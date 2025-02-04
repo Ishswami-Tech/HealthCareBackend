@@ -6,8 +6,12 @@ import {
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { join } from 'path';
+import initDatabase from './scripts/init-db';
 
 async function bootstrap() {
+  // Initialize database with seed data
+  await initDatabase();
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter(),
