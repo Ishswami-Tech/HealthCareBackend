@@ -1,26 +1,18 @@
-import { PrismaClient } from '@prisma/client';
-import { faker } from '@faker-js/faker';
+import { PrismaClient } from "@prisma/client";
 
 async function initDatabase() {
   const prisma = new PrismaClient();
 
   try {
-    const count = await prisma.user.count();
-    if (count === 0) {
-      const users = Array.from({ length: 50 }, () => ({
-        email: faker.internet.email(),
-        name: faker.person.fullName(),
-        age: faker.number.int({ min: 18, max: 80 }),
-        city: faker.location.city(),
-      }));
+    // Run migrations
+    await prisma.$executeRaw`CREATE SCHEMA IF NOT EXISTS public`;
 
-      for (const user of users) {
-        await prisma.user.create({ data: user });
-      }
-      console.log('Database initialized with 50 users');
-    }
+    // Verify connection
+    await prisma.$connect();
+
+    console.log("Database initialized successfully");
   } catch (error) {
-    console.error('Database initialization failed:', error);
+    console.error("Database initialization failed:", error);
   } finally {
     await prisma.$disconnect();
   }

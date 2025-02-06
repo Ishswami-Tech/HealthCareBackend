@@ -1,6 +1,6 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import { Injectable, OnModuleDestroy } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import Redis from "ioredis";
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -8,8 +8,8 @@ export class RedisService implements OnModuleDestroy {
 
   constructor(private configService: ConfigService) {
     this.redis = new Redis({
-      host: this.configService.get('redis.host'),
-      port: this.configService.get('redis.port'),
+      host: this.configService.get("redis.host"),
+      port: this.configService.get("redis.port"),
     });
   }
 
@@ -19,7 +19,7 @@ export class RedisService implements OnModuleDestroy {
 
   async set(key: string, value: string, ttl?: number): Promise<void> {
     if (ttl) {
-      await this.redis.set(key, value, 'EX', ttl);
+      await this.redis.set(key, value, "EX", ttl);
     } else {
       await this.redis.set(key, value);
     }
@@ -27,6 +27,43 @@ export class RedisService implements OnModuleDestroy {
 
   async del(key: string): Promise<void> {
     await this.redis.del(key);
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    return await this.redis.keys(pattern);
+  }
+
+  async type(key: string): Promise<string> {
+    return await this.redis.type(key);
+  }
+
+  async ttl(key: string): Promise<number> {
+    return await this.redis.ttl(key);
+  }
+
+  async getStatus(): Promise<any> {
+    try {
+      const info = await this.redis.info();
+      const keys = await this.keys("*");
+      const memory = await this.redis.info("memory");
+
+      return {
+        isConnected: this.redis.status === "ready",
+        keys: keys.length,
+        keysList: keys,
+        info,
+        memory,
+        configuration: {
+          host: this.configService.get("redis.host"),
+          port: this.configService.get("redis.port"),
+        },
+      };
+    } catch (error) {
+      return {
+        isConnected: false,
+        error: error.message,
+      };
+    }
   }
 
   async onModuleDestroy() {
