@@ -4,6 +4,7 @@ import { UsersService } from "./users.service";
 import { UserResponseDto, CreateUserDto } from "./user.entity";
 import { RedisService } from "../redis/redis.service";
 import { KafkaService } from "../kafka/kafka.service";
+import { PrismaService } from "../prisma/prisma.service";
 
 @ApiTags("users")
 @Controller("users")
@@ -11,7 +12,8 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly redis: RedisService,
-    private readonly kafka: KafkaService
+    private readonly kafka: KafkaService,
+    private readonly prisma: PrismaService
   ) {}
 
   @Get()
@@ -98,5 +100,120 @@ export class UsersController {
     );
 
     return keyDetails;
+  }
+
+  @Get("redis-health")
+  async checkRedisHealth() {
+    try {
+      const testKey = "health-check";
+      await this.redis.set(testKey, "OK", 60);
+      const result = await this.redis.get(testKey);
+      return {
+        status: "healthy",
+        connected: result === "OK",
+      };
+    } catch (error) {
+      return {
+        status: "unhealthy",
+        error: error.message,
+      };
+    }
+  }
+
+  @Get("cache/debug")
+  async debugCache() {
+    const allKeys = await this.redis.keys("*");
+    const cacheDetails = await Promise.all(
+      allKeys.map(async (key) => ({
+        key,
+        type: await this.redis.type(key),
+        ttl: await this.redis.ttl(key),
+        value: await this.redis.get(key),
+      }))
+    );
+
+    return {
+      totalKeys: allKeys.length,
+      keys: cacheDetails,
+    };
+  }
+
+  @Get("monitoring/redis-status")
+  @ApiOperation({ summary: "Get Redis status and cache statistics" })
+  async getRedisStatus() {
+    try {
+      // Basic connectivity check
+      const healthCheck = await this.checkRedisHealth();
+
+      // Get cache statistics
+      const [dbUsers, cachedUsers, cacheHits, cacheMisses] = await Promise.all([
+        this.prisma.user.count(),
+        this.redis.get("users:all"),
+        this.redis.get("cache:hits:total"),
+        this.redis.get("cache:misses:total"),
+      ]);
+
+      // Calculate hit ratio
+      const hits = parseInt(cacheHits || "0");
+      const misses = parseInt(cacheMisses || "0");
+      const hitRatio = hits + misses > 0 ? (hits / (hits + misses)) * 100 : 0;
+
+      return {
+        status: {
+          isConnected: healthCheck.status === "healthy",
+          lastCheck: new Date().toISOString(),
+        },
+        cacheStats: {
+          databaseRecords: dbUsers,
+          cachedRecords: cachedUsers ? JSON.parse(cachedUsers).length : 0,
+          performance: {
+            hits,
+            misses,
+            hitRatio: `${hitRatio.toFixed(2)}%`,
+          },
+        },
+      };
+    } catch (error) {
+      return {
+        status: "error",
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Get("cache/stats")
+  @ApiOperation({ summary: "Get Redis cache statistics" })
+  async getCacheStats() {
+    try {
+      // Get all users from database
+      const dbUsers = await this.prisma.user.count();
+
+      // Get cached users
+      const cachedAllUsers = await this.redis.get("users:all");
+      const allKeys = await this.redis.keys("users:*");
+
+      // Get individual cached users
+      const individualCacheKeys = allKeys.filter((key) =>
+        key.startsWith("users:one:")
+      );
+
+      return {
+        databaseCount: dbUsers,
+        cachedListCount: cachedAllUsers ? JSON.parse(cachedAllUsers).length : 0,
+        individualCachedCount: individualCacheKeys.length,
+        cacheKeys: allKeys,
+        cacheHitRatio: {
+          total: (await this.redis.get("cache:hits:total")) || "0",
+          misses: (await this.redis.get("cache:misses:total")) || "0",
+        },
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      return {
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 }

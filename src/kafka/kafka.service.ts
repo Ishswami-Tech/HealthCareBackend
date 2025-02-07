@@ -8,27 +8,64 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
   private consumer: Consumer;
   private isConnected = false;
   private messageCount = 0;
+  private readonly maxRetries = 5;
+  private readonly retryDelay = 5000;
 
   constructor() {
     this.kafka = new Kafka({
       clientId: "user-service",
-      brokers: [process.env.KAFKA_BROKERS || "kafka:29092"],
+      brokers: [process.env.KAFKA_BROKERS || "localhost:9092"],
       retry: {
         initialRetryTime: 1000,
         retries: 10,
+        maxRetryTime: 30000,
+        factor: 2,
       },
+      connectionTimeout: 3000,
     });
     this.producer = this.kafka.producer();
     this.consumer = this.kafka.consumer({ groupId: "user-group" });
   }
 
   async onModuleInit() {
-    try {
-      await this.producer.connect();
-      await this.consumer.connect();
+    await this.connectWithRetry();
+  }
 
-      // Create topic if it doesn't exist
-      const admin = this.kafka.admin();
+  private async connectWithRetry(retryCount = 0) {
+    try {
+      if (!this.isConnected) {
+        await this.producer.connect();
+        await this.consumer.connect();
+
+        await this.setupTopics();
+        await this.setupConsumer();
+
+        this.isConnected = true;
+        console.log("Successfully connected to Kafka");
+      }
+    } catch (error) {
+      console.error(
+        `Failed to connect to Kafka (attempt ${retryCount + 1}/${
+          this.maxRetries
+        }):`,
+        error
+      );
+
+      if (retryCount < this.maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, this.retryDelay));
+        await this.connectWithRetry(retryCount + 1);
+      } else {
+        console.error("Max retry attempts reached. Failed to connect to Kafka");
+        this.isConnected = false;
+      }
+    }
+  }
+
+  private async setupTopics() {
+    const admin = this.kafka.admin();
+    await admin.connect();
+
+    try {
       await admin.createTopics({
         topics: [
           {
@@ -37,25 +74,28 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
             replicationFactor: 1,
           },
         ],
+        timeout: 5000,
       });
-      await admin.disconnect();
-
-      await this.consumer.subscribe({
-        topic: "user-events",
-        fromBeginning: true,
-      });
-      await this.consumer.run({
-        eachMessage: async ({ message }) => {
-          this.messageCount++;
-          console.log("Received message:", message.value?.toString());
-        },
-      });
-
-      this.isConnected = true;
     } catch (error) {
-      console.error("Failed to connect to Kafka:", error);
-      this.isConnected = false;
+      // Topic might already exist, ignore error
+      console.log("Topic creation error (might already exist):", error.message);
     }
+
+    await admin.disconnect();
+  }
+
+  private async setupConsumer() {
+    await this.consumer.subscribe({
+      topic: "user-events",
+      fromBeginning: true,
+    });
+
+    await this.consumer.run({
+      eachMessage: async ({ message }) => {
+        this.messageCount++;
+        console.log("Received message:", message.value?.toString());
+      },
+    });
   }
 
   async onModuleDestroy() {
@@ -108,6 +148,19 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
         isConnected: false,
         error: error.message,
       };
+    }
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      const admin = this.kafka.admin();
+      await admin.connect();
+      const topics = await admin.listTopics();
+      await admin.disconnect();
+      return topics.includes("user-events");
+    } catch (error) {
+      console.error("Kafka health check failed:", error);
+      return false;
     }
   }
 }
