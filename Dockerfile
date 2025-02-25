@@ -1,6 +1,9 @@
 # Development
 FROM node:20-alpine AS development
 
+# Install necessary tools
+RUN apk add --no-cache postgresql-client redis busybox-extras
+
 WORKDIR /usr/src/app
 
 COPY package*.json ./
@@ -10,10 +13,9 @@ RUN npm install
 
 COPY . .
 
-# Create public directory if it doesn't exist
-RUN mkdir -p public
+RUN npm run prisma:generate
 
-RUN npm run build
+CMD ["npm", "run", "start:dev"]
 
 # Production
 FROM node:20-alpine AS production

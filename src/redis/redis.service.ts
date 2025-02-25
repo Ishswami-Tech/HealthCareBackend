@@ -7,12 +7,23 @@ export class RedisService implements OnModuleDestroy {
   private readonly redis: Redis;
 
   constructor(private configService: ConfigService) {
-    const host = this.configService.get<string>("REDIS_HOST") ?? "localhost";
-    const port = this.configService.get<string>("REDIS_PORT") ?? "6379";
-
     this.redis = new Redis({
-      host,
-      port: parseInt(port, 10),
+      host: process.env.REDIS_HOST || 'redis',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      retryStrategy: (times) => {
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+      },
+      maxRetriesPerRequest: null,
+      enableReadyCheck: true,
+    });
+
+    this.redis.on('error', (err) => {
+      console.error('Redis Client Error:', err);
+    });
+
+    this.redis.on('connect', () => {
+      console.log('Successfully connected to Redis');
     });
   }
 
@@ -78,5 +89,9 @@ export class RedisService implements OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.redis.quit();
+  }
+
+  getClient(): Redis {
+    return this.redis;
   }
 }
