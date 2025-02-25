@@ -14,12 +14,10 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
   constructor() {
     this.kafka = new Kafka({
       clientId: "user-service",
-      brokers: [process.env.KAFKA_BROKERS || "localhost:9092"],
+      brokers: [process.env.KAFKA_BROKERS || 'kafka:29092'],
       retry: {
         initialRetryTime: 1000,
-        retries: 10,
-        maxRetryTime: 30000,
-        factor: 2,
+        retries: 8
       },
       connectionTimeout: 3000,
     });
@@ -28,7 +26,13 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
-    await this.connectWithRetry();
+    try {
+      await this.producer.connect();
+      await this.consumer.connect();
+      console.log('Successfully connected to Kafka');
+    } catch (error) {
+      console.error('Failed to connect to Kafka:', error);
+    }
   }
 
   private async connectWithRetry(retryCount = 0) {
