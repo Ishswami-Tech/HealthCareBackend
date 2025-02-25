@@ -1,9 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { RedisService } from "../redis/redis.service";
 import { User, Prisma } from "@prisma/client";
-import { KafkaService } from "../kafka/kafka.service";
-import { RedisCache } from "../utils/redis-cache.decorator";
+import { PrismaService } from "../../../shared/database/prisma/prisma.service";
+import { RedisService } from "../../../shared/cache/redis/redis.service";
+import { KafkaService } from "../../../shared/messaging/kafka/kafka.service";
+import { RedisCache } from "../../../shared/cache/decorators/redis-cache.decorator";
 
 @Injectable()
 export class UsersService {
@@ -13,16 +13,20 @@ export class UsersService {
     private kafka: KafkaService
   ) {}
 
-  @RedisCache("users:all", 3600)
+  @RedisCache({ prefix: "users:all", ttl: 3600 })
   async findAll(): Promise<User[]> {
     return await this.prisma.user.findMany();
   }
 
-  @RedisCache("users:one", 3600)
-  async findOne(id: any): Promise<User | null> {
+  @RedisCache({ prefix: "users:one", ttl: 3600 })
+  async findOne(id: string): Promise<User | null> {
     return await this.prisma.user.findUnique({
       where: { id },
     });
+  }
+
+  async count(): Promise<number> {
+    return await this.prisma.user.count();
   }
 
   async createUser(

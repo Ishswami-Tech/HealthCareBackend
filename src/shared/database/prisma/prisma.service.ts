@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
 
 @Injectable()
@@ -6,15 +7,15 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
-  constructor() {
-    const isDevelopment = process.env.NODE_ENV === 'development';
+  constructor(private configService: ConfigService) {
+    const isDevelopment = configService.get('NODE_ENV') === 'development';
     
     super({
       datasources: {
         db: {
           url: isDevelopment 
-            ? process.env.DATABASE_URL 
-            : process.env.DATABASE_URL_PROD
+            ? configService.get('database.url')
+            : configService.get('database.urlProd')
         },
       },
     });

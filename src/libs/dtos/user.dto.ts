@@ -54,12 +54,42 @@ export class CreateUserDto {
   isVerified: boolean;
 }
 
-export class UserResponseDto extends CreateUserDto {
+export class UserResponseDto {
   @ApiProperty()
   id: string;
 
+  @ApiProperty()
+  email: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty()
+  age: number;
+
+  @ApiProperty()
+  firstName: string;
+
+  @ApiProperty()
+  lastName: string;
+
+  @ApiProperty()
+  phone: string;
+
+  @ApiProperty({ enum: Role })
+  role: Role;
+
   @ApiProperty({ required: false })
-  lastLogin?: Date | null;
+  profilePicture?: string;
+
+  @ApiProperty({ enum: Gender, required: false })
+  gender?: Gender;
+
+  @ApiProperty({ required: false })
+  dateOfBirth?: Date;
+
+  @ApiProperty()
+  isVerified: boolean;
 
   @ApiProperty()
   createdAt: Date;

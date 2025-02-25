@@ -4,13 +4,13 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from "./app.module";
-import { join } from "path";
-import { initDatabase } from "./scripts/init-db";
+import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
+import { initDatabase } from "./shared/database/scripts/init-db";
 
 async function bootstrap() {
   try {
-    // Initialize database
     await initDatabase();
 
     const app = await NestFactory.create<NestFastifyApplication>(
@@ -18,13 +18,12 @@ async function bootstrap() {
       new FastifyAdapter()
     );
 
-    // Register fastify static
-    await app.register(import("@fastify/static"), {
-      root: join(__dirname, "..", "public"),
-      prefix: "/public/",
-    });
+    app.useGlobalPipes(new ValidationPipe({
+      transform: true,
+      whitelist: true,
+    }));
+    app.useGlobalFilters(new HttpExceptionFilter());
 
-    // Swagger setup
     const config = new DocumentBuilder()
       .setTitle("Healthcare API")
       .setDescription("The Healthcare API description")
@@ -39,4 +38,5 @@ async function bootstrap() {
     process.exit(1);
   }
 }
+
 bootstrap();
