@@ -1,10 +1,10 @@
 import { Controller, Get, Post, Body } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
-import { UsersService } from "./users.service";
-import { UserResponseDto, CreateUserDto } from "./user.entity";
-import { RedisService } from "../redis/redis.service";
-import { KafkaService } from "../kafka/kafka.service";
-import { PrismaService } from "../prisma/prisma.service";
+import { UsersService } from "../services/users.service";
+import { CreateUserDto, UserResponseDto } from "../../../libs/dtos/user.dto";
+import { RedisService } from "../../../shared/cache/redis/redis.service";
+import { KafkaService } from "../../../shared/messaging/kafka/kafka.service";
+import { KAFKA_TOPICS } from "../../../config/constants";
 
 @ApiTags("users")
 @Controller("users")
@@ -12,19 +12,29 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly redis: RedisService,
-    private readonly kafka: KafkaService,
-    private readonly prisma: PrismaService
+    private readonly kafka: KafkaService
   ) {}
 
   @Get()
   @ApiOperation({ summary: "Get all users" })
   @ApiResponse({
     status: 200,
-    description: "Return all users",
+    description: "List of users",
     type: [UserResponseDto],
   })
-  findAll() {
+  async findAll() {
     return this.usersService.findAll();
+  }
+
+  @Get(":id")
+  @ApiOperation({ summary: "Get user by id" })
+  @ApiResponse({
+    status: 200,
+    description: "User found",
+    type: UserResponseDto,
+  })
+  async findOne(id: string) {
+    return this.usersService.findOne(id);
   }
 
   @Post()
@@ -58,20 +68,23 @@ export class UsersController {
   }
 
   @Get("monitoring/status")
-  @ApiOperation({ summary: "Check all services status" })
-  async checkAllServices() {
-    const [kafkaStatus, redisStatus, cacheStatus] = await Promise.all([
-      this.kafka.getDetailedStatus(),
-      this.redis.getStatus(),
-      this.checkCacheStatus(),
-    ]);
-
-    return {
-      kafka: kafkaStatus,
-      redis: redisStatus,
-      cache: cacheStatus,
-      timestamp: new Date().toISOString(),
-    };
+  @ApiOperation({ summary: "Get system status" })
+  async getStatus() {
+    try {
+      const userCount = await this.usersService.count();
+      
+      return {
+        status: "healthy",
+        users: userCount,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      return {
+        status: "error",
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 
   @Post("monitoring/test-message")
@@ -147,7 +160,7 @@ export class UsersController {
 
       // Get cache statistics
       const [dbUsers, cachedUsers, cacheHits, cacheMisses] = await Promise.all([
-        this.prisma.user.count(),
+        this.usersService.count(),
         this.redis.get("users:all"),
         this.redis.get("cache:hits:total"),
         this.redis.get("cache:misses:total"),
@@ -187,7 +200,7 @@ export class UsersController {
   async getCacheStats() {
     try {
       // Get all users from database
-      const dbUsers = await this.prisma.user.count();
+      const dbUsers = await this.usersService.count();
 
       // Get cached users
       const cachedAllUsers = await this.redis.get("users:all");
