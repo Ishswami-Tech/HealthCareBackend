@@ -3,55 +3,45 @@ services:
   api:
     build:
       context: .
-      target: development
-    volumes:
-      - .:/usr/src/app
-      - /usr/src/app/node_modules
+      dockerfile: Dockerfile
+    container_name: healthcarebackend-api-1
     ports:
       - "3000:3000"
       - "5555:5555"
     environment:
-      - NODE_ENV=${NODE_ENV}
-      - DATABASE_URL=${DATABASE_URL}
-      - DATABASE_URL_PROD=${DATABASE_URL_PROD}
-      - REDIS_HOST=${REDIS_HOST}
-      - REDIS_PORT=${REDIS_PORT}
-      - KAFKA_BROKERS=${KAFKA_BROKERS}
-    networks:
-      - app-network
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+      POSTGRES_PASSWORD: postgres
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - /app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: >
-      sh -c "npm run prisma:generate &&
-             npm run prisma:deploy &&
-             npm run db:seed &&
-             (npx prisma studio --port 5555 --hostname 0.0.0.0 &) &&
-             npm run start:dev"
+    networks:
+      - app-network
+    restart: unless-stopped
 
   postgres:
-    image: postgres:15
+    image: postgres:latest
     container_name: postgres
-    restart: always
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
-    ports:
-      - "5432:5432"
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data/pgdata
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -67,11 +57,10 @@ services:
       - app-network
 
   redis:
-    image: redis:alpine
+    image: redis:latest
+    container_name: healthcarebackend-redis-1
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
     networks:
       - app-network
     healthcheck:
@@ -82,14 +71,11 @@ services:
 
   redis-commander:
     image: rediscommander/redis-commander:latest
-    environment:
-      - REDIS_HOSTS=local:redis:6379
-      - HTTP_USER=admin
-      - HTTP_PASSWORD=admin
+    container_name: healthcarebackend-redis-commander-1
     ports:
       - "8081:8081"
-    depends_on:
-      - redis
+    environment:
+      - REDIS_HOSTS=redis
     networks:
       - app-network
 
@@ -150,10 +136,11 @@ services:
     networks:
       - app-network
 
+volumes:
+  postgres_data:
+    driver: local
+
 networks:
   app-network:
     driver: bridge
-
-volumes:
-  postgres_data:
-  redis_data: 
+ 

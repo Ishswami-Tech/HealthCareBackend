@@ -1,42 +1,19 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from './prisma.types';
 
 @Injectable()
-export class PrismaService
-  extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy
-{
-  constructor(private configService: ConfigService) {
-    const isDevelopment = configService.get('NODE_ENV') === 'development';
-    
-    super({
-      datasources: {
-        db: {
-          url: isDevelopment 
-            ? configService.get('database.url')
-            : configService.get('database.urlProd')
-        },
-      },
-    });
-  }
+export class PrismaService implements OnModuleInit, OnModuleDestroy {
+  private prisma = getPrismaClient();
 
   async onModuleInit() {
-    await this.$connect();
-    console.log('Prisma connected successfully');
+    await this.prisma.$connect();
   }
 
   async onModuleDestroy() {
-    await this.$disconnect();
+    await this.prisma.$disconnect();
   }
 
-  async cleanDatabase() {
-    if (
-      process.env.NODE_ENV === 'development' ||
-      process.env.NODE_ENV === 'test'
-    ) {
-      // Add your cleanup logic here if needed
-      return;
-    }
+  get client() {
+    return this.prisma;
   }
 }

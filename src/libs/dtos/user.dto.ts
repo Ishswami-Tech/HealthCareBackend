@@ -1,57 +1,165 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { Role, Gender } from "@prisma/client";
+import { Role, Gender } from '@prisma/client';
+import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean } from 'class-validator';
 
-export class CreateUserDto {
-  @ApiProperty()
+// Base interface with required fields matching schema
+interface BaseUserFields {
   email: string;
-
-  @ApiProperty()
   password: string;
-
-  @ApiProperty()
   name: string;
-
-  @ApiProperty()
   age: number;
-
-  @ApiProperty()
   firstName: string;
-
-  @ApiProperty()
   lastName: string;
-
-  @ApiProperty()
   phone: string;
+  role?: Role;
+  profilePicture?: string;
+  gender?: Gender;
+  dateOfBirth?: Date;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  zipCode?: string;
+  lastLogin?: Date;
+}
 
-  @ApiProperty({ enum: Role, default: Role.PATIENT })
-  role: Role;
+// For create operations - same as base
+type CreateUserFields = BaseUserFields;
 
-  @ApiProperty({ required: false })
-  profilePicture?: string | null;
+// For update operations - all fields optional
+type UpdateUserFields = Partial<BaseUserFields>;
 
-  @ApiProperty({ enum: Gender, required: false })
-  gender?: Gender | null;
+export class CreateUserDto implements CreateUserFields {
+  @IsEmail()
+  email!: string;
 
-  @ApiProperty({ required: false })
-  dateOfBirth?: Date | null;
+  @IsString()
+  password!: string;
 
-  @ApiProperty({ required: false })
-  address?: string | null;
+  @IsString()
+  name!: string;
 
-  @ApiProperty({ required: false })
-  city?: string | null;
+  @IsInt()
+  age!: number;
 
-  @ApiProperty({ required: false })
-  state?: string | null;
+  @IsString()
+  firstName!: string;
 
-  @ApiProperty({ required: false })
-  country?: string | null;
+  @IsString()
+  lastName!: string;
 
-  @ApiProperty({ required: false })
-  zipCode?: string | null;
+  @IsString()
+  phone!: string;
 
-  @ApiProperty({ default: false })
-  isVerified: boolean;
+  @IsEnum(Role)
+  @IsOptional()
+  role?: Role;
+
+  @IsString()
+  @IsOptional()
+  profilePicture?: string;
+
+  @IsEnum(Gender)
+  @IsOptional()
+  gender?: Gender;
+
+  @IsDate()
+  @IsOptional()
+  dateOfBirth?: Date;
+
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @IsString()
+  @IsOptional()
+  zipCode?: string;
+
+  @IsDate()
+  @IsOptional()
+  lastLogin?: Date;
+}
+
+export class UpdateUserDto implements UpdateUserFields {
+  @IsEmail()
+  @IsOptional()
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  password?: string;
+
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @IsInt()
+  @IsOptional()
+  age?: number;
+
+  @IsString()
+  @IsOptional()
+  firstName?: string;
+
+  @IsString()
+  @IsOptional()
+  lastName?: string;
+
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @IsEnum(Role)
+  @IsOptional()
+  role?: Role;
+
+  @IsString()
+  @IsOptional()
+  profilePicture?: string;
+
+  @IsEnum(Gender)
+  @IsOptional()
+  gender?: Gender;
+
+  @IsDate()
+  @IsOptional()
+  dateOfBirth?: Date;
+
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @IsString()
+  @IsOptional()
+  zipCode?: string;
+
+  @IsDate()
+  @IsOptional()
+  lastLogin?: Date;
 }
 
 export class UserResponseDto {
