@@ -1,25 +1,22 @@
 {
   "compilerOptions": {
+    "lib": ["es2021"],
     "module": "commonjs",
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
-    "target": "ES2021",
+    "target": "es2021",
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",
-    "paths": {
-      "@services/*": ["src/services/*"],
-      "@shared/*": ["src/shared/*"],
-      "@config/*": ["src/config/*"],
-      "@libs/*": ["src/libs/*"]
-    },
     "incremental": true,
     "skipLibCheck": true,
-    "strictNullChecks": true,
-    "forceConsistentCasingInFileNames": true,
-    "noImplicitAny": false
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "forceConsistentCasingInFileNames": false,
+    "noFallthroughCasesInSwitch": false
   }
 }

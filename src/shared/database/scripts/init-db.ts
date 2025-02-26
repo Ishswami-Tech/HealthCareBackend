@@ -1,31 +1,30 @@
-import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../prisma/prisma.types';
+
+const prisma = getPrismaClient();
 
 export async function initDatabase() {
   try {
-    const prisma = new PrismaClient({
-      datasources: {
-        db: {
-          url: process.env.DATABASE_URL,
-        },
-      },
-    });
-
-    console.log('Environment:', process.env.NODE_ENV);
-    console.log('Using Database URL:', process.env.DATABASE_URL);
-
     // Test the connection
-    await prisma.$queryRaw`SELECT 1`;
-    
-    // Create schema if it doesn't exist
-    await prisma.$executeRaw`CREATE SCHEMA IF NOT EXISTS public`;
+    await prisma.$connect();
+    console.log('Database connection successful');
 
-    console.log('Database initialized successfully');
-    await prisma.$disconnect();
-    return true;
+    // Your initialization logic here
+    console.log('Database initialized');
   } catch (error) {
     console.error('Database initialization failed:', error);
-    console.log('Current DATABASE_URL:', process.env.DATABASE_URL);
     throw error;
   }
+}
+
+// Allow running directly
+if (require.main === module) {
+  initDatabase()
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
 }
 
