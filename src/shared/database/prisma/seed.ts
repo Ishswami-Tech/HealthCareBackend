@@ -1,95 +1,23 @@
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { faker } from "@faker-js/faker";
+import {
+  Role,
+  Gender,
+  AppointmentStatus,
+  PaymentStatus,
+  PaymentMethod,
+  AppointmentType,
+  Prakriti,
+  MedicineType,
+  QueueStatus,
+  NotificationType,
+  NotificationStatus,
+  HealthRecordType,
+  getPrismaClient
+} from './prisma.types';
 
 const SEED_COUNT = 50;
-const prisma = new PrismaClient();
-
-// Define enums from schema
-const Role = {
-  SUPER_ADMIN: 'SUPER_ADMIN',
-  CLINIC_ADMIN: 'CLINIC_ADMIN',
-  DOCTOR: 'DOCTOR',
-  PATIENT: 'PATIENT',
-  RECEPTIONIST: 'RECEPTIONIST'
-} as const;
-
-const Gender = {
-  MALE: 'MALE',
-  FEMALE: 'FEMALE',
-  OTHER: 'OTHER'
-} as const;
-
-const AppointmentStatus = {
-  PENDING: 'PENDING',
-  SCHEDULED: 'SCHEDULED',
-  CONFIRMED: 'CONFIRMED',
-  CANCELLED: 'CANCELLED',
-  COMPLETED: 'COMPLETED',
-  NO_SHOW: 'NO_SHOW'
-} as const;
-
-const PaymentStatus = {
-  PENDING: 'PENDING',
-  COMPLETED: 'COMPLETED',
-  FAILED: 'FAILED',
-  REFUNDED: 'REFUNDED'
-} as const;
-
-const PaymentMethod = {
-  CASH: 'CASH',
-  CARD: 'CARD',
-  UPI: 'UPI',
-  NET_BANKING: 'NET_BANKING'
-} as const;
-
-const AppointmentType = {
-  IN_PERSON: 'IN_PERSON',
-  VIDEO_CALL: 'VIDEO_CALL',
-  HOME_VISIT: 'HOME_VISIT'
-} as const;
-
-const Prakriti = {
-  VATA: 'VATA',
-  PITTA: 'PITTA',
-  KAPHA: 'KAPHA',
-  VATA_PITTA: 'VATA_PITTA',
-  PITTA_KAPHA: 'PITTA_KAPHA',
-  VATA_KAPHA: 'VATA_KAPHA',
-  TRIDOSHA: 'TRIDOSHA'
-} as const;
-
-const MedicineType = {
-  CLASSICAL: 'CLASSICAL',
-  PROPRIETARY: 'PROPRIETARY',
-  HERBAL: 'HERBAL'
-} as const;
-
-const QueueStatus = {
-  WAITING: 'WAITING',
-  IN_PROGRESS: 'IN_PROGRESS',
-  COMPLETED: 'COMPLETED'
-} as const;
-
-const NotificationType = {
-  EMAIL: 'EMAIL',
-  SMS: 'SMS',
-  PUSH_NOTIFICATION: 'PUSH_NOTIFICATION'
-} as const;
-
-const NotificationStatus = {
-  PENDING: 'PENDING',
-  SENT: 'SENT',
-  FAILED: 'FAILED'
-} as const;
-
-const HealthRecordType = {
-  LAB_TEST: 'LAB_TEST',
-  XRAY: 'XRAY',
-  MRI: 'MRI',
-  PRESCRIPTION: 'PRESCRIPTION',
-  DIAGNOSIS_REPORT: 'DIAGNOSIS_REPORT',
-  PULSE_DIAGNOSIS: 'PULSE_DIAGNOSIS'
-} as const;
+const prisma = getPrismaClient();
 
 async function waitForDatabase() {
   let retries = 5;
