@@ -1,99 +1,641 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Healthcare Backend API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A modern, scalable backend system for healthcare management built with NestJS, PostgreSQL, Redis, and Kafka. This system is designed to handle the complete workflow of healthcare clinics, from patient management to appointment scheduling and medical record keeping, with a special focus on Ayurvedic practices.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## 📁 Project Structure
 
-## Description
+\`\`\`
+src/
+├── config/               # Configuration modules and environment setup
+├── libs/                 # Shared libraries, DTOs, and utilities
+│   ├── dtos/            # Data Transfer Objects
+│   └── filters/         # Global filters (e.g., HTTP exceptions)
+├── services/            # Feature modules and business logic
+│   └── users/           # User management module
+│       ├── controllers/ # User-related controllers
+│       └── services/    # User-related services
+├── shared/             # Shared modules and utilities
+│   ├── cache/          # Redis caching implementation
+│   ├── database/       # Database configurations and Prisma setup
+│   └── messaging/      # Kafka messaging implementation
+├── app.controller.ts   # Main application controller
+├── app.module.ts       # Main application module
+└── main.ts            # Application entry point
+\`\`\`
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 🏥 Features
 
-## Project setup
+- **User Management**
+  - Multiple user roles (Super Admin, Clinic Admin, Doctor, Patient, Receptionist)
+  - Authentication and Authorization with JWT
+  - Profile management with avatar support
+  - Role-based access control (RBAC)
+  - User activity logging
+  - Password reset and email verification
 
-```bash
-$ npm install
-```
+- **Clinic Management**
+  - Multiple clinic support with independent configurations
+  - Doctor-clinic associations with scheduling
+  - Working hours management with break time support
+  - Staff management and role assignment
+  - Resource allocation and management
+  - Multiple branch support
 
-## Compile and run the project
+- **Appointment System**
+  - Smart appointment scheduling with conflict prevention
+  - Automated queue management
+  - Multiple appointment types:
+    - In-person consultations
+    - Video call appointments
+    - Home visits
+  - Real-time status tracking
+  - Appointment reminders via SMS/Email
+  - Cancellation and rescheduling support
+  - Waiting list management
 
-```bash
-# development
-$ npm run start
+- **Medical Records**
+  - Comprehensive patient health records
+  - Digital prescriptions with medicine tracking
+  - Medicine inventory management
+  - Lab reports and diagnostics integration
+  - Document upload support (X-rays, MRI scans, etc.)
+  - Medical history tracking
+  - Allergy and medication alerts
+  - Treatment progress tracking
 
-# watch mode
-$ npm run start:dev
+- **Payment System**
+  - Multiple payment methods integration
+    - Cash payments
+    - Card payments
+    - UPI transactions
+    - Net banking
+  - Payment status tracking
+  - Transaction history and reporting
+  - Invoice generation
+  - Refund processing
+  - Subscription management for packages
+  - GST compliance
 
-# production mode
-$ npm run start:prod
-```
+- **Ayurvedic Features**
+  - Prakriti and Dosha assessment tools
+  - Pulse diagnosis recording
+  - Classical and proprietary medicine tracking
+  - Diet and lifestyle recommendations
+  - Seasonal health guidance
+  - Panchakarma treatment tracking
+  - Herbal medicine inventory
 
-## Run tests
+- **Advanced Features**
+  - Real-time notifications
+  - SMS and Email integration
+  - Report generation
+  - Analytics dashboard
+  - Audit logging
+  - Data export/import
+  - Backup and recovery
+  - Multi-language support
 
-```bash
-# unit tests
-$ npm run test
+## 🏗️ Architecture
+
+### Backend Architecture
+- **API Layer**: NestJS controllers and DTOs
+- **Service Layer**: Business logic implementation
+- **Data Layer**: Prisma ORM with PostgreSQL
+- **Cache Layer**: Redis for performance optimization
+- **Message Queue**: Kafka for event-driven architecture
+- **Authentication**: JWT with refresh token rotation
+- **File Storage**: S3-compatible storage for documents
+
+### Database Design
+- Normalized database schema
+- Efficient indexing for performance
+- Soft delete implementation
+- Audit trail tables
+- Relationship management
+- Data versioning
+
+### Caching Strategy
+- Redis for high-performance caching
+- Cache invalidation patterns
+- Distributed caching support
+- Cache warming mechanisms
+- TTL-based cache management
+
+### Message Queue Implementation
+- Kafka topics for event handling
+- Event sourcing patterns
+- Message retry mechanisms
+- Dead letter queues
+- Event logging and tracking
+
+## 🚀 Tech Stack
+
+- **Framework**: NestJS (v9.x)
+- **Database**: 
+  - PostgreSQL (v14+)
+  - Prisma ORM (v4.x)
+- **Caching**: Redis (v6.x)
+- **Message Queue**: Apache Kafka
+- **API Documentation**: Swagger/OpenAPI 3.0
+- **Runtime**: Node.js (v16+)
+- **Language**: TypeScript (v4.x)
+- **Testing**: Jest & Supertest
+- **CI/CD**: GitHub Actions
+- **Containerization**: Docker & Docker Compose
+- **Monitoring**: Prometheus & Grafana
+
+## 🛠️ Development Setup
+
+### Prerequisites
+
+- Node.js (v16 or higher)
+- PostgreSQL (v14 or higher)
+- Redis (v6 or higher)
+- Apache Kafka (v3 or higher)
+- Docker & Docker Compose
+- Git
+
+### Environment Configuration
+
+Three environment configurations are available:
+
+1. Development (\`.env.development\`):
+\`\`\`env
+NODE_ENV=development
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+REDIS_HOST=redis
+REDIS_PORT=6379
+KAFKA_BROKERS=kafka:29092
+PRISMA_SCHEMA_PATH=./src/shared/database/prisma/schema.prisma
+\`\`\`
+
+2. Production (\`.env.production\`):
+\`\`\`env
+NODE_ENV=production
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+REDIS_HOST=redis
+REDIS_PORT=6379
+KAFKA_BROKERS=kafka:29092
+PRISMA_SCHEMA_PATH=./src/shared/database/prisma/schema.prisma
+\`\`\`
+
+### Docker Services
+
+The application uses Docker Compose with the following services:
+
+1. **API Service**:
+   - NestJS application
+   - Ports: 3000 (API), 5555 (Prisma Studio)
+   - Development hot-reload enabled
+
+2. **PostgreSQL**:
+   - Latest PostgreSQL
+   - Port: 5432
+   - Health check enabled
+   - Persistent volume storage
+
+3. **PgAdmin**:
+   - Database management interface
+   - Port: 5050
+   - Default credentials:
+     - Email: admin@admin.com
+     - Password: admin
+
+4. **Redis**:
+   - Latest Redis
+   - Port: 6379
+   - Health check enabled
+
+5. **Redis Commander**:
+   - Redis management interface
+   - Port: 8081
+
+6. **Kafka & Zookeeper**:
+   - Kafka (Port: 9092, 29092)
+   - Zookeeper (Port: 2181)
+   - Health checks enabled
+
+7. **Kafka UI**:
+   - Management interface for Kafka
+   - Port: 8085
+
+### Installation Steps
+
+1. Clone and setup:
+\`\`\`bash
+git clone [repository-url]
+cd healthcare-backend
+npm install
+\`\`\`
+
+2. Environment setup:
+\`\`\`bash
+cp .env.example .env
+# Configure environment variables
+\`\`\`
+
+3. Start Docker services:
+\`\`\`bash
+docker-compose up -d
+\`\`\`
+
+4. Database setup:
+\`\`\`bash
+npm run prisma:generate    # Generate Prisma client
+npm run prisma:migrate    # Run migrations
+npm run prisma:seed      # Seed database
+\`\`\`
+
+### Available Scripts
+
+\`\`\`json
+{
+  "scripts": {
+    "build": "nest build",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
+    "prisma:generate": "prisma generate --schema=./src/shared/database/prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate deploy --schema=./src/shared/database/prisma/schema.prisma",
+    "prisma:seed": "ts-node src/shared/database/prisma/seed.ts",
+    "prisma:studio": "prisma studio --schema=./src/shared/database/prisma/schema.prisma",
+    "test": "jest",
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:cov": "jest --coverage"
+  }
+}
+\`\`\`
+
+### Development Tools
+
+1. **TypeScript Configuration**:
+   - Target: ES2021
+   - Module: CommonJS
+   - Decorators enabled
+   - Strict null checks disabled
+   - Source maps enabled
+
+2. **ESLint Configuration**:
+   - TypeScript ESLint
+   - Prettier integration
+   - Custom rules:
+     - no-explicit-any: off
+     - no-floating-promises: warn
+     - no-unsafe-argument: warn
+
+3. **Git Configuration**:
+   - Line endings normalized (LF)
+   - Appropriate gitignore rules
+   - Husky for git hooks
+
+4. **VS Code Settings**:
+   - Debug configurations
+   - Extension recommendations
+   - Editor settings
+
+## 🔐 Security Implementations
+
+1. **Authentication**:
+   - JWT-based authentication
+   - Refresh token mechanism
+   - Role-based access control
+
+2. **Data Protection**:
+   - Request validation
+   - SQL injection prevention
+   - XSS protection
+   - CSRF tokens
+
+3. **API Security**:
+   - Rate limiting
+   - CORS protection
+   - Helmet security headers
+
+## 📊 Monitoring & Maintenance
+
+1. **Health Checks**:
+   - Database connectivity
+   - Redis connection
+   - Kafka broker status
+   - Application health status
+
+2. **Performance Monitoring**:
+   - Redis cache statistics
+   - Database query metrics
+   - API response times
+   - Resource utilization
+
+3. **Logging**:
+   - Application logs
+   - Error tracking
+   - Audit trails
+   - Performance metrics
+
+## 🚀 Deployment
+
+### Docker Deployment
+
+1. Build the image:
+\`\`\`bash
+docker build -t healthcare-api .
+\`\`\`
+
+2. Run the container:
+\`\`\`bash
+docker run -p 3000:3000 healthcare-api
+\`\`\`
+
+### Production Considerations
+
+1. **Environment**:
+   - Use production environment variables
+   - Enable production optimizations
+   - Configure appropriate scaling
+
+2. **Security**:
+   - Secure all endpoints
+   - Enable rate limiting
+   - Configure SSL/TLS
+
+3. **Monitoring**:
+   - Set up health checks
+   - Configure logging
+   - Enable performance monitoring
+
+## 📋 Prerequisites
+
+- Node.js (v16 or higher)
+- PostgreSQL (v14 or higher)
+- Redis (v6 or higher)
+- Apache Kafka (v3 or higher)
+- Docker & Docker Compose (optional)
+- Git
+
+## 🛠️ Installation
+
+1. Clone the repository:
+\`\`\`bash
+git clone [repository-url]
+cd healthcare-backend
+\`\`\`
+
+2. Install dependencies:
+\`\`\`bash
+npm install
+\`\`\`
+
+3. Set up environment variables:
+\`\`\`bash
+cp .env.example .env
+# Edit .env with your configuration:
+# - Database connection
+# - Redis connection
+# - Kafka configuration
+# - JWT secrets
+# - SMTP settings
+# - S3 credentials
+\`\`\`
+
+4. Generate Prisma client:
+\`\`\`bash
+npx prisma generate
+\`\`\`
+
+5. Run database migrations:
+\`\`\`bash
+npx prisma migrate dev
+\`\`\`
+
+6. Seed the database:
+\`\`\`bash
+npx prisma db seed
+\`\`\`
+
+### Docker Setup
+\`\`\`bash
+# Build and start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+\`\`\`
+
+## 🚀 Running the Application
+
+### Development
+\`\`\`bash
+# Start in watch mode
+npm run start:dev
+
+# Start with debugger
+npm run start:debug
+\`\`\`
+
+### Production
+\`\`\`bash
+# Build
+npm run build
+
+# Start production server
+npm run start:prod
+
+# With PM2
+pm2 start dist/main.js --name healthcare-api
+\`\`\`
+
+## 📚 API Documentation
+
+Once the application is running, access the Swagger documentation at:
+\`http://localhost:3000/api\`
+
+## 🌐 API Endpoints
+
+### Authentication
+- \`POST /auth/login\` - User login
+- \`POST /auth/register\` - User registration
+- \`POST /auth/refresh\` - Refresh token
+- \`POST /auth/forgot-password\` - Password reset request
+- \`POST /auth/reset-password\` - Reset password
+
+### Users
+- \`GET /users\` - Get all users
+- \`GET /users/:id\` - Get user by ID
+- \`POST /users\` - Create new user
+- \`PUT /users/:id\` - Update user
+- \`DELETE /users/:id\` - Delete user
+- \`GET /users/me\` - Get current user profile
+
+### Appointments
+- \`GET /appointments\` - List appointments
+- \`POST /appointments\` - Create appointment
+- \`PUT /appointments/:id\` - Update appointment
+- \`DELETE /appointments/:id\` - Cancel appointment
+- \`GET /appointments/calendar\` - Get calendar view
+- \`POST /appointments/:id/confirm\` - Confirm appointment
+
+### Clinics
+- \`GET /clinics\` - List clinics
+- \`POST /clinics\` - Add new clinic
+- \`PUT /clinics/:id\` - Update clinic details
+- \`GET /clinics/:id/doctors\` - List clinic doctors
+- \`GET /clinics/:id/schedule\` - Get clinic schedule
+
+### Health Records
+- \`GET /health-records/:patientId\` - Get patient records
+- \`POST /health-records\` - Add new health record
+- \`GET /health-records/:id/history\` - Get record history
+- \`POST /health-records/:id/documents\` - Upload documents
+
+### Prescriptions
+- \`GET /prescriptions/:patientId\` - Get patient prescriptions
+- \`POST /prescriptions\` - Create new prescription
+- \`GET /prescriptions/:id/pdf\` - Download PDF
+- \`PUT /prescriptions/:id\` - Update prescription
+
+### Medicines
+- \`GET /medicines\` - List medicines
+- \`POST /medicines\` - Add medicine
+- \`PUT /medicines/:id\` - Update medicine
+- \`GET /medicines/inventory\` - Check inventory
+
+## 🔍 Monitoring & Maintenance
+
+### Health Checks
+- \`/health\` - Basic health check
+- \`/health/live\` - Liveness probe
+- \`/health/ready\` - Readiness probe
+
+### Monitoring Endpoints
+- \`/metrics\` - Prometheus metrics
+- \`/users/monitoring/cache-status\` - Redis cache status
+- \`/users/monitoring/kafka-status\` - Kafka connection status
+- \`/users/monitoring/redis-status\` - Redis performance metrics
+- \`/cache/stats\` - Cache statistics
+
+### Maintenance
+- Database backup script
+- Log rotation configuration
+- Cron job setup
+- Monitoring dashboard
+
+## 🧪 Testing
+
+Run tests:
+\`\`\`bash
+# Unit tests
+npm run test
 
 # e2e tests
-$ npm run test:e2e
+npm run test:e2e
 
-# test coverage
-$ npm run test:cov
-```
+# Test coverage
+npm run test:cov
 
-## Deployment
+# Test specific file
+npm test -- users.service.spec.ts
+\`\`\`
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## 🔒 Security
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+- JWT-based authentication with refresh tokens
+- Role-based access control (RBAC)
+- Request validation and sanitization
+- Rate limiting and brute force protection
+- Secure password hashing with bcrypt
+- CORS protection
+- Helmet security headers
+- SQL injection prevention
+- XSS protection
+- CSRF tokens
+- API key authentication for external services
+- Request logging and audit trails
 
-```bash
-$ npm install -g mau
-$ mau deploy
-```
+## 🔧 Development Tools
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+- ESLint configuration
+- Prettier setup
+- Git hooks with Husky
+- Conventional commits
+- Debug configurations
+- VS Code settings
+- Development utilities
 
-## Resources
+## 📈 Performance Optimization
 
-Check out a few resources that may come in handy when working with NestJS:
+- Redis caching
+- Database indexing
+- Query optimization
+- Connection pooling
+- Load balancing ready
+- Response compression
+- Static file caching
+- Rate limiting
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## 🤝 Contributing
 
-## Support
+1. Fork the repository
+2. Create your feature branch (\`git checkout -b feature/AmazingFeature\`)
+3. Commit your changes (\`git commit -m 'Add some AmazingFeature'\`)
+4. Push to the branch (\`git push origin feature/AmazingFeature\`)
+5. Create a new Pull Request
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### Coding Standards
+- Follow TypeScript best practices
+- Use NestJS architectural patterns
+- Write unit tests for new features
+- Update documentation
+- Follow conventional commits
 
-## Stay in touch
+## 📄 License
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## License
+## 👥 Authors
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- [Aadesh Bhujbal](https://github.com/aadeshbhujbal)
+  - Lead Developer & System Architect
+  - Backend Architecture Design
+  - Database Schema Design
+  - API Development
+  - System Integration
+  - DevOps Setup
+
+## 🙏 Acknowledgments
+
+- NestJS team for the amazing framework
+- All contributors who participate in this project
+- Open source community for various tools and libraries
+
+## 📞 Support
+
+- Technical Support: [your-email]
+- Documentation: http://localhost:3000/api
+- Issue Tracking: GitHub Issues
+
+## 🗺️ Roadmap
+
+1. **Q1 2024**
+   - [ ] Telemedicine integration
+   - [ ] AI-powered health predictions
+
+2. **Q2 2024**
+   - [ ] Mobile app development
+   - [ ] Internationalization
+
+3. **Q3 2024**
+   - [ ] Advanced analytics dashboard
+   - [ ] Integration with wearable devices
+
+4. **Q4 2024**
+   - [ ] ML-based diagnosis assistance
+   - [ ] Blockchain for medical records
+
+## 📈 Performance Metrics
+
+- Response Time: < 100ms
+- Cache Hit Ratio: > 80%
+- API Availability: 99.9%
+- Database Query Time: < 50ms
