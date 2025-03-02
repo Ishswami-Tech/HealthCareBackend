@@ -1,232 +1,136 @@
-import { Controller, Get, Post, Body } from "@nestjs/common";
-import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
-import { UsersService } from "../services/users.service";
-import { CreateUserDto, UserResponseDto } from "../../../libs/dtos/user.dto";
-import { RedisService } from "../../../shared/cache/redis/redis.service";
-import { KafkaService } from "../../../shared/messaging/kafka/kafka.service";
-import { KAFKA_TOPICS } from "../../../config/constants";
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { UsersService } from '../services/users.service';
+import { AuthService } from '../services/auth.service';
+import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
+import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
+import { Roles } from '../../../libs/decorators/roles.decorator';
+import { Role } from '@prisma/client';
+import { RolesGuard } from 'src/libs/guards/roles.guard';
+import { Public } from '../../../libs/decorators/public.decorator';
 
-@ApiTags("users")
-@Controller("users")
+@ApiTags('users')
+@Controller('users')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
-    private readonly redis: RedisService,
-    private readonly kafka: KafkaService
+    private readonly authService: AuthService,
   ) {}
 
+  @Public()
+  @Post('register')
+  @ApiOperation({ summary: 'Register a new user' })
+  @ApiResponse({ status: 201, type: UserResponseDto })
+  async register(@Body() createUserDto: CreateUserDto): Promise<UserResponseDto> {
+    return this.authService.register(createUserDto);
+  }
+
+  @Public()
+  @Post('login')
+  @ApiOperation({ summary: 'Login user' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 401, description: 'Invalid credentials' })
+  async login(@Body() loginDto: { email: string; password: string }) {
+    if (!loginDto || !loginDto.email || !loginDto.password) {
+      return { statusCode: 400, message: 'Email and password are required' };
+    }
+    const user = await this.authService.validateUser(loginDto.email, loginDto.password);
+    if (!user) {
+      return { statusCode: 401, message: 'Invalid credentials' };
+    }
+    const response = await this.authService.login(user);
+    return response;
+  }
+
+  @Post('logout')
+  @ApiOperation({ summary: 'Logout user' })
+  async logout(@Request() req) {
+    return this.authService.logout(req.user.sub);
+  }
+
   @Get()
-  @ApiOperation({ summary: "Get all users" })
-  @ApiResponse({
-    status: 200,
-    description: "List of users",
-    type: [UserResponseDto],
-  })
-  async findAll() {
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'Get all users' })
+  @ApiResponse({ status: 200, type: [UserResponseDto] })
+  async findAll(): Promise<UserResponseDto[]> {
     return this.usersService.findAll();
   }
 
-  @Get(":id")
-  @ApiOperation({ summary: "Get user by id" })
-  @ApiResponse({
-    status: 200,
-    description: "User found",
-    type: UserResponseDto,
-  })
-  async findOne(id: string) {
+  @Get('profile')
+  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiResponse({ status: 200, type: UserResponseDto })
+  async getProfile(@Request() req): Promise<UserResponseDto> {
+    return this.usersService.findOne(req.user.sub);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get user by id' })
+  @ApiResponse({ status: 200, type: UserResponseDto })
+  async findOne(@Param('id') id: string): Promise<UserResponseDto> {
     return this.usersService.findOne(id);
   }
 
-  @Post()
-  @ApiOperation({ summary: "Create user" })
-  @ApiResponse({
-    status: 201,
-    description: "User created successfully",
-    type: UserResponseDto,
-  })
-  create(@Body() userData: CreateUserDto) {
-    return this.usersService.createUser(userData);
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update user' })
+  @ApiResponse({ status: 200, type: UserResponseDto })
+  async update(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+  ): Promise<UserResponseDto> {
+    return this.usersService.update(id, updateUserDto);
   }
 
-  @Get("monitoring/cache-status")
-  @ApiOperation({ summary: "Check Redis cache status" })
-  async checkCacheStatus() {
-    const allUsersCache = await this.redis.get("users:all");
-    return {
-      isCacheConnected: !!this.redis,
-      allUsersCached: !!allUsersCache,
-      cachedUsersCount: allUsersCache
-        ? (JSON.parse(allUsersCache) as unknown[]).length
-        : 0,
-    };
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Delete user' })
+  async remove(@Param('id') id: string): Promise<void> {
+    return this.usersService.remove(id);
   }
 
-  @Get("monitoring/kafka-status")
-  @ApiOperation({ summary: "Check Kafka status" })
-  async checkKafkaStatus() {
-    return await this.kafka.getStatus();
+  // Role-specific endpoints
+  @Get('doctors')
+  @ApiOperation({ summary: 'Get all doctors' })
+  @ApiResponse({ status: 200, type: [UserResponseDto] })
+  async getDoctors(): Promise<UserResponseDto[]> {
+    return this.usersService.getDoctors();
   }
 
-  @Get("monitoring/status")
-  @ApiOperation({ summary: "Get system status" })
-  async getStatus() {
-    try {
-      const userCount = await this.usersService.count();
-      
-      return {
-        status: "healthy",
-        users: userCount,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      return {
-        status: "error",
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Get('patients')
+  @ApiOperation({ summary: 'Get all patients' })
+  @ApiResponse({ status: 200, type: [UserResponseDto] })
+  async getPatients(): Promise<UserResponseDto[]> {
+    return this.usersService.getPatients();
   }
 
-  @Post("monitoring/test-message")
-  @ApiOperation({ summary: "Send test message to Kafka" })
-  async sendTestMessage() {
-    const testMessage = {
-      type: "TEST_EVENT",
-      data: { test: true },
-      timestamp: new Date().toISOString(),
-    };
-
-    await this.kafka.sendMessage("user-events", testMessage);
-    return { success: true, message: "Test message sent" };
+  @Get('receptionists')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'Get all receptionists' })
+  @ApiResponse({ status: 200, type: [UserResponseDto] })
+  async getReceptionists(): Promise<UserResponseDto[]> {
+    return this.usersService.getReceptionists();
   }
 
-  @Get("monitoring/redis-keys")
-  @ApiOperation({ summary: "List all Redis keys and their types" })
-  async listRedisKeys() {
-    const keys = await this.redis.keys("*");
-    const keyDetails = await Promise.all(
-      keys.map(async (key) => ({
-        key,
-        type: await this.redis.type(key),
-        ttl: await this.redis.ttl(key),
-      }))
-    );
-
-    return keyDetails;
-  }
-
-  @Get("redis-health")
-  async checkRedisHealth() {
-    try {
-      const testKey = "health-check";
-      await this.redis.set(testKey, "OK", 60);
-      const result = await this.redis.get(testKey);
-      return {
-        status: "healthy",
-        connected: result === "OK",
-      };
-    } catch (error) {
-      return {
-        status: "unhealthy",
-        error: error.message,
-      };
-    }
-  }
-
-  @Get("cache/debug")
-  async debugCache() {
-    const allKeys = await this.redis.keys("*");
-    const cacheDetails = await Promise.all(
-      allKeys.map(async (key) => ({
-        key,
-        type: await this.redis.type(key),
-        ttl: await this.redis.ttl(key),
-        value: await this.redis.get(key),
-      }))
-    );
-
-    return {
-      totalKeys: allKeys.length,
-      keys: cacheDetails,
-    };
-  }
-
-  @Get("monitoring/redis-status")
-  @ApiOperation({ summary: "Get Redis status and cache statistics" })
-  async getRedisStatus() {
-    try {
-      // Basic connectivity check
-      const healthCheck = await this.checkRedisHealth();
-
-      // Get cache statistics
-      const [dbUsers, cachedUsers, cacheHits, cacheMisses] = await Promise.all([
-        this.usersService.count(),
-        this.redis.get("users:all"),
-        this.redis.get("cache:hits:total"),
-        this.redis.get("cache:misses:total"),
-      ]);
-
-      // Calculate hit ratio
-      const hits = parseInt(cacheHits || "0");
-      const misses = parseInt(cacheMisses || "0");
-      const hitRatio = hits + misses > 0 ? (hits / (hits + misses)) * 100 : 0;
-
-      return {
-        status: {
-          isConnected: healthCheck.status === "healthy",
-          lastCheck: new Date().toISOString(),
-        },
-        cacheStats: {
-          databaseRecords: dbUsers,
-          cachedRecords: cachedUsers ? JSON.parse(cachedUsers).length : 0,
-          performance: {
-            hits,
-            misses,
-            hitRatio: `${hitRatio.toFixed(2)}%`,
-          },
-        },
-      };
-    } catch (error) {
-      return {
-        status: "error",
-        message: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Get("cache/stats")
-  @ApiOperation({ summary: "Get Redis cache statistics" })
-  async getCacheStats() {
-    try {
-      // Get all users from database
-      const dbUsers = await this.usersService.count();
-
-      // Get cached users
-      const cachedAllUsers = await this.redis.get("users:all");
-      const allKeys = await this.redis.keys("users:*");
-
-      // Get individual cached users
-      const individualCacheKeys = allKeys.filter((key) =>
-        key.startsWith("users:one:")
-      );
-
-      return {
-        databaseCount: dbUsers,
-        cachedListCount: cachedAllUsers ? JSON.parse(cachedAllUsers).length : 0,
-        individualCachedCount: individualCacheKeys.length,
-        cacheKeys: allKeys,
-        cacheHitRatio: {
-          total: (await this.redis.get("cache:hits:total")) || "0",
-          misses: (await this.redis.get("cache:misses:total")) || "0",
-        },
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      return {
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Get('clinic-admins')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all clinic admins' })
+  @ApiResponse({ status: 200, type: [UserResponseDto] })
+  async getClinicAdmins(): Promise<UserResponseDto[]> {
+    return this.usersService.getClinicAdmins();
   }
 }

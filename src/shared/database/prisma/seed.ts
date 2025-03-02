@@ -15,6 +15,7 @@ import {
   HealthRecordType,
   getPrismaClient
 } from './prisma.types';
+import * as bcrypt from 'bcryptjs';
 
 const SEED_COUNT = 50;
 const prisma = getPrismaClient();
@@ -77,12 +78,13 @@ async function main() {
 
     // Create Users with different roles
     console.log('Creating users...');
+    const hashedPassword = await bcrypt.hash('admin123', 10);
     const users = await Promise.all([
       // Super Admin
       prisma.user.create({
         data: {
           email: 'admin@example.com',
-          password: 'admin123',
+          password: hashedPassword,
           name: 'Admin User',
           age: 30,
           firstName: 'Admin',

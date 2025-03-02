@@ -12,9 +12,15 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
       POSTGRES_PASSWORD: postgres
       NODE_ENV: development
+      PRISMA_SCHEMA_PATH: ./src/shared/database/prisma/schema.prisma
     volumes:
       - .:/app
       - /app/node_modules
+    command: >
+      sh -c "npx prisma generate --schema=./src/shared/database/prisma/schema.prisma &&
+             npx prisma migrate deploy --schema=./src/shared/database/prisma/schema.prisma &&
+             npx prisma studio --schema=./src/shared/database/prisma/schema.prisma &
+             npm run start:dev"
     depends_on:
       postgres:
         condition: service_healthy

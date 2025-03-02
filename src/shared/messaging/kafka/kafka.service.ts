@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Kafka, Producer, Consumer, Partitioners } from 'kafkajs';
+import { Kafka, Producer, Consumer, Partitioners, Admin } from 'kafkajs';
 
 @Injectable()
 export class KafkaService implements OnModuleInit, OnModuleDestroy {
@@ -12,27 +12,40 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(KafkaService.name);
 
   constructor(private configService: ConfigService) {
-    const brokers = this.configService.get<string[]>('kafka.brokers') || ['kafka:29092'];
+    const brokers = this.configService.get<string[]>('KAFKA_BROKERS') || ['kafka:29092'];
     
     this.kafka = new Kafka({
       clientId: 'user-service',
       brokers,
       retry: {
-        initialRetryTime: 100,
-        retries: 8
-      }
+        initialRetryTime: 300,
+        retries: 10,
+        maxRetryTime: 30000,
+      },
+      connectionTimeout: 3000,
     });
 
     this.producer = this.kafka.producer({
-      createPartitioner: Partitioners.LegacyPartitioner
+      createPartitioner: Partitioners.LegacyPartitioner,
+      retry: {
+        initialRetryTime: 300,
+        retries: 10,
+        maxRetryTime: 30000,
+      },
     });
+    
     this.consumer = this.kafka.consumer({ 
       groupId: 'user-consumer-group',
       retry: {
-        initialRetryTime: 100,
-        retries: 8
-      }
+        initialRetryTime: 300,
+        retries: 10,
+        maxRetryTime: 30000,
+      },
     });
+  }
+
+  admin(): Admin {
+    return this.kafka.admin();
   }
 
   async onModuleInit() {
@@ -87,6 +100,9 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async sendMessage(topic: string, message: any): Promise<void> {
+    if (!this.isConnected) {
+      throw new Error('Kafka is not connected');
+    }
     try {
       await this.producer.send({
         topic,
@@ -122,7 +138,7 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
         messageCount: this.messageCount,
         topics,
         consumerGroups: groups,
-        brokers: this.configService.get('kafka.brokers'),
+        brokers: this.configService.get('KAFKA_BROKERS'),
         clientId: "user-service",
       };
     } catch (error) {
@@ -144,5 +160,41 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
       console.error("Kafka health check failed:", error);
       return false;
     }
+  }
+
+  async emit(topic: string, message: any) {
+    try {
+      await this.producer.send({
+        topic,
+        messages: [{ value: JSON.stringify(message) }],
+      });
+    } catch (error) {
+      console.error('Failed to emit Kafka message:', error);
+    }
+  }
+
+  async onApplicationShutdown() {
+    await this.producer.disconnect();
+  }
+
+  async ping(): Promise<void> {
+    try {
+      const admin = this.kafka.admin();
+      await admin.connect();
+      await admin.listTopics();
+      await admin.disconnect();
+    } catch (error) {
+      throw new Error('Kafka connection failed');
+    }
+  }
+
+  async subscribe(topic: string, callback: (message: any) => void): Promise<void> {
+    await this.consumer.subscribe({ topic });
+    await this.consumer.run({
+      eachMessage: async ({ message }) => {
+        const value = message.value.toString();
+        callback(JSON.parse(value));
+      },
+    });
   }
 }

@@ -1,40 +1,71 @@
-import { Injectable } from "@nestjs/common";
-import { User, Role } from '@prisma/client';
-import { getPrismaClient } from '../../../shared/database/prisma/prisma.types';
-import { PrismaService } from "../../../shared/database/prisma/prisma.service";
-import { RedisService } from "../../../shared/cache/redis/redis.service";
-import { KafkaService } from "../../../shared/messaging/kafka/kafka.service";
-import { RedisCache } from "../../../shared/cache/decorators/redis-cache.decorator";
-import { CreateUserDto } from '../../../libs/dtos/user.dto';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { Role, User, Prisma } from '@prisma/client';
+import { PrismaService } from '../../../shared/database/prisma/prisma.service';
+import { KafkaService } from '../../../shared/messaging/kafka/kafka.service';
+import { RedisCache } from '../../../shared/cache/decorators/redis-cache.decorator';
+import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
+import { RedisService } from '../../../shared/cache/redis/redis.service';
 
 @Injectable()
 export class UsersService {
-  private prisma = getPrismaClient();
-
   constructor(
-    private redis: RedisService,
-    private kafka: KafkaService
+    private readonly prisma: PrismaService,
+    private readonly kafka: KafkaService,
+    private readonly redis: RedisService,
   ) {}
 
   @RedisCache({ prefix: "users:all", ttl: 3600 })
-  async findAll(): Promise<User[]> {
-    return await this.prisma.user.findMany();
+  async findAll(role?: Role): Promise<UserResponseDto[]> {
+    const users = await this.prisma.user.findMany({
+      where: role ? { role } : undefined,
+      include: {
+        doctor: role === Role.DOCTOR,
+        patient: role === Role.PATIENT,
+        receptionist: role === Role.RECEPTIONIST,
+        clinicAdmin: role === Role.CLINIC_ADMIN,
+      },
+    });
+
+    return users.map(({ password, ...user }) => user) as UserResponseDto[];
   }
 
   @RedisCache({ prefix: "users:one", ttl: 3600 })
-  async findOne(id: string): Promise<User | null> {
-    return await this.prisma.user.findUnique({
+  async findOne(id: string): Promise<UserResponseDto> {
+    const user = await this.prisma.user.findUnique({
       where: { id },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+      },
     });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    const { password, ...result } = user;
+    return result as UserResponseDto;
   }
 
   async count(): Promise<number> {
     return await this.prisma.user.count();
   }
 
+  private async getNextNumericId(): Promise<number> {
+    const COUNTER_KEY = 'user:counter';
+    const currentId = await this.redis.get(COUNTER_KEY);
+    const nextId = currentId ? parseInt(currentId) + 1 : 0;
+    await this.redis.set(COUNTER_KEY, nextId.toString());
+    return nextId;
+  }
+
   async createUser(data: CreateUserDto): Promise<User> {
+    const numericId = await this.getNextNumericId();
     const user = await this.prisma.user.create({
       data: {
+        id: numericId.toString(),
         email: data.email,
         password: data.password,
         name: data.name,
@@ -56,5 +87,108 @@ export class UsersService {
       }
     });
     return user;
+  }
+
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<UserResponseDto> {
+    const user = await this.prisma.user.update({
+      where: { id },
+      data: updateUserDto,
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+      },
+    });
+
+    // Log the update action
+    await this.logAuditEvent(id, 'UPDATE', 'User profile updated');
+
+    // Notify relevant services via Kafka
+    await this.kafka.sendMessage('user.updated', {
+      userId: id,
+      changes: updateUserDto,
+      timestamp: new Date(),
+    });
+
+    const { password, ...result } = user;
+    return result as UserResponseDto;
+  }
+
+  async remove(id: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    // Delete role-specific record first
+    if (user.doctor) {
+      await this.prisma.doctor.delete({ where: { userId: id } });
+    }
+    if (user.patient) {
+      await this.prisma.patient.delete({ where: { userId: id } });
+    }
+    if (user.receptionist) {
+      await this.prisma.receptionist.delete({ where: { userId: id } });
+    }
+    if (user.clinicAdmin) {
+      await this.prisma.clinicAdmin.delete({ where: { userId: id } });
+    }
+
+    // Delete the user
+    await this.prisma.user.delete({ where: { id } });
+
+    // Log the deletion
+    await this.logAuditEvent(id, 'DELETE', 'User account deleted');
+
+    // Notify via Kafka
+    await this.kafka.sendMessage('user.deleted', {
+      userId: id,
+      timestamp: new Date(),
+    });
+  }
+
+  private async logAuditEvent(
+    userId: string,
+    action: string,
+    description: string,
+  ): Promise<void> {
+    await this.prisma.auditLog.create({
+      data: {
+        id: undefined,
+        userId,
+        action,
+        description,
+        timestamp: new Date(),
+        ipAddress: '127.0.0.1',
+        device: 'API',
+      },
+    });
+  }
+
+  // Role-specific methods
+  async getDoctors(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.DOCTOR);
+  }
+
+  async getPatients(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.PATIENT);
+  }
+
+  async getReceptionists(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.RECEPTIONIST);
+  }
+
+  async getClinicAdmins(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.CLINIC_ADMIN);
   }
 }
