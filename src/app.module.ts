@@ -1,18 +1,18 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "./config/config.module";
+import { ConfigModule } from "@nestjs/config";
 import { UsersModule } from "./services/users/users.module";
-import { PrismaModule } from "./shared/database/prisma/prisma.module";
-import { CacheModule } from "./shared/cache/cache.module";
-import { KafkaModule } from "./shared/messaging/kafka/kafka.module";
+import { HealthModule } from "./services/health/health.module";
 import { AppController } from "./app.controller";
+import { CacheModule } from "./shared/cache/cache.module";
 
 @Module({
   imports: [
-    ConfigModule,
-    PrismaModule,
-    CacheModule,
-    KafkaModule,
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
     UsersModule,
+    HealthModule,
+    CacheModule,
   ],
   controllers: [AppController],
 })

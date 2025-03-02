@@ -4,74 +4,79 @@ FROM node:20-alpine AS development
 # Install necessary tools
 RUN apk add --no-cache postgresql-client redis busybox-extras
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
+# Copy package files first
 COPY package*.json ./
-COPY prisma ./prisma/
 
+# Install all dependencies (including devDependencies for TypeScript)
 RUN npm install
 
+# Copy the rest of the application
 COPY . .
 
-RUN npm run prisma:generate
+# Set Prisma schema path and generate client
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 
 CMD ["npm", "run", "start:dev"]
 
-# Production
-FROM node:20-alpine AS production
-
-ARG NODE_ENV=production
-ENV NODE_ENV=${NODE_ENV}
-
-WORKDIR /usr/src/app
-
-COPY package*.json ./
-COPY prisma ./prisma/
-
-RUN npm install --only=production
-
-COPY . .
-RUN mkdir -p public
-
-COPY --from=development /usr/src/app/dist ./dist
-
-CMD ["node", "dist/main"]
-
-FROM node:20 AS builder
+# Builder stage
+FROM node:20-alpine AS builder
 
 WORKDIR /app
+
+# Install build tools
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install all dependencies (including devDependencies for TypeScript)
 RUN npm install
 
 # Copy source code
 COPY . .
 
-# Generate Prisma Client first
-RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
+# Set Prisma schema path and generate client
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 
-# Then install global TypeScript
-RUN npm install typescript@latest -g
-
-# Finally build
+# Build the application
 RUN npm run build
 
-FROM node:20
+# Production stage
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Install PostgreSQL client
-RUN apt-get update && apt-get install -y postgresql-client
+# Install build dependencies and tools
+RUN apk add --no-cache \
+    postgresql-client \
+    python3 \
+    redis
 
-# Copy built application
-COPY --from=builder /app/node_modules /app/node_modules
-COPY --from=builder /app/package*.json /app/
-COPY --from=builder /app/dist /app/dist
-COPY --from=builder /app/src /app/src
-COPY --from=builder /app/node_modules/.prisma /app/node_modules/.prisma
+# Copy package files first
+COPY --from=builder /app/package*.json ./
+
+# Install both production and necessary dev dependencies
+RUN npm ci && \
+    npm install -g ts-node typescript @types/node && \
+    npm install --save-dev @faker-js/faker @types/faker
+
+# Copy the built code and necessary files
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+
+# Copy Prisma files and generate client
+COPY --from=builder /app/src/shared/database/prisma/schema.prisma ./src/shared/database/prisma/schema.prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 
 # Make the script executable
 COPY src/shared/database/prisma/wait-for-postgres.sh /wait-for-postgres.sh

@@ -1,20 +1,273 @@
 generator client {
   provider      = "prisma-client-js"
   output        = "../../../../node_modules/.prisma/client"
-  engineType    = "binary"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  engineType    = "binary"
 }
 
-// generator erd {
-//   provider = "prisma-erd-generator"
-// }
-
 datasource db {
-  provider = "postgresql" // Or your database
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// Enums
+model User {
+  id             String         @id @default(uuid())
+  email          String         @unique
+  password       String
+  name           String
+  age            Int
+  firstName      String
+  lastName       String
+  phone          String         @unique
+  role           Role           @default(PATIENT)
+  profilePicture String?
+  gender         Gender?
+  dateOfBirth    DateTime?
+  address        String?
+  city           String?
+  state          String?
+  country        String?
+  zipCode        String?
+  isVerified     Boolean        @default(false)
+  lastLogin      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  auditLogs      AuditLog[]
+  notifications  Notification[]
+  doctor         Doctor?
+  patient        Patient?
+  receptionist   Receptionist?
+  clinicAdmin    ClinicAdmin?
+  superAdmin     SuperAdmin?
+}
+
+model Receptionist {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  clinicId  String?
+  createdAt DateTime @default(now())
+  clinic    Clinic?  @relation(fields: [clinicId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+  clinics   Clinic[] @relation("ReceptionistsAtClinic")
+}
+
+model Clinic {
+  id            String         @id @default(uuid())
+  name          String
+  address       String
+  phone         String
+  createdAt     DateTime       @default(now())
+  admins        ClinicAdmin[]
+  doctors       DoctorClinic[]
+  Receptionist  Receptionist[]
+  receptionists Receptionist[] @relation("ReceptionistsAtClinic")
+}
+
+model SuperAdmin {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model ClinicAdmin {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  clinicId  String
+  createdAt DateTime @default(now())
+  clinic    Clinic   @relation(fields: [clinicId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Doctor {
+  id              String         @id @default(uuid())
+  userId          String         @unique
+  specialization  String
+  experience      Int
+  qualification   String?
+  consultationFee Float?
+  rating          Float?         @default(0.0)
+  isAvailable     Boolean        @default(true)
+  workingHours    Json?
+  createdAt       DateTime       @default(now())
+  user            User           @relation(fields: [userId], references: [id])
+  appointments    Appointment[]
+  clinics         DoctorClinic[]
+  healthRecords   HealthRecord[]
+  prescriptions   Prescription[]
+  reviews         Review[]
+}
+
+model Patient {
+  id            String         @id @default(uuid())
+  userId        String         @unique
+  prakriti      Prakriti?
+  dosha         Dosha?
+  createdAt     DateTime       @default(now())
+  user          User           @relation(fields: [userId], references: [id])
+  appointments  Appointment[]
+  healthRecords HealthRecord[]
+  prescriptions Prescription[]
+  reviews       Review[]
+}
+
+model Appointment {
+  id        String            @id @default(uuid())
+  patientId String
+  doctorId  String
+  status    AppointmentStatus @default(PENDING)
+  type      AppointmentType   @default(IN_PERSON)
+  date      DateTime
+  time      String
+  duration  Int               @default(30)
+  notes     String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  payment   Payment?
+  doctor    Doctor            @relation(fields: [doctorId], references: [id])
+  patient   Patient           @relation(fields: [patientId], references: [id])
+  therapy   Therapy?          @relation(fields: [therapyId], references: [id])
+  therapyId String?
+  queue     Queue?
+
+  @@index([patientId], name: "appointment_patient_idx")
+  @@index([doctorId], name: "appointment_doctor_idx")
+}
+
+model Therapy {
+  id           String        @id @default(uuid())
+  name         String
+  description  String?
+  duration     Int?
+  createdAt    DateTime      @default(now())
+  appointments Appointment[]
+}
+
+model Prescription {
+  id        String             @id @default(uuid())
+  patientId String
+  doctorId  String
+  date      DateTime           @default(now())
+  notes     String?
+  doctor    Doctor             @relation(fields: [doctorId], references: [id])
+  patient   Patient            @relation(fields: [patientId], references: [id])
+  items     PrescriptionItem[]
+}
+
+model PrescriptionItem {
+  id             String       @id @default(uuid())
+  prescriptionId String
+  medicineId     String?
+  dosage         String?
+  frequency      String?
+  duration       String?
+  medicine       Medicine?    @relation(fields: [medicineId], references: [id])
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id])
+}
+
+model Medicine {
+  id                String             @id @default(uuid())
+  name              String
+  ingredients       String?
+  properties        String?
+  dosage            String?
+  manufacturer      String?
+  type              MedicineType
+  prescriptionItems PrescriptionItem[]
+}
+
+model DoctorClinic {
+  doctorId  String
+  clinicId  String
+  startTime DateTime?
+  endTime   DateTime?
+  clinic    Clinic    @relation(fields: [clinicId], references: [id])
+  doctor    Doctor    @relation(fields: [doctorId], references: [id])
+
+  @@id([doctorId, clinicId])
+}
+
+model Payment {
+  id            String         @id @default(uuid())
+  appointmentId String         @unique
+  amount        Float
+  status        PaymentStatus  @default(PENDING)
+  method        PaymentMethod?
+  transactionId String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  appointment   Appointment    @relation(fields: [appointmentId], references: [id], map: "payment_appointment_fkey")
+
+  @@index([appointmentId], map: "payment_appointment_idx")
+}
+
+model Queue {
+  id                String      @id @default(uuid())
+  appointmentId     String      @unique
+  queueNumber       Int
+  estimatedWaitTime Int?
+  status            QueueStatus @default(WAITING)
+  updatedAt         DateTime    @updatedAt
+  appointment       Appointment @relation(fields: [appointmentId], references: [id])
+}
+
+model Notification {
+  id        String             @id @default(uuid())
+  userId    String
+  type      NotificationType
+  message   String
+  read      Boolean            @default(false)
+  sentAt    DateTime?
+  status    NotificationStatus @default(PENDING)
+  createdAt DateTime           @default(now())
+  user      User               @relation(fields: [userId], references: [id])
+}
+
+model HealthRecord {
+  id         String           @id @default(uuid())
+  patientId  String
+  doctorId   String
+  recordType HealthRecordType
+  report     String?
+  fileUrl    String?
+  createdAt  DateTime         @default(now())
+  doctor     Doctor           @relation(fields: [doctorId], references: [id])
+  patient    Patient          @relation(fields: [patientId], references: [id])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String
+  action      String
+  timestamp   DateTime @default(now())
+  ipAddress   String?
+  device      String?
+  description String   @default("")
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  rating    Int      @default(0)
+  comment   String?
+  patientId String
+  doctorId  String
+  createdAt DateTime @default(now())
+  doctor    Doctor   @relation(fields: [doctorId], references: [id])
+  patient   Patient  @relation(fields: [patientId], references: [id])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  price       Float
+  category    String
+  stock       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 enum Role {
   SUPER_ADMIN
   CLINIC_ADMIN
@@ -64,7 +317,7 @@ enum HealthRecordType {
   MRI
   PRESCRIPTION
   DIAGNOSIS_REPORT
-  PULSE_DIAGNOSIS // Added
+  PULSE_DIAGNOSIS
 }
 
 enum NotificationType {
@@ -105,280 +358,4 @@ enum MedicineType {
   CLASSICAL
   PROPRIETARY
   HERBAL
-}
-
-// Models
-
-model User {
-  id             String    @id @default(uuid())
-  email          String    @unique
-  password       String
-  name           String // Add this required field
-  age            Int // Add this required field
-  firstName      String
-  lastName       String
-  phone          String    @unique
-  role           Role      @default(PATIENT)
-  profilePicture String?
-  gender         Gender?
-  dateOfBirth    DateTime?
-  address        String?
-  city           String?
-  state          String?
-  country        String?
-  zipCode        String?
-  isVerified     Boolean   @default(false)
-  lastLogin      DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  Doctor              Doctor?
-  Patient             Patient?
-  Receptionist        Receptionist?
-  ClinicAdmin         ClinicAdmin?
-  SuperAdmin          SuperAdmin?
-  notifications       Notification[]
-  auditLogs           AuditLog[]
-  patientAppointments Appointment[]  @relation("PatientAppointments")
-  doctorAppointments  Appointment[]  @relation("DoctorAppointments")
-}
-
-model Receptionist {
-  id        String   @id @default(uuid())
-  userId    String   @unique // Link to the User model
-  clinicId  String? // Receptionist might work at one or more clinics. Make it optional.
-  createdAt DateTime @default(now())
-
-  user    User     @relation(fields: [userId], references: [id])
-  clinic  Clinic?  @relation(fields: [clinicId], references: [id]) // Make clinic relation optional
-  clinics Clinic[] @relation("ReceptionistsAtClinic") // Many-to-many with Clinic
-}
-
-model Clinic {
-  id            String         @id @default(uuid())
-  name          String
-  address       String
-  phone         String
-  createdAt     DateTime       @default(now())
-  doctors       DoctorClinic[]
-  admins        ClinicAdmin[]
-  receptionists Receptionist[] @relation("ReceptionistsAtClinic")
-  Receptionist  Receptionist[]
-}
-
-model SuperAdmin {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-}
-
-model ClinicAdmin {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  clinicId  String
-  createdAt DateTime @default(now())
-
-  user   User   @relation(fields: [userId], references: [id])
-  clinic Clinic @relation(fields: [clinicId], references: [id])
-}
-
-model Doctor {
-  id              String   @id @default(uuid())
-  userId          String   @unique
-  specialization  String
-  experience      Int
-  qualification   String?
-  consultationFee Float?
-  rating          Float?   @default(0.0)
-  isAvailable     Boolean  @default(true)
-  workingHours    Json?
-  createdAt       DateTime @default(now())
-
-  user          User           @relation(fields: [userId], references: [id])
-  appointments  Appointment[]
-  clinics       DoctorClinic[]
-  prescriptions Prescription[]
-  healthRecords HealthRecord[]
-  reviews       Review[] // Doctor Reviews
-}
-
-model Patient {
-  id        String    @id @default(uuid())
-  userId    String    @unique
-  prakriti  Prakriti?
-  dosha     Dosha?
-  createdAt DateTime  @default(now())
-
-  user          User           @relation(fields: [userId], references: [id])
-  appointments  Appointment[]
-  healthRecords HealthRecord[]
-  reviews       Review[] // Patient Reviews
-  Prescription  Prescription[]
-}
-
-model Appointment {
-  id        String            @id @default(uuid())
-  patientId String
-  patient   User              @relation("PatientAppointments", fields: [patientId], references: [id], map: "appointment_patient_fkey")
-  doctorId  String
-  doctor    User              @relation("DoctorAppointments", fields: [doctorId], references: [id], map: "appointment_doctor_fkey")
-  status    AppointmentStatus @default(PENDING)
-  type      AppointmentType   @default(IN_PERSON)
-  date      DateTime
-  time      String
-  duration  Int               @default(30) // in minutes
-  notes     String?
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
-  payment   Payment?
-  Doctor    Doctor            @relation(fields: [doctorId], references: [id])
-  Patient   Patient           @relation(fields: [patientId], references: [id])
-  Therapy   Therapy?          @relation(fields: [therapyId], references: [id])
-  therapyId String?
-  Queue     Queue?
-
-  @@index([patientId], name: "appointment_patient_idx")
-  @@index([doctorId], name: "appointment_doctor_idx")
-}
-
-model Therapy {
-  id           String        @id @default(uuid())
-  name         String
-  description  String?
-  duration     Int?
-  createdAt    DateTime      @default(now())
-  appointments Appointment[]
-}
-
-model Prescription {
-  id        String             @id @default(uuid())
-  patientId String
-  doctorId  String
-  date      DateTime           @default(now())
-  notes     String?
-  items     PrescriptionItem[]
-
-  patient Patient @relation(fields: [patientId], references: [id])
-  doctor  Doctor  @relation(fields: [doctorId], references: [id])
-}
-
-model PrescriptionItem {
-  id             String  @id @default(uuid())
-  prescriptionId String
-  medicineId     String?
-  dosage         String?
-  frequency      String?
-  duration       String?
-
-  medicine     Medicine?    @relation(fields: [medicineId], references: [id])
-  prescription Prescription @relation(fields: [prescriptionId], references: [id])
-}
-
-model Medicine {
-  id                String             @id @default(uuid())
-  name              String
-  ingredients       String?
-  properties        String?
-  dosage            String?
-  manufacturer      String?
-  type              MedicineType
-  prescriptionItems PrescriptionItem[]
-}
-
-model DoctorClinic {
-  doctorId  String
-  clinicId  String
-  startTime DateTime?
-  endTime   DateTime?
-  doctor    Doctor    @relation(fields: [doctorId], references: [id])
-  clinic    Clinic    @relation(fields: [clinicId], references: [id])
-
-  @@id([doctorId, clinicId])
-}
-
-model Payment {
-  id            String         @id @default(uuid())
-  appointmentId String         @unique
-  appointment   Appointment    @relation(fields: [appointmentId], references: [id], map: "payment_appointment_fkey")
-  amount        Float
-  status        PaymentStatus  @default(PENDING)
-  method        PaymentMethod?
-  transactionId String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-
-  @@index([appointmentId], name: "payment_appointment_idx")
-}
-
-model Queue {
-  id                String      @id @default(uuid())
-  appointmentId     String      @unique
-  queueNumber       Int
-  estimatedWaitTime Int?
-  status            QueueStatus @default(WAITING)
-  updatedAt         DateTime    @updatedAt
-
-  appointment Appointment @relation(fields: [appointmentId], references: [id])
-}
-
-model Notification {
-  id        String             @id @default(uuid())
-  userId    String
-  type      NotificationType
-  message   String
-  read      Boolean            @default(false)
-  sentAt    DateTime?
-  status    NotificationStatus @default(PENDING)
-  createdAt DateTime           @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-}
-
-model HealthRecord {
-  id         String           @id @default(uuid())
-  patientId  String
-  doctorId   String
-  recordType HealthRecordType
-  report     String?
-  fileUrl    String?
-  createdAt  DateTime         @default(now())
-
-  patient Patient @relation(fields: [patientId], references: [id])
-  doctor  Doctor  @relation(fields: [doctorId], references: [id])
-}
-
-model AuditLog {
-  id        String   @id @default(uuid())
-  userId    String
-  action    String
-  timestamp DateTime @default(now())
-  ipAddress String?
-  device    String?
-
-  user User @relation(fields: [userId], references: [id])
-}
-
-model Review {
-  id        String   @id @default(uuid())
-  rating    Int      @default(0) // Example validation
-  comment   String?
-  patientId String
-  doctorId  String
-  createdAt DateTime @default(now())
-
-  patient Patient @relation(fields: [patientId], references: [id])
-  doctor  Doctor  @relation(fields: [doctorId], references: [id])
-}
-
-model Product {
-  id          String   @id @default(uuid())
-  name        String
-  description String?
-  price       Float
-  category    String
-  stock       Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
 }

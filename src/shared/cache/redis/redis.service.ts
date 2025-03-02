@@ -9,8 +9,13 @@ export class RedisService implements OnModuleInit {
 
   constructor(private configService: ConfigService) {
     this.redis = new Redis({
-      host: this.configService.get('redis.host'),
-      port: this.configService.get('redis.port'),
+      host: this.configService.get('REDIS_HOST', 'redis'),
+      port: parseInt(this.configService.get('REDIS_PORT', '6379')),
+      maxRetriesPerRequest: 3,
+      retryStrategy(times) {
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+      }
     });
   }
 
@@ -101,5 +106,13 @@ export class RedisService implements OnModuleInit {
       totalKeys: keys.length,
       keys: debug,
     };
+  }
+
+  async ping(): Promise<string> {
+    return await this.redis.ping();
+  }
+
+  getClient(): Redis {
+    return this.redis;
   }
 }
