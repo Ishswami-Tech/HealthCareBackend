@@ -23,6 +23,7 @@ export class UsersService {
         patient: role === Role.PATIENT,
         receptionist: role === Role.RECEPTIONIST,
         clinicAdmin: role === Role.CLINIC_ADMIN,
+        superAdmin: role === Role.SUPER_ADMIN,
       },
     });
 
@@ -38,11 +39,37 @@ export class UsersService {
         patient: true,
         receptionist: true,
         clinicAdmin: true,
+        superAdmin: true,
       },
     });
 
     if (!user) {
       throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    const { password, ...result } = user;
+    return result as UserResponseDto;
+  }
+
+  async findByEmail(email: string): Promise<UserResponseDto | null> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: {
+          mode: 'insensitive',
+          equals: email
+        }
+      },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
+      },
+    });
+
+    if (!user) {
+      return null;
     }
 
     const { password, ...result } = user;
@@ -98,18 +125,22 @@ export class UsersService {
         patient: true,
         receptionist: true,
         clinicAdmin: true,
+        superAdmin: true,
       },
     });
 
-    // Log the update action
-    await this.logAuditEvent(id, 'UPDATE', 'User profile updated');
-
-    // Notify relevant services via Kafka
     await this.kafka.sendMessage('user.updated', {
-      userId: id,
-      changes: updateUserDto,
-      timestamp: new Date(),
+      userId: user.id,
+      role: user.role,
+      timestamp: new Date()
     });
+
+    // Invalidate cache
+    await Promise.all([
+      this.redis.del(`users:one:${id}`),
+      this.redis.del('users:all'),
+      this.redis.del(`users:${user.role.toLowerCase()}`),
+    ]);
 
     const { password, ...result } = user;
     return result as UserResponseDto;
@@ -123,6 +154,7 @@ export class UsersService {
         patient: true,
         receptionist: true,
         clinicAdmin: true,
+        superAdmin: true,
       },
     });
 
@@ -131,30 +163,61 @@ export class UsersService {
     }
 
     // Delete role-specific record first
-    if (user.doctor) {
-      await this.prisma.doctor.delete({ where: { userId: id } });
-    }
-    if (user.patient) {
-      await this.prisma.patient.delete({ where: { userId: id } });
-    }
-    if (user.receptionist) {
-      await this.prisma.receptionist.delete({ where: { userId: id } });
-    }
-    if (user.clinicAdmin) {
-      await this.prisma.clinicAdmin.delete({ where: { userId: id } });
+    switch (user.role) {
+      case Role.DOCTOR:
+        if (user.doctor) {
+          await this.prisma.doctor.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.PATIENT:
+        if (user.patient) {
+          await this.prisma.patient.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.RECEPTIONIST:
+        if (user.receptionist) {
+          await this.prisma.receptionist.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.CLINIC_ADMIN:
+        if (user.clinicAdmin) {
+          await this.prisma.clinicAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.SUPER_ADMIN:
+        if (user.superAdmin) {
+          await this.prisma.superAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
     }
 
-    // Delete the user
-    await this.prisma.user.delete({ where: { id } });
+    // Delete user record
+    await this.prisma.user.delete({
+      where: { id }
+    });
 
-    // Log the deletion
-    await this.logAuditEvent(id, 'DELETE', 'User account deleted');
-
-    // Notify via Kafka
     await this.kafka.sendMessage('user.deleted', {
       userId: id,
-      timestamp: new Date(),
+      role: user.role,
+      timestamp: new Date()
     });
+
+    // Invalidate cache
+    await Promise.all([
+      this.redis.del(`users:one:${id}`),
+      this.redis.del('users:all'),
+      this.redis.del(`users:${user.role.toLowerCase()}`),
+    ]);
   }
 
   private async logAuditEvent(
@@ -236,5 +299,134 @@ export class UsersService {
       // Re-throw the error
       throw error;
     }
+  }
+
+  async updateUserRole(id: string, role: Role, createUserDto: CreateUserDto): Promise<UserResponseDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    // Delete old role-specific record
+    switch (user.role) {
+      case Role.DOCTOR:
+        if (user.doctor) {
+          await this.prisma.doctor.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.PATIENT:
+        if (user.patient) {
+          await this.prisma.patient.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.RECEPTIONIST:
+        if (user.receptionist) {
+          await this.prisma.receptionist.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.CLINIC_ADMIN:
+        if (user.clinicAdmin) {
+          await this.prisma.clinicAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.SUPER_ADMIN:
+        if (user.superAdmin) {
+          await this.prisma.superAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+    }
+
+    // Create new role-specific record
+    switch (role) {
+      case Role.PATIENT:
+        await this.prisma.patient.create({
+          data: { userId: id }
+        });
+        break;
+      case Role.DOCTOR:
+        await this.prisma.doctor.create({
+          data: {
+            userId: id,
+            specialization: '',
+            experience: 0
+          }
+        });
+        break;
+      case Role.RECEPTIONIST:
+        await this.prisma.receptionist.create({
+          data: { userId: id }
+        });
+        break;
+      case Role.CLINIC_ADMIN:
+        const clinics = await this.prisma.clinic.findMany({
+          take: 1
+        });
+        if (!clinics.length) {
+          throw new Error('No clinic found. Please create a clinic first.');
+        }
+        await this.prisma.clinicAdmin.create({
+          data: { 
+            userId: id,
+            clinicId: createUserDto.clinicId || clinics[0].id
+          }
+        });
+        break;
+      case Role.SUPER_ADMIN:
+        await this.prisma.superAdmin.create({
+          data: { userId: id }
+        });
+        break;
+    }
+
+    // Update user role
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data: { role },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
+      },
+    });
+
+    await this.kafka.sendMessage('user.role.updated', {
+      userId: id,
+      oldRole: user.role,
+      newRole: role,
+      timestamp: new Date()
+    });
+
+    // Invalidate cache
+    await Promise.all([
+      this.redis.del(`users:one:${id}`),
+      this.redis.del('users:all'),
+      this.redis.del(`users:${user.role.toLowerCase()}`),
+      this.redis.del(`users:${role.toLowerCase()}`),
+    ]);
+
+    const { password, ...result } = updatedUser;
+    return result as UserResponseDto;
   }
 }

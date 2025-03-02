@@ -7,6 +7,6 @@ export default () => ({
     port: parseInt(process.env.REDIS_PORT || '6379', 10),
   },
   kafka: {
-    brokers: process.env.KAFKA_BROKERS?.split(',') || ['kafka:29092'],
+    brokers: process.env.KAFKA_BROKERS?.split(',') || ['kafka:9092'],
   },
 }); 

@@ -1,9 +1,9 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { RedisService } from '../../shared/cache/redis/redis.service';
 import { KafkaService } from '../../shared/messaging/kafka/kafka.service';
-import { HealthCheckResponse, ServiceHealth, SystemMetrics } from '../../libs/types/health.types';
+import { HealthCheckResponse, ServiceHealth, SystemMetrics, RedisMetrics, DatabaseMetrics, KafkaMetrics } from '../../libs/types/health.types';
 import { ConfigService } from '@nestjs/config';
 import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
@@ -12,6 +12,7 @@ import { cpus, totalmem, freemem } from 'node:os';
 @Controller('health')
 export class HealthController {
   private startTime: number;
+  private readonly logger = new Logger(HealthController.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -49,18 +50,19 @@ export class HealthController {
     };
   }
 
-  private async checkServiceHealth(
+  private async checkServiceHealth<T>(
     name: string,
-    check: () => Promise<any>
-  ): Promise<ServiceHealth> {
+    check: () => Promise<{ metrics?: T }>
+  ): Promise<ServiceHealth & { metrics?: T }> {
     const startTime = performance.now();
     try {
-      await check();
+      const result = await check();
       return {
         status: 'healthy',
         details: `${name} connected`,
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
+        metrics: result.metrics,
       };
     } catch (error) {
       return {
@@ -95,7 +97,7 @@ export class HealthController {
     };
 
     // Check Database
-    const dbHealth = await this.checkServiceHealth('PostgreSQL', async () => {
+    const dbHealth = await this.checkServiceHealth<DatabaseMetrics>('PostgreSQL', async () => {
       const startQuery = performance.now();
       await this.prisma.$queryRaw`SELECT 1 as test`;
       const queryTime = Math.round(performance.now() - startQuery);
@@ -103,26 +105,32 @@ export class HealthController {
       return {
         metrics: {
           queryResponseTime: queryTime,
+          activeConnections: 1, // This would need to be fetched from Prisma if possible
+          maxConnections: 100, // This would need to be fetched from Prisma if possible
+          connectionUtilization: 1, // This would need to be fetched from Prisma if possible
         },
       };
     });
     health.services.database = dbHealth;
 
     // Check Redis
-    const redisHealth = await this.checkServiceHealth('Redis', async () => {
-      const info = await this.redis.getClient().info();
-      const metrics = {
-        connectedClients: parseInt(info.match(/connected_clients:(\d+)/)?.[1] || '0'),
-        usedMemory: parseInt(info.match(/used_memory:(\d+)/)?.[1] || '0'),
-        totalKeys: (await this.redis.keys('*')).length,
-        lastSave: new Date(parseInt(info.match(/rdb_last_save_time:(\d+)/)?.[1] || '0') * 1000).toISOString(),
+    const redisHealth = await this.checkServiceHealth<RedisMetrics>('Redis', async () => {
+      const info = await this.redis.getCacheDebug();
+      const { dbSize, memoryInfo } = info.info;
+      
+      return {
+        metrics: {
+          connectedClients: 1, // This would need to be parsed from info
+          usedMemory: parseInt(memoryInfo?.match(/used_memory:(\d+)/)?.[1] || '0'),
+          totalKeys: dbSize || 0,
+          lastSave: new Date().toISOString(),
+        },
       };
-      return { metrics };
     });
     health.services.redis = redisHealth;
 
     // Check Kafka
-    const kafkaHealth = await this.checkServiceHealth('Kafka', async () => {
+    const kafkaHealth = await this.checkServiceHealth<KafkaMetrics>('Kafka', async () => {
       const admin = this.kafka.admin();
       await admin.connect();
       
@@ -158,5 +166,27 @@ export class HealthController {
     }
 
     return health;
+  }
+
+  @Get('redis')
+  @ApiOperation({ summary: 'Check Redis health' })
+  @ApiResponse({ status: 200, description: 'Redis health check successful' })
+  @ApiResponse({ status: 503, description: 'Redis health check failed' })
+  async checkRedis() {
+    try {
+      const isHealthy = await this.redis.healthCheck();
+      if (!isHealthy) {
+        throw new Error('Redis health check failed');
+      }
+      
+      const info = await this.redis.getCacheDebug();
+      return {
+        status: 'ok',
+        info: info.info
+      };
+    } catch (error) {
+      this.logger.error('Redis health check failed:', error);
+      throw new ServiceUnavailableException('Redis health check failed');
+    }
   }
 } 

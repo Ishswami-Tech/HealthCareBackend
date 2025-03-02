@@ -28,11 +28,19 @@ async function bootstrap() {
       .setTitle("Healthcare API")
       .setDescription("The Healthcare API description")
       .setVersion("1.0")
+      .addBearerAuth()
       .build();
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup("api", app, document);
 
+    const httpAdapter = app.getHttpAdapter();
+    const server = httpAdapter.getInstance();
+    console.log('\nAvailable Routes:');
+    server.printRoutes();
+
     await app.listen(process.env.PORT || 3000, "0.0.0.0");
+    console.log(`\nApplication is running on: ${await app.getUrl()}`);
+    console.log(`Swagger documentation is available at: ${await app.getUrl()}/api`);
   } catch (error) {
     console.error('Failed to start application:', error);
     process.exit(1);

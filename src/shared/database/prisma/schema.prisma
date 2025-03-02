@@ -11,34 +11,40 @@ datasource db {
 }
 
 model User {
-  id             String         @id @default(uuid())
-  email          String         @unique
-  password       String
-  name           String
-  age            Int
-  firstName      String
-  lastName       String
-  phone          String         @unique
-  role           Role           @default(PATIENT)
-  profilePicture String?
-  gender         Gender?
-  dateOfBirth    DateTime?
-  address        String?
-  city           String?
-  state          String?
-  country        String?
-  zipCode        String?
-  isVerified     Boolean        @default(false)
-  lastLogin      DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  auditLogs      AuditLog[]
-  notifications  Notification[]
-  doctor         Doctor?
-  patient        Patient?
-  receptionist   Receptionist?
-  clinicAdmin    ClinicAdmin?
-  superAdmin     SuperAdmin?
+  id                String         @id @default(uuid())
+  email             String         @unique
+  password          String
+  name              String
+  age               Int
+  firstName         String?
+  lastName          String?
+  phone             String?
+  role              Role           @default(PATIENT)
+  profilePicture    String?
+  gender            String?
+  dateOfBirth       DateTime?
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  zipCode           String?
+  isVerified        Boolean        @default(false)
+  lastLogin         DateTime?
+  lastLoginIP       String?
+  lastLoginDevice   String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  doctor            Doctor?
+  patient           Patient?
+  receptionist      Receptionist?
+  clinicAdmin       ClinicAdmin?
+  superAdmin        SuperAdmin?
+  passwordChangedAt DateTime?
+  appointments      Appointment[]
+
+  @@map("users")
 }
 
 model Receptionist {
@@ -129,6 +135,8 @@ model Appointment {
   therapy   Therapy?          @relation(fields: [therapyId], references: [id])
   therapyId String?
   queue     Queue?
+  User      User?             @relation(fields: [userId], references: [id])
+  userId    String?
 
   @@index([patientId], name: "appointment_patient_idx")
   @@index([doctorId], name: "appointment_doctor_idx")
