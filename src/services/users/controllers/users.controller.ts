@@ -1,94 +1,92 @@
 import {
   Controller,
   Get,
-  Post,
   Body,
   Patch,
   Param,
   Delete,
   UseGuards,
   Request,
+  Put,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from '../services/users.service';
-import { AuthService } from '../services/auth.service';
-import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
+import { UpdateUserDto, UserResponseDto, CreateUserDto } from '../../../libs/dtos/user.dto';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { RolesGuard } from 'src/libs/guards/roles.guard';
-import { Public } from '../../../libs/decorators/public.decorator';
+import { RolesGuard } from '../../../libs/guards/roles.guard';
 
-@ApiTags('users')
-@Controller('users')
+@ApiTags('user')
+@Controller('user')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
-    private readonly authService: AuthService,
   ) {}
 
-  @Public()
-  @Post('register')
-  @ApiOperation({ summary: 'Register a new user' })
-  @ApiResponse({ status: 201, type: UserResponseDto })
-  async register(@Body() createUserDto: CreateUserDto): Promise<UserResponseDto> {
-    return this.authService.register(createUserDto);
-  }
-
-  @Public()
-  @Post('login')
-  @ApiOperation({ summary: 'Login user' })
-  @ApiResponse({ status: 200 })
-  @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  async login(@Body() loginDto: { email: string; password: string }) {
-    if (!loginDto || !loginDto.email || !loginDto.password) {
-      return { statusCode: 400, message: 'Email and password are required' };
-    }
-    const user = await this.authService.validateUser(loginDto.email, loginDto.password);
-    if (!user) {
-      return { statusCode: 401, message: 'Invalid credentials' };
-    }
-    const response = await this.authService.login(user);
-    return response;
-  }
-
-  @Post('logout')
-  @ApiOperation({ summary: 'Logout user' })
-  async logout(@Request() req) {
-    return this.authService.logout(req.user.sub);
-  }
-
-  @Get()
+  @Get('all')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  @ApiOperation({ summary: 'Get all users' })
-  @ApiResponse({ status: 200, type: [UserResponseDto] })
+  @ApiOperation({ 
+    summary: 'Get all users',
+    description: 'Retrieve a list of all users. Only accessible by Super Admin and Clinic Admin.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'List of users retrieved successfully',
+    type: [UserResponseDto] 
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async findAll(): Promise<UserResponseDto[]> {
     return this.usersService.findAll();
   }
 
   @Get('profile')
-  @ApiOperation({ summary: 'Get current user profile' })
-  @ApiResponse({ status: 200, type: UserResponseDto })
+  @ApiOperation({ 
+    summary: 'Get user profile',
+    description: 'Retrieve the profile of the currently authenticated user'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User profile retrieved successfully',
+    type: UserResponseDto 
+  })
   async getProfile(@Request() req): Promise<UserResponseDto> {
     return this.usersService.findOne(req.user.sub);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get user by id' })
-  @ApiResponse({ status: 200, type: UserResponseDto })
+  @ApiOperation({ 
+    summary: 'Get user by ID',
+    description: 'Retrieve a specific user by their unique identifier'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User found and retrieved successfully',
+    type: UserResponseDto 
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
   async findOne(@Param('id') id: string): Promise<UserResponseDto> {
     return this.usersService.findOne(id);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update user' })
-  @ApiResponse({ status: 200, type: UserResponseDto })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @ApiOperation({ 
+    summary: 'Update user',
+    description: 'Update user information. Only accessible by Super Admin and Clinic Admin.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User updated successfully',
+    type: UserResponseDto 
+  })
   async update(
     @Param('id') id: string,
-    @Body() updateUserDto: UpdateUserDto,
+    @Body() updateUserDto: UpdateUserDto
   ): Promise<UserResponseDto> {
     return this.usersService.update(id, updateUserDto);
   }
@@ -96,27 +94,38 @@ export class UsersController {
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Delete user' })
+  @ApiOperation({ 
+    summary: 'Delete user',
+    description: 'Permanently delete a user. Only accessible by Super Admin.'
+  })
+  @ApiResponse({ status: 200, description: 'User deleted successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async remove(@Param('id') id: string): Promise<void> {
     return this.usersService.remove(id);
   }
 
-  // Role-specific endpoints
-  @Get('doctors')
+  @Get('role/patient')
+  @ApiOperation({ 
+    summary: 'Get all patients',
+    description: 'Retrieve a list of all users with the patient role'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'List of patients retrieved successfully',
+    type: [UserResponseDto] 
+  })
+  async getPatients(): Promise<UserResponseDto[]> {
+    return this.usersService.getPatients();
+  }
+
+  @Get('role/doctors')
   @ApiOperation({ summary: 'Get all doctors' })
   @ApiResponse({ status: 200, type: [UserResponseDto] })
   async getDoctors(): Promise<UserResponseDto[]> {
     return this.usersService.getDoctors();
   }
 
-  @Get('patients')
-  @ApiOperation({ summary: 'Get all patients' })
-  @ApiResponse({ status: 200, type: [UserResponseDto] })
-  async getPatients(): Promise<UserResponseDto[]> {
-    return this.usersService.getPatients();
-  }
-
-  @Get('receptionists')
+  @Get('role/receptionists')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Get all receptionists' })
@@ -125,12 +134,25 @@ export class UsersController {
     return this.usersService.getReceptionists();
   }
 
-  @Get('clinic-admins')
+  @Get('role/clinic-admins')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get all clinic admins' })
   @ApiResponse({ status: 200, type: [UserResponseDto] })
   async getClinicAdmins(): Promise<UserResponseDto[]> {
     return this.usersService.getClinicAdmins();
+  }
+
+  @Put(':id/role')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update user role' })
+  @ApiResponse({ status: 200, type: UserResponseDto })
+  async updateUserRole(
+    @Param('id') id: string,
+    @Body('role') role: Role,
+    @Body() createUserDto: CreateUserDto
+  ): Promise<UserResponseDto> {
+    return this.usersService.updateUserRole(id, role, createUserDto);
   }
 }

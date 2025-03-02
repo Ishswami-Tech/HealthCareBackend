@@ -1,6 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Role, Gender } from '@prisma/client';
-import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean } from 'class-validator';
+import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID } from 'class-validator';
 
 // Base interface with required fields matching schema
 interface BaseUserFields {
@@ -23,8 +23,15 @@ interface BaseUserFields {
   lastLogin?: Date;
 }
 
-// For create operations - same as base
-type CreateUserFields = BaseUserFields;
+// Role-specific fields
+interface RoleSpecificFields {
+  specialization?: string;
+  experience?: number;
+  clinicId?: string;
+}
+
+// For create operations - same as base plus role-specific fields
+type CreateUserFields = BaseUserFields & RoleSpecificFields;
 
 // For update operations - all fields optional
 type UpdateUserFields = Partial<BaseUserFields>;
@@ -90,6 +97,18 @@ export class CreateUserDto implements CreateUserFields {
   @IsDate()
   @IsOptional()
   lastLogin?: Date;
+
+  @IsString()
+  @IsOptional()
+  specialization?: string;
+
+  @IsInt()
+  @IsOptional()
+  experience?: number;
+
+  @IsUUID()
+  @IsOptional()
+  clinicId?: string;
 }
 
 export class UpdateUserDto implements UpdateUserFields {

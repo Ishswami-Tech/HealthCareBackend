@@ -1,125 +1,159 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Kafka, Producer, Consumer, Partitioners, Admin } from 'kafkajs';
+import { Kafka, Producer, Consumer, Admin } from 'kafkajs';
 
 @Injectable()
 export class KafkaService implements OnModuleInit, OnModuleDestroy {
   private kafka: Kafka;
   private producer: Producer;
   private consumer: Consumer;
-  private messageCount: number = 0;
   private isConnected: boolean = false;
+  private messageCount: number = 0;
   private readonly logger = new Logger(KafkaService.name);
+  private readonly retryAttempts = 5;
+  private readonly retryDelay = 5000; // 5 seconds
 
   constructor(private configService: ConfigService) {
-    const brokers = this.configService.get<string[]>('KAFKA_BROKERS') || ['kafka:29092'];
-    
     this.kafka = new Kafka({
       clientId: 'user-service',
-      brokers,
+      brokers: [this.configService.get('KAFKA_BROKERS', 'kafka:9092')],
       retry: {
-        initialRetryTime: 300,
-        retries: 10,
+        initialRetryTime: 100,
+        retries: 8,
         maxRetryTime: 30000,
+        factor: 2
       },
       connectionTimeout: 3000,
+      authenticationTimeout: 1000
     });
 
     this.producer = this.kafka.producer({
-      createPartitioner: Partitioners.LegacyPartitioner,
-      retry: {
-        initialRetryTime: 300,
-        retries: 10,
-        maxRetryTime: 30000,
-      },
+      allowAutoTopicCreation: true,
+      transactionTimeout: 30000
     });
-    
-    this.consumer = this.kafka.consumer({ 
+
+    this.consumer = this.kafka.consumer({
       groupId: 'user-consumer-group',
+      maxWaitTimeInMs: 50,
       retry: {
-        initialRetryTime: 300,
-        retries: 10,
-        maxRetryTime: 30000,
-      },
+        initialRetryTime: 100,
+        retries: 8
+      }
     });
+  }
+
+  async onModuleInit() {
+    await this.connect();
+    await this.setupTopics();
+  }
+
+  async onModuleDestroy() {
+    await this.disconnect();
+  }
+
+  private async setupTopics() {
+    const admin = this.kafka.admin();
+    try {
+      await admin.connect();
+      const topics = ['user.created', 'user.updated', 'user.deleted', 'user.login', 'user.logout'];
+      
+      const existingTopics = await admin.listTopics();
+      const topicsToCreate = topics.filter(topic => !existingTopics.includes(topic));
+      
+      if (topicsToCreate.length > 0) {
+        await admin.createTopics({
+          topics: topicsToCreate.map(topic => ({
+            topic,
+            numPartitions: 1,
+            replicationFactor: 1
+          }))
+        });
+        this.logger.log(`Created Kafka topics: ${topicsToCreate.join(', ')}`);
+      }
+    } catch (error) {
+      this.logger.error('Failed to setup Kafka topics:', error);
+    } finally {
+      await admin.disconnect();
+    }
+  }
+
+  private async connect() {
+    let retries = 0;
+    while (retries < this.retryAttempts) {
+      try {
+        await Promise.all([
+          this.producer.connect(),
+          this.consumer.connect()
+        ]);
+        this.isConnected = true;
+        this.logger.log('Successfully connected to Kafka');
+        return;
+      } catch (error) {
+        retries++;
+        this.logger.error(`Failed to connect to Kafka (attempt ${retries}/${this.retryAttempts}):`, error);
+        if (retries < this.retryAttempts) {
+          await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        }
+      }
+    }
+    throw new Error('Failed to connect to Kafka after multiple attempts');
+  }
+
+  private async disconnect() {
+    try {
+      await Promise.all([
+        this.producer.disconnect(),
+        this.consumer.disconnect()
+      ]);
+      this.isConnected = false;
+      this.logger.log('Disconnected from Kafka');
+    } catch (error) {
+      this.logger.error('Error disconnecting from Kafka:', error);
+    }
+  }
+
+  async sendMessage(topic: string, message: any): Promise<void> {
+    if (!this.isConnected) {
+      await this.connect();
+    }
+
+    try {
+      await this.producer.send({
+        topic,
+        messages: [{
+          value: JSON.stringify({
+            ...message,
+            timestamp: new Date().toISOString()
+          })
+        }]
+      });
+      this.messageCount++;
+      this.logger.debug(`Message sent to topic ${topic}`);
+    } catch (error) {
+      this.logger.error(`Failed to send message to topic ${topic}:`, error);
+      if (!this.isConnected) {
+        await this.connect();
+      }
+      throw error;
+    }
   }
 
   admin(): Admin {
     return this.kafka.admin();
   }
 
-  async onModuleInit() {
-    try {
-      await this.connect();
-      await this.setupConsumer();
-      this.isConnected = true;
-      this.logger.log('Successfully connected to Kafka');
-    } catch (error) {
-      this.logger.error('Failed to connect to Kafka:', error);
-      this.isConnected = false;
-    }
-  }
-
-  async onModuleDestroy() {
-    try {
-      await this.producer.disconnect();
-      await this.consumer.disconnect();
-      this.isConnected = false;
-    } catch (error) {
-      this.logger.error('Error disconnecting from Kafka:', error);
-    }
-  }
-
-  private async connect() {
-    try {
-      await this.producer.connect();
-      await this.consumer.connect();
-    } catch (error) {
-      this.logger.error('Error connecting to Kafka:', error);
-      throw error;
-    }
-  }
-
-  private async setupConsumer() {
-    try {
-      await this.consumer.subscribe({
-        topic: "user-events",
-        fromBeginning: true,
-      });
-
-      await this.consumer.run({
-        eachMessage: async ({ message }) => {
-          this.messageCount++;
-          this.logger.debug('Received message:', message.value?.toString());
-        },
-      });
-    } catch (error) {
-      this.logger.error('Error setting up consumer:', error);
-      throw error;
-    }
-  }
-
-  async sendMessage(topic: string, message: any): Promise<void> {
-    if (!this.isConnected) {
-      throw new Error('Kafka is not connected');
-    }
-    try {
-      await this.producer.send({
-        topic,
-        messages: [{ value: JSON.stringify(message) }],
-      });
-    } catch (error) {
-      this.logger.error('Error sending message:', error);
-      throw error;
-    }
-  }
-
   getStatus() {
     return {
       isConnected: this.isConnected,
       messageCount: this.messageCount,
-      topics: ["user-events"],
-      consumerGroup: "user-consumer-group"
+      topics: [
+        'user.created',
+        'user.updated',
+        'user.deleted',
+        'user.login',
+        'user.logout'
+      ],
+      consumerGroup: 'user-consumer-group'
     };
   }
 

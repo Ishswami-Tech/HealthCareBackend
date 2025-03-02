@@ -6,7 +6,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 export class AppController {
   @Get()
   @ApiOperation({ summary: 'Redirect root to login' })
-  @Redirect('/users/login')
+  @Redirect('/auth/login')
   getRoot() {
     return;
   }
