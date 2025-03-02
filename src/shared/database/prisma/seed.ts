@@ -20,38 +20,8 @@ import * as bcrypt from 'bcryptjs';
 const SEED_COUNT = 50;
 const prisma = getPrismaClient();
 
-async function waitForDatabase() {
-  let retries = 5;
-  while (retries > 0) {
-    try {
-      await prisma.$connect();
-      return;
-    } catch (err) {
-      console.log(`Database connection failed. ${retries} retries remaining...`);
-      retries--;
-      await new Promise(res => setTimeout(res, 2000)); // Wait 2 seconds
-    }
-  }
-  throw new Error('Unable to connect to database');
-}
-
-async function cleanDatabase() {
-  const tablenames = await prisma.$queryRaw<
-    Array<{ tablename: string }>
-  >`SELECT tablename FROM pg_tables WHERE schemaname='public'`;
-
-  const tables = tablenames
-    .map(({ tablename }) => tablename)
-    .filter((name) => name !== '_prisma_migrations')
-    .map((name) => `"public"."${name}"`)
-    .join(', ');
-
-  try {
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} CASCADE;`);
-  } catch (error) {
-    console.log('Error cleaning database:', error);
-  }
-}
+let userIdCounter = 1;
+const generateUserId = () => `UID${String(userIdCounter++).padStart(6, '0')}`;
 
 async function main() {
   try {
@@ -83,6 +53,7 @@ async function main() {
       // Super Admin
       prisma.user.create({
         data: {
+          id: generateUserId(),
           email: 'admin@example.com',
           password: hashedPassword,
           name: 'Admin User',
@@ -100,6 +71,7 @@ async function main() {
       ...Array(SEED_COUNT).fill(null).map(() => 
         prisma.user.create({
           data: {
+            id: generateUserId(),
             email: faker.internet.email(),
             password: faker.internet.password(),
             name: faker.person.fullName(),
@@ -118,6 +90,7 @@ async function main() {
       ...Array(SEED_COUNT).fill(null).map(() => 
         prisma.user.create({
           data: {
+            id: generateUserId(),
             email: faker.internet.email(),
             password: faker.internet.password(),
             name: faker.person.fullName(),
@@ -136,6 +109,7 @@ async function main() {
       ...Array(SEED_COUNT).fill(null).map(() => 
         prisma.user.create({
           data: {
+            id: generateUserId(),
             email: faker.internet.email(),
             password: faker.internet.password(),
             name: faker.person.fullName(),
@@ -154,6 +128,7 @@ async function main() {
       ...Array(SEED_COUNT).fill(null).map(() => 
         prisma.user.create({
           data: {
+            id: generateUserId(),
             email: faker.internet.email(),
             password: faker.internet.password(),
             name: faker.person.fullName(),
@@ -444,6 +419,39 @@ async function main() {
   } catch (error) {
     console.error('Seed failed:', error);
     throw error;
+  }
+}
+
+async function waitForDatabase() {
+  let retries = 5;
+  while (retries > 0) {
+    try {
+      await prisma.$connect();
+      return;
+    } catch (err) {
+      console.log(`Database connection failed. ${retries} retries remaining...`);
+      retries--;
+      await new Promise(res => setTimeout(res, 2000)); // Wait 2 seconds
+    }
+  }
+  throw new Error('Unable to connect to database');
+}
+
+async function cleanDatabase() {
+  const tablenames = await prisma.$queryRaw<
+    Array<{ tablename: string }>
+  >`SELECT tablename FROM pg_tables WHERE schemaname='public'`;
+
+  const tables = tablenames
+    .map(({ tablename }) => tablename)
+    .filter((name) => name !== '_prisma_migrations')
+    .map((name) => `"public"."${name}"`)
+    .join(', ');
+
+  try {
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} CASCADE;`);
+  } catch (error) {
+    console.log('Error cleaning database:', error);
   }
 }
 

@@ -53,19 +53,19 @@ export class UsersService {
     return await this.prisma.user.count();
   }
 
-  private async getNextNumericId(): Promise<number> {
+  private async getNextNumericId(): Promise<string> {
     const COUNTER_KEY = 'user:counter';
     const currentId = await this.redis.get(COUNTER_KEY);
-    const nextId = currentId ? parseInt(currentId) + 1 : 0;
+    const nextId = currentId ? parseInt(currentId) + 1 : 1;
     await this.redis.set(COUNTER_KEY, nextId.toString());
-    return nextId;
+    return `UID${nextId.toString().padStart(6, '0')}`;
   }
 
   async createUser(data: CreateUserDto): Promise<User> {
-    const numericId = await this.getNextNumericId();
+    const userId = await this.getNextNumericId();
     const user = await this.prisma.user.create({
       data: {
-        id: numericId.toString(),
+        id: userId,
         email: data.email,
         password: data.password,
         name: data.name,
@@ -190,5 +190,51 @@ export class UsersService {
 
   async getClinicAdmins(): Promise<UserResponseDto[]> {
     return this.findAll(Role.CLINIC_ADMIN);
+  }
+
+  async logout(userId: string): Promise<void> {
+    // Check if user exists
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    try {
+      // Update last login timestamp
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          lastLogin: null
+        }
+      });
+
+      // Clear all user-related cache
+      await Promise.all([
+        this.redis.del(`users:one:${userId}`),
+        this.redis.del(`users:all`),
+        this.redis.del(`users:${user.role.toLowerCase()}`),
+        this.redis.del(`user:sessions:${userId}`)
+      ]);
+
+      // Log the logout event
+      await this.logAuditEvent(userId, 'LOGOUT', 'User logged out successfully');
+
+      // Notify via Kafka
+      await this.kafka.sendMessage('user.logout', {
+        userId,
+        timestamp: new Date(),
+        role: user.role,
+        status: 'success'
+      });
+    } catch (error) {
+      // Log the error
+      await this.logAuditEvent(userId, 'LOGOUT_ERROR', `Logout failed: ${error.message}`);
+      
+      // Re-throw the error
+      throw error;
+    }
   }
 }
