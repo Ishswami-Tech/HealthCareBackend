@@ -14,7 +14,7 @@ interface BaseUserFields {
   role?: Role;
   profilePicture?: string;
   gender?: Gender;
-  dateOfBirth?: Date;
+  dateOfBirth?: string;
   address?: string;
   city?: string;
   state?: string;
@@ -70,9 +70,14 @@ export class CreateUserDto implements CreateUserFields {
   @IsOptional()
   gender?: Gender;
 
-  @IsDate()
+  @ApiProperty({
+    description: 'Date of birth in ISO format (YYYY-MM-DD)',
+    example: '1990-01-01',
+    required: false
+  })
+  @IsString()
   @IsOptional()
-  dateOfBirth?: Date;
+  dateOfBirth?: string;
 
   @IsString()
   @IsOptional()
@@ -152,9 +157,14 @@ export class UpdateUserDto implements UpdateUserFields {
   @IsOptional()
   gender?: Gender;
 
-  @IsDate()
+  @ApiProperty({
+    description: 'Date of birth in ISO format (YYYY-MM-DD)',
+    example: '1990-01-01',
+    required: false
+  })
+  @IsString()
   @IsOptional()
-  dateOfBirth?: Date;
+  dateOfBirth?: string;
 
   @IsString()
   @IsOptional()
@@ -212,8 +222,12 @@ export class UserResponseDto {
   @ApiProperty({ enum: Gender, required: false })
   gender?: Gender;
 
-  @ApiProperty({ required: false })
-  dateOfBirth?: Date;
+  @ApiProperty({ 
+    required: false,
+    description: 'Date of birth in ISO format (YYYY-MM-DD)',
+    example: '1990-01-01'
+  })
+  dateOfBirth?: string;
 
   @ApiProperty()
   isVerified: boolean;

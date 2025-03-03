@@ -27,7 +27,13 @@ export class UsersService {
       },
     });
 
-    return users.map(({ password, ...user }) => user) as UserResponseDto[];
+    return users.map(({ password, ...user }) => {
+      const userResponse = { ...user } as any;
+      if (userResponse.dateOfBirth) {
+        userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      }
+      return userResponse;
+    }) as UserResponseDto[];
   }
 
   @RedisCache({ prefix: "users:one", ttl: 3600 })
@@ -48,7 +54,11 @@ export class UsersService {
     }
 
     const { password, ...result } = user;
-    return result as UserResponseDto;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
   }
 
   async findByEmail(email: string): Promise<UserResponseDto | null> {
@@ -73,7 +83,11 @@ export class UsersService {
     }
 
     const { password, ...result } = user;
-    return result as UserResponseDto;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
   }
 
   async count(): Promise<number> {
@@ -143,7 +157,11 @@ export class UsersService {
     ]);
 
     const { password, ...result } = user;
-    return result as UserResponseDto;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
   }
 
   async remove(id: string): Promise<void> {
@@ -427,6 +445,10 @@ export class UsersService {
     ]);
 
     const { password, ...result } = updatedUser;
-    return result as UserResponseDto;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
   }
 }

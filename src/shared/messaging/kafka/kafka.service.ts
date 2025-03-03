@@ -55,20 +55,34 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     const admin = this.kafka.admin();
     try {
       await admin.connect();
-      const topics = ['user.created', 'user.updated', 'user.deleted', 'user.login', 'user.logout'];
+      const topics = ['user.created', 'user.updated', 'user.deleted', 'user.login', 'user.logout', 'email.sent'];
       
       const existingTopics = await admin.listTopics();
       const topicsToCreate = topics.filter(topic => !existingTopics.includes(topic));
       
       if (topicsToCreate.length > 0) {
-        await admin.createTopics({
-          topics: topicsToCreate.map(topic => ({
-            topic,
-            numPartitions: 1,
-            replicationFactor: 1
-          }))
-        });
-        this.logger.log(`Created Kafka topics: ${topicsToCreate.join(', ')}`);
+        this.logger.log(`Creating Kafka topics: ${topicsToCreate.join(', ')}`);
+        
+        // Create topics one by one to avoid leadership election issues
+        for (const topic of topicsToCreate) {
+          try {
+            await admin.createTopics({
+              topics: [{
+                topic,
+                numPartitions: 1,
+                replicationFactor: 1,
+                configEntries: [
+                  { name: 'min.insync.replicas', value: '1' }
+                ]
+              }]
+            });
+            this.logger.log(`Created Kafka topic: ${topic}`);
+            // Add a small delay between topic creations
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (error) {
+            this.logger.warn(`Failed to create Kafka topic ${topic}: ${error.message}`);
+          }
+        }
       }
     } catch (error) {
       this.logger.error('Failed to setup Kafka topics:', error);
@@ -118,23 +132,71 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      await this.producer.send({
-        topic,
-        messages: [{
-          value: JSON.stringify({
-            ...message,
-            timestamp: new Date().toISOString()
-          })
-        }]
-      });
-      this.messageCount++;
-      this.logger.debug(`Message sent to topic ${topic}`);
+      // Check if topic exists, create if it doesn't
+      const admin = this.kafka.admin();
+      await admin.connect();
+      const existingTopics = await admin.listTopics();
+      
+      if (!existingTopics.includes(topic)) {
+        this.logger.log(`Topic ${topic} does not exist, creating it...`);
+        try {
+          await admin.createTopics({
+            topics: [{
+              topic,
+              numPartitions: 1,
+              replicationFactor: 1,
+              configEntries: [
+                { name: 'min.insync.replicas', value: '1' }
+              ]
+            }]
+          });
+          this.logger.log(`Created Kafka topic: ${topic}`);
+          // Add a small delay after topic creation
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (topicError) {
+          this.logger.warn(`Failed to create Kafka topic ${topic}: ${topicError.message}`);
+        }
+      }
+      
+      await admin.disconnect();
+
+      // Send the message with retry logic
+      let retries = 0;
+      const maxRetries = 3;
+      
+      while (retries < maxRetries) {
+        try {
+          await this.producer.send({
+            topic,
+            messages: [{
+              value: JSON.stringify({
+                ...message,
+                timestamp: new Date().toISOString()
+              })
+            }]
+          });
+          
+          this.messageCount++;
+          this.logger.debug(`Message sent to topic ${topic}`);
+          return;
+        } catch (sendError) {
+          retries++;
+          this.logger.warn(`Failed to send message to topic ${topic} (attempt ${retries}/${maxRetries}): ${sendError.message}`);
+          
+          if (retries < maxRetries) {
+            // Exponential backoff
+            const delay = Math.pow(2, retries) * 1000;
+            await new Promise(resolve => setTimeout(resolve, delay));
+          } else {
+            throw sendError;
+          }
+        }
+      }
     } catch (error) {
       this.logger.error(`Failed to send message to topic ${topic}:`, error);
       if (!this.isConnected) {
         await this.connect();
       }
-      throw error;
     }
   }
 
@@ -187,11 +249,25 @@ export class KafkaService implements OnModuleInit, OnModuleDestroy {
     try {
       const admin = this.kafka.admin();
       await admin.connect();
+      
+      // Check if broker is available
+      const clusterInfo = await admin.describeCluster();
+      const brokerCount = clusterInfo.brokers.length;
+      
+      if (brokerCount === 0) {
+        this.logger.warn('No Kafka brokers available');
+        await admin.disconnect();
+        return false;
+      }
+      
+      // Check if topics can be listed
       const topics = await admin.listTopics();
       await admin.disconnect();
-      return topics.includes("user-events");
+      
+      this.logger.debug(`Kafka health check: ${brokerCount} brokers, ${topics.length} topics`);
+      return true;
     } catch (error) {
-      console.error("Kafka health check failed:", error);
+      this.logger.error("Kafka health check failed:", error);
       return false;
     }
   }
