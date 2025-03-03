@@ -9,6 +9,8 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { CreateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
@@ -290,5 +292,159 @@ export class AuthController {
         timestamp: new Date()
       };
     }
+  }
+
+  @Public()
+  @Post('request-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request OTP for login',
+    description: 'Send an OTP to the user\'s email for login'
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', format: 'email' }
+      },
+      required: ['email']
+    }
+  })
+  async requestOTP(@Body('email') email: string): Promise<{ message: string }> {
+    try {
+      await this.authService.requestLoginOTP(email);
+      return { message: 'OTP sent to your email' };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new UnauthorizedException('Failed to send OTP');
+    }
+  }
+
+  @Public()
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify OTP and login',
+    description: 'Verify the OTP sent to the user\'s email and log them in'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User logged in successfully'
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', format: 'email' },
+        otp: { type: 'string' }
+      },
+      required: ['email', 'otp']
+    }
+  })
+  async verifyOTP(
+    @Body('email') email: string,
+    @Body('otp') otp: string,
+    @Req() request: any
+  ): Promise<any> {
+    return this.authService.loginWithPasswordOrOTP(email, null, otp, request);
+  }
+
+  @Public()
+  @Post('check-otp-status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Check if user has an active OTP',
+    description: 'Check if a user has an active OTP that can be used for login'
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', format: 'email' }
+      },
+      required: ['email']
+    }
+  })
+  async checkOTPStatus(@Body('email') email: string): Promise<{ hasActiveOTP: boolean }> {
+    try {
+      const user = await this.authService.findUserByEmail(email);
+      if (!user) {
+        throw new BadRequestException('User not found');
+      }
+      
+      const hasActiveOTP = await this.authService.hasActiveOTP(user.id);
+      return { hasActiveOTP };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new UnauthorizedException('Failed to check OTP status');
+    }
+  }
+
+  @Public()
+  @Post('invalidate-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Invalidate active OTP',
+    description: 'Invalidate any active OTP for a user'
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', format: 'email' }
+      },
+      required: ['email']
+    }
+  })
+  async invalidateOTP(@Body('email') email: string): Promise<{ message: string }> {
+    try {
+      const user = await this.authService.findUserByEmail(email);
+      if (!user) {
+        throw new BadRequestException('User not found');
+      }
+      
+      await this.authService.invalidateOTP(user.id);
+      return { message: 'OTP invalidated successfully' };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new UnauthorizedException('Failed to invalidate OTP');
+    }
+  }
+
+  @Public()
+  @Post('unified-login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Unified login with password or OTP',
+    description: 'Login using either password or OTP'
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', format: 'email' },
+        password: { type: 'string' },
+        otp: { type: 'string' }
+      },
+      required: ['email']
+    }
+  })
+  async unifiedLogin(
+    @Body('email') email: string,
+    @Body('password') password?: string,
+    @Body('otp') otp?: string,
+    @Req() request?: any
+  ): Promise<any> {
+    if (!password && !otp) {
+      throw new BadRequestException('Either password or OTP must be provided');
+    }
+    
+    return this.authService.loginWithPasswordOrOTP(email, password, otp, request);
   }
 } 

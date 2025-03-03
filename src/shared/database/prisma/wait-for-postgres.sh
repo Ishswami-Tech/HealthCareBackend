@@ -11,6 +11,11 @@ done
 
 echo "PostgreSQL is up - executing commands"
 
+# Ensure all dependencies are installed
+echo "Installing dependencies..."
+npm install --legacy-peer-deps
+npm install @fastify/helmet nodemailer
+
 # Clean up any existing Prisma client
 rm -rf /app/node_modules/.prisma
 

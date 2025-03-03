@@ -30,19 +30,27 @@ services:
       KAFKAJS_NO_PARTITIONER_WARNING: 1
       # Kafka configuration
       KAFKA_BROKERS: kafka:9092
+      KAFKA_CLIENT_ID: healthcare-api
+      KAFKA_GROUP_ID: healthcare-api-group
+      # Email configuration
       EMAIL_HOST: sandbox.smtp.mailtrap.io
       EMAIL_PORT: 2525
       EMAIL_SECURE: false
       EMAIL_USER: ff5bb55c43b528
       EMAIL_PASSWORD: e76ae4c723b5d4
       EMAIL_FROM: noreply@healthcare.com
+      # CORS configuration
       CORS_ORIGIN: http://localhost:3000,http://localhost:3001
       CORS_CREDENTIALS: true
       CORS_METHODS: GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS
+      # Security configuration
       SECURITY_RATE_LIMIT: true
       SECURITY_RATE_LIMIT_MAX: 1000
       SECURITY_RATE_LIMIT_WINDOW_MS: 150
       TRUST_PROXY: 1
+      # Redis configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     volumes:
       - .:/app
       - /app/node_modules
@@ -53,6 +61,10 @@ services:
              npm run start:dev"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     networks:
       - app-network
@@ -145,6 +157,7 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1

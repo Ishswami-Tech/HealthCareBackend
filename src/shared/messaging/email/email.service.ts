@@ -125,4 +125,27 @@ export class EmailService {
       <p>If you didn't request this code, please secure your account.</p>
     `;
   }
+
+  private generateOTP(length: number = 6): string {
+    const digits = '0123456789';
+    let otp = '';
+    for (let i = 0; i < length; i++) {
+      otp += digits[Math.floor(Math.random() * 10)];
+    }
+    return otp;
+  }
+
+  async sendOTPEmail(to: string): Promise<boolean> {
+    const otp = this.generateOTP();
+    const emailOptions: EmailOptions = {
+      to,
+      subject: 'Your OTP Code',
+      template: EmailTemplate.OTP_LOGIN,
+      context: { otp }
+    };
+    
+    // Store OTP in a temporary storage with expiration (e.g., Redis)
+    // await this.storeOTP(to, otp);
+    return this.sendEmail(emailOptions);
+  }
 } 
