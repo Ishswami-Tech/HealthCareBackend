@@ -7,6 +7,8 @@ import { CreateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
 import { Role, User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import { EmailService } from '../../../shared/messaging/email/email.service';
+import { EmailTemplate } from '../../../libs/types/email.types';
 
 @Injectable()
 export class AuthService {
@@ -20,6 +22,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly redisService: RedisService,
     private readonly kafkaService: KafkaService,
+    private readonly emailService: EmailService,
   ) {
     this.ensureSuperAdmin();
   }
@@ -468,114 +471,68 @@ export class AuthService {
     return !!session;
   }
 
-  async forgotPassword(email: string): Promise<void> {
-    const user = await this.prisma.user.findFirst({
-      where: { 
-        email: {
-          mode: 'insensitive',
-          equals: email
-        }
-      }
-    });
+  async sendVerificationEmail(user: User): Promise<void> {
+    const token = uuidv4();
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
 
+    // Store token in Redis
+    await this.redisService.set(
+      `email_verification:${token}`,
+      user.id,
+      this.EMAIL_VERIFICATION_TTL
+    );
+
+    await this.emailService.sendEmail({
+      to: user.email,
+      subject: 'Verify Your Email',
+      template: EmailTemplate.VERIFICATION,
+      context: { verificationUrl }
+    });
+  }
+
+  async forgotPassword(email: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
-      // Return void to prevent email enumeration
+      // Return silently to prevent email enumeration
       return;
     }
 
-    // Generate reset token
-    const resetToken = uuidv4();
-    const hashedToken = await bcrypt.hash(resetToken, 10);
+    const token = uuidv4();
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
-    // Store hashed token in Redis
+    // Store token in Redis
     await this.redisService.set(
-      `password_reset:${hashedToken}`,
+      `password_reset:${token}`,
       user.id,
       this.PASSWORD_RESET_TTL
     );
 
-    // Send reset email event
-    await this.kafkaService.sendMessage('user.password.reset.requested', {
-      userId: user.id,
-      email: user.email,
-      resetToken,
-      expiresIn: this.PASSWORD_RESET_TTL
+    await this.emailService.sendEmail({
+      to: user.email,
+      subject: 'Reset Your Password',
+      template: EmailTemplate.PASSWORD_RESET,
+      context: { resetUrl }
     });
   }
 
-  async resetPassword(token: string, newPassword: string): Promise<void> {
-    // Validate password strength
-    if (!this.isPasswordStrong(newPassword)) {
-      throw new BadRequestException('Password does not meet security requirements');
-    }
-
-    const hashedToken = await bcrypt.hash(token, 10);
-    const userId = await this.redisService.get(`password_reset:${hashedToken}`);
-
-    if (!userId) {
-      throw new UnauthorizedException('Invalid or expired reset token');
-    }
-
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Update password and invalidate all sessions
-    await this.prisma.$transaction(async (prisma) => {
-      // Update password
-      await prisma.user.update({
-        where: { id: userId },
-        data: { 
-          password: hashedPassword,
-          passwordChangedAt: new Date()
-        }
-      });
-
-      // Invalidate all sessions for this user
-      const sessionKeys = await this.redisService.keys(`session:${userId}:*`);
-      for (const key of sessionKeys) {
-        await this.redisService.del(key);
-      }
-    });
-
-    // Delete reset token
-    await this.redisService.del(`password_reset:${hashedToken}`);
-
-    // Send password changed notification
-    await this.kafkaService.sendMessage('user.password.changed', {
-      userId,
-      timestamp: new Date(),
-      source: 'reset'
-    });
-  }
-
-  private isPasswordStrong(password: string): boolean {
-    const minLength = 8;
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumbers = /\d/.test(password);
-    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
-
-    return (
-      password.length >= minLength &&
-      hasUpperCase &&
-      hasLowerCase &&
-      hasNumbers &&
-      hasSpecialChar
+  async sendLoginOTP(user: User): Promise<string> {
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Store OTP in Redis with 5-minute expiry
+    await this.redisService.set(
+      `login_otp:${user.id}`,
+      otp,
+      300 // 5 minutes
     );
-  }
 
-  async verifyEmail(token: string): Promise<void> {
-    const userId = await this.redisService.get(`email_verification:${token}`);
-    if (!userId) {
-      throw new UnauthorizedException('Invalid or expired verification token');
-    }
-
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { isVerified: true }
+    await this.emailService.sendEmail({
+      to: user.email,
+      subject: 'Login Verification Code',
+      template: EmailTemplate.OTP_LOGIN,
+      context: { otp }
     });
 
-    await this.redisService.del(`email_verification:${token}`);
+    return otp;
   }
 
   private parseUserAgent(userAgent: string) {
@@ -617,5 +574,32 @@ export class AuthService {
     if (/android/i.test(userAgent)) return 'Android';
     if (/ios|iphone|ipad|ipod/i.test(userAgent)) return 'iOS';
     return 'Unknown';
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    // Verify token
+    const userId = await this.verifyResetToken(token);
+    
+    // Hash the new password
+    const hashedPassword = await this.hashPassword(newPassword);
+    
+    // Update user's password
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword }
+    });
+  }
+
+  private async verifyResetToken(token: string): Promise<string> {
+    try {
+      const decoded = await this.jwtService.verifyAsync(token);
+      return decoded.sub;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+  }
+
+  private async hashPassword(password: string): Promise<string> {
+    return bcrypt.hash(password, this.SALT_ROUNDS);
   }
 } 

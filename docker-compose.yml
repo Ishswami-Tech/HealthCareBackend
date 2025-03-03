@@ -30,6 +30,12 @@ services:
       KAFKAJS_NO_PARTITIONER_WARNING: 1
       # Kafka configuration
       KAFKA_BROKERS: kafka:9092
+      EMAIL_HOST: sandbox.smtp.mailtrap.io
+      EMAIL_PORT: 2525
+      EMAIL_SECURE: false
+      EMAIL_USER: ff5bb55c43b528
+      EMAIL_PASSWORD: e76ae4c723b5d4
+      EMAIL_FROM: noreply@healthcare.com
     volumes:
       - .:/app
       - /app/node_modules
@@ -155,7 +161,7 @@ services:
       - "8085:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
     networks:
       - app-network
