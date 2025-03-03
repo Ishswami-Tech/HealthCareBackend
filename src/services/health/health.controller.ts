@@ -121,7 +121,7 @@ export class HealthController {
       return {
         metrics: {
           connectedClients: 1, // This would need to be parsed from info
-          usedMemory: parseInt(memoryInfo?.match(/used_memory:(\d+)/)?.[1] || '0'),
+          usedMemory: memoryInfo?.usedMemory || 0,
           totalKeys: dbSize || 0,
           lastSave: new Date().toISOString(),
         },

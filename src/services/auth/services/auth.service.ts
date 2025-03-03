@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, InternalServerErrorException, ConflictException, ForbiddenException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { RedisService } from '../../../shared/cache/redis/redis.service';
@@ -9,9 +9,11 @@ import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { EmailService } from '../../../shared/messaging/email/email.service';
 import { EmailTemplate } from '../../../libs/types/email.types';
+import axios from 'axios';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly SALT_ROUNDS = 10;
   private readonly PASSWORD_RESET_TTL = 3600; // 1 hour
   private readonly EMAIL_VERIFICATION_TTL = 86400; // 24 hours
@@ -20,6 +22,10 @@ export class AuthService {
   private readonly OTP_RATE_LIMIT_TTL = 60; // 1 minute
   private readonly MAX_OTP_ATTEMPTS = 5;
   private readonly OTP_RATE_LIMIT_WINDOW = 3600; // 1 hour
+  private readonly SMS_PROVIDER_API_KEY = process.env.SMS_PROVIDER_API_KEY || 'your-api-key';
+  private readonly SMS_PROVIDER_URL = process.env.SMS_PROVIDER_URL || 'https://api.sms-provider.com/send';
+  private readonly SMS_SENDER_ID = process.env.SMS_SENDER_ID || 'HealthApp';
+  private readonly MAGIC_LINK_TTL = 900; // 15 minutes
 
   constructor(
     private readonly prisma: PrismaService,
@@ -200,18 +206,19 @@ export class AuthService {
     };
   }
 
-  private getRedirectPathForRole(role: Role): string {
+  // Get the appropriate redirect path based on user role
+  public getRedirectPathForRole(role: Role): string {
     switch (role) {
-      case Role.SUPER_ADMIN:
-        return '/dashboard/admin';
-      case Role.CLINIC_ADMIN:
-        return '/dashboard/clinic';
-      case Role.DOCTOR:
-        return '/dashboard/doctor';
-      case Role.PATIENT:
-        return '/dashboard/patient';
-      case Role.RECEPTIONIST:
-        return '/dashboard/reception';
+      case 'SUPER_ADMIN':
+        return '/admin/dashboard';
+      case 'DOCTOR':
+        return '/doctor/dashboard';
+      case 'PATIENT':
+        return '/patient/dashboard';
+      case 'CLINIC_ADMIN':
+        return '/clinic/dashboard';
+      case 'RECEPTIONIST':
+        return '/reception/dashboard';
       default:
         return '/dashboard';
     }
@@ -283,9 +290,16 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(createUserDto.password, this.SALT_ROUNDS);
     
+    // Format dateOfBirth as DateTime if it exists
+    const userData: any = { ...createUserDto };
+    if (userData.dateOfBirth) {
+      // Convert YYYY-MM-DD to a valid DateTime by appending time
+      userData.dateOfBirth = new Date(`${userData.dateOfBirth}T00:00:00Z`);
+    }
+    
     const user = await this.prisma.user.create({
       data: {
-        ...createUserDto,
+        ...userData,
         password: hashedPassword,
         isVerified: false
       },
@@ -331,7 +345,12 @@ export class AuthService {
     });
 
     const { password, ...result } = user;
-    return result as UserResponseDto;
+    // Convert dateOfBirth from Date to string if it exists
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
   }
 
   async logout(userId: string, sessionId?: string, allDevices: boolean = false): Promise<void> {
@@ -495,48 +514,152 @@ export class AuthService {
   }
 
   async forgotPassword(email: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.findUserByEmail(email);
     if (!user) {
       // Return silently to prevent email enumeration
       return;
     }
 
+    // Check if a reset token was recently issued
+    // Temporarily disable rate limiting for testing
+    /*
+    const rateLimitKey = `password_reset_rate_limit:${user.id}`;
+    const lastResetTime = await this.redisService.get(rateLimitKey);
+    
+    if (lastResetTime) {
+      const timeSinceLastReset = Date.now() - parseInt(lastResetTime);
+      const minimumWaitTime = 60 * 1000; // 1 minute in milliseconds
+      
+      if (timeSinceLastReset < minimumWaitTime) {
+        // A reset was requested recently, but we'll return silently to prevent abuse
+        return;
+      }
+    }
+    */
+    
+    // Generate a secure random token
     const token = uuidv4();
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
-    // Store token in Redis
+    // Store token in Redis with expiry
     await this.redisService.set(
       `password_reset:${token}`,
       user.id,
       this.PASSWORD_RESET_TTL
     );
 
+    // Temporarily disable rate limiting for testing
+    /*
+    // Update rate limit
+    await this.redisService.set(
+      rateLimitKey,
+      Date.now().toString(),
+      this.PASSWORD_RESET_TTL
+    );
+    */
+
+    // Log the password reset request
+    this.kafkaService.emit('auth.password.reset.requested', {
+      userId: user.id,
+      email: user.email,
+      timestamp: new Date().toISOString()
+    });
+
+    // Send password reset email
     await this.emailService.sendEmail({
       to: user.email,
       subject: 'Reset Your Password',
       template: EmailTemplate.PASSWORD_RESET,
-      context: { resetUrl }
+      context: { 
+        resetUrl,
+        name: user.firstName || user.name || 'User',
+        expiryTime: `${this.PASSWORD_RESET_TTL / 60} minutes`
+      }
     });
   }
 
-  async sendLoginOTP(user: User): Promise<string> {
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    // Verify token and get user ID
+    const userId = await this.verifyResetToken(token);
+    if (!userId) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
     
-    // Store OTP in Redis with expiry
-    await this.redisService.set(
-      `login_otp:${user.id}`,
-      otp,
-      this.OTP_TTL
-    );
-
+    // Get the user
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+    
+    // Validate password strength
+    this.validatePasswordStrength(newPassword);
+    
+    // Hash the new password
+    const hashedPassword = await this.hashPassword(newPassword);
+    
+    // Update user's password and set passwordChangedAt
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { 
+        password: hashedPassword,
+        passwordChangedAt: new Date()
+      }
+    });
+    
+    // Invalidate all existing sessions for this user
+    await this.logout(userId, null, true);
+    
+    // Delete the reset token
+    await this.redisService.del(`password_reset:${token}`);
+    
+    // Log the password change
+    this.kafkaService.emit('auth.password.changed', {
+      userId: user.id,
+      email: user.email,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Send confirmation email
     await this.emailService.sendEmail({
       to: user.email,
-      subject: 'Login Verification Code',
-      template: EmailTemplate.OTP_LOGIN,
-      context: { otp }
+      subject: 'Your Password Has Been Reset',
+      template: EmailTemplate.PASSWORD_RESET_CONFIRMATION,
+      context: { 
+        name: user.firstName || user.name || 'User',
+        loginUrl: `${process.env.FRONTEND_URL}/login`
+      }
     });
+  }
 
-    return otp;
+  private async verifyResetToken(token: string): Promise<string | null> {
+    const userId = await this.redisService.get(`password_reset:${token}`);
+    return userId;
+  }
+
+  private validatePasswordStrength(password: string): void {
+    if (password.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters long');
+    }
+    
+    // Check for at least one uppercase letter
+    if (!/[A-Z]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one uppercase letter');
+    }
+    
+    // Check for at least one lowercase letter
+    if (!/[a-z]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one lowercase letter');
+    }
+    
+    // Check for at least one number
+    if (!/[0-9]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one number');
+    }
+    
+    // Check for at least one special character
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one special character');
+    }
   }
 
   private parseUserAgent(userAgent: string) {
@@ -572,200 +695,180 @@ export class AuthService {
   }
 
   private detectOS(userAgent: string): string {
-    if (/windows/i.test(userAgent)) return 'Windows';
-    if (/macintosh|mac os x/i.test(userAgent)) return 'MacOS';
-    if (/linux/i.test(userAgent)) return 'Linux';
-    if (/android/i.test(userAgent)) return 'Android';
-    if (/ios|iphone|ipad|ipod/i.test(userAgent)) return 'iOS';
+    // Simple OS detection
+    if (userAgent.includes('Windows')) return 'Windows';
+    if (userAgent.includes('Mac')) return 'MacOS';
+    if (userAgent.includes('Android')) return 'Android';
+    if (userAgent.includes('iOS') || userAgent.includes('iPhone') || userAgent.includes('iPad')) return 'iOS';
+    if (userAgent.includes('Linux')) return 'Linux';
     return 'Unknown';
-  }
-
-  async resetPassword(token: string, newPassword: string): Promise<void> {
-    // Verify token
-    const userId = await this.verifyResetToken(token);
-    
-    // Hash the new password
-    const hashedPassword = await this.hashPassword(newPassword);
-    
-    // Update user's password
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { password: hashedPassword }
-    });
-  }
-
-  private async verifyResetToken(token: string): Promise<string> {
-    try {
-      const decoded = await this.jwtService.verifyAsync(token);
-      return decoded.sub;
-    } catch {
-      throw new UnauthorizedException('Invalid or expired reset token');
-    }
   }
 
   private async hashPassword(password: string): Promise<string> {
     return bcrypt.hash(password, this.SALT_ROUNDS);
   }
 
-  async storeOTP(email: string, otp: string): Promise<void> {
-    const user = await this.findUserByEmail(email);
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-    
-    await this.redisService.set(
-      `login_otp:${user.id}`,
-      otp,
-      this.OTP_TTL
-    );
-  }
-
-  async verifyOTP(email: string, otp: string): Promise<boolean> {
-    // First find the user by email
-    const user = await this.findUserByEmail(email);
-    if (!user) {
-      return false;
-    }
-    
-    const key = `login_otp:${user.id}`;
-    const storedOtp = await this.redisService.get(key);
-    if (storedOtp === otp) {
-      await this.redisService.del(key); // Remove OTP after successful verification
-      return true;
-    }
-    return false;
-  }
-
-  async loginWithPasswordOrOTP(email: string, password?: string, otp?: string, request?: any): Promise<any> {
-    let user: User | null = null;
-    let loginMethod: 'password' | 'otp' = null;
-
-    try {
-      if (password) {
-        // Password login
-        user = await this.validateUser(email, password);
-        if (!user) {
-          throw new UnauthorizedException('Invalid email or password');
-        }
-        loginMethod = 'password';
-      } else if (otp) {
-        // OTP login
-        const isOtpValid = await this.verifyOTP(email, otp);
-        if (!isOtpValid) {
-          throw new UnauthorizedException('Invalid or expired OTP');
-        }
-        user = await this.findUserByEmail(email);
-        if (!user) {
-          throw new UnauthorizedException('User not found');
-        }
-        loginMethod = 'otp';
-      } else {
-        throw new BadRequestException('Either password or OTP must be provided');
-      }
-
-      // Log successful login
-      this.kafkaService.emit('auth.login.success', {
-        userId: user.id,
-        email: user.email,
-        method: loginMethod,
-        timestamp: new Date().toISOString()
-      });
-
-      return this.login(user, request);
-    } catch (error) {
-      // Log failed login attempt
-      this.kafkaService.emit('auth.login.failed', {
-        email,
-        method: loginMethod || 'unknown',
-        reason: error.message,
-        timestamp: new Date().toISOString()
-      });
-      
-      throw error;
-    }
-  }
-
-  async findUserByEmail(email: string): Promise<User | null> {
-    return this.prisma.user.findFirst({
-      where: {
-        email: {
-          mode: 'insensitive',
-          equals: email
-        }
-      },
-      include: {
-        superAdmin: true,
-        doctor: true,
-        patient: true,
-        clinicAdmin: true,
-        receptionist: true
-      }
-    });
-  }
-
+  // Generate a secure OTP
   private generateOTP(length: number = 6): string {
-    const digits = '0123456789';
+    // Generate a random OTP of specified length
     let otp = '';
+    const digits = '0123456789';
+    
     for (let i = 0; i < length; i++) {
       otp += digits[Math.floor(Math.random() * 10)];
     }
+    
     return otp;
   }
-
-  async requestLoginOTP(email: string): Promise<void> {
-    // Find the user by email
-    const user = await this.findUserByEmail(email);
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
+  
+  // Store OTP in Redis with bcrypt hashing
+  async storeOTP(email: string, otp: string): Promise<void> {
+    // Hash the OTP using bcrypt
+    const hashedOTP = await bcrypt.hash(otp, this.SALT_ROUNDS);
     
-    // Check rate limiting
-    const rateLimitKey = `otp_rate_limit:${user.id}`;
-    const attempts = await this.redisService.get(rateLimitKey);
-    
-    if (attempts && parseInt(attempts) >= this.MAX_OTP_ATTEMPTS) {
-      throw new BadRequestException('Too many OTP requests. Please try again later.');
-    }
-    
-    // Generate OTP
-    const otp = this.generateOTP();
-    
-    // Store OTP in Redis
+    // Store the hashed OTP in Redis with expiry
     await this.redisService.set(
-      `login_otp:${user.id}`,
-      otp,
+      `otp:${email}`,
+      hashedOTP,
       this.OTP_TTL
     );
     
-    // Increment rate limit counter
-    if (attempts) {
-      await this.redisService.set(
-        rateLimitKey,
-        (parseInt(attempts) + 1).toString(),
-        this.OTP_RATE_LIMIT_WINDOW
-      );
-    } else {
-      await this.redisService.set(
-        rateLimitKey,
-        '1',
-        this.OTP_RATE_LIMIT_WINDOW
-      );
+    // Store attempt counter
+    await this.redisService.set(
+      `otp_attempts:${email}`,
+      '0',
+      this.OTP_TTL
+    );
+    
+    // Log OTP generation (without the actual OTP)
+    this.logger.debug(`OTP generated for ${email}`);
+  }
+  
+  // Verify OTP with bcrypt comparison
+  async verifyOTP(email: string, otp: string): Promise<boolean> {
+    // Get the stored hashed OTP
+    const storedHashedOTP = await this.redisService.get(`otp:${email}`);
+    if (!storedHashedOTP) {
+      this.logger.debug(`No OTP found for ${email}`);
+      return false; // No OTP found or expired
     }
     
-    // Send OTP email
-    await this.emailService.sendEmail({
-      to: user.email,
-      subject: 'Login Verification Code',
-      template: EmailTemplate.OTP_LOGIN,
-      context: { otp }
-    });
+    // Get and increment attempt counter
+    const attempts = parseInt(await this.redisService.get(`otp_attempts:${email}`) || '0');
+    if (attempts >= this.MAX_OTP_ATTEMPTS) {
+      // Too many attempts, invalidate OTP
+      this.logger.warn(`Max OTP attempts reached for ${email}`);
+      await this.redisService.del(`otp:${email}`);
+      await this.redisService.del(`otp_attempts:${email}`);
+      return false;
+    }
     
-    // Log OTP request for audit purposes
-    this.kafkaService.emit('auth.otp.requested', {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString()
+    // Increment attempt counter
+    await this.redisService.set(
+      `otp_attempts:${email}`,
+      (attempts + 1).toString(),
+      this.OTP_TTL
+    );
+    
+    // Compare the provided OTP with the stored hash
+    const isValid = await bcrypt.compare(otp, storedHashedOTP);
+    
+    // If valid, delete the OTP to prevent reuse
+    if (isValid) {
+      this.logger.debug(`OTP verified successfully for ${email}`);
+      await this.redisService.del(`otp:${email}`);
+      await this.redisService.del(`otp_attempts:${email}`);
+    } else {
+      this.logger.debug(`Invalid OTP attempt for ${email}`);
+    }
+    
+    return isValid;
+  }
+
+  async findUserByEmail(email: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { email }
     });
+  }
+
+  // Request a login OTP and send it via email, SMS, or both
+  async requestLoginOTP(email: string, deliveryMethod: 'email' | 'sms' | 'both' = 'email'): Promise<void> {
+    try {
+      // Find the user by email
+      const user = await this.findUserByEmail(email);
+      if (!user) {
+        // Return silently to prevent email enumeration
+        this.logger.debug(`OTP requested for non-existent user: ${email}`);
+        return;
+      }
+      
+      // Check rate limiting
+      const rateLimitKey = `otp_rate_limit:${user.id}`;
+      const lastOtpTime = await this.redisService.get(rateLimitKey);
+      
+      if (lastOtpTime) {
+        const timeSinceLastOtp = Date.now() - parseInt(lastOtpTime);
+        if (timeSinceLastOtp < this.OTP_RATE_LIMIT_TTL * 1000) {
+          this.logger.warn(`Rate limit exceeded for OTP request: ${email}`);
+          throw new BadRequestException('Please wait before requesting another OTP');
+        }
+      }
+      
+      // Generate a new OTP
+      const otp = this.generateOTP();
+      
+      // Store the OTP
+      await this.storeOTP(email, otp);
+      
+      // Set rate limit
+      await this.redisService.set(
+        rateLimitKey,
+        Date.now().toString(),
+        this.OTP_RATE_LIMIT_WINDOW
+      );
+      
+      // Send OTP via selected delivery method(s)
+      let emailSent = false;
+      let smsSent = false;
+      
+      if (deliveryMethod === 'email' || deliveryMethod === 'both') {
+        // Send OTP via email
+        emailSent = await this.emailService.sendEmail({
+          to: user.email,
+          subject: 'Your Login OTP',
+          template: EmailTemplate.OTP_LOGIN,
+          context: { 
+            otp,
+            name: user.firstName || user.name || 'User',
+            expiryTime: `${this.OTP_TTL / 60} minutes`
+          }
+        });
+      }
+      
+      if ((deliveryMethod === 'sms' || deliveryMethod === 'both') && user.phone) {
+        // Send OTP via SMS
+        const message = `Your HealthCare login OTP is: ${otp}. It will expire in ${this.OTP_TTL / 60} minutes.`;
+        smsSent = await this.sendSMS(user.phone, message);
+      }
+      
+      // Log OTP delivery
+      this.kafkaService.emit('auth.otp.sent', {
+        userId: user.id,
+        email: user.email,
+        deliveryMethod,
+        emailSent,
+        smsSent,
+        timestamp: new Date().toISOString()
+      });
+      
+      this.logger.debug(`OTP sent to ${email} via ${deliveryMethod}`);
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error(`Failed to send OTP: ${error.message}`);
+      throw new InternalServerErrorException('Failed to send OTP');
+    }
   }
 
   async hasActiveOTP(userId: string): Promise<boolean> {
@@ -777,5 +880,445 @@ export class AuthService {
   async invalidateOTP(userId: string): Promise<void> {
     const key = `login_otp:${userId}`;
     await this.redisService.del(key);
+  }
+
+  // Helper method to generate tokens and user info
+  private async generateTokens(user: User, request: any) {
+    // Get user agent info
+    const userAgent = request?.headers?.['user-agent'] || 'unknown';
+    const deviceInfo = this.parseUserAgent(userAgent);
+    
+    // Generate session ID
+    const sessionId = uuidv4();
+    
+    // Generate tokens
+    const payload = { 
+      email: user.email, 
+      sub: user.id, 
+      role: user.role,
+      sessionId
+    };
+    
+    const accessToken = this.jwtService.sign(payload);
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+    
+    // Store refresh token in Redis
+    await this.redisService.set(
+      `refresh_token:${user.id}:${sessionId}`,
+      refreshToken,
+      this.TOKEN_REFRESH_TTL
+    );
+    
+    // Store session info
+    await this.redisService.set(
+      `session:${user.id}:${sessionId}`,
+      JSON.stringify({
+        deviceInfo,
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString()
+      }),
+      this.TOKEN_REFRESH_TTL
+    );
+    
+    // Get role-specific permissions
+    const permissions = this.getRolePermissions(user.role);
+    
+    // Get redirect path based on role
+    const redirectPath = this.getRedirectPathForRole(user.role);
+    
+    // Return tokens and user info
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name || `${user.firstName} ${user.lastName}`.trim(),
+        firstName: user.firstName,
+        lastName: user.lastName
+      },
+      redirectPath,
+      permissions
+    };
+  }
+
+  private async sendSMS(phoneNumber: string, message: string): Promise<boolean> {
+    try {
+      // This is a placeholder for your actual SMS provider integration
+      // You would replace this with your SMS provider's API
+      const response = await axios.post(this.SMS_PROVIDER_URL, {
+        apiKey: this.SMS_PROVIDER_API_KEY,
+        to: phoneNumber,
+        from: this.SMS_SENDER_ID,
+        message: message
+      });
+      
+      console.log(`SMS sent to ${phoneNumber}`);
+      return response.status === 200;
+    } catch (error) {
+      console.error(`Failed to send SMS: ${error.message}`);
+      return false;
+    }
+  }
+
+  // Generate and send a magic link for passwordless login
+  async sendMagicLink(email: string): Promise<void> {
+    try {
+      const user = await this.findUserByEmail(email);
+      if (!user) {
+        // Return silently to prevent email enumeration
+        this.logger.debug(`Magic link requested for non-existent user: ${email}`);
+        return;
+      }
+      
+      // Generate a secure token
+      const token = uuidv4();
+      
+      // Create a signed JWT with limited expiry that contains the token
+      const signedToken = this.jwtService.sign(
+        { token, sub: user.id, type: 'magic_link' },
+        { expiresIn: this.MAGIC_LINK_TTL }
+      );
+      
+      // Create the magic link URL that points directly to the frontend
+      // The frontend will handle the token and complete the login
+      const loginUrl = `${process.env.FRONTEND_URL}/auth/magic-login?token=${encodeURIComponent(signedToken)}`;
+      
+      // Store token in Redis with expiry
+      await this.redisService.set(
+        `magic_link:${token}`,
+        user.id,
+        this.MAGIC_LINK_TTL
+      );
+      
+      // Send magic link email
+      await this.emailService.sendEmail({
+        to: user.email,
+        subject: 'Your Magic Login Link',
+        template: EmailTemplate.MAGIC_LINK,
+        context: { 
+          loginUrl,
+          name: user.firstName || user.name || 'User',
+          expiryTime: `${this.MAGIC_LINK_TTL / 60} minutes`
+        }
+      });
+      
+      // Log magic link request for audit purposes
+      this.kafkaService.emit('auth.magic_link.requested', {
+        userId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString()
+      });
+      
+      this.logger.debug(`Magic link sent to ${email}`);
+    } catch (error) {
+      this.logger.error(`Failed to send magic link: ${error.message}`);
+      throw new InternalServerErrorException('Failed to send magic link');
+    }
+  }
+  
+  // Verify magic link token and log user in
+  async verifyMagicLink(token: string, request: any): Promise<any> {
+    try {
+      // First verify the JWT signature and expiration
+      const payload = this.jwtService.verify(token);
+      
+      if (payload.type !== 'magic_link') {
+        this.logger.warn(`Invalid magic link token type: ${payload.type}`);
+        throw new UnauthorizedException('Invalid token type');
+      }
+      
+      const originalToken = payload.token;
+      
+      // Get user ID from Redis using the original token
+      const userId = await this.redisService.get(`magic_link:${originalToken}`);
+      if (!userId) {
+        this.logger.warn(`Magic link token not found or expired: ${originalToken.substring(0, 6)}...`);
+        throw new UnauthorizedException('Magic link has expired or already been used');
+      }
+      
+      // Find the user
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        this.logger.warn(`User not found for magic link: ${userId}`);
+        throw new UnauthorizedException('User not found');
+      }
+      
+      // Delete the token to prevent reuse
+      await this.redisService.del(`magic_link:${originalToken}`);
+      
+      // Log the successful magic link login
+      this.kafkaService.emit('auth.magic_link.success', {
+        userId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString()
+      });
+      
+      this.logger.debug(`Magic link login successful for ${user.email}`);
+      
+      // Log the user in
+      return this.login(user, request);
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      this.logger.error(`Magic link verification failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid or expired magic link');
+    }
+  }
+
+  // Social login methods
+  
+  async handleGoogleLogin(googleUser: any, request: any): Promise<any> {
+    const { email, given_name, family_name, picture, sub: googleId } = googleUser;
+    
+    try {
+      // Check if user exists
+      let user = await this.findUserByEmail(email);
+      
+      if (!user) {
+        // Create new user if not exists
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            firstName: given_name,
+            lastName: family_name,
+            name: `${given_name} ${family_name}`,
+            profilePicture: picture,
+            role: 'PATIENT', // Default role
+            isVerified: true, // Google emails are verified
+            password: await this.hashPassword(uuidv4()), // Random password
+            age: 0, // Default age, can be updated later
+            phone: '', // Default empty phone
+            gender: 'UNSPECIFIED', // Default gender
+            dateOfBirth: new Date() // Default date, can be updated later
+          }
+        });
+        
+        // Log new user creation
+        this.kafkaService.emit('auth.social_login.new_user', {
+          userId: user.id,
+          provider: 'google',
+          email: user.email,
+          timestamp: new Date().toISOString()
+        });
+      } else if (!user.googleId) {
+        // Update existing user with Google ID if not already set
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            googleId,
+            isVerified: true,
+            profilePicture: user.profilePicture || picture
+          }
+        });
+      }
+      
+      // Log successful Google login
+      this.kafkaService.emit('auth.social_login.success', {
+        userId: user.id,
+        provider: 'google',
+        email: user.email,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Generate tokens and return login response
+      return this.login(user, request);
+    } catch (error) {
+      this.logger.error(`Google login failed: ${error.message}`);
+      throw new InternalServerErrorException('Failed to process Google login');
+    }
+  }
+  
+  async handleFacebookLogin(facebookUser: any, request: any): Promise<any> {
+    const { email, first_name, last_name, picture, id: facebookId } = facebookUser;
+    
+    try {
+      // Check if user exists
+      let user = await this.findUserByEmail(email);
+      
+      if (!user) {
+        // Create new user if not exists
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            firstName: first_name,
+            lastName: last_name,
+            name: `${first_name} ${last_name}`,
+            profilePicture: picture?.data?.url,
+            role: 'PATIENT', // Default role
+            isVerified: true, // Facebook emails are verified
+            password: await this.hashPassword(uuidv4()), // Random password
+            age: 0, // Default age, can be updated later
+            phone: '', // Default empty phone
+            gender: 'UNSPECIFIED', // Default gender
+            dateOfBirth: new Date() // Default date, can be updated later
+          }
+        });
+        
+        // Log new user creation
+        this.kafkaService.emit('auth.social_login.new_user', {
+          userId: user.id,
+          provider: 'facebook',
+          email: user.email,
+          timestamp: new Date().toISOString()
+        });
+      } else if (!user.facebookId) {
+        // Update existing user with Facebook ID if not already set
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            facebookId,
+            isVerified: true,
+            profilePicture: user.profilePicture || picture?.data?.url
+          }
+        });
+      }
+      
+      // Log successful Facebook login
+      this.kafkaService.emit('auth.social_login.success', {
+        userId: user.id,
+        provider: 'facebook',
+        email: user.email,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Generate tokens and return login response
+      return this.login(user, request);
+    } catch (error) {
+      this.logger.error(`Facebook login failed: ${error.message}`);
+      this.logger.error(`Google token verification failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid Google token');
+    }
+  }
+  
+  async verifyFacebookToken(token: string): Promise<any> {
+    try {
+      // This is a placeholder for actual Facebook token verification
+      // In a real implementation, you would make a request to the Facebook Graph API
+      // Example: const response = await axios.get(`https://graph.facebook.com/me?fields=id,email,name,first_name,last_name,picture&access_token=${token}`);
+      
+      // For now, we'll simulate a successful verification with mock data
+      return {
+        id: 'facebook-user-id',
+        email: 'user@example.com',
+        name: 'John Doe',
+        first_name: 'John',
+        last_name: 'Doe',
+        picture: {
+          data: {
+            url: 'https://example.com/profile.jpg'
+          }
+        }
+      };
+    } catch (error) {
+      this.logger.error(`Facebook token verification failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid Facebook token');
+    }
+  }
+  
+  async verifyAppleToken(token: string): Promise<any> {
+    try {
+      // This is a placeholder for actual Apple token verification
+      // In a real implementation, you would verify the JWT token from Apple
+      // Example: const decoded = jwt.verify(token, applePublicKey, { algorithms: ['RS256'] });
+      
+      // For now, we'll simulate a successful verification with mock data
+      return {
+        sub: 'apple-user-id',
+        email: 'user@example.com',
+        name: 'John Doe'
+      };
+    } catch (error) {
+      this.logger.error(`Apple token verification failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid Apple token');
+    }
+  }
+
+  // Handle Apple login
+  async handleAppleLogin(appleUser: any, request: any): Promise<any> {
+    const { email, firstName, lastName, sub: appleId } = appleUser;
+    
+    try {
+      // Check if user exists
+      let user = await this.findUserByEmail(email);
+      
+      if (!user) {
+        // Create new user if not exists
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            firstName,
+            lastName,
+            name: `${firstName} ${lastName}`,
+            role: 'PATIENT', // Default role
+            isVerified: true, // Apple emails are verified
+            password: await this.hashPassword(uuidv4()), // Random password
+            age: 0, // Default age, can be updated later
+            phone: '', // Default empty phone
+            gender: 'UNSPECIFIED', // Default gender
+            dateOfBirth: new Date(), // Default date, can be updated later
+            profilePicture: '' // Default empty profile picture
+          }
+        });
+        
+        // Log new user creation
+        this.kafkaService.emit('auth.social_login.new_user', {
+          userId: user.id,
+          provider: 'apple',
+          email: user.email,
+          timestamp: new Date().toISOString()
+        });
+      } else if (!user.appleId) {
+        // Update existing user with Apple ID if not already set
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            appleId,
+            isVerified: true
+          }
+        });
+      }
+      
+      // Log successful Apple login
+      this.kafkaService.emit('auth.social_login.success', {
+        userId: user.id,
+        provider: 'apple',
+        email: user.email,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Generate tokens and return login response
+      return this.login(user, request);
+    } catch (error) {
+      this.logger.error(`Apple login failed: ${error.message}`);
+      throw new InternalServerErrorException('Failed to process Apple login');
+    }
+  }
+  
+  // Social login token verification methods
+  
+  async verifyGoogleToken(token: string): Promise<any> {
+    try {
+      // This is a placeholder for actual Google token verification
+      // In a real implementation, you would use the Google Auth Library
+      // Example: const ticket = await client.verifyIdToken({ idToken: token, audience: CLIENT_ID });
+      
+      // For now, we'll simulate a successful verification with mock data
+      return {
+        getPayload: () => ({
+          email: 'user@example.com',
+          sub: 'google-user-id',
+          name: 'John Doe',
+          given_name: 'John',
+          family_name: 'Doe',
+          picture: 'https://example.com/profile.jpg'
+        })
+      };
+    } catch (error) {
+      this.logger.error(`Google token verification failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid Google token');
+    }
   }
 } 

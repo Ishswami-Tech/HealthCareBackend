@@ -62,7 +62,7 @@ async function bootstrap() {
     console.log('\nAvailable Routes:');
     server.printRoutes();
 
-    await app.listen(process.env.PORT || 3000, "0.0.0.0");
+    await app.listen(process.env.PORT || 8088, "0.0.0.0");
     console.log(`\nApplication is running on: ${await app.getUrl()}`);
     console.log(`Swagger documentation is available at: ${await app.getUrl()}/api`);
   } catch (error) {
