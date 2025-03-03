@@ -8,6 +8,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
+import fastifyHelmet from '@fastify/helmet';
+import fastifyCors from '@fastify/cors';
 
 async function bootstrap() {
   try {
@@ -23,6 +25,28 @@ async function bootstrap() {
       whitelist: true,
     }));
     app.useGlobalFilters(new HttpExceptionFilter());
+
+    // Security headers
+    await app.register(fastifyHelmet, {
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: [`'self'`],
+          styleSrc: [`'self'`, `'unsafe-inline'`],
+          imgSrc: [`'self'`, 'data:', 'validator.swagger.io'],
+          scriptSrc: [`'self'`, `https: 'unsafe-inline'`],
+        },
+      }
+    });
+
+    // CORS configuration
+    await app.register(fastifyCors, {
+      origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'],
+      methods: process.env.CORS_METHODS || 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      credentials: process.env.CORS_CREDENTIALS === 'true',
+      allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With'],
+      exposedHeaders: ['Content-Range', 'X-Content-Range'],
+      maxAge: 86400 // 24 hours
+    });
 
     const config = new DocumentBuilder()
       .setTitle("Healthcare API")
