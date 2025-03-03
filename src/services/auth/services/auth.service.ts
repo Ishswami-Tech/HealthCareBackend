@@ -16,6 +16,10 @@ export class AuthService {
   private readonly PASSWORD_RESET_TTL = 3600; // 1 hour
   private readonly EMAIL_VERIFICATION_TTL = 86400; // 24 hours
   private readonly TOKEN_REFRESH_TTL = 604800; // 7 days
+  private readonly OTP_TTL = 600; // 10 minutes
+  private readonly OTP_RATE_LIMIT_TTL = 60; // 1 minute
+  private readonly MAX_OTP_ATTEMPTS = 5;
+  private readonly OTP_RATE_LIMIT_WINDOW = 3600; // 1 hour
 
   constructor(
     private readonly prisma: PrismaService,
@@ -518,11 +522,11 @@ export class AuthService {
   async sendLoginOTP(user: User): Promise<string> {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // Store OTP in Redis with 5-minute expiry
+    // Store OTP in Redis with expiry
     await this.redisService.set(
       `login_otp:${user.id}`,
       otp,
-      300 // 5 minutes
+      this.OTP_TTL
     );
 
     await this.emailService.sendEmail({
@@ -601,5 +605,177 @@ export class AuthService {
 
   private async hashPassword(password: string): Promise<string> {
     return bcrypt.hash(password, this.SALT_ROUNDS);
+  }
+
+  async storeOTP(email: string, otp: string): Promise<void> {
+    const user = await this.findUserByEmail(email);
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+    
+    await this.redisService.set(
+      `login_otp:${user.id}`,
+      otp,
+      this.OTP_TTL
+    );
+  }
+
+  async verifyOTP(email: string, otp: string): Promise<boolean> {
+    // First find the user by email
+    const user = await this.findUserByEmail(email);
+    if (!user) {
+      return false;
+    }
+    
+    const key = `login_otp:${user.id}`;
+    const storedOtp = await this.redisService.get(key);
+    if (storedOtp === otp) {
+      await this.redisService.del(key); // Remove OTP after successful verification
+      return true;
+    }
+    return false;
+  }
+
+  async loginWithPasswordOrOTP(email: string, password?: string, otp?: string, request?: any): Promise<any> {
+    let user: User | null = null;
+    let loginMethod: 'password' | 'otp' = null;
+
+    try {
+      if (password) {
+        // Password login
+        user = await this.validateUser(email, password);
+        if (!user) {
+          throw new UnauthorizedException('Invalid email or password');
+        }
+        loginMethod = 'password';
+      } else if (otp) {
+        // OTP login
+        const isOtpValid = await this.verifyOTP(email, otp);
+        if (!isOtpValid) {
+          throw new UnauthorizedException('Invalid or expired OTP');
+        }
+        user = await this.findUserByEmail(email);
+        if (!user) {
+          throw new UnauthorizedException('User not found');
+        }
+        loginMethod = 'otp';
+      } else {
+        throw new BadRequestException('Either password or OTP must be provided');
+      }
+
+      // Log successful login
+      this.kafkaService.emit('auth.login.success', {
+        userId: user.id,
+        email: user.email,
+        method: loginMethod,
+        timestamp: new Date().toISOString()
+      });
+
+      return this.login(user, request);
+    } catch (error) {
+      // Log failed login attempt
+      this.kafkaService.emit('auth.login.failed', {
+        email,
+        method: loginMethod || 'unknown',
+        reason: error.message,
+        timestamp: new Date().toISOString()
+      });
+      
+      throw error;
+    }
+  }
+
+  async findUserByEmail(email: string): Promise<User | null> {
+    return this.prisma.user.findFirst({
+      where: {
+        email: {
+          mode: 'insensitive',
+          equals: email
+        }
+      },
+      include: {
+        superAdmin: true,
+        doctor: true,
+        patient: true,
+        clinicAdmin: true,
+        receptionist: true
+      }
+    });
+  }
+
+  private generateOTP(length: number = 6): string {
+    const digits = '0123456789';
+    let otp = '';
+    for (let i = 0; i < length; i++) {
+      otp += digits[Math.floor(Math.random() * 10)];
+    }
+    return otp;
+  }
+
+  async requestLoginOTP(email: string): Promise<void> {
+    // Find the user by email
+    const user = await this.findUserByEmail(email);
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+    
+    // Check rate limiting
+    const rateLimitKey = `otp_rate_limit:${user.id}`;
+    const attempts = await this.redisService.get(rateLimitKey);
+    
+    if (attempts && parseInt(attempts) >= this.MAX_OTP_ATTEMPTS) {
+      throw new BadRequestException('Too many OTP requests. Please try again later.');
+    }
+    
+    // Generate OTP
+    const otp = this.generateOTP();
+    
+    // Store OTP in Redis
+    await this.redisService.set(
+      `login_otp:${user.id}`,
+      otp,
+      this.OTP_TTL
+    );
+    
+    // Increment rate limit counter
+    if (attempts) {
+      await this.redisService.set(
+        rateLimitKey,
+        (parseInt(attempts) + 1).toString(),
+        this.OTP_RATE_LIMIT_WINDOW
+      );
+    } else {
+      await this.redisService.set(
+        rateLimitKey,
+        '1',
+        this.OTP_RATE_LIMIT_WINDOW
+      );
+    }
+    
+    // Send OTP email
+    await this.emailService.sendEmail({
+      to: user.email,
+      subject: 'Login Verification Code',
+      template: EmailTemplate.OTP_LOGIN,
+      context: { otp }
+    });
+    
+    // Log OTP request for audit purposes
+    this.kafkaService.emit('auth.otp.requested', {
+      userId: user.id,
+      email: user.email,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  async hasActiveOTP(userId: string): Promise<boolean> {
+    const key = `login_otp:${userId}`;
+    const otp = await this.redisService.get(key);
+    return !!otp;
+  }
+  
+  async invalidateOTP(userId: string): Promise<void> {
+    const key = `login_otp:${userId}`;
+    await this.redisService.del(key);
   }
 } 

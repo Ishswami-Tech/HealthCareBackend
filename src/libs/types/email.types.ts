@@ -9,4 +9,6 @@ export interface EmailOptions {
   subject: string;
   template: EmailTemplate;
   context: any;
+  text?: string;
+  html?: string;
 }

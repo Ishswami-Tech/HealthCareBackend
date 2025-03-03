@@ -10,7 +10,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including devDependencies for TypeScript)
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Copy the rest of the application
 COPY . .
@@ -36,7 +36,7 @@ RUN apk add --no-cache \
 COPY package*.json ./
 
 # Install all dependencies (including devDependencies for TypeScript)
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Copy source code
 COPY . .
@@ -63,9 +63,11 @@ RUN apk add --no-cache \
 COPY --from=builder /app/package*.json ./
 
 # Install both production and necessary dev dependencies
-RUN npm ci && \
+RUN npm ci --legacy-peer-deps && \
     npm install -g ts-node typescript @types/node && \
-    npm install --save-dev @faker-js/faker @types/faker
+    npm install --save-dev @faker-js/faker @types/faker && \
+    # Explicitly install the problematic packages
+    npm install @fastify/helmet nodemailer
 
 # Copy the built code and necessary files
 COPY --from=builder /app/dist ./dist
