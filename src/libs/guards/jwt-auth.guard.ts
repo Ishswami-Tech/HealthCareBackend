@@ -155,7 +155,15 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
   private async verifyToken(token: string): Promise<any> {
     try {
-      return this.jwtService.verify(token);
+      const payload = this.jwtService.verify(token);
+      
+      // Check if token has been invalidated (blacklisted)
+      const isBlacklisted = await this.redisService.get(`blacklist:token:${token.substring(0, 64)}`);
+      if (isBlacklisted) {
+        throw new UnauthorizedException('Token has been invalidated');
+      }
+      
+      return payload;
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
         throw new UnauthorizedException('Token has expired');

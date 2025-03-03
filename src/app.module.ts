@@ -5,6 +5,7 @@ import { AuthModule } from "./services/auth/auth.module";
 import { HealthModule } from "./services/health/health.module";
 import { AppController } from "./app.controller";
 import { CacheModule } from "./shared/cache/cache.module";
+import { WhatsAppModule } from "./shared/messaging/whatsapp/whatsapp.module";
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { CacheModule } from "./shared/cache/cache.module";
     UsersModule,
     HealthModule,
     CacheModule,
+    WhatsAppModule,
   ],
   controllers: [AppController],
 })

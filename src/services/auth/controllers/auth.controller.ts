@@ -12,6 +12,7 @@ import {
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
+  HttpException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { CreateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
@@ -21,11 +22,15 @@ import { AuthService } from '../services/auth.service';
 import { LoginDto } from '../../../libs/dtos/login.dto';
 import { EmailService } from '../../../shared/messaging/email/email.service';
 import { EmailTemplate } from '../../../libs/types/email.types';
+import { Logger } from '@nestjs/common';
+import { LogoutDto } from '../../../libs/dtos/logout.dto';
 
 @ApiTags('auth')
 @Controller('auth')
 @ApiBearerAuth()
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly emailService: EmailService
@@ -122,29 +127,55 @@ export class AuthController {
   }
 
   @Post('logout')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Logout user',
-    description: 'Invalidate current session and refresh token'
+    description: 'Logs out the user from the current session or all devices. Invalidates the JWT token.'
   })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Successfully logged out',
+  @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        message: { type: 'string', example: 'Successfully logged out' },
-        timestamp: { type: 'string', example: '2025-03-02T12:00:00.000Z' }
+        sessionId: { 
+          type: 'string', 
+          description: 'Optional session ID to logout from a specific session',
+          example: 'session_123456789'
+        },
+        allDevices: { 
+          type: 'boolean', 
+          description: 'Whether to logout from all devices',
+          example: false,
+          default: false
+        }
       }
     }
   })
-  async logout(@Request() req) {
-    await this.authService.logout(req.user.sub);
-    return {
-      message: 'Successfully logged out',
-      timestamp: new Date().toISOString()
-    };
+  @ApiResponse({
+    status: 200,
+    description: 'User logged out successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Logged out successfully' }
+      }
+    }
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
+  @UseGuards(JwtAuthGuard)
+  async logout(
+    @Req() req,
+    @Body() logoutDto: LogoutDto,
+  ): Promise<{ message: string }> {
+    const userId = req.user.sub;
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    await this.authService.logout(
+      userId,
+      logoutDto.sessionId,
+      logoutDto.allDevices,
+      token,
+    );
+    
+    return { message: 'Logged out successfully' };
   }
 
   @Post('refresh')
@@ -239,19 +270,20 @@ export class AuthController {
 
   @Public()
   @Post('reset-password')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reset password',
-    description: 'Resets user password using the token received via email'
+    description: 'Reset password using the token received via email'
   })
   @ApiBody({
     schema: {
       type: 'object',
+      required: ['token', 'newPassword'],
       properties: {
         token: { type: 'string' },
-        newPassword: { type: 'string', minLength: 8 }
-      },
-      required: ['token', 'newPassword']
+        newPassword: { type: 'string' }
+      }
     }
   })
   @ApiResponse({ 
@@ -265,6 +297,7 @@ export class AuthController {
     }
   })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  @ApiResponse({ status: 400, description: 'Password does not meet requirements' })
   async resetPassword(
     @Body('token') token: string,
     @Body('newPassword') newPassword: string
@@ -273,112 +306,43 @@ export class AuthController {
     return { message: 'Password reset successful' };
   }
 
-  @Post('test-email')
-  @Public()
-  @ApiOperation({ summary: 'Test email service' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        email: { type: 'string', example: 'user@example.com' }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 200,
-    description: 'Email test result',
-    schema: {
-      type: 'object',
-      properties: {
-        success: { type: 'boolean' },
-        message: { type: 'string' },
-        timestamp: { type: 'string' }
-      }
-    }
-  })
-  async testEmail(@Body() body: { email: string }) {
-    try {
-      const result = await this.emailService.sendEmail({
-        to: body.email,
-        subject: 'Test Email from Healthcare App',
-        template: EmailTemplate.VERIFICATION,
-        context: {
-          verificationUrl: 'https://example.com/verify',
-          name: 'Test User'
-        }
-      });
-
-      return {
-        success: result,
-        message: result ? 'Email sent successfully' : 'Failed to send email',
-        timestamp: new Date()
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: `Error sending email: ${error.message}`,
-        timestamp: new Date()
-      };
-    }
-  }
-
-  @Public()
   @Post('request-otp')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Request OTP for login',
-    description: 'Send an OTP to the user\'s email and/or phone for login'
+    description: 'Sends an OTP through all available channels (WhatsApp, SMS, Email) based on the provided identifier',
   })
   @ApiBody({
     schema: {
       type: 'object',
+      required: ['identifier'],
       properties: {
-        email: { type: 'string', format: 'email' },
-        deliveryMethod: { 
-          type: 'string', 
-          enum: ['email', 'sms', 'both'],
-          description: 'How to deliver the OTP (email, SMS, or both)',
-          default: 'email'
-        }
+        identifier: {
+          type: 'string',
+          description: 'Email address or phone number',
+          example: 'user@example.com or +1234567890',
+        },
       },
-      required: ['email']
-    }
+    },
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'OTP sent successfully',
     schema: {
       type: 'object',
       properties: {
-        message: { type: 'string', example: 'OTP sent to your email and/or phone' }
-      }
-    }
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'OTP sent successfully via Email, WhatsApp, SMS' },
+      },
+    },
   })
-  @ApiResponse({ status: 400, description: 'User not found or invalid email' })
-  @ApiResponse({ status: 401, description: 'Failed to send OTP' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid request',
+  })
   async requestOTP(
-    @Body('email') email: string,
-    @Body('deliveryMethod') deliveryMethod: 'email' | 'sms' | 'both' = 'email'
-  ): Promise<{ message: string }> {
-    try {
-      await this.authService.requestLoginOTP(email, deliveryMethod);
-      
-      let message = 'OTP sent to your ';
-      if (deliveryMethod === 'email') {
-        message += 'email';
-      } else if (deliveryMethod === 'sms') {
-        message += 'phone';
-      } else {
-        message += 'email and phone';
-      }
-      
-      return { message };
-    } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new UnauthorizedException('Failed to send OTP');
-    }
+    @Body('identifier') identifier: string,
+  ): Promise<{ success: boolean; message: string }> {
+    return this.authService.requestLoginOTP(identifier);
   }
 
   @Public()
@@ -386,15 +350,15 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Verify OTP and login',
-    description: 'Verify the OTP sent to the user and log them in'
+    description: 'Verify the OTP sent to the user and log them in. This endpoint works with OTPs sent via any delivery method (WhatsApp, SMS, or Email).'
   })
   @ApiBody({
     schema: {
       type: 'object',
       required: ['email', 'otp'],
       properties: {
-        email: { type: 'string' },
-        otp: { type: 'string' }
+        email: { type: 'string', format: 'email' },
+        otp: { type: 'string', minLength: 6, maxLength: 6, pattern: '^[0-9]+$' }
       }
     }
   })
@@ -404,21 +368,27 @@ export class AuthController {
     schema: {
       type: 'object',
       properties: {
-        access_token: { type: 'string' },
-        refresh_token: { type: 'string' },
+        access_token: { type: 'string', description: 'JWT access token' },
+        refresh_token: { type: 'string', description: 'JWT refresh token' },
         user: { 
           type: 'object',
           properties: {
             id: { type: 'string' },
             email: { type: 'string' },
-            role: { type: 'string' }
+            role: { type: 'string' },
+            name: { type: 'string' },
+            firstName: { type: 'string' },
+            lastName: { type: 'string' }
           }
         },
         redirectUrl: { type: 'string', description: 'URL to redirect the user to after successful login' }
       }
     }
   })
-  @ApiResponse({ status: 401, description: 'Invalid OTP' })
+  @ApiResponse({ status: 400, description: 'Bad request - Missing required fields' })
+  @ApiResponse({ status: 401, description: 'Invalid OTP or user not found' })
+  @ApiResponse({ status: 429, description: 'Too many failed attempts' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
   async verifyOTP(
     @Body('email') email: string,
     @Body('otp') otp: string,
@@ -444,6 +414,8 @@ export class AuthController {
       const redirectUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       const redirectPath = this.authService.getRedirectPathForRole(user.role);
       
+      this.logger.log(`User ${email} successfully logged in using OTP`);
+      
       return {
         ...loginData,
         redirectUrl: `${redirectUrl}${redirectPath}`
@@ -452,6 +424,13 @@ export class AuthController {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      if (error.message && error.message.includes('Too many attempts')) {
+        throw new HttpException('Too many failed OTP attempts', HttpStatus.TOO_MANY_REQUESTS);
+      }
+      this.logger.error(`Failed to verify OTP for ${email}: ${error.message}`);
       throw new InternalServerErrorException('Failed to verify OTP');
     }
   }
@@ -517,6 +496,18 @@ export class AuthController {
       required: ['email']
     }
   })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'OTP invalidated successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'OTP invalidated successfully' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'User not found or invalid email' })
+  @ApiResponse({ status: 401, description: 'Failed to invalidate OTP' })
   async invalidateOTP(@Body('email') email: string): Promise<{ message: string }> {
     try {
       const user = await this.authService.findUserByEmail(email);

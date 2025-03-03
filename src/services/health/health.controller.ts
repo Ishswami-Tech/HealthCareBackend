@@ -75,8 +75,57 @@ export class HealthController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get system health status' })
-  @ApiResponse({ status: 200, type: Object, description: 'Health check response' })
+  @ApiOperation({ 
+    summary: 'Get system health status',
+    description: 'Returns the health status of all system components including API, database, Redis, and Kafka. No parameters required.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Health check response with detailed metrics for all services',
+    schema: {
+      type: 'object',
+      properties: {
+        status: { 
+          type: 'string', 
+          enum: ['healthy', 'degraded'],
+          description: 'Overall system health status'
+        },
+        timestamp: { 
+          type: 'string', 
+          format: 'date-time',
+          description: 'Time when the health check was performed'
+        },
+        environment: { 
+          type: 'string',
+          description: 'Current environment (development, production, etc.)'
+        },
+        version: { 
+          type: 'string',
+          description: 'API version'
+        },
+        systemMetrics: {
+          type: 'object',
+          description: 'System-level performance metrics',
+          properties: {
+            uptime: { type: 'number', description: 'System uptime in seconds' },
+            memoryUsage: { type: 'object', description: 'Memory usage statistics' },
+            cpuUsage: { type: 'object', description: 'CPU usage statistics' }
+          }
+        },
+        services: {
+          type: 'object',
+          description: 'Health status of individual services',
+          properties: {
+            api: { type: 'object', description: 'API service health' },
+            database: { type: 'object', description: 'Database service health and metrics' },
+            redis: { type: 'object', description: 'Redis service health and metrics' },
+            kafka: { type: 'object', description: 'Kafka service health and metrics' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 503, description: 'Service unavailable - One or more critical services are unhealthy' })
   async getHealth(): Promise<HealthCheckResponse> {
     const health: HealthCheckResponse = {
       status: 'healthy',
@@ -169,9 +218,38 @@ export class HealthController {
   }
 
   @Get('redis')
-  @ApiOperation({ summary: 'Check Redis health' })
-  @ApiResponse({ status: 200, description: 'Redis health check successful' })
-  @ApiResponse({ status: 503, description: 'Redis health check failed' })
+  @ApiOperation({ 
+    summary: 'Check Redis health',
+    description: 'Returns detailed health information about the Redis service. No parameters required.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Redis health check successful',
+    schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', example: 'ok' },
+        info: { 
+          type: 'object',
+          description: 'Detailed Redis information',
+          properties: {
+            dbSize: { type: 'number', description: 'Number of keys in the Redis database' },
+            memoryInfo: { 
+              type: 'object', 
+              description: 'Redis memory usage information',
+              properties: {
+                usedMemory: { type: 'number', description: 'Used memory in bytes' },
+                usedMemoryHuman: { type: 'string', description: 'Human-readable used memory' },
+                maxMemory: { type: 'number', description: 'Maximum memory limit in bytes' },
+                maxMemoryHuman: { type: 'string', description: 'Human-readable maximum memory' }
+              }
+            }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 503, description: 'Service unavailable - Redis health check failed' })
   async checkRedis() {
     try {
       const isHealthy = await this.redis.healthCheck();

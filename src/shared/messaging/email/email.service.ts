@@ -171,18 +171,4 @@ export class EmailService {
     }
     return otp;
   }
-
-  async sendOTPEmail(to: string): Promise<boolean> {
-    const otp = this.generateOTP();
-    const emailOptions: EmailOptions = {
-      to,
-      subject: 'Your OTP Code',
-      template: EmailTemplate.OTP_LOGIN,
-      context: { otp }
-    };
-    
-    // Store OTP in a temporary storage with expiration (e.g., Redis)
-    // await this.storeOTP(to, otp);
-    return this.sendEmail(emailOptions);
-  }
 } 

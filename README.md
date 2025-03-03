@@ -88,12 +88,29 @@ src/
 - **Advanced Features**
   - Real-time notifications
   - SMS and Email integration
+  - WhatsApp Business API integration
   - Report generation
   - Analytics dashboard
   - Audit logging
   - Data export/import
   - Backup and recovery
   - Multi-language support
+
+## Authentication Features
+
+### OTP Authentication
+- Multi-channel OTP delivery (WhatsApp, SMS, Email)
+- **NEW: Automatic delivery through all available channels**
+- Intelligent fallback between delivery methods
+- Retry logic with exponential backoff
+- Comprehensive error handling and logging
+
+### Security Features
+- JWT-based authentication
+- **NEW: Token invalidation on logout**
+- **NEW: Session management (logout from specific sessions or all devices)**
+- Rate limiting to prevent brute force attacks
+- IP-based security measures
 
 ## 🏗️ Architecture
 
@@ -639,3 +656,14 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Cache Hit Ratio: > 80%
 - API Availability: 99.9%
 - Database Query Time: < 50ms
+
+## 📱 WhatsApp Integration
+
+The application includes integration with WhatsApp Business API for enhanced communication with patients:
+
+- **OTP Delivery**: Send one-time passwords via WhatsApp
+- **Appointment Reminders**: Send interactive appointment reminders with confirmation options
+- **Prescription Notifications**: Deliver prescription details and documents directly to patients
+- **Rich Media Support**: Send documents, images, and interactive messages
+
+For detailed setup instructions, see [WHATSAPP_INTEGRATION.md](WHATSAPP_INTEGRATION.md).
