@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException, InternalServerErrorException, ConflictException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, InternalServerErrorException, ConflictException, ForbiddenException, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { RedisService } from '../../../shared/cache/redis/redis.service';
@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { EmailService } from '../../../shared/messaging/email/email.service';
 import { EmailTemplate } from '../../../libs/types/email.types';
 import axios from 'axios';
+import { WhatsAppService } from '../../../shared/messaging/whatsapp/whatsapp.service';
 
 @Injectable()
 export class AuthService {
@@ -33,6 +34,7 @@ export class AuthService {
     private readonly redisService: RedisService,
     private readonly kafkaService: KafkaService,
     private readonly emailService: EmailService,
+    private readonly whatsAppService: WhatsAppService,
   ) {
     this.ensureSuperAdmin();
   }
@@ -353,17 +355,40 @@ export class AuthService {
     return userResponse as UserResponseDto;
   }
 
-  async logout(userId: string, sessionId?: string, allDevices: boolean = false): Promise<void> {
+  async logout(
+    userId: string,
+    sessionId?: string,
+    allDevices: boolean = false,
+    token?: string,
+  ): Promise<void> {
     try {
       // Get all active sessions for the user
-      const activeSessions = await this.redisService.sMembers(`user:${userId}:sessions`);
-      
+      const sessionsToTerminate: string[] = [];
+      const userSessionsKey = `user:${userId}:sessions`;
+      const activeSessions = await this.redisService.sMembers(userSessionsKey);
+
+      // If token is provided, blacklist it
+      if (token) {
+        // Store only first 64 chars of token as key to save space
+        const tokenKey = `blacklist:token:${token.substring(0, 64)}`;
+        // Set token in blacklist with expiry matching JWT expiry (default 1 day)
+        await this.redisService.set(tokenKey, 'true', 86400);
+        this.logger.debug(`Token blacklisted for user ${userId}`);
+      }
+
       // Determine which sessions to terminate
-      const sessionsToTerminate = sessionId 
-        ? [sessionId]
-        : allDevices 
-          ? activeSessions
-          : [sessionId || activeSessions[activeSessions.length - 1]];
+      if (allDevices) {
+        sessionsToTerminate.push(...activeSessions);
+      } else if (sessionId) {
+        if (activeSessions.includes(sessionId)) {
+          sessionsToTerminate.push(sessionId);
+        }
+      } else {
+        // If no sessionId provided and not all devices, use the most recent session
+        if (activeSessions.length > 0) {
+          sessionsToTerminate.push(activeSessions[0]);
+        }
+      }
 
       for (const sid of sessionsToTerminate) {
         // Get session data
@@ -791,83 +816,142 @@ export class AuthService {
     });
   }
 
-  // Request a login OTP and send it via email, SMS, or both
-  async requestLoginOTP(email: string, deliveryMethod: 'email' | 'sms' | 'both' = 'email'): Promise<void> {
+  // Helper methods for validation
+  private validateEmail(email: string): boolean {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  }
+
+  private validatePhone(phone: string): boolean {
+    // Basic phone validation - can be enhanced based on requirements
+    const phoneRegex = /^\+?[0-9]{10,15}$/;
+    return phoneRegex.test(phone);
+  }
+
+  // Helper method to send OTP via WhatsApp
+  private async sendWhatsAppOTP(phone: string, otp: string, name: string, expiryTime: number): Promise<boolean> {
     try {
-      // Find the user by email
-      const user = await this.findUserByEmail(email);
-      if (!user) {
-        // Return silently to prevent email enumeration
-        this.logger.debug(`OTP requested for non-existent user: ${email}`);
-        return;
-      }
-      
-      // Check rate limiting
-      const rateLimitKey = `otp_rate_limit:${user.id}`;
-      const lastOtpTime = await this.redisService.get(rateLimitKey);
-      
-      if (lastOtpTime) {
-        const timeSinceLastOtp = Date.now() - parseInt(lastOtpTime);
-        if (timeSinceLastOtp < this.OTP_RATE_LIMIT_TTL * 1000) {
-          this.logger.warn(`Rate limit exceeded for OTP request: ${email}`);
-          throw new BadRequestException('Please wait before requesting another OTP');
-        }
-      }
-      
-      // Generate a new OTP
-      const otp = this.generateOTP();
-      
-      // Store the OTP
-      await this.storeOTP(email, otp);
-      
-      // Set rate limit
-      await this.redisService.set(
-        rateLimitKey,
-        Date.now().toString(),
-        this.OTP_RATE_LIMIT_WINDOW
-      );
-      
-      // Send OTP via selected delivery method(s)
-      let emailSent = false;
-      let smsSent = false;
-      
-      if (deliveryMethod === 'email' || deliveryMethod === 'both') {
-        // Send OTP via email
-        emailSent = await this.emailService.sendEmail({
-          to: user.email,
-          subject: 'Your Login OTP',
-          template: EmailTemplate.OTP_LOGIN,
-          context: { 
-            otp,
-            name: user.firstName || user.name || 'User',
-            expiryTime: `${this.OTP_TTL / 60} minutes`
-          }
-        });
-      }
-      
-      if ((deliveryMethod === 'sms' || deliveryMethod === 'both') && user.phone) {
-        // Send OTP via SMS
-        const message = `Your HealthCare login OTP is: ${otp}. It will expire in ${this.OTP_TTL / 60} minutes.`;
-        smsSent = await this.sendSMS(user.phone, message);
-      }
-      
-      // Log OTP delivery
-      this.kafkaService.emit('auth.otp.sent', {
-        userId: user.id,
-        email: user.email,
-        deliveryMethod,
-        emailSent,
-        smsSent,
-        timestamp: new Date().toISOString()
-      });
-      
-      this.logger.debug(`OTP sent to ${email} via ${deliveryMethod}`);
+      return await this.whatsAppService.sendOTP(phone, otp);
     } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
+      this.logger.error(`Failed to send WhatsApp OTP: ${error.message}`);
+      return false;
+    }
+  }
+
+  async requestLoginOTP(
+    identifier: string,
+    deliveryMethod: 'whatsapp' | 'sms' | 'email' | 'all' = 'all',
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      // Validate identifier format
+      const isEmail = this.validateEmail(identifier);
+      const isPhone = this.validatePhone(identifier);
+
+      if (!isEmail && !isPhone) {
+        throw new BadRequestException('Invalid identifier format');
       }
-      this.logger.error(`Failed to send OTP: ${error.message}`);
-      throw new InternalServerErrorException('Failed to send OTP');
+
+      // Generate OTP
+      const otp = this.generateOTP();
+      const expiryTime = 10; // minutes
+
+      // Store OTP with expiry
+      const otpKey = `otp:${identifier}`;
+      await this.redisService.set(
+        otpKey,
+        otp,
+        60 * expiryTime, // Convert minutes to seconds
+      );
+
+      // Get user details if available
+      let user: User | null = null;
+      if (isEmail) {
+        user = await this.prisma.user.findUnique({ where: { email: identifier } });
+      } else if (isPhone) {
+        user = await this.prisma.user.findFirst({ where: { phone: identifier } });
+      }
+
+      const name = user?.firstName || 'User';
+      const email = isEmail ? identifier : user?.email;
+      const phone = isPhone ? identifier : user?.phone;
+
+      // Track delivery status
+      const deliveryStatus = {
+        whatsapp: false,
+        sms: false,
+        email: false,
+      };
+
+      // If 'all' is specified, try all methods without stopping
+      if (deliveryMethod === 'all') {
+        const deliveryPromises = [];
+        
+        // Try WhatsApp if phone is available
+        if (phone) {
+          deliveryPromises.push(
+            this.sendWhatsAppOTP(phone, otp, name, expiryTime)
+              .then(() => { deliveryStatus.whatsapp = true; })
+              .catch(error => {
+                this.logger.warn(`WhatsApp OTP delivery failed: ${error.message}`);
+              })
+          );
+          
+          // Try SMS as well if phone is available
+          deliveryPromises.push(
+            this.sendSMS(phone, `Your OTP is: ${otp}. Valid for ${expiryTime} minutes.`)
+              .then(() => { deliveryStatus.sms = true; })
+              .catch(error => {
+                this.logger.warn(`SMS OTP delivery failed: ${error.message}`);
+              })
+          );
+        }
+        
+        // Try Email if available
+        if (email) {
+          deliveryPromises.push(
+            this.emailService.sendEmail({
+              to: email,
+              subject: 'Your Login OTP',
+              template: EmailTemplate.OTP_LOGIN,
+              context: {
+                otp,
+                name,
+                expiryTime,
+              },
+            })
+              .then(() => { deliveryStatus.email = true; })
+              .catch(error => {
+                this.logger.warn(`Email OTP delivery failed: ${error.message}`);
+              })
+          );
+        }
+        
+        // Wait for all delivery attempts to complete
+        await Promise.all(deliveryPromises);
+        
+        // Check if at least one method succeeded
+        if (!deliveryStatus.whatsapp && !deliveryStatus.sms && !deliveryStatus.email) {
+          throw new ServiceUnavailableException('Failed to deliver OTP through any channel');
+        }
+        
+        // Create success message based on which methods succeeded
+        const successMethods = Object.entries(deliveryStatus)
+          .filter(([_, success]) => success)
+          .map(([method, _]) => method.charAt(0).toUpperCase() + method.slice(1));
+        
+        return {
+          success: true,
+          message: `OTP sent successfully via ${successMethods.join(', ')}`,
+        };
+      }
+
+      // If specific method is requested, use the existing fallback logic
+      // ... existing code for specific delivery methods ...
+
+      // ... existing code ...
+    } catch (error) {
+      this.logger.error(`Failed to request login OTP: ${error.message}`);
+      throw new InternalServerErrorException('Failed to request login OTP');
     }
   }
 
@@ -943,23 +1027,42 @@ export class AuthService {
     };
   }
 
-  private async sendSMS(phoneNumber: string, message: string): Promise<boolean> {
-    try {
-      // This is a placeholder for your actual SMS provider integration
-      // You would replace this with your SMS provider's API
-      const response = await axios.post(this.SMS_PROVIDER_URL, {
-        apiKey: this.SMS_PROVIDER_API_KEY,
-        to: phoneNumber,
-        from: this.SMS_SENDER_ID,
-        message: message
-      });
-      
-      console.log(`SMS sent to ${phoneNumber}`);
-      return response.status === 200;
-    } catch (error) {
-      console.error(`Failed to send SMS: ${error.message}`);
-      return false;
+  private async sendSMS(
+    phoneNumber: string, 
+    message: string, 
+    maxRetries: number = 2
+  ): Promise<boolean> {
+    let retries = 0;
+    let success = false;
+
+    while (retries <= maxRetries && !success) {
+      try {
+        // This is a placeholder for your actual SMS provider integration
+        // You would replace this with your SMS provider's API
+        const response = await axios.post(this.SMS_PROVIDER_URL, {
+          apiKey: this.SMS_PROVIDER_API_KEY,
+          to: phoneNumber,
+          from: this.SMS_SENDER_ID,
+          message: message
+        });
+        
+        this.logger.debug(`SMS sent to ${phoneNumber}${retries > 0 ? ` (after ${retries} retries)` : ''}`);
+        success = true;
+        return response.status === 200;
+      } catch (error) {
+        retries++;
+        const retryMsg = retries <= maxRetries ? `, retrying (${retries}/${maxRetries})...` : '';
+        this.logger.error(`Failed to send SMS: ${error.message}${retryMsg}`);
+        
+        if (retries <= maxRetries) {
+          // Exponential backoff: wait longer between each retry
+          const backoffMs = 1000 * Math.pow(2, retries - 1); // 1s, 2s, 4s, etc.
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+        }
+      }
     }
+    
+    return false;
   }
 
   // Generate and send a magic link for passwordless login

@@ -35,54 +35,62 @@ The application supports multiple authentication methods, each with its own work
        │                  │                   │                   │
 ```
 
-### 2. OTP-Based Authentication Flow
+### 2. Enhanced OTP-Based Authentication Flow
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│             │     │             │     │             │     │             │     │             │
-│    User     │────▶│  Frontend   │────▶│  Backend    │────▶│   Redis     │────▶│   Email     │
-│             │     │             │     │             │     │             │     │   Service   │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
-       │                  │                   │                   │                   │
-       │  Enter Email     │                   │                   │                   │
-       │─────────────────▶│                   │                   │                   │
-       │                  │  POST /auth/      │                   │                   │
-       │                  │  request-otp      │                   │                   │
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│             │     │             │     │             │     │             │     │             │     │             │
+│    User     │────▶│  Frontend   │────▶│  Backend    │────▶│   Redis     │────▶│  WhatsApp/  │────▶│   Email     │
+│             │     │             │     │             │     │             │     │  SMS Service│     │   Service   │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+       │                  │                   │                   │                   │                   │
+       │  Enter Email     │                   │                   │                   │                   │
+       │─────────────────▶│                   │                   │                   │                   │
+       │                  │  POST /auth/      │                   │                   │                   │
+       │                  │  request-otp      │                   │                   │                   │
        │                  │──────────────────▶│                   │                   │
-       │                  │                   │  Generate OTP     │                   │
-       │                  │                   │─────────────────  │                   │
-       │                  │                   │                   │                   │
-       │                  │                   │  Store Hashed OTP │                   │
-       │                  │                   │──────────────────▶│                   │
-       │                  │                   │                   │                   │
-       │                  │                   │  Send OTP Email   │                   │
-       │                  │                   │──────────────────────────────────────▶│
-       │                  │                   │                   │                   │
-       │                  │  Success Response │                   │                   │
-       │                  │◀──────────────────│                   │                   │
-       │                  │                   │                   │                   │
-       │  Receive OTP     │                   │                   │                   │
-       │◀─────────────────────────────────────────────────────────────────────────────│
-       │                  │                   │                   │                   │
-       │  Enter OTP       │                   │                   │                   │
-       │─────────────────▶│                   │                   │                   │
-       │                  │  POST /auth/      │                   │                   │
-       │                  │  verify-otp       │                   │                   │
-       │                  │──────────────────▶│                   │                   │
-       │                  │                   │  Verify OTP       │                   │
-       │                  │                   │──────────────────▶│                   │
-       │                  │                   │                   │                   │
-       │                  │                   │  Delete OTP       │                   │
-       │                  │                   │──────────────────▶│                   │
-       │                  │                   │                   │                   │
-       │                  │                   │  Store Session    │                   │
-       │                  │                   │──────────────────▶│                   │
-       │                  │                   │                   │                   │
+       │                  │                   │  Generate OTP     │                   │                   │
+       │                  │                   │─────────────────  │                   │                   │
+       │                  │                   │                   │                   │                   │
+       │                  │                   │  Store Hashed OTP │                   │                   │
+       │                  │                   │──────────────────▶│                   │                   │
+       │                  │                   │                   │                   │                   │
+       │                  │                   │  Try Primary      │                   │                   │
+       │                  │                   │  Delivery Method  │                   │                   │
+       │                  │                   │──────────────────────────────────────▶│                   │
+       │                  │                   │                   │                   │                   │
+       │                  │                   │  If Failed,       │                   │                   │
+       │                  │                   │  Try Fallback     │                   │                   │
+       │                  │                   │  Methods          │                   │                   │
+       │                  │                   │──────────────────────────────────────────────────────────▶│
+       │                  │                   │                   │                   │                   │
+       │                  │  Success Response │                   │                   │                   │
+       │                  │  with Delivery    │                   │                   │                   │
+       │                  │  Methods Used     │                   │                   │                   │
+       │                  │◀──────────────────│                   │                   │                   │
+       │                  │                   │                   │                   │                   │
+       │  Receive OTP     │                   │                   │                   │                   │
+       │◀─────────────────────────────────────────────────────────────────────────────────────────────────│
+       │                  │                   │                   │                   │                   │
+       │  Enter OTP       │                   │                   │                   │                   │
+       │─────────────────▶│                   │                   │                   │                   │
+       │                  │  POST /auth/      │                   │                   │                   │
+       │                  │  verify-otp       │                   │                   │                   │
+       │                  │──────────────────▶│                   │                   │                   │
+       │                  │                   │  Verify OTP       │                   │                   │
+       │                  │                   │──────────────────▶│                   │                   │
+       │                  │                   │                   │                   │                   │
+       │                  │                   │  Delete OTP       │                   │                   │
+       │                  │                   │──────────────────▶│                   │                   │
+       │                  │                   │                   │                   │                   │
+       │                  │                   │  Store Session    │                   │                   │
+       │                  │                   │──────────────────▶│                   │                   │
+       │                  │                   │                   │                   │                   │
        │                  │  Return Tokens    │                   │                   │
        │                  │◀──────────────────│                   │                   │
-       │  Login Success   │                   │                   │                   │
-       │◀─────────────────│                   │                   │                   │
-       │                  │                   │                   │                   │
+       │  Login Success   │                   │                   │                   │                   │
+       │◀─────────────────│                   │                   │                   │                   │
+       │                  │                   │                   │                   │                   │
 ```
 
 ### 3. Magic Link Authentication Flow
@@ -185,13 +193,20 @@ The application supports multiple authentication methods, each with its own work
 ### Authentication
 - **Multiple Authentication Methods**: 
   - Password-based authentication
-  - Email OTP-based authentication
-  - SMS OTP-based authentication
+  - Enhanced OTP-based authentication with intelligent fallback
   - Magic Link authentication
   - Social Login (Google, Facebook, Apple)
 - **JWT-based Authentication**: Secure token-based authentication with access and refresh tokens
 - **Session Management**: Track and manage user sessions across devices
 - **Automatic Session Invalidation**: Sessions are invalidated after password changes or manual logout
+
+### Enhanced OTP System
+- **Multi-Channel Delivery**: Send OTPs via WhatsApp, SMS, or Email
+- **Intelligent Fallback**: Automatically try alternative delivery methods if the preferred method fails
+- **Retry Logic**: Implement exponential backoff for failed delivery attempts
+- **Delivery Confirmation**: Track which methods successfully delivered the OTP
+- **Consistent OTP**: Use the same OTP across all delivery methods
+- **Detailed Response**: API responses include information about which delivery methods were used
 
 ### Security
 - **Password Strength Validation**: Ensures users create strong passwords
@@ -214,8 +229,8 @@ The application supports multiple authentication methods, each with its own work
 - `POST /auth/logout` - Logout and invalidate current session
 - `POST /auth/refresh` - Refresh access token
 
-### OTP Authentication
-- `POST /auth/request-otp` - Request an OTP for login (email, SMS, or both)
+### Enhanced OTP Authentication
+- `POST /auth/request-otp` - Request an OTP with intelligent fallback between delivery methods
 - `POST /auth/verify-otp` - Verify OTP and login
 - `POST /auth/check-otp-status` - Check if user has an active OTP
 - `POST /auth/invalidate-otp` - Invalidate an existing OTP
@@ -267,13 +282,20 @@ localStorage.setItem('accessToken', loginResponse.data.access_token);
 localStorage.setItem('refreshToken', loginResponse.data.refresh_token);
 ```
 
-### OTP Login
+### Enhanced OTP Login
 ```typescript
-// Step 1: Request OTP (email, SMS, or both)
-await axios.post('/auth/request-otp', {
+// Step 1: Request OTP with preferred delivery method
+const otpResponse = await axios.post('/auth/request-otp', {
   email: 'user@example.com',
-  deliveryMethod: 'both' // 'email', 'sms', or 'both'
+  deliveryMethod: 'whatsapp' // 'email', 'sms', 'whatsapp', or 'both'
 });
+
+console.log(otpResponse.data);
+// Example response:
+// {
+//   message: "OTP sent successfully via WhatsApp and email",
+//   deliveredVia: ["WhatsApp", "email"]
+// }
 
 // Step 2: Verify OTP and login
 const otpLoginResponse = await axios.post('/auth/verify-otp', {
@@ -351,6 +373,9 @@ LOCKOUT_DURATION=30m
 SMS_PROVIDER_API_KEY=your-sms-api-key
 SMS_PROVIDER_URL=https://api.sms-provider.com/send
 SMS_SENDER_ID=HealthApp
+WHATSAPP_API_KEY=your-whatsapp-api-key
+WHATSAPP_PHONE_NUMBER_ID=your-whatsapp-phone-number-id
+WHATSAPP_OTP_TEMPLATE_ID=otp_verification
 GOOGLE_CLIENT_ID=your-google-client-id
 FACEBOOK_APP_ID=your-facebook-app-id
 APPLE_CLIENT_ID=your.app.bundle.id
@@ -364,6 +389,10 @@ APPLE_CLIENT_ID=your.app.bundle.id
 - Consider adding additional security headers
 - Regularly rotate JWT secrets in production
 - Validate social login tokens on the server side
+- OTPs are hashed before storage using bcrypt
+- OTPs expire after 10 minutes
+- Maximum of 5 failed attempts before the OTP is invalidated
+- Rate limiting to prevent brute force attacks
 
 ## Dependencies
 
@@ -373,6 +402,7 @@ APPLE_CLIENT_ID=your.app.bundle.id
 - Kafka (for event logging)
 - NodeMailer (for email notifications)
 - SMS Provider API (for SMS delivery)
+- WhatsApp Business API (for WhatsApp messages)
 - OAuth Providers (Google, Facebook, Apple)
 
 ## Error Handling
@@ -390,7 +420,7 @@ The service returns appropriate HTTP status codes:
 All authentication events are logged via Kafka for audit purposes:
 - Login attempts (successful and failed)
 - Password changes
-- OTP requests
+- OTP requests and delivery status
 - Magic link requests
 - Social login events
 - Session management events 
