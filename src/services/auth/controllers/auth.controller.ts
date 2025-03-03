@@ -16,12 +16,17 @@ import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { Public } from '../../../libs/decorators/public.decorator';
 import { AuthService } from '../services/auth.service';
 import { LoginDto } from '../../../libs/dtos/login.dto';
+import { EmailService } from '../../../shared/messaging/email/email.service';
+import { EmailTemplate } from '../../../libs/types/email.types';
 
 @ApiTags('auth')
 @Controller('auth')
 @ApiBearerAuth()
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly emailService: EmailService
+  ) {}
 
   @Public()
   @Post('register')
@@ -236,5 +241,54 @@ export class AuthController {
     @Body('newPassword') newPassword: string
   ): Promise<void> {
     await this.authService.resetPassword(token, newPassword);
+  }
+
+  @Post('test-email')
+  @Public()
+  @ApiOperation({ summary: 'Test email service' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', example: 'user@example.com' }
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: 200,
+    description: 'Email test result',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        timestamp: { type: 'string' }
+      }
+    }
+  })
+  async testEmail(@Body() body: { email: string }) {
+    try {
+      const result = await this.emailService.sendEmail({
+        to: body.email,
+        subject: 'Test Email from Healthcare App',
+        template: EmailTemplate.VERIFICATION,
+        context: {
+          verificationUrl: 'https://example.com/verify',
+          name: 'Test User'
+        }
+      });
+
+      return {
+        success: result,
+        message: result ? 'Email sent successfully' : 'Failed to send email',
+        timestamp: new Date()
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Error sending email: ${error.message}`,
+        timestamp: new Date()
+      };
+    }
   }
 } 
