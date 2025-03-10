@@ -1,8 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Role, Gender } from '@prisma/client';
 import { faker } from "@faker-js/faker";
 import {
-  Role,
-  Gender,
   AppointmentStatus,
   PaymentStatus,
   PaymentMethod,
@@ -30,30 +28,23 @@ async function main() {
     console.log('Cleaning database...');
     await cleanDatabase();
     
-    console.log('Starting database seeding...');
+    console.log('Starting comprehensive database seeding...');
 
-    // Create Clinics
-    console.log('Creating clinics...');
-    const clinics = await Promise.all(
-      Array(SEED_COUNT).fill(null).map(() => 
-        prisma.clinic.create({
-          data: {
-            name: faker.company.name(),
-            address: faker.location.streetAddress(),
-            phone: faker.phone.number(),
-          }
-        })
-      )
-    );
+    // ===== SUPER ADMIN CREATION =====
+    console.log('Checking if SuperAdmin user exists...');
+    let superAdminUser = await prisma.user.findUnique({
+      where: {
+        email: 'admin@example.com'
+      }
+    });
 
-    // Create Users with different roles
-    console.log('Creating users...');
-    const hashedPassword = await bcrypt.hash('admin123', 10);
-    const users = await Promise.all([
-      // Super Admin
-      prisma.user.create({
+    if (!superAdminUser) {
+      // Create a SuperAdmin user
+      console.log('Creating SuperAdmin user...');
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      
+      superAdminUser = await prisma.user.create({
         data: {
-          id: generateUserId(),
           email: 'admin@example.com',
           password: hashedPassword,
           name: 'Admin User',
@@ -64,9 +55,149 @@ async function main() {
           role: Role.SUPER_ADMIN,
           gender: Gender.MALE,
           isVerified: true,
-        },
-      }),
+        }
+      });
+
+      // Create SuperAdmin record
+      await prisma.superAdmin.create({
+        data: {
+          userId: superAdminUser.id
+        }
+      });
+      console.log('SuperAdmin user created successfully.');
+    } else {
+      console.log('SuperAdmin user already exists, skipping creation.');
+    }
+
+    // ===== CLINIC CREATION =====
+    console.log('Checking if clinics exist...');
+    
+    // Aadesh Ayurvedalay Clinic
+    let aadeshClinic = await prisma.clinic.findFirst({
+      where: {
+        name: 'Aadesh Ayurvedalay'
+      }
+    });
+
+    if (!aadeshClinic) {
+      console.log('Creating Aadesh Ayurvedalay clinic...');
+      aadeshClinic = await prisma.clinic.create({
+        data: {
+          name: 'Aadesh Ayurvedalay',
+          address: 'Pune, Maharashtra',
+          phone: '1234567890',
+          app_name: 'aadesh_app',
+          db_connection_string: 'postgresql://postgres:postgres@postgres:5432/clinic_aadesh_app?schema=public',
+        } as any // Type assertion for fields not recognized by Prisma client
+      });
+      console.log(`Aadesh Ayurvedalay clinic created with ID: ${aadeshClinic.id}`);
+    } else {
+      console.log('Aadesh Ayurvedalay clinic already exists, skipping creation.');
+    }
+
+    // Shri Vishwamurthi Ayurvedalay Clinic
+    let vishwamurthiClinic = await prisma.clinic.findFirst({
+      where: {
+        name: 'Shri Vishwamurthi Ayurvedalay'
+      }
+    });
+
+    if (!vishwamurthiClinic) {
+      console.log('Creating Shri Vishwamurthi Ayurvedalay clinic...');
+      vishwamurthiClinic = await prisma.clinic.create({
+        data: {
+          name: 'Shri Vishwamurthi Ayurvedalay',
+          address: 'Mumbai, Maharashtra',
+          phone: '0987654321',
+          app_name: 'vishwamurthi_app',
+          db_connection_string: 'postgresql://postgres:postgres@postgres:5432/clinic_vishwamurthi_app?schema=public',
+        } as any // Type assertion for fields not recognized by Prisma client
+      });
+      console.log(`Shri Vishwamurthi Ayurvedalay clinic created with ID: ${vishwamurthiClinic.id}`);
+    } else {
+      console.log('Shri Vishwamurthi Ayurvedalay clinic already exists, skipping creation.');
+    }
+
+    // ===== SAMPLE USERS CREATION =====
+    // Create a sample doctor
+    const doctorExists = await prisma.user.findUnique({
+      where: {
+        email: 'doctor@example.com'
+      }
+    });
+
+    if (!doctorExists) {
+      console.log('Creating sample doctor...');
+      const hashedPassword = await bcrypt.hash('doctor123', 10);
       
+      const doctorUser = await prisma.user.create({
+        data: {
+          email: 'doctor@example.com',
+          password: hashedPassword,
+          name: 'Dr. John Doe',
+          age: 40,
+          firstName: 'John',
+          lastName: 'Doe',
+          phone: '1122334455',
+          role: Role.DOCTOR,
+          gender: Gender.MALE,
+          isVerified: true,
+        }
+      });
+
+      // Create doctor record
+      await prisma.doctor.create({
+        data: {
+          userId: doctorUser.id,
+          specialization: 'General Physician',
+          qualification: 'MBBS, MD',
+          experience: 10,
+        }
+      });
+      console.log('Sample doctor created successfully.');
+    }
+
+    // Create a sample patient
+    const patientExists = await prisma.user.findUnique({
+      where: {
+        email: 'patient@example.com'
+      }
+    });
+
+    if (!patientExists) {
+      console.log('Creating sample patient...');
+      const hashedPassword = await bcrypt.hash('patient123', 10);
+      
+      const patientUser = await prisma.user.create({
+        data: {
+          email: 'patient@example.com',
+          password: hashedPassword,
+          name: 'Jane Smith',
+          age: 30,
+          firstName: 'Jane',
+          lastName: 'Smith',
+          phone: '9988776655',
+          role: Role.PATIENT,
+          gender: Gender.FEMALE,
+          isVerified: true,
+        }
+      });
+
+      // Create patient record
+      await prisma.patient.create({
+        data: {
+          userId: patientUser.id,
+          bloodGroup: 'O+',
+          height: 165,
+          weight: 65,
+        } as any // Type assertion for fields not recognized by Prisma client
+      });
+      console.log('Sample patient created successfully.');
+    }
+
+    // Create Users with different roles
+    console.log('Creating users...');
+    const users = await Promise.all([
       // Clinic Admins
       ...Array(SEED_COUNT).fill(null).map(() => 
         prisma.user.create({
@@ -144,17 +275,6 @@ async function main() {
       )
     ]);
 
-    // Create SuperAdmin
-    console.log('Creating super admin...');
-    const superAdminUser = users.find(u => u.role === Role.SUPER_ADMIN);
-    if (superAdminUser) {
-      await prisma.superAdmin.create({
-        data: {
-          userId: superAdminUser.id
-        }
-      });
-    }
-
     // Create ClinicAdmins
     console.log('Creating clinic admins...');
     const clinicAdminUsers = users.filter(u => u.role === Role.CLINIC_ADMIN);
@@ -163,7 +283,7 @@ async function main() {
         prisma.clinicAdmin.create({
           data: {
             userId: user.id,
-            clinicId: clinics[index % clinics.length].id
+            clinicId: faker.helpers.arrayElement([aadeshClinic, vishwamurthiClinic]).id
           }
         })
       )
@@ -196,7 +316,7 @@ async function main() {
         prisma.doctorClinic.create({
           data: {
             doctorId: doctor.id,
-            clinicId: faker.helpers.arrayElement(clinics).id,
+            clinicId: faker.helpers.arrayElement([aadeshClinic, vishwamurthiClinic]).id,
             startTime: faker.date.future(),
             endTime: faker.date.future()
           }
@@ -227,7 +347,7 @@ async function main() {
         prisma.receptionist.create({
           data: {
             userId: user.id,
-            clinicId: faker.helpers.arrayElement(clinics).id
+            clinicId: faker.helpers.arrayElement([aadeshClinic, vishwamurthiClinic]).id
           }
         })
       )
@@ -415,10 +535,16 @@ async function main() {
       )
     );
 
-    console.log('Seeding completed successfully');
+    console.log('Database seeding completed successfully!');
+    console.log('SuperAdmin credentials: admin@example.com / admin123');
+    console.log('Doctor credentials: doctor@example.com / doctor123');
+    console.log('Patient credentials: patient@example.com / patient123');
+
   } catch (error) {
-    console.error('Seed failed:', error);
-    throw error;
+    console.error('Error during database seeding:', error);
+    process.exit(1);
+  } finally {
+    await prisma.$disconnect();
   }
 }
 
@@ -455,11 +581,4 @@ async function cleanDatabase() {
   }
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+main();

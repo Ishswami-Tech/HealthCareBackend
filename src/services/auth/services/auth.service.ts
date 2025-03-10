@@ -11,6 +11,7 @@ import { EmailService } from '../../../shared/messaging/email/email.service';
 import { EmailTemplate } from '../../../libs/types/email.types';
 import axios from 'axios';
 import { WhatsAppService } from '../../../shared/messaging/whatsapp/whatsapp.service';
+import { ClinicDatabaseService } from '../../clinic/clinic-database.service';
 
 @Injectable()
 export class AuthService {
@@ -35,6 +36,7 @@ export class AuthService {
     private readonly kafkaService: KafkaService,
     private readonly emailService: EmailService,
     private readonly whatsAppService: WhatsAppService,
+    private readonly clinicDatabaseService: ClinicDatabaseService,
   ) {
     this.ensureSuperAdmin();
   }
@@ -1423,5 +1425,44 @@ export class AuthService {
       this.logger.error(`Google token verification failed: ${error.message}`);
       throw new UnauthorizedException('Invalid Google token');
     }
+  }
+
+  /**
+   * Register a new user with clinic-specific context
+   * @param createUserDto User registration data
+   * @param appName Optional clinic app name for clinic-specific registration
+   * @returns The registered user
+   */
+  async registerWithClinic(createUserDto: CreateUserDto, appName?: string): Promise<UserResponseDto> {
+    // First, register the user in the global database
+    const user = await this.register(createUserDto);
+
+    // If an app name is provided, register the user to the specific clinic
+    if (appName) {
+      try {
+        // Get the clinic by app name
+        const clinic = await this.clinicDatabaseService.getClinicByAppName(appName);
+        
+        if (clinic) {
+          // Get a client for the clinic's database
+          const clinicClient = await this.prisma.getClinicClient(clinic.id);
+          
+          // Create a patient record in the clinic's database
+          await clinicClient.patient.create({
+            data: {
+              userId: user.id,
+            },
+          });
+
+          // Log the clinic registration
+          this.logger.log(`User ${user.id} registered to clinic ${clinic.id} (${appName})`);
+        }
+      } catch (error) {
+        // Log the error but don't fail the registration
+        this.logger.error(`Failed to register user to clinic: ${error.message}`, error.stack);
+      }
+    }
+
+    return user;
   }
 } 
