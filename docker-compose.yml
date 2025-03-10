@@ -14,6 +14,7 @@ services:
       NODE_ENV: development
       APP_ENV: development
       IS_DEV: 'true'
+      RESET_DB: 'true'
       PRISMA_SCHEMA_PATH: ./src/shared/database/prisma/schema.prisma
       # Rate limiting configuration
       RATE_LIMIT_ENABLED: 'true'
@@ -54,11 +55,6 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
-    command: >
-      sh -c "npx prisma generate --schema=./src/shared/database/prisma/schema.prisma &&
-             npx prisma migrate deploy --schema=./src/shared/database/prisma/schema.prisma &&
-             npx prisma studio --schema=./src/shared/database/prisma/schema.prisma &
-             npm run start:dev"
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,7 +84,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   pgadmin:

@@ -61,15 +61,17 @@ model Receptionist {
 }
 
 model Clinic {
-  id            String         @id @default(uuid())
-  name          String
-  address       String
-  phone         String
-  createdAt     DateTime       @default(now())
-  admins        ClinicAdmin[]
-  doctors       DoctorClinic[]
-  Receptionist  Receptionist[]
-  receptionists Receptionist[] @relation("ReceptionistsAtClinic")
+  id                   String         @id @default(uuid())
+  name                 String
+  address              String
+  phone                String
+  app_name             String         @unique
+  db_connection_string String         @unique
+  createdAt            DateTime       @default(now())
+  admins               ClinicAdmin[]
+  doctors              DoctorClinic[]
+  Receptionist         Receptionist[]
+  receptionists        Receptionist[] @relation("ReceptionistsAtClinic")
 }
 
 model SuperAdmin {

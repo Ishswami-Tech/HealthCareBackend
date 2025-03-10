@@ -49,13 +49,78 @@ export class AuthController {
   })
   @ApiResponse({ 
     status: 400, 
-    description: 'Email already registered or invalid input'
+    description: 'Bad request - validation error or user already exists'
+  })
+  @ApiResponse({ 
+    status: 500, 
+    description: 'Internal server error'
   })
   async register(@Body() createUserDto: CreateUserDto): Promise<UserResponseDto> {
-    return this.authService.register(createUserDto);
+    try {
+      return await this.authService.register(createUserDto);
+    } catch (error) {
+      this.logger.error(`Registration failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      if (error.code === 'P2002') {
+        throw new BadRequestException('User with this email already exists');
+      }
+      
+      throw new InternalServerErrorException('Registration failed');
+    }
   }
 
   @Public()
+  @Post('register-with-clinic')
+  @ApiOperation({ 
+    summary: 'Register a new user with clinic association',
+    description: 'Create a new user account and associate it with a specific clinic'
+  })
+  @ApiResponse({ 
+    status: 201, 
+    type: UserResponseDto,
+    description: 'User successfully registered and associated with clinic'
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Bad request - validation error or user already exists'
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Clinic not found'
+  })
+  @ApiResponse({ 
+    status: 500, 
+    description: 'Internal server error'
+  })
+  async registerWithClinic(
+    @Body() createUserDto: CreateUserDto,
+    @Body('appName') appName: string
+  ): Promise<UserResponseDto> {
+    try {
+      if (!appName) {
+        throw new BadRequestException('App name is required for clinic registration');
+      }
+      
+      return await this.authService.registerWithClinic(createUserDto, appName);
+    } catch (error) {
+      this.logger.error(`Clinic registration failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      if (error.code === 'P2002') {
+        throw new BadRequestException('User with this email already exists');
+      }
+      
+      throw new InternalServerErrorException('Registration failed');
+    }
+  }
+
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

@@ -9,6 +9,7 @@ import { UsersModule } from "../users/users.module";
 import { AuthService } from "./services/auth.service";
 import { GuardsModule } from "../../libs/guards/guards.module";
 import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
+import { ClinicModule } from '../clinic/clinic.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
     UsersModule,
     GuardsModule,
     RateLimitModule,
+    ClinicModule,
   ],
   controllers: [AuthController],
   providers: [AuthService],
