@@ -7,7 +7,7 @@ interface BaseUserFields {
   email: string;
   password: string;
   name: string;
-  age: number;
+  age?: number;
   firstName: string;
   lastName: string;
   phone: string;
