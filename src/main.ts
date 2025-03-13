@@ -40,13 +40,20 @@ async function bootstrap() {
 
     // CORS configuration
     await app.register(fastifyCors, {
-      origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'],
+      origin: (origin, cb) => {
+        if (!origin || origin.startsWith('http://localhost')) {
+          cb(null, true); // Allow requests from any localhost
+        } else {
+          cb(null, false); // Block other origins
+        }
+      },
       methods: process.env.CORS_METHODS || 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
       credentials: process.env.CORS_CREDENTIALS === 'true',
       allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With'],
       exposedHeaders: ['Content-Range', 'X-Content-Range'],
       maxAge: 86400 // 24 hours
     });
+    
 
     const config = new DocumentBuilder()
       .setTitle("Healthcare API")
