@@ -1,0 +1,31 @@
+FROM node:20-alpine
+
+# Install necessary tools
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including devDependencies)
+RUN npm install --legacy-peer-deps
+
+# Create dist directory with proper permissions
+RUN mkdir -p /app/dist && chmod 777 /app/dist
+
+# Copy the rest of the application
+COPY . .
+
+# Set Prisma schema path and generate client
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
+
+# Make the script executable
+RUN chmod +x /app/src/shared/database/prisma/wait-for-postgres.sh
+
+# Expose ports
+EXPOSE 8088 5555
+
+# The command will be overridden by docker-compose
+CMD ["npm", "run", "start:dev"] 

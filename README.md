@@ -183,13 +183,65 @@ REDIS_PORT=6379
 PRISMA_SCHEMA_PATH=./src/shared/database/prisma/schema.prisma
 ```
 
+### Docker Development Setup
+
+The application includes a development-specific Docker setup with hot-reloading for a better development experience:
+
+1. **Development Docker Compose**:
+   - Uses `docker-compose.dev.yml` for development
+   - Hot-reloading enabled for code changes
+   - Volume mounts for local code
+   - Separate development containers
+
+2. **Development Dockerfile**:
+   - Uses `Dockerfile.dev` for development
+   - Includes all development dependencies
+   - Configures proper permissions for hot-reloading
+
+3. **Run Script**:
+   - Provides a convenient `run.sh` script for managing the application
+   - Supports both development and production modes
+   - Includes commands for logs, backups, and maintenance
+
+#### Development Commands
+
+```bash
+# Start development environment with hot-reloading
+./run.sh dev start
+
+# View logs
+./run.sh dev logs:api    # API logs
+./run.sh dev logs:db     # Database logs
+./run.sh dev logs:redis  # Redis logs
+
+# Restart services
+./run.sh dev restart
+
+# Stop services
+./run.sh dev stop
+
+# Clean up (with volumes)
+./run.sh dev clean --volumes
+```
+
+#### Development Features
+
+- **Hot Reloading**: Changes to your code are automatically detected and the application restarts
+- **Volume Mounts**: 
+  - Your local code is mounted to `/app` in the container
+  - `node_modules` is excluded from the mount to prevent conflicts
+- **Development Tools**:
+  - Prisma Studio: http://localhost:5555
+  - PgAdmin: http://localhost:5050 (admin@admin.com/admin)
+  - Redis Commander: http://localhost:8082 (admin/admin)
+
 ### Docker Services
 
 The application uses Docker Compose with the following services:
 
 1. **API Service**:
    - NestJS application
-   - Ports: 3000 (API), 5555 (Prisma Studio)
+   - Ports: 8088 (API), 5555 (Prisma Studio)
    - Development hot-reload enabled
 
 2. **PostgreSQL**:
@@ -212,7 +264,10 @@ The application uses Docker Compose with the following services:
 
 5. **Redis Commander**:
    - Redis management interface
-   - Port: 8081
+   - Port: 8082
+   - Default credentials:
+     - Username: admin
+     - Password: admin
 
 ### Installation Steps
 
@@ -231,7 +286,11 @@ cp .env.example .env
 
 3. Start Docker services:
 ```bash
-docker-compose up -d
+# For development with hot-reloading
+./run.sh dev start
+
+# For production
+./run.sh prod start
 ```
 
 4. Database setup:
@@ -336,7 +395,7 @@ docker build -t healthcare-api .
 
 2. Run the container:
 ```bash
-docker run -p 3000:3000 healthcare-api
+docker run -p 8088:8088 healthcare-api
 ```
 
 ### Production Considerations
@@ -405,34 +464,34 @@ npx prisma db seed
 
 ### Docker Setup
 ```bash
-# Build and start all services
-docker-compose up -d
+# For development with hot-reloading
+./run.sh dev start
+
+# For production
+./run.sh prod start
 
 # View logs
-docker-compose logs -f
+./run.sh dev logs:api
 
 # Stop services
-docker-compose down
+./run.sh dev stop
 ```
 
 ## 🚀 Running the Application
 
 ### Development
 ```bash
-# Start in watch mode
-npm run start:dev
+# Start in development mode with hot-reloading
+./run.sh dev start
 
-# Start with debugger
-npm run start:debug
+# View logs
+./run.sh dev logs:api
 ```
 
 ### Production
 ```bash
-# Build
-npm run build
-
-# Start production server
-npm run start:prod
+# Start in production mode
+./run.sh prod start
 
 # With PM2
 pm2 start dist/main.js --name healthcare-api
@@ -441,7 +500,7 @@ pm2 start dist/main.js --name healthcare-api
 ## 📚 API Documentation
 
 Once the application is running, access the Swagger documentation at:
-```http://localhost:3000/api
+```http://localhost:8088/api
 
 ## 🌐 API Endpoints
 
@@ -603,7 +662,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 📞 Support
 
 - Technical Support: [your-email]
-- Documentation: http://localhost:3000/api
+- Documentation: http://localhost:8088/api
 - Issue Tracking: GitHub Issues
 
 ## 🗺️ Roadmap
