@@ -11,6 +11,9 @@ import { EmailTemplate } from '../../../libs/types/email.types';
 import axios from 'axios';
 import { WhatsAppService } from '../../../shared/messaging/whatsapp/whatsapp.service';
 import { ClinicDatabaseService } from '../../clinic/clinic-database.service';
+import { LoggingService } from '../../../shared/logging/logging.service';
+import { EventService } from '../../../shared/events/event.service';
+import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
 
 @Injectable()
 export class AuthService {
@@ -35,19 +38,21 @@ export class AuthService {
     private readonly emailService: EmailService,
     private readonly whatsAppService: WhatsAppService,
     private readonly clinicDatabaseService: ClinicDatabaseService,
+    private readonly loggingService: LoggingService,
+    private readonly eventService: EventService,
   ) {
     this.ensureSuperAdmin();
   }
 
   private async ensureSuperAdmin() {
-    const superAdminEmail = 'superadmin@healthcare.com';
-    const existingSuperAdmin = await this.prisma.user.findFirst({
-      where: { role: Role.SUPER_ADMIN }
-    });
+    try {
+      const superAdminEmail = 'superadmin@healthcare.com';
+      const existingSuperAdmin = await this.prisma.user.findFirst({
+        where: { role: Role.SUPER_ADMIN }
+      });
 
-    if (!existingSuperAdmin) {
-      const hashedPassword = await bcrypt.hash('superadmin123', this.SALT_ROUNDS);
-      try {
+      if (!existingSuperAdmin) {
+        const hashedPassword = await bcrypt.hash('superadmin123', this.SALT_ROUNDS);
         const superAdmin = await this.prisma.user.create({
           data: {
             email: superAdminEmail,
@@ -65,9 +70,30 @@ export class AuthService {
         await this.prisma.superAdmin.create({
           data: { userId: superAdmin.id }
         });
-      } catch (error) {
-        console.error('Error creating super admin:', error);
+
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Super admin user created',
+          'AuthService',
+          { email: superAdminEmail }
+        );
+
+        await this.eventService.emit('user.created', {
+          userId: superAdmin.id,
+          role: Role.SUPER_ADMIN,
+          email: superAdminEmail
+        });
       }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to ensure super admin',
+        'AuthService',
+        { error: error.message }
+      );
+      throw error;
     }
   }
 
@@ -102,94 +128,114 @@ export class AuthService {
   }
 
   async login(user: User, request: any) {
-    const payload = { email: user.email, sub: user.id, role: user.role };
-    const accessToken = this.jwtService.sign(payload);
-    const refreshToken = uuidv4();
-    const sessionId = uuidv4();
+    try {
+      const payload = { email: user.email, sub: user.id, role: user.role };
+      const accessToken = this.jwtService.sign(payload);
+      const refreshToken = uuidv4();
+      const sessionId = uuidv4();
 
-    // Extract device and IP information
-    const userAgent = request.headers['user-agent'] || 'unknown';
-    const ipAddress = request.ip || request.headers['x-forwarded-for'] || 'unknown';
-    const deviceInfo = this.parseUserAgent(userAgent);
+      // Extract device and IP information
+      const userAgent = request.headers['user-agent'] || 'unknown';
+      const ipAddress = request.ip || request.headers['x-forwarded-for'] || 'unknown';
+      const deviceInfo = this.parseUserAgent(userAgent);
 
-    // Store session and refresh token in Redis
-    const sessionData = {
-      sessionId,
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      refreshToken,
-      lastLogin: new Date(),
-      deviceInfo,
-      ipAddress,
-      userAgent,
-      isActive: true,
-      createdAt: new Date(),
-      lastActivityAt: new Date()
-    };
-
-    // Store session data with multiple keys for different access patterns
-    await Promise.all([
-      // Main session data
-      this.redisService.set(
-        `session:${user.id}:${sessionId}`,
-        JSON.stringify(sessionData),
-        24 * 60 * 60
-      ),
-      // Refresh token mapping
-      this.redisService.set(
-        `refresh:${refreshToken}`,
-        JSON.stringify({ userId: user.id, sessionId }),
-        this.TOKEN_REFRESH_TTL
-      ),
-      // Active sessions index
-      this.redisService.sAdd(
-        `user:${user.id}:sessions`,
-        sessionId
-      ),
-      // Device tracking
-      this.redisService.set(
-        `device:${user.id}:${deviceInfo.deviceId}`,
-        JSON.stringify({
-          sessionId,
-          lastSeen: new Date(),
-          deviceInfo
-        }),
-        30 * 24 * 60 * 60 // 30 days
-      )
-    ]);
-
-    // Update last login and emit event
-    const updatedUser = await this.prisma.user.update({
-      where: { id: user.id },
-      data: { 
+      // Store session and refresh token in Redis
+      const sessionData = {
+        sessionId,
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        refreshToken,
         lastLogin: new Date(),
-        lastLoginIP: ipAddress,
-        lastLoginDevice: userAgent
-      },
-      include: {
-        doctor: true,
-        patient: true,
-        receptionist: true,
-        clinicAdmin: true,
-        superAdmin: true,
-      }
-    });
+        deviceInfo,
+        ipAddress,
+        userAgent,
+        isActive: true,
+        createdAt: new Date(),
+        lastActivityAt: new Date()
+      };
 
-    // Get role-specific redirect path
-    const redirectPath = this.getRedirectPathForRole(user.role);
+      await Promise.all([
+        this.redisService.set(
+          `session:${user.id}:${sessionId}`,
+          JSON.stringify(sessionData),
+          24 * 60 * 60
+        ),
+        this.redisService.set(
+          `refresh:${refreshToken}`,
+          JSON.stringify({ userId: user.id, sessionId }),
+          this.TOKEN_REFRESH_TTL
+        ),
+        this.redisService.sAdd(
+          `user:${user.id}:sessions`,
+          sessionId
+        ),
+        this.redisService.set(
+          `device:${user.id}:${deviceInfo.deviceId}`,
+          JSON.stringify({
+            sessionId,
+            lastSeen: new Date(),
+            deviceInfo
+          }),
+          30 * 24 * 60 * 60
+        )
+      ]);
 
-    // Remove sensitive data
-    const { password: _, ...userWithoutPassword } = updatedUser;
+      // Update last login and emit event
+      const updatedUser = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { 
+          lastLogin: new Date(),
+          lastLoginIP: ipAddress,
+          lastLoginDevice: userAgent
+        },
+        include: {
+          doctor: true,
+          patient: true,
+          receptionist: true,
+          clinicAdmin: true,
+          superAdmin: true,
+        }
+      });
 
-    return {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      session_id: sessionId,
-      user: userWithoutPassword,
-      redirectPath,
-      permissions: this.getRolePermissions(user.role)
-    };
+      // Log successful login
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        'User logged in successfully',
+        'AuthService',
+        { userId: user.id, email: user.email, role: user.role }
+      );
+
+      // Emit login event
+      await this.eventService.emit('user.loggedIn', {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        deviceInfo,
+        ipAddress
+      });
+
+      const { password: _, ...userWithoutPassword } = updatedUser;
+
+      return {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        session_id: sessionId,
+        user: userWithoutPassword,
+        redirectPath: this.getRedirectPathForRole(user.role),
+        permissions: this.getRolePermissions(user.role)
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.ERROR,
+        'Login failed',
+        'AuthService',
+        { error: error.message, email: user.email }
+      );
+      throw error;
+    }
   }
 
   // Get the appropriate redirect path based on user role
@@ -261,76 +307,107 @@ export class AuthService {
   }
 
   async register(createUserDto: CreateUserDto): Promise<UserResponseDto> {
-    const existingUser = await this.prisma.user.findFirst({
-      where: {
-        email: {
-          mode: 'insensitive',
-          equals: createUserDto.email
-        }
-      }
-    });
-
-    if (existingUser) {
-      throw new BadRequestException('Email already registered');
-    }
-
-    const hashedPassword = await bcrypt.hash(createUserDto.password, this.SALT_ROUNDS);
-    
-    // Format dateOfBirth as DateTime if it exists
-    const userData: any = { ...createUserDto };
-    if (userData.dateOfBirth) {
-      // Convert YYYY-MM-DD to a valid DateTime by appending time
-      userData.dateOfBirth = new Date(`${userData.dateOfBirth}T00:00:00Z`);
-    }
-    
-    const user = await this.prisma.user.create({
-      data: {
-        ...userData,
-        password: hashedPassword,
-        isVerified: false
-      },
-    });
-
-    // Create role-specific record
-    switch (user.role) {
-      case Role.PATIENT:
-        await this.prisma.patient.create({
-          data: { userId: user.id }
-        });
-        break;
-      case Role.DOCTOR:
-        await this.prisma.doctor.create({
-          data: {
-            userId: user.id,
-            specialization: createUserDto.specialization || '',
-            experience: createUserDto.experience || 0,
+    try {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          email: {
+            mode: 'insensitive',
+            equals: createUserDto.email
           }
-        });
-        break;
-      case Role.RECEPTIONIST:
-        await this.prisma.receptionist.create({
-          data: { userId: user.id }
-        });
-        break;
-      case Role.CLINIC_ADMIN:
-        if (createUserDto.clinicId) {
-          await this.prisma.clinicAdmin.create({
+        }
+      });
+
+      if (existingUser) {
+        await this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.WARN,
+          'Registration attempt with existing email',
+          'AuthService',
+          { email: createUserDto.email }
+        );
+        throw new BadRequestException('Email already registered');
+      }
+
+      const hashedPassword = await bcrypt.hash(createUserDto.password, this.SALT_ROUNDS);
+      
+      const userData: any = { ...createUserDto };
+      if (userData.dateOfBirth) {
+        userData.dateOfBirth = new Date(`${userData.dateOfBirth}T00:00:00Z`);
+      }
+      
+      const user = await this.prisma.user.create({
+        data: {
+          ...userData,
+          password: hashedPassword,
+          isVerified: false
+        },
+      });
+
+      // Create role-specific record
+      switch (user.role) {
+        case Role.PATIENT:
+          await this.prisma.patient.create({
+            data: { userId: user.id }
+          });
+          break;
+        case Role.DOCTOR:
+          await this.prisma.doctor.create({
             data: {
               userId: user.id,
-              clinicId: createUserDto.clinicId
+              specialization: createUserDto.specialization || '',
+              experience: createUserDto.experience || 0,
             }
           });
-        }
-        break;
-    }
+          break;
+        case Role.RECEPTIONIST:
+          await this.prisma.receptionist.create({
+            data: { userId: user.id }
+          });
+          break;
+        case Role.CLINIC_ADMIN:
+          if (createUserDto.clinicId) {
+            await this.prisma.clinicAdmin.create({
+              data: {
+                userId: user.id,
+                clinicId: createUserDto.clinicId
+              }
+            });
+          }
+          break;
+      }
 
-    const { password, ...result } = user;
-    // Convert dateOfBirth from Date to string if it exists
-    const userResponse = { ...result } as any;
-    if (userResponse.dateOfBirth) {
-      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      // Log successful registration
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        'User registered successfully',
+        'AuthService',
+        { userId: user.id, email: user.email, role: user.role }
+      );
+
+      // Emit registration event
+      await this.eventService.emit('user.registered', {
+        userId: user.id,
+        email: user.email,
+        role: user.role
+      });
+
+      const { password, ...result } = user;
+      const userResponse = { ...result } as any;
+      if (userResponse.dateOfBirth) {
+        userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      }
+      return userResponse as UserResponseDto;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.ERROR,
+        'Registration failed',
+        'AuthService',
+        { error: error.message, email: createUserDto.email }
+      );
+      throw error;
     }
-    return userResponse as UserResponseDto;
   }
 
   async logout(

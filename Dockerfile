@@ -11,6 +11,8 @@ COPY package*.json ./
 
 # Install all dependencies (including devDependencies for TypeScript)
 RUN npm install --legacy-peer-deps
+RUN npm install @nestjs/event-emitter
+RUN npm install -g nodemon
 
 # Copy the startup script first
 COPY start.sh /app/start.sh
@@ -29,5 +31,5 @@ RUN chmod +x /app/src/shared/database/prisma/wait-for-postgres.sh
 # Expose ports
 EXPOSE 8088 5555
 
-# Use the startup script as entrypoint
-CMD ["/bin/sh", "/app/start.sh"] 
+# Use nodemon in development
+CMD ["nodemon", "--watch", "src", "--ext", "ts", "--exec", "npm run start:dev"] 

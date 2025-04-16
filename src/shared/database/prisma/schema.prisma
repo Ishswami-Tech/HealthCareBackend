@@ -65,9 +65,12 @@ model Clinic {
   name                 String
   address              String
   phone                String
+  email                String         @unique
   app_name             String         @unique
   db_connection_string String         @unique
+  isActive             Boolean        @default(true)
   createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
   admins               ClinicAdmin[]
   doctors              DoctorClinic[]
   Receptionist         Receptionist[]
@@ -279,6 +282,18 @@ model Product {
   stock       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model Log {
+  id        String   @id @default(uuid())
+  type      String
+  level     String
+  message   String
+  context   String
+  metadata  String?
+  timestamp DateTime @default(now())
+
+  @@map("logs")
 }
 
 enum Role {

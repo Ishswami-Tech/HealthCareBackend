@@ -2,12 +2,17 @@ import { Injectable, NotFoundException, ConflictException, UnauthorizedException
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { ClinicDatabaseService } from './clinic-database.service';
 import { Role } from '@prisma/client';
+import { LoggingService } from '../../shared/logging/logging.service';
+import { EventService } from '../../shared/events/event.service';
+import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
 
 @Injectable()
 export class ClinicService {
   constructor(
     private prisma: PrismaService,
     private clinicDatabaseService: ClinicDatabaseService,
+    private readonly loggingService: LoggingService,
+    private readonly eventService: EventService,
   ) {}
 
   /**
@@ -18,65 +23,99 @@ export class ClinicService {
     name: string;
     address: string;
     phone: string;
-    app_name: string;
-    createdBy: string; // User ID of the creator (must be SuperAdmin)
+    email: string;
+    createdBy: string;
   }) {
-    // Check if the user is a SuperAdmin
-    const user = await this.prisma.user.findUnique({
-      where: { id: data.createdBy },
-      include: { superAdmin: true },
-    });
-
-    if (!user || user.role !== Role.SUPER_ADMIN || !user.superAdmin) {
-      throw new UnauthorizedException('Only SuperAdmin can create clinics');
-    }
-
-    // Check if a clinic with the same name or app_name already exists
-    const existingClinic = await this.prisma.clinic.findFirst({
-      where: {
-        OR: [
-          { name: data.name },
-          { app_name: data.app_name } as any // Use type assertion to bypass type checking
-        ]
-      },
-    });
-
-    if (existingClinic) {
-      throw new ConflictException(
-        existingClinic.name === data.name
-          ? 'A clinic with this name already exists'
-          : 'A clinic with this app name already exists'
-      );
-    }
-
     try {
-      // Create the clinic in the global database
+      const creator = await this.prisma.user.findUnique({
+        where: { id: data.createdBy },
+        include: { superAdmin: true },
+      });
+
+      if (!creator || creator.role !== Role.SUPER_ADMIN || !creator.superAdmin) {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Unauthorized clinic creation attempt',
+          'ClinicService',
+          { userId: data.createdBy }
+        );
+        throw new UnauthorizedException('Only SuperAdmin can create clinics');
+      }
+
+      const existingClinic = await this.prisma.clinic.findFirst({
+        where: {
+          OR: [
+            { name: data.name },
+            { email: data.email }
+          ]
+        },
+      });
+
+      if (existingClinic) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Clinic creation failed - duplicate name or email',
+          'ClinicService',
+          { name: data.name, email: data.email }
+        );
+        throw new ConflictException(
+          existingClinic.name === data.name
+            ? 'A clinic with this name already exists'
+            : 'A clinic with this email already exists'
+        );
+      }
+
       const clinic = await this.prisma.clinic.create({
         data: {
           name: data.name,
           address: data.address,
           phone: data.phone,
-          app_name: data.app_name,
-          db_connection_string: 'pending', // Temporary value
-        } as any, // Use type assertion to bypass type checking
+          email: data.email,
+          app_name: data.email, // Use email as app_name for now
+          db_connection_string: 'pending', // Will be updated after database creation
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        },
       });
 
-      // Generate a database connection string for the clinic
-      const dbConnectionString = `postgresql://postgres:postgres@postgres:5432/clinic_${data.app_name.toLowerCase().replace(/\s+/g, '_')}?schema=public`;
+      const dbConnectionString = await this.clinicDatabaseService.createClinicDatabase(
+        clinic.id,
+        data.email
+      );
 
-      // Update the clinic with the actual connection string
-      try {
-        return await this.prisma.clinic.update({
-          where: { id: clinic.id },
-          data: { db_connection_string: dbConnectionString } as any, // Use type assertion to bypass type checking
-        });
-      } catch (error) {
-        // If there's an error, delete the clinic from the global database
-        await this.prisma.clinic.delete({ where: { id: clinic.id } });
-        throw error;
-      }
+      const updatedClinic = await this.prisma.clinic.update({
+        where: { id: clinic.id },
+        data: { db_connection_string: dbConnectionString },
+      });
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinic created successfully',
+        'ClinicService',
+        { clinicId: clinic.id, name: data.name }
+      );
+
+      await this.eventService.emit('clinic.created', {
+        clinicId: clinic.id,
+        name: data.name,
+        email: data.email,
+        createdBy: data.createdBy
+      });
+
+      return updatedClinic;
     } catch (error) {
-      throw new ConflictException(`Failed to create clinic: ${error.message}`);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to create clinic',
+        'ClinicService',
+        { error: error.message, ...data }
+      );
+      throw error;
     }
   }
 
@@ -86,52 +125,86 @@ export class ClinicService {
    * ClinicAdmin can only see their assigned clinics
    */
   async getAllClinics(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        superAdmin: true,
-        clinicAdmin: true,
-      },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    // SuperAdmin can see all clinics
-    if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
-      return this.prisma.clinic.findMany({
-        include: {
-          admins: {
-            include: {
-              user: true,
-            },
-          },
-        },
-      });
-    }
-
-    // ClinicAdmin can only see their assigned clinics
-    if (user.role === Role.CLINIC_ADMIN && user.clinicAdmin) {
-      return this.prisma.clinic.findMany({
+    try {
+      const user = await this.prisma.user.findUnique({
         where: {
-          admins: {
-            some: {
-              userId: userId,
-            },
-          },
+          id: userId
         },
         include: {
-          admins: {
-            include: {
-              user: true,
+          superAdmin: true,
+          clinicAdmin: true
+        }
+      });
+
+      if (!user) {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'User not found while fetching clinics',
+          'ClinicService',
+          { userId }
+        );
+        throw new NotFoundException('User not found');
+      }
+
+      let clinics;
+      if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
+        clinics = await this.prisma.clinic.findMany({
+          include: {
+            admins: {
+              include: {
+                user: true,
+              },
             },
           },
-        },
-      });
-    }
+        });
+      } else if (user.role === Role.CLINIC_ADMIN && user.clinicAdmin) {
+        clinics = await this.prisma.clinic.findMany({
+          where: {
+            admins: {
+              some: {
+                userId: userId,
+              },
+            },
+          },
+          include: {
+            admins: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        });
+      } else {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Unauthorized clinic access attempt',
+          'ClinicService',
+          { userId, role: user.role }
+        );
+        throw new UnauthorizedException('You do not have permission to view clinics');
+      }
 
-    throw new UnauthorizedException('You do not have permission to view clinics');
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinics fetched successfully',
+        'ClinicService',
+        { userId, count: clinics.length }
+      );
+
+      return clinics;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to fetch clinics',
+        'ClinicService',
+        { error: error.message, userId }
+      );
+      throw error;
+    }
   }
 
   /**
@@ -140,47 +213,91 @@ export class ClinicService {
    * ClinicAdmin can only see their assigned clinics
    */
   async getClinicById(id: string, userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        superAdmin: true,
-        clinicAdmin: true,
-      },
-    });
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          superAdmin: true,
+          clinicAdmin: true,
+        },
+      });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+      if (!user) {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'User not found while fetching clinic',
+          'ClinicService',
+          { userId }
+        );
+        throw new NotFoundException('User not found');
+      }
 
-    const clinic = await this.prisma.clinic.findUnique({
-      where: { id },
-      include: {
-        admins: {
-          include: {
-            user: true,
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id },
+        include: {
+          admins: {
+            include: {
+              user: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!clinic) {
-      throw new NotFoundException('Clinic not found');
-    }
+      if (!clinic) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Clinic not found',
+          'ClinicService',
+          { clinicId: id }
+        );
+        throw new NotFoundException('Clinic not found');
+      }
 
-    // SuperAdmin can see any clinic
-    if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
-      return clinic;
-    }
-
-    // ClinicAdmin can only see their assigned clinics
-    if (user.role === Role.CLINIC_ADMIN && user.clinicAdmin) {
-      const isAdmin = clinic.admins.some((admin) => admin.userId === userId);
-      if (isAdmin) {
+      if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Clinic fetched by super admin',
+          'ClinicService',
+          { clinicId: id, userId }
+        );
         return clinic;
       }
-    }
 
-    throw new UnauthorizedException('You do not have permission to view this clinic');
+      if (user.role === Role.CLINIC_ADMIN && user.clinicAdmin) {
+        const isAdmin = clinic.admins.some((admin) => admin.userId === userId);
+        if (isAdmin) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Clinic fetched by clinic admin',
+            'ClinicService',
+            { clinicId: id, userId }
+          );
+          return clinic;
+        }
+      }
+
+      await this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Unauthorized clinic access attempt',
+        'ClinicService',
+        { clinicId: id, userId, role: user.role }
+      );
+      throw new UnauthorizedException('You do not have permission to view this clinic');
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to fetch clinic',
+        'ClinicService',
+        { error: error.message, clinicId: id, userId }
+      );
+      throw error;
+    }
   }
 
   /**
@@ -189,7 +306,7 @@ export class ClinicService {
    */
   async getClinicByAppName(appName: string) {
     const clinic = await this.prisma.clinic.findUnique({
-      where: { app_name: appName } as any, // Use type assertion to bypass type checking
+      where: { email: appName },
       include: {
         admins: {
           include: {
@@ -434,7 +551,7 @@ export class ClinicService {
   }) {
     // Get the clinic by app name
     const clinic = await this.prisma.clinic.findUnique({
-      where: { app_name: data.appName } as any, // Use type assertion to bypass type checking
+      where: { email: data.appName } as any, // Use type assertion to bypass type checking
     });
 
     if (!clinic) {
@@ -459,5 +576,191 @@ export class ClinicService {
     // This is a placeholder - in a real implementation, you would create a record in the clinic's database
     // For now, we'll just return a success message
     return { message: 'Patient registered to clinic successfully' };
+  }
+
+  async updateClinic(id: string, data: {
+    name?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+  }, userId: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          superAdmin: true,
+          clinicAdmin: true,
+        },
+      });
+
+      if (!user) {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'User not found while updating clinic',
+          'ClinicService',
+          { userId }
+        );
+        throw new NotFoundException('User not found');
+      }
+
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id },
+        include: {
+          admins: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
+
+      if (!clinic) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Clinic not found for update',
+          'ClinicService',
+          { clinicId: id }
+        );
+        throw new NotFoundException('Clinic not found');
+      }
+
+      if (user.role !== Role.SUPER_ADMIN) {
+        if (user.role === Role.CLINIC_ADMIN) {
+          const isAdmin = clinic.admins.some((admin) => admin.userId === userId);
+          if (!isAdmin) {
+            await this.loggingService.log(
+              LogType.SECURITY,
+              LogLevel.WARN,
+              'Unauthorized clinic update attempt',
+              'ClinicService',
+              { clinicId: id, userId, role: user.role }
+            );
+            throw new UnauthorizedException('You do not have permission to update this clinic');
+          }
+        } else {
+          await this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            'Unauthorized clinic update attempt',
+            'ClinicService',
+            { clinicId: id, userId, role: user.role }
+          );
+          throw new UnauthorizedException('You do not have permission to update clinics');
+        }
+      }
+
+      const updatedClinic = await this.prisma.clinic.update({
+        where: { id },
+        data,
+      });
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinic updated successfully',
+        'ClinicService',
+        { clinicId: id, updatedFields: Object.keys(data) }
+      );
+
+      await this.eventService.emit('clinic.updated', {
+        clinicId: id,
+        updatedFields: Object.keys(data),
+        updatedBy: userId
+      });
+
+      return updatedClinic;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to update clinic',
+        'ClinicService',
+        { error: error.message, clinicId: id, ...data }
+      );
+      throw error;
+    }
+  }
+
+  async deleteClinic(id: string, userId: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { superAdmin: true },
+      });
+
+      if (!user) {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'User not found while deleting clinic',
+          'ClinicService',
+          { userId }
+        );
+        throw new NotFoundException('User not found');
+      }
+
+      if (user.role !== Role.SUPER_ADMIN) {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Unauthorized clinic deletion attempt',
+          'ClinicService',
+          { clinicId: id, userId, role: user.role }
+        );
+        throw new UnauthorizedException('Only SuperAdmin can delete clinics');
+      }
+
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id },
+        include: {
+          admins: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
+
+      if (!clinic) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Clinic not found for deletion',
+          'ClinicService',
+          { clinicId: id }
+        );
+        throw new NotFoundException('Clinic not found');
+      }
+
+      await this.prisma.clinic.delete({
+        where: { id },
+      });
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinic deleted successfully',
+        'ClinicService',
+        { clinicId: id }
+      );
+
+      await this.eventService.emit('clinic.deleted', {
+        clinicId: id,
+        deletedBy: userId
+      });
+
+      return { message: 'Clinic deleted successfully' };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to delete clinic',
+        'ClinicService',
+        { error: error.message, clinicId: id }
+      );
+      throw error;
+    }
   }
 } 
