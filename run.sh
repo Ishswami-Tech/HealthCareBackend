@@ -17,7 +17,7 @@ show_help() {
   echo "Usage: ./run.sh [environment] [command]"
   echo ""
   echo "Environments:"
-  echo "  dev     - Run in development mode (default)"
+  echo "  dev     - Run in development mode with hot-reloading (default)"
   echo "  prod    - Run in production mode"
   echo ""
   echo "Commands:"
@@ -35,7 +35,7 @@ show_help() {
   echo "  help        - Show this help message"
   echo ""
   echo "Examples:"
-  echo "  ./run.sh dev start    - Start in development mode"
+  echo "  ./run.sh dev start    - Start in development mode with hot-reloading"
   echo "  ./run.sh prod start   - Start in production mode"
   echo "  ./run.sh dev backup   - Create a backup in development mode"
   echo "  ./run.sh dev restore  - Restore a backup in development mode"
@@ -69,7 +69,7 @@ create_backup() {
   BACKUP_FILE="backups/backup_${TIMESTAMP}.sql"
   
   # Create backup using pg_dump
-  docker-compose exec -T postgres pg_dump -U postgres userdb > "${BACKUP_FILE}"
+  docker-compose -f docker-compose.dev.yml exec -T postgres pg_dump -U postgres userdb > "${BACKUP_FILE}"
   
   if [ $? -eq 0 ]; then
     echo -e "${GREEN}Backup created successfully: ${BACKUP_FILE}${NC}"
@@ -100,8 +100,8 @@ restore_backup() {
   echo -e "${YELLOW}Restoring backup from ${BACKUP_FILE}...${NC}"
   
   # Restore backup using psql
-  docker-compose exec -T postgres psql -U postgres -d userdb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-  cat "${BACKUP_FILE}" | docker-compose exec -T postgres psql -U postgres -d userdb
+  docker-compose -f docker-compose.dev.yml exec -T postgres psql -U postgres -d userdb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+  cat "${BACKUP_FILE}" | docker-compose -f docker-compose.dev.yml exec -T postgres psql -U postgres -d userdb
   
   if [ $? -eq 0 ]; then
     echo -e "${GREEN}Backup restored successfully.${NC}"
@@ -129,48 +129,48 @@ case "$ENV" in
     
     case "$CMD" in
       start)
-        echo -e "${YELLOW}Starting Healthcare Backend in DEVELOPMENT mode...${NC}"
+        echo -e "${YELLOW}Starting Healthcare Backend in DEVELOPMENT mode with hot-reloading...${NC}"
         export NODE_ENV=development
         export APP_ENV=development
         export IS_DEV=true
-        docker-compose -f docker-compose.yml up -d
+        docker-compose -f docker-compose.dev.yml up -d
         echo -e "${GREEN}Development environment started successfully!${NC}"
         echo -e "${GREEN}API: http://localhost:8088${NC}"
         echo -e "${GREEN}Prisma Studio: http://localhost:5555${NC}"
         echo -e "${GREEN}PgAdmin: http://localhost:5050 (admin@admin.com/admin)${NC}"
         echo -e "${GREEN}Redis Commander: http://localhost:8082 (admin/admin)${NC}"
         echo -e "${YELLOW}Showing logs from the API container. Press Ctrl+C to exit logs (containers will keep running).${NC}"
-        docker-compose logs -f api
+        docker-compose -f docker-compose.dev.yml logs -f api
         ;;
       stop)
         echo -e "${YELLOW}Stopping Healthcare Backend...${NC}"
-        docker-compose down
+        docker-compose -f docker-compose.dev.yml down
         echo -e "${GREEN}Environment stopped successfully!${NC}"
         ;;
       restart)
         echo -e "${YELLOW}Restarting Healthcare Backend...${NC}"
-        docker-compose restart
+        docker-compose -f docker-compose.dev.yml restart
         echo -e "${GREEN}Environment restarted successfully!${NC}"
         ;;
       logs)
         echo -e "${YELLOW}Showing logs from all containers...${NC}"
-        docker-compose logs -f
+        docker-compose -f docker-compose.dev.yml logs -f
         ;;
       logs:api)
         echo -e "${YELLOW}Showing logs from the API container...${NC}"
-        docker-compose logs -f api
+        docker-compose -f docker-compose.dev.yml logs -f api
         ;;
       logs:db)
         echo -e "${YELLOW}Showing logs from the database container...${NC}"
-        docker-compose logs -f postgres
+        docker-compose -f docker-compose.dev.yml logs -f postgres
         ;;
       logs:redis)
         echo -e "${YELLOW}Showing logs from the Redis container...${NC}"
-        docker-compose logs -f redis
+        docker-compose -f docker-compose.dev.yml logs -f redis
         ;;
       status)
         echo -e "${YELLOW}Container status:${NC}"
-        docker-compose ps
+        docker-compose -f docker-compose.dev.yml ps
         ;;
       backup)
         create_backup
@@ -181,10 +181,10 @@ case "$ENV" in
       clean)
         if [ "$3" == "--volumes" ]; then
           echo -e "${YELLOW}Removing all containers and volumes...${NC}"
-          docker-compose down -v
+          docker-compose -f docker-compose.dev.yml down -v
         else
           echo -e "${YELLOW}Removing all containers...${NC}"
-          docker-compose down
+          docker-compose -f docker-compose.dev.yml down
         fi
         echo -e "${GREEN}Cleanup completed successfully!${NC}"
         ;;
@@ -209,17 +209,7 @@ case "$ENV" in
         export NODE_ENV=production
         export APP_ENV=production
         export IS_DEV=false
-        
-        # Create a temporary docker-compose file without pgadmin and redis-commander
-        TMP_COMPOSE=$(mktemp)
-        grep -v "pgadmin:" docker-compose.yml | grep -v "redis-commander:" > "$TMP_COMPOSE"
-        
-        # Use the temporary file
-        docker-compose -f "$TMP_COMPOSE" up -d
-        
-        # Clean up
-        rm "$TMP_COMPOSE"
-        
+        docker-compose up -d
         echo -e "${GREEN}Production environment started successfully!${NC}"
         echo -e "${GREEN}API: http://localhost:8088${NC}"
         echo -e "${YELLOW}Showing logs from the API container. Press Ctrl+C to exit logs (containers will keep running).${NC}"
