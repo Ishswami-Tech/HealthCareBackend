@@ -45,8 +45,7 @@ if [ $? -eq 0 ]; then
   echo -e "${GREEN}API is running at: http://localhost:8088${NC}"
   echo -e "${GREEN}Prisma Studio is running at: http://localhost:5555${NC}"
   echo -e "${GREEN}PgAdmin is running at: http://localhost:5050${NC}"
-  echo -e "${GREEN}Redis Commander is running at: http://localhost:8081${NC}"
-  echo -e "${GREEN}Kafka UI is running at: http://localhost:8085${NC}"
+  echo -e "${GREEN}Redis Commander is running at: http://localhost:8082${NC}"
 else
   echo -e "${RED}Error: Failed to start Docker containers. Check the logs for more information.${NC}"
   docker-compose logs

@@ -6,9 +6,6 @@ export default () => ({
     host: process.env.REDIS_HOST || 'redis',
     port: parseInt(process.env.REDIS_PORT || '6379', 10),
   },
-  kafka: {
-    brokers: process.env.KAFKA_BROKERS?.split(',') || ['kafka:9092'],
-  },
   whatsapp: {
     enabled: process.env.WHATSAPP_ENABLED === 'true',
     apiUrl: process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v17.0',

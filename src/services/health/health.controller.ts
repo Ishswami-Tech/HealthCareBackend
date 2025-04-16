@@ -2,8 +2,7 @@ import { Controller, Get, ServiceUnavailableException, Logger } from '@nestjs/co
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { RedisService } from '../../shared/cache/redis/redis.service';
-import { KafkaService } from '../../shared/messaging/kafka/kafka.service';
-import { HealthCheckResponse, ServiceHealth, SystemMetrics, RedisMetrics, DatabaseMetrics, KafkaMetrics } from '../../libs/types/health.types';
+import { HealthCheckResponse, ServiceHealth, SystemMetrics, RedisMetrics, DatabaseMetrics } from '../../libs/types/health.types';
 import { ConfigService } from '@nestjs/config';
 import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
@@ -17,7 +16,6 @@ export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-    private readonly kafka: KafkaService,
     private readonly config: ConfigService,
   ) {
     this.startTime = Date.now();
@@ -77,7 +75,7 @@ export class HealthController {
   @Get()
   @ApiOperation({ 
     summary: 'Get system health status',
-    description: 'Returns the health status of all system components including API, database, Redis, and Kafka. No parameters required.'
+    description: 'Returns the health status of all system components including API, database, and Redis. No parameters required.'
   })
   @ApiResponse({ 
     status: 200, 
@@ -118,8 +116,7 @@ export class HealthController {
           properties: {
             api: { type: 'object', description: 'API service health' },
             database: { type: 'object', description: 'Database service health and metrics' },
-            redis: { type: 'object', description: 'Redis service health and metrics' },
-            kafka: { type: 'object', description: 'Kafka service health and metrics' }
+            redis: { type: 'object', description: 'Redis service health and metrics' }
           }
         }
       }
@@ -141,7 +138,6 @@ export class HealthController {
         },
         database: { status: 'unknown' },
         redis: { status: 'unknown' },
-        kafka: { status: 'unknown' },
       },
     };
 
@@ -177,37 +173,6 @@ export class HealthController {
       };
     });
     health.services.redis = redisHealth;
-
-    // Check Kafka
-    const kafkaHealth = await this.checkServiceHealth<KafkaMetrics>('Kafka', async () => {
-      const admin = this.kafka.admin();
-      await admin.connect();
-      
-      const [topics, groups] = await Promise.all([
-        admin.listTopics(),
-        admin.listGroups(),
-      ]);
-      
-      const topicMetadata = await admin.fetchTopicMetadata({ topics });
-      const partitionCount = topicMetadata.topics.reduce(
-        (sum, topic) => sum + topic.partitions.length,
-        0
-      );
-
-      const brokerCount = (await admin.describeCluster()).brokers.length;
-      
-      await admin.disconnect();
-      
-      return {
-        metrics: {
-          brokers: brokerCount,
-          topics: topics.length,
-          partitions: partitionCount,
-          consumerGroups: groups.groups.length,
-        },
-      };
-    });
-    health.services.kafka = kafkaHealth;
 
     // Update overall status if any service is unhealthy
     if (Object.values(health.services).some(service => service.status === 'unhealthy')) {

@@ -399,7 +399,6 @@ APPLE_CLIENT_ID=your.app.bundle.id
 - NestJS
 - Prisma ORM
 - Redis (for token and session storage)
-- Kafka (for event logging)
 - NodeMailer (for email notifications)
 - SMS Provider API (for SMS delivery)
 - WhatsApp Business API (for WhatsApp messages)
@@ -417,7 +416,7 @@ The service returns appropriate HTTP status codes:
 
 ## Logging and Monitoring
 
-All authentication events are logged via Kafka for audit purposes:
+All authentication events are logged for audit purposes:
 - Login attempts (successful and failed)
 - Password changes
 - OTP requests and delivery status

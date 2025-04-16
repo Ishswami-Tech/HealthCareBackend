@@ -40,13 +40,7 @@ export interface RedisMetrics {
   lastSave?: string;
 }
 
-export interface KafkaMetrics {
-  brokers: number;
-  topics: number;
-  partitions: number;
-  consumerGroups: number;
-  messageRate?: number;
-}
+
 
 export interface HealthCheckResponse {
   status: 'healthy' | 'degraded';
@@ -58,6 +52,6 @@ export interface HealthCheckResponse {
     api: ServiceHealth;
     database: ServiceHealth & { metrics?: DatabaseMetrics };
     redis: ServiceHealth & { metrics?: RedisMetrics };
-    kafka: ServiceHealth & { metrics?: KafkaMetrics };
+   
   };
 } 
