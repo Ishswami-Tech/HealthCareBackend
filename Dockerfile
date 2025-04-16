@@ -1,22 +1,73 @@
-# Development
-FROM node:20-alpine
+# Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install --legacy-peer-deps
+
+# Copy the rest of the application
+COPY . .
+
+# Generate Prisma client
+RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
+
+# Production stage
+FROM node:20-alpine AS production
 
 # Install necessary tools
 RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++
 
 WORKDIR /app
 
-# Copy package files first
+# Copy package files
 COPY package*.json ./
 
-# Install all dependencies (including devDependencies for TypeScript)
-RUN npm install --legacy-peer-deps
-RUN npm install @nestjs/event-emitter
-RUN npm install -g nodemon
+# Install production dependencies only
+RUN npm install --only=production --legacy-peer-deps
 
-# Copy the startup script first
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# Copy built application from builder stage
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/@nestjs ./node_modules/@nestjs
+COPY --from=builder /app/node_modules/class-validator ./node_modules/class-validator
+COPY --from=builder /app/node_modules/class-transformer ./node_modules/class-transformer
+COPY --from=builder /app/node_modules/reflect-metadata ./node_modules/reflect-metadata
+COPY --from=builder /app/node_modules/rxjs ./node_modules/rxjs
+COPY --from=builder /app/node_modules/tslib ./node_modules/tslib
+COPY --from=builder /app/node_modules/zone.js ./node_modules/zone.js
+
+# Copy Prisma schema
+COPY prisma ./prisma
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV PRISMA_SCHEMA_PATH=/app/prisma/schema.prisma
+
+# Expose ports
+EXPOSE 8088 5555
+
+# Start the application
+CMD ["node", "dist/main"]
+
+# Development stage
+FROM node:20-alpine AS development
+
+# Install necessary tools
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including devDependencies)
+RUN npm install --legacy-peer-deps
+RUN npm install -g nodemon
 
 # Copy the rest of the application
 COPY . .
