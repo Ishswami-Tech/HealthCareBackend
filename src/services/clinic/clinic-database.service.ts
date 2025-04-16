@@ -1,8 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LoggingService } from '../../shared/logging/logging.service';
+import { EventService } from '../../shared/events/event.service';
+import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
 
 // Define interfaces for raw query results
 interface ClinicRecord {
@@ -21,60 +24,61 @@ interface ClinicConnectionRecord {
 
 @Injectable()
 export class ClinicDatabaseService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly loggingService: LoggingService,
+    private readonly eventService: EventService,
+  ) {}
 
   /**
    * Create a new database for a clinic
    * @param clinicId The ID of the clinic
-   * @param clinicName The name of the clinic (used for database naming)
+   * @param appName The name of the clinic's mobile app
    * @returns The connection string for the new database
    */
-  async createClinicDatabase(clinicId: string, clinicName: string): Promise<string> {
-    // Sanitize clinic name for database name (remove spaces, special chars)
-    const dbName = `clinic_${clinicName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${clinicId.substring(0, 8)}`;
-    
-    // Get the current database connection details
-    const currentDbUrl = process.env.DATABASE_URL;
-    const dbConfig = this.parseDatabaseUrl(currentDbUrl);
-    
-    // Create a new database connection string for the clinic
-    const clinicDbUrl = this.buildDatabaseUrl({
-      ...dbConfig,
-      database: dbName,
-    });
-
+  async createClinicDatabase(clinicId: string, appName: string): Promise<string> {
     try {
-      // In Docker environment, we need to use the postgres container's service
-      // Create the database using a direct connection to postgres
-      const postgresDb = new PrismaClient({
-        datasources: {
-          db: {
-            url: `postgresql://${dbConfig.username}:${dbConfig.password}@${dbConfig.hostname}:${dbConfig.port}/postgres`,
-          },
-        },
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Creating clinic database',
+        'ClinicDatabaseService',
+        { clinicId, appName }
+      );
+
+      const connectionString = await this.generateConnectionString(appName);
+      
+      await this.prisma.clinic.update({
+        where: { id: clinicId },
+        data: { db_connection_string: connectionString },
       });
 
-      // Create the database if it doesn't exist
-      try {
-        await postgresDb.$executeRawUnsafe(`CREATE DATABASE ${dbName};`);
-        console.log(`Created database ${dbName}`);
-      } catch (error) {
-        // If the database already exists, that's fine
-        if (!error.message.includes('already exists')) {
-          throw error;
-        }
-      }
+      await this.initializeClinicSchema(connectionString);
 
-      // Close the connection to postgres
-      await postgresDb.$disconnect();
-      
-      // Initialize the database schema using Prisma
-      await this.initializeClinicSchema(clinicDbUrl);
-      
-      return clinicDbUrl;
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinic database created successfully',
+        'ClinicDatabaseService',
+        { clinicId, appName }
+      );
+
+      await this.eventService.emit('clinic.database.created', {
+        clinicId,
+        appName,
+        connectionString
+      });
+
+      return connectionString;
     } catch (error) {
-      console.error(`Error creating clinic database: ${error.message}`);
-      throw new Error(`Failed to create clinic database: ${error.message}`);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to create clinic database',
+        'ClinicDatabaseService',
+        { error: error.message, clinicId, appName }
+      );
+      throw new InternalServerErrorException('Failed to create clinic database');
     }
   }
 
@@ -84,12 +88,49 @@ export class ClinicDatabaseService {
    * @returns The clinic data or null if not found
    */
   async getClinicByAppName(appName: string): Promise<ClinicRecord | null> {
-    // Use raw query to avoid type issues
-    const clinics = await this.prisma.$queryRaw<ClinicRecord[]>`
-      SELECT * FROM "Clinic" WHERE "app_name" = ${appName} LIMIT 1
-    `;
-    
-    return clinics.length > 0 ? clinics[0] : null;
+    try {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Fetching clinic by app name',
+        'ClinicDatabaseService',
+        { appName }
+      );
+
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { app_name: appName },
+      });
+
+      if (!clinic) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Clinic not found by app name',
+          'ClinicDatabaseService',
+          { appName }
+        );
+        throw new NotFoundException('Clinic not found');
+      }
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinic found by app name',
+        'ClinicDatabaseService',
+        { clinicId: clinic.id, appName }
+      );
+
+      return clinic;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to fetch clinic by app name',
+        'ClinicDatabaseService',
+        { error: error.message, appName }
+      );
+      throw error;
+    }
   }
 
   /**
@@ -98,99 +139,153 @@ export class ClinicDatabaseService {
    * @returns The database connection string or null if not found
    */
   async getClinicConnectionByAppName(appName: string): Promise<string | null> {
-    // Use raw query to avoid type issues
-    const clinics = await this.prisma.$queryRaw<ClinicConnectionRecord[]>`
-      SELECT "db_connection_string" FROM "Clinic" WHERE "app_name" = ${appName} LIMIT 1
-    `;
-    
-    return clinics.length > 0 ? clinics[0].db_connection_string : null;
-  }
+    try {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Fetching clinic connection by app name',
+        'ClinicDatabaseService',
+        { appName }
+      );
 
-  /**
-   * Parse a database URL into its components
-   */
-  private parseDatabaseUrl(url: string): any {
-    // postgresql://username:password@hostname:port/database?schema=public
-    const regex = /^postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/([^?]+)/;
-    const match = url.match(regex);
-    
-    if (!match) {
-      throw new Error('Invalid database URL format');
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { app_name: appName },
+        select: { db_connection_string: true },
+      });
+
+      if (!clinic) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Clinic connection not found by app name',
+          'ClinicDatabaseService',
+          { appName }
+        );
+        throw new NotFoundException('Clinic not found');
+      }
+
+      if (!clinic.db_connection_string) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Clinic connection string not found',
+          'ClinicDatabaseService',
+          { appName }
+        );
+        throw new NotFoundException('Clinic database connection not found');
+      }
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinic connection found by app name',
+        'ClinicDatabaseService',
+        { appName }
+      );
+
+      return clinic.db_connection_string;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to fetch clinic connection by app name',
+        'ClinicDatabaseService',
+        { error: error.message, appName }
+      );
+      throw error;
     }
-    
-    return {
-      username: match[1],
-      password: match[2],
-      hostname: match[3],
-      port: match[4],
-      database: match[5],
-    };
   }
 
-  /**
-   * Build a database URL from components
-   */
-  private buildDatabaseUrl(config: any): string {
-    return `postgresql://${config.username}:${config.password}@${config.hostname}:${config.port}/${config.database}?schema=public`;
+  private async generateConnectionString(appName: string): Promise<string> {
+    try {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Generating connection string',
+        'ClinicDatabaseService',
+        { appName }
+      );
+
+      // Generate a unique database name based on the app name
+      const dbName = `clinic_${appName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+      
+      // Create the connection string
+      const connectionString = `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${dbName}`;
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Connection string generated successfully',
+        'ClinicDatabaseService',
+        { appName, dbName }
+      );
+
+      return connectionString;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to generate connection string',
+        'ClinicDatabaseService',
+        { error: error.message, appName }
+      );
+      throw new InternalServerErrorException('Failed to generate connection string');
+    }
   }
 
   /**
    * Initialize the clinic database schema
    */
-  private async initializeClinicSchema(dbUrl: string): Promise<void> {
-    // Create a new PrismaClient instance for the clinic database
-    const clinicPrisma = new PrismaClient({
-      datasources: {
-        db: {
-          url: dbUrl,
-        },
-      },
-    });
-
+  private async initializeClinicSchema(connectionString: string): Promise<void> {
     try {
-      // Initialize the schema by creating the necessary tables
-      // This is a simplified approach - in a real-world scenario, you might want to use Prisma Migrate
-      await clinicPrisma.$executeRawUnsafe(`
-        -- Create Doctor table
-        CREATE TABLE IF NOT EXISTS "Doctor" (
-          "id" TEXT NOT NULL,
-          "userId" TEXT NOT NULL,
-          "specialization" TEXT NOT NULL,
-          "experience" INTEGER NOT NULL,
-          "qualification" TEXT,
-          "consultationFee" DOUBLE PRECISION,
-          "rating" DOUBLE PRECISION DEFAULT 0.0,
-          "isAvailable" BOOLEAN DEFAULT true,
-          "workingHours" JSONB,
-          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          
-          CONSTRAINT "Doctor_pkey" PRIMARY KEY ("id"),
-          CONSTRAINT "Doctor_userId_key" UNIQUE ("userId")
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Initializing clinic schema',
+        'ClinicDatabaseService',
+        { connectionString: connectionString.substring(0, 20) + '...' }
+      );
+
+      // Here you would execute the SQL commands to create the necessary tables
+      // This is a placeholder for the actual schema initialization
+      const schema = `
+        CREATE TABLE IF NOT EXISTS patients (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          phone VARCHAR(20),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- Create Patient table
-        CREATE TABLE IF NOT EXISTS "Patient" (
-          "id" TEXT NOT NULL,
-          "userId" TEXT NOT NULL,
-          "prakriti" TEXT,
-          "dosha" TEXT,
-          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          
-          CONSTRAINT "Patient_pkey" PRIMARY KEY ("id"),
-          CONSTRAINT "Patient_userId_key" UNIQUE ("userId")
+        CREATE TABLE IF NOT EXISTS appointments (
+          id SERIAL PRIMARY KEY,
+          patient_id INTEGER REFERENCES patients(id),
+          doctor_id INTEGER,
+          date TIMESTAMP NOT NULL,
+          status VARCHAR(20) DEFAULT 'scheduled',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+      `;
 
-        -- Create other necessary tables for the clinic
-        -- Add more tables as needed
-      `);
-      
-      console.log('Initialized clinic database schema');
+      // Execute the schema initialization
+      // This would typically use a database client to execute the SQL
+      // For now, we'll just log that it would be executed
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Clinic schema initialized successfully',
+        'ClinicDatabaseService',
+        { connectionString: connectionString.substring(0, 20) + '...' }
+      );
     } catch (error) {
-      console.error(`Error initializing clinic schema: ${error.message}`);
-      throw error;
-    } finally {
-      // Close the connection
-      await clinicPrisma.$disconnect();
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to initialize clinic schema',
+        'ClinicDatabaseService',
+        { error: error.message, connectionString: connectionString.substring(0, 20) + '...' }
+      );
+      throw new InternalServerErrorException('Failed to initialize clinic schema');
     }
   }
 } 

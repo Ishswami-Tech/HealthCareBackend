@@ -1,11 +1,10 @@
-import { PrismaClient, Role, Gender } from '@prisma/client';
+import { PrismaClient, Role, Gender, Prakriti, Dosha } from '@prisma/client';
 import { faker } from "@faker-js/faker";
 import {
   AppointmentStatus,
   PaymentStatus,
   PaymentMethod,
   AppointmentType,
-  Prakriti,
   MedicineType,
   QueueStatus,
   NotificationType,
@@ -83,12 +82,13 @@ async function main() {
       console.log('Creating Aadesh Ayurvedalay clinic...');
       aadeshClinic = await prisma.clinic.create({
         data: {
-          name: 'Aadesh Ayurvedalay',
-          address: 'Pune, Maharashtra',
-          phone: '1234567890',
-          app_name: 'aadesh_app',
-          db_connection_string: 'postgresql://postgres:postgres@postgres:5432/clinic_aadesh_app?schema=public',
-        } as any // Type assertion for fields not recognized by Prisma client
+          name: "Aadesh Ayurvedalay",
+          address: "Pune, Maharashtra",
+          phone: "1234567890",
+          email: "aadesh@ayurvedalay.com",
+          app_name: "aadesh_app",
+          db_connection_string: "postgresql://postgres:postgres@postgres:5432/clinic_aadesh_app?schema=public",
+        }
       });
       console.log(`Aadesh Ayurvedalay clinic created with ID: ${aadeshClinic.id}`);
     } else {
@@ -106,12 +106,13 @@ async function main() {
       console.log('Creating Shri Vishwamurthi Ayurvedalay clinic...');
       vishwamurthiClinic = await prisma.clinic.create({
         data: {
-          name: 'Shri Vishwamurthi Ayurvedalay',
-          address: 'Mumbai, Maharashtra',
-          phone: '0987654321',
-          app_name: 'vishwamurthi_app',
-          db_connection_string: 'postgresql://postgres:postgres@postgres:5432/clinic_vishwamurthi_app?schema=public',
-        } as any // Type assertion for fields not recognized by Prisma client
+          name: "Shri Vishwamurthi Ayurvedalay",
+          address: "Mumbai, Maharashtra",
+          phone: "0987654321",
+          email: "vishwamurthi@ayurvedalay.com",
+          app_name: "vishwamurthi_app",
+          db_connection_string: "postgresql://postgres:postgres@postgres:5432/clinic_vishwamurthi_app?schema=public",
+        }
       });
       console.log(`Shri Vishwamurthi Ayurvedalay clinic created with ID: ${vishwamurthiClinic.id}`);
     } else {
@@ -187,10 +188,10 @@ async function main() {
       await prisma.patient.create({
         data: {
           userId: patientUser.id,
-          bloodGroup: 'O+',
-          height: 165,
-          weight: 65,
-        } as any // Type assertion for fields not recognized by Prisma client
+          prakriti: Prakriti.VATA,
+          dosha: Dosha.VATA,
+          createdAt: new Date()
+        }
       });
       console.log('Sample patient created successfully.');
     }

@@ -9,6 +9,8 @@ import { AuthService } from "./services/auth.service";
 import { GuardsModule } from "../../libs/guards/guards.module";
 import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
 import { ClinicModule } from '../clinic/clinic.module';
+import { SharedModule } from '../../shared/shared.module';
+import { JwtModule } from '@nestjs/jwt';
 
 @Module({
   imports: [
@@ -20,6 +22,11 @@ import { ClinicModule } from '../clinic/clinic.module';
     GuardsModule,
     RateLimitModule,
     ClinicModule,
+    SharedModule,
+    JwtModule.register({
+      secret: process.env.JWT_SECRET || 'your-secret-key',
+      signOptions: { expiresIn: '24h' },
+    })
   ],
   controllers: [AuthController],
   providers: [AuthService],

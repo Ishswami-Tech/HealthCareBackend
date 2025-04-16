@@ -71,6 +71,7 @@
     "@eslint/js": "^9.18.0",
     "@faker-js/faker": "^9.4.0",
     "@nestjs/cli": "^11.0.0",
+    "@nestjs/event-emitter": "^3.0.1",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
     "@swc/cli": "^0.6.0",

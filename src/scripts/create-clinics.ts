@@ -23,20 +23,20 @@ async function createClinics() {
     console.log('Creating Aadesh Ayurvedalay clinic...');
     const aadeshClinic = await clinicService.createClinic({
       name: 'Aadesh Ayurvedalay',
-      address: '123 Ayurveda Street, Mumbai, Maharashtra',
-      phone: '+919876543210',
-      app_name: 'aadeshayurvedalay',
-      createdBy: superAdmin.userId
+      address: '123 Main St, Mumbai, India',
+      phone: '+91 9876543210',
+      email: 'aadeshayurvedalay@example.com',
+      createdBy: superAdmin.id,
     });
 
     // Create Shri Vishwamurthi Ayurvedalay clinic
     console.log('Creating Shri Vishwamurthi Ayurvedalay clinic...');
     const vishwamurthiClinic = await clinicService.createClinic({
-      name: 'Shri Vishwamurthi Ayurvedalay',
-      address: '456 Wellness Road, Bangalore, Karnataka',
-      phone: '+919876543211',
-      app_name: 'vishwamurthiayurvedalay',
-      createdBy: superAdmin.userId
+      name: 'Vishwamurthi Ayurvedalay',
+      address: '456 Oak St, Delhi, India',
+      phone: '+91 9876543211',
+      email: 'vishwamurthiayurvedalay@example.com',
+      createdBy: superAdmin.id,
     });
 
     console.log('Clinics created successfully:');

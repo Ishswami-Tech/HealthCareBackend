@@ -28,10 +28,10 @@ export class CreateClinicDto {
   phone: string;
 
   @ApiProperty({
-    description: 'The app name for the clinic (used for mobile app identification)',
-    example: 'cityhealthclinic',
+    description: 'The email of the clinic',
+    example: 'info@cityhealthclinic.com',
   })
   @IsString()
   @IsNotEmpty()
-  app_name: string;
+  email: string;
 } 

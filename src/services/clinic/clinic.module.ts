@@ -1,21 +1,18 @@
 import { Module } from '@nestjs/common';
-
-import { ClinicDatabaseService } from './clinic-database.service';
-import { PrismaModule } from '../../shared/database/prisma/prisma.module';
-import { JwtModule } from '@nestjs/jwt';
-import { RedisModule } from '../../shared/cache/redis/redis.module';
-import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
-import { ClinicController } from './clinic.controller';
 import { ClinicService } from './clinic.service';
+import { ClinicController } from './clinic.controller';
+import { ClinicDatabaseService } from './clinic-database.service';
+import { SharedModule } from '../../shared/shared.module';
+import { JwtModule } from '@nestjs/jwt';
+import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 
 @Module({
   imports: [
-    PrismaModule,
+    SharedModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
-    RedisModule,
     RateLimitModule
   ],
   controllers: [ClinicController],

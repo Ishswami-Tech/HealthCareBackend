@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Delete, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, UseGuards, Request, Req } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
 import { JwtAuthGuard } from '../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../libs/guards/roles.guard';
@@ -23,10 +23,7 @@ export class ClinicController {
   @ApiResponse({ status: 401, description: 'Unauthorized.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 409, description: 'Clinic with this name already exists.' })
-  async createClinic(
-    @Body() createClinicDto: CreateClinicDto,
-    @Request() req,
-  ) {
+  async createClinic(@Body() createClinicDto: CreateClinicDto, @Req() req: any) {
     return this.clinicService.createClinic({
       ...createClinicDto,
       createdBy: req.user.id,
