@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { KafkaService } from '../kafka/kafka.service';
 import { EmailTemplate, EmailOptions } from '../../../libs/types/email.types';
 import * as nodemailer from 'nodemailer';
 
@@ -11,7 +10,6 @@ export class EmailService {
 
   constructor(
     private configService: ConfigService,
-    private kafkaService: KafkaService,
   ) {
     this.initializeTransporter();
   }
@@ -59,27 +57,9 @@ export class EmailService {
       
       this.logger.debug(`Email sent: ${info.messageId}`);
       
-      // Log email event to Kafka
-      await this.kafkaService.sendMessage('email.sent', {
-        messageId: info.messageId,
-        to: options.to,
-        template: options.template,
-        timestamp: new Date(),
-        success: true
-      });
-
       return true;
     } catch (error) {
       this.logger.error(`Failed to send email: ${error.message}`, error.stack);
-      
-      // Log failed email attempt
-      await this.kafkaService.sendMessage('email.failed', {
-        to: options.to,
-        template: options.template,
-        timestamp: new Date(),
-        error: error.message
-      });
-
       return false;
     }
   }

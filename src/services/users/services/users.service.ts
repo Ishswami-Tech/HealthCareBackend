@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Role, User, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { KafkaService } from '../../../shared/messaging/kafka/kafka.service';
 import { RedisCache } from '../../../shared/cache/decorators/redis-cache.decorator';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
 import { RedisService } from '../../../shared/cache/redis/redis.service';
@@ -10,7 +9,6 @@ import { RedisService } from '../../../shared/cache/redis/redis.service';
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly kafka: KafkaService,
     private readonly redis: RedisService,
   ) {}
 
@@ -143,12 +141,6 @@ export class UsersService {
       },
     });
 
-    await this.kafka.sendMessage('user.updated', {
-      userId: user.id,
-      role: user.role,
-      timestamp: new Date()
-    });
-
     // Invalidate cache
     await Promise.all([
       this.redis.del(`users:one:${id}`),
@@ -224,12 +216,6 @@ export class UsersService {
       where: { id }
     });
 
-    await this.kafka.sendMessage('user.deleted', {
-      userId: id,
-      role: user.role,
-      timestamp: new Date()
-    });
-
     // Invalidate cache
     await Promise.all([
       this.redis.del(`users:one:${id}`),
@@ -302,14 +288,6 @@ export class UsersService {
 
       // Log the logout event
       await this.logAuditEvent(userId, 'LOGOUT', 'User logged out successfully');
-
-      // Notify via Kafka
-      await this.kafka.sendMessage('user.logout', {
-        userId,
-        timestamp: new Date(),
-        role: user.role,
-        status: 'success'
-      });
     } catch (error) {
       // Log the error
       await this.logAuditEvent(userId, 'LOGOUT_ERROR', `Logout failed: ${error.message}`);
@@ -427,13 +405,6 @@ export class UsersService {
         clinicAdmin: true,
         superAdmin: true,
       },
-    });
-
-    await this.kafka.sendMessage('user.role.updated', {
-      userId: id,
-      oldRole: user.role,
-      newRole: role,
-      timestamp: new Date()
     });
 
     // Invalidate cache

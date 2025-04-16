@@ -7,9 +7,7 @@ export interface RedisConfig {
   port: number;
 }
 
-
-
-export interface WhatsAppConfig {
+export interface WhatsappConfig {
   enabled: boolean;
   apiUrl: string;
   apiKey: string;
@@ -20,9 +18,8 @@ export interface WhatsAppConfig {
   prescriptionTemplateId: string;
 }
 
-export interface AppConfig {
+export interface Config {
   database: DatabaseConfig;
   redis: RedisConfig;
-
-  whatsapp: WhatsAppConfig;
+  whatsapp: WhatsappConfig;
 } 

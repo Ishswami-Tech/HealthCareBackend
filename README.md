@@ -1,10 +1,10 @@
 # Healthcare Backend API
 
-A modern, scalable backend system for healthcare management built with NestJS, PostgreSQL, Redis, and Kafka. This system is designed to handle the complete workflow of healthcare clinics, from patient management to appointment scheduling and medical record keeping, with a special focus on Ayurvedic practices.
+A modern, scalable backend system for healthcare management built with NestJS, PostgreSQL, and Redis. This system is designed to handle the complete workflow of healthcare clinics, from patient management to appointment scheduling and medical record keeping, with a special focus on Ayurvedic practices.
 
 ## 📁 Project Structure
 
-\`\`\`
+```
 src/
 ├── config/               # Configuration modules and environment setup
 ├── libs/                 # Shared libraries, DTOs, and utilities
@@ -16,12 +16,11 @@ src/
 │       └── services/    # User-related services
 ├── shared/             # Shared modules and utilities
 │   ├── cache/          # Redis caching implementation
-│   ├── database/       # Database configurations and Prisma setup
-│   └── messaging/      # Kafka messaging implementation
+│   └── database/       # Database configurations and Prisma setup
 ├── app.controller.ts   # Main application controller
 ├── app.module.ts       # Main application module
 └── main.ts            # Application entry point
-\`\`\`
+```
 
 ## 🏥 Features
 
@@ -119,7 +118,6 @@ src/
 - **Service Layer**: Business logic implementation
 - **Data Layer**: Prisma ORM with PostgreSQL
 - **Cache Layer**: Redis for performance optimization
-- **Message Queue**: Kafka for event-driven architecture
 - **Authentication**: JWT with refresh token rotation
 - **File Storage**: S3-compatible storage for documents
 
@@ -138,13 +136,6 @@ src/
 - Cache warming mechanisms
 - TTL-based cache management
 
-### Message Queue Implementation
-- Kafka topics for event handling
-- Event sourcing patterns
-- Message retry mechanisms
-- Dead letter queues
-- Event logging and tracking
-
 ## 🚀 Tech Stack
 
 - **Framework**: NestJS (v9.x)
@@ -152,7 +143,6 @@ src/
   - PostgreSQL (v14+)
   - Prisma ORM (v4.x)
 - **Caching**: Redis (v6.x)
-- **Message Queue**: Apache Kafka
 - **API Documentation**: Swagger/OpenAPI 3.0
 - **Runtime**: Node.js (v16+)
 - **Language**: TypeScript (v4.x)
@@ -168,7 +158,6 @@ src/
 - Node.js (v16 or higher)
 - PostgreSQL (v14 or higher)
 - Redis (v6 or higher)
-- Apache Kafka (v3 or higher)
 - Docker & Docker Compose
 - Git
 
@@ -176,25 +165,23 @@ src/
 
 Three environment configurations are available:
 
-1. Development (\`.env.development\`):
-\`\`\`env
+1. Development (`.env.development`):
+```env
 NODE_ENV=development
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?schema=public
 REDIS_HOST=redis
 REDIS_PORT=6379
-KAFKA_BROKERS=kafka:29092
 PRISMA_SCHEMA_PATH=./src/shared/database/prisma/schema.prisma
-\`\`\`
+```
 
-2. Production (\`.env.production\`):
-\`\`\`env
+2. Production (`.env.production`):
+```env
 NODE_ENV=production
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?schema=public
 REDIS_HOST=redis
 REDIS_PORT=6379
-KAFKA_BROKERS=kafka:29092
 PRISMA_SCHEMA_PATH=./src/shared/database/prisma/schema.prisma
-\`\`\`
+```
 
 ### Docker Services
 
@@ -227,45 +214,36 @@ The application uses Docker Compose with the following services:
    - Redis management interface
    - Port: 8081
 
-6. **Kafka & Zookeeper**:
-   - Kafka (Port: 9092, 29092)
-   - Zookeeper (Port: 2181)
-   - Health checks enabled
-
-7. **Kafka UI**:
-   - Management interface for Kafka
-   - Port: 8085
-
 ### Installation Steps
 
 1. Clone and setup:
-\`\`\`bash
+```bash
 git clone [repository-url]
 cd healthcare-backend
 npm install
-\`\`\`
+```
 
 2. Environment setup:
-\`\`\`bash
+```bash
 cp .env.example .env
 # Configure environment variables
-\`\`\`
+```
 
 3. Start Docker services:
-\`\`\`bash
+```bash
 docker-compose up -d
-\`\`\`
+```
 
 4. Database setup:
-\`\`\`bash
+```bash
 npm run prisma:generate    # Generate Prisma client
 npm run prisma:migrate    # Run migrations
 npm run prisma:seed      # Seed database
-\`\`\`
+```
 
 ### Available Scripts
 
-\`\`\`json
+```json
 {
   "scripts": {
     "build": "nest build",
@@ -281,7 +259,7 @@ npm run prisma:seed      # Seed database
     "test:cov": "jest --coverage"
   }
 }
-\`\`\`
+```
 
 ### Development Tools
 
@@ -333,7 +311,6 @@ npm run prisma:seed      # Seed database
 1. **Health Checks**:
    - Database connectivity
    - Redis connection
-   - Kafka broker status
    - Application health status
 
 2. **Performance Monitoring**:
@@ -353,14 +330,14 @@ npm run prisma:seed      # Seed database
 ### Docker Deployment
 
 1. Build the image:
-\`\`\`bash
+```bash
 docker build -t healthcare-api .
-\`\`\`
+```
 
 2. Run the container:
-\`\`\`bash
+```bash
 docker run -p 3000:3000 healthcare-api
-\`\`\`
+```
 
 ### Production Considerations
 
@@ -384,52 +361,50 @@ docker run -p 3000:3000 healthcare-api
 - Node.js (v16 or higher)
 - PostgreSQL (v14 or higher)
 - Redis (v6 or higher)
-- Apache Kafka (v3 or higher)
 - Docker & Docker Compose (optional)
 - Git
 
 ## 🛠️ Installation
 
 1. Clone the repository:
-\`\`\`bash
+```bash
 git clone [repository-url]
 cd healthcare-backend
-\`\`\`
+```
 
 2. Install dependencies:
-\`\`\`bash
+```bash
 npm install
-\`\`\`
+```
 
 3. Set up environment variables:
-\`\`\`bash
+```bash
 cp .env.example .env
 # Edit .env with your configuration:
 # - Database connection
 # - Redis connection
-# - Kafka configuration
 # - JWT secrets
 # - SMTP settings
 # - S3 credentials
-\`\`\`
+```
 
 4. Generate Prisma client:
-\`\`\`bash
+```bash
 npx prisma generate
-\`\`\`
+```
 
 5. Run database migrations:
-\`\`\`bash
+```bash
 npx prisma migrate dev
-\`\`\`
+```
 
 6. Seed the database:
-\`\`\`bash
+```bash
 npx prisma db seed
-\`\`\`
+```
 
 ### Docker Setup
-\`\`\`bash
+```bash
 # Build and start all services
 docker-compose up -d
 
@@ -438,21 +413,21 @@ docker-compose logs -f
 
 # Stop services
 docker-compose down
-\`\`\`
+```
 
 ## 🚀 Running the Application
 
 ### Development
-\`\`\`bash
+```bash
 # Start in watch mode
 npm run start:dev
 
 # Start with debugger
 npm run start:debug
-\`\`\`
+```
 
 ### Production
-\`\`\`bash
+```bash
 # Build
 npm run build
 
@@ -461,76 +436,75 @@ npm run start:prod
 
 # With PM2
 pm2 start dist/main.js --name healthcare-api
-\`\`\`
+```
 
 ## 📚 API Documentation
 
 Once the application is running, access the Swagger documentation at:
-\`http://localhost:3000/api\`
+```http://localhost:3000/api
 
 ## 🌐 API Endpoints
 
 ### Authentication
-- \`POST /auth/login\` - User login
-- \`POST /auth/register\` - User registration
-- \`POST /auth/refresh\` - Refresh token
-- \`POST /auth/forgot-password\` - Password reset request
-- \`POST /auth/reset-password\` - Reset password
+- `POST /auth/login` - User login
+- `POST /auth/register` - User registration
+- `POST /auth/refresh` - Refresh token
+- `POST /auth/forgot-password` - Password reset request
+- `POST /auth/reset-password` - Reset password
 
 ### Users
-- \`GET /users\` - Get all users
-- \`GET /users/:id\` - Get user by ID
-- \`POST /users\` - Create new user
-- \`PUT /users/:id\` - Update user
-- \`DELETE /users/:id\` - Delete user
-- \`GET /users/me\` - Get current user profile
+- `GET /users` - Get all users
+- `GET /users/:id` - Get user by ID
+- `POST /users` - Create new user
+- `PUT /users/:id` - Update user
+- `DELETE /users/:id` - Delete user
+- `GET /users/me` - Get current user profile
 
 ### Appointments
-- \`GET /appointments\` - List appointments
-- \`POST /appointments\` - Create appointment
-- \`PUT /appointments/:id\` - Update appointment
-- \`DELETE /appointments/:id\` - Cancel appointment
-- \`GET /appointments/calendar\` - Get calendar view
-- \`POST /appointments/:id/confirm\` - Confirm appointment
+- `GET /appointments` - List appointments
+- `POST /appointments` - Create appointment
+- `PUT /appointments/:id` - Update appointment
+- `DELETE /appointments/:id` - Cancel appointment
+- `GET /appointments/calendar` - Get calendar view
+- `POST /appointments/:id/confirm` - Confirm appointment
 
 ### Clinics
-- \`GET /clinics\` - List clinics
-- \`POST /clinics\` - Add new clinic
-- \`PUT /clinics/:id\` - Update clinic details
-- \`GET /clinics/:id/doctors\` - List clinic doctors
-- \`GET /clinics/:id/schedule\` - Get clinic schedule
+- `GET /clinics` - List clinics
+- `POST /clinics` - Add new clinic
+- `PUT /clinics/:id` - Update clinic details
+- `GET /clinics/:id/doctors` - List clinic doctors
+- `GET /clinics/:id/schedule` - Get clinic schedule
 
 ### Health Records
-- \`GET /health-records/:patientId\` - Get patient records
-- \`POST /health-records\` - Add new health record
-- \`GET /health-records/:id/history\` - Get record history
-- \`POST /health-records/:id/documents\` - Upload documents
+- `GET /health-records/:patientId` - Get patient records
+- `POST /health-records` - Add new health record
+- `GET /health-records/:id/history` - Get record history
+- `POST /health-records/:id/documents` - Upload documents
 
 ### Prescriptions
-- \`GET /prescriptions/:patientId\` - Get patient prescriptions
-- \`POST /prescriptions\` - Create new prescription
-- \`GET /prescriptions/:id/pdf\` - Download PDF
-- \`PUT /prescriptions/:id\` - Update prescription
+- `GET /prescriptions/:patientId` - Get patient prescriptions
+- `POST /prescriptions` - Create new prescription
+- `GET /prescriptions/:id/pdf` - Download PDF
+- `PUT /prescriptions/:id` - Update prescription
 
 ### Medicines
-- \`GET /medicines\` - List medicines
-- \`POST /medicines\` - Add medicine
-- \`PUT /medicines/:id\` - Update medicine
-- \`GET /medicines/inventory\` - Check inventory
+- `GET /medicines` - List medicines
+- `POST /medicines` - Add medicine
+- `PUT /medicines/:id` - Update medicine
+- `GET /medicines/inventory` - Check inventory
 
 ## 🔍 Monitoring & Maintenance
 
 ### Health Checks
-- \`/health\` - Basic health check
-- \`/health/live\` - Liveness probe
-- \`/health/ready\` - Readiness probe
+- `/health` - Basic health check
+- `/health/live` - Liveness probe
+- `/health/ready` - Readiness probe
 
 ### Monitoring Endpoints
-- \`/metrics\` - Prometheus metrics
-- \`/users/monitoring/cache-status\` - Redis cache status
-- \`/users/monitoring/kafka-status\` - Kafka connection status
-- \`/users/monitoring/redis-status\` - Redis performance metrics
-- \`/cache/stats\` - Cache statistics
+- `/metrics` - Prometheus metrics
+- `/users/monitoring/cache-status` - Redis cache status
+- `/users/monitoring/redis-status` - Redis performance metrics
+- `/cache/stats` - Cache statistics
 
 ### Maintenance
 - Database backup script
@@ -541,7 +515,7 @@ Once the application is running, access the Swagger documentation at:
 ## 🧪 Testing
 
 Run tests:
-\`\`\`bash
+```bash
 # Unit tests
 npm run test
 
@@ -553,7 +527,7 @@ npm run test:cov
 
 # Test specific file
 npm test -- users.service.spec.ts
-\`\`\`
+```
 
 ## 🔒 Security
 
@@ -594,9 +568,9 @@ npm test -- users.service.spec.ts
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create your feature branch (\`git checkout -b feature/AmazingFeature\`)
-3. Commit your changes (\`git commit -m 'Add some AmazingFeature'\`)
-4. Push to the branch (\`git push origin feature/AmazingFeature\`)
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Create a new Pull Request
 
 ### Coding Standards

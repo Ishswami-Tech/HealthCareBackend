@@ -2,7 +2,6 @@ import { Injectable, UnauthorizedException, BadRequestException, InternalServerE
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { RedisService } from '../../../shared/cache/redis/redis.service';
-import { KafkaService } from '../../../shared/messaging/kafka/kafka.service';
 import { CreateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
 import { Role, User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -33,7 +32,6 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly redisService: RedisService,
-    private readonly kafkaService: KafkaService,
     private readonly emailService: EmailService,
     private readonly whatsAppService: WhatsAppService,
     private readonly clinicDatabaseService: ClinicDatabaseService,
@@ -66,12 +64,6 @@ export class AuthService {
 
         await this.prisma.superAdmin.create({
           data: { userId: superAdmin.id }
-        });
-
-        await this.kafkaService.sendMessage('user.created', {
-          userId: superAdmin.id,
-          role: Role.SUPER_ADMIN,
-          event: 'SUPER_ADMIN_CREATED'
         });
       } catch (error) {
         console.error('Error creating super admin:', error);
@@ -182,16 +174,6 @@ export class AuthService {
         clinicAdmin: true,
         superAdmin: true,
       }
-    });
-
-    // Log login event with device info
-    await this.kafkaService.sendMessage('user.login', {
-      userId: user.id,
-      role: user.role,
-      timestamp: new Date(),
-      sessionId,
-      deviceInfo,
-      ipAddress
     });
 
     // Get role-specific redirect path
@@ -342,12 +324,6 @@ export class AuthService {
         break;
     }
 
-    await this.kafkaService.sendMessage('user.created', {
-      userId: user.id,
-      role: user.role,
-      event: 'USER_REGISTERED'
-    });
-
     const { password, ...result } = user;
     // Convert dateOfBirth from Date to string if it exists
     const userResponse = { ...result } as any;
@@ -427,15 +403,6 @@ export class AuthService {
               }
             })
           ]);
-
-          // Log each session termination
-          await this.kafkaService.sendMessage('user.session.terminated', {
-            userId,
-            sessionId: sid,
-            deviceInfo: session.deviceInfo,
-            ipAddress: session.ipAddress,
-            timestamp: new Date()
-          });
         }
       }
 
@@ -445,34 +412,11 @@ export class AuthService {
           where: { id: userId },
           data: { lastLogin: null }
         });
-
-        // Log complete logout
-        await this.kafkaService.sendMessage('user.logout.all', {
-          userId,
-          timestamp: new Date(),
-          sessionCount: sessionsToTerminate.length
-        });
       }
-
-      // Log the successful logout
-      await this.kafkaService.sendMessage('user.logout', {
-        userId,
-        timestamp: new Date(),
-        sessionId: sessionId || 'current',
-        allDevices,
-        status: 'success'
-      });
 
     } catch (error) {
       // Log the error but don't expose internal details
-      await this.kafkaService.sendMessage('user.logout.error', {
-        userId,
-        timestamp: new Date(),
-        error: error.message,
-        sessionId: sessionId || 'current',
-        allDevices
-      });
-      
+      this.logger.error(`Logout error for user ${userId}: ${error.message}`);
       throw new UnauthorizedException('Failed to logout properly');
     }
   }
@@ -586,11 +530,7 @@ export class AuthService {
     */
 
     // Log the password reset request
-    this.kafkaService.emit('auth.password.reset.requested', {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString()
-    });
+    this.logger.debug(`Password reset requested for user ${user.id}`);
 
     // Send password reset email
     await this.emailService.sendEmail({
@@ -640,11 +580,7 @@ export class AuthService {
     await this.redisService.del(`password_reset:${token}`);
     
     // Log the password change
-    this.kafkaService.emit('auth.password.changed', {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString()
-    });
+    this.logger.debug(`Password changed for user ${userId}`);
     
     // Send confirmation email
     await this.emailService.sendEmail({
@@ -1110,12 +1046,6 @@ export class AuthService {
       });
       
       // Log magic link request for audit purposes
-      this.kafkaService.emit('auth.magic_link.requested', {
-        userId: user.id,
-        email: user.email,
-        timestamp: new Date().toISOString()
-      });
-      
       this.logger.debug(`Magic link sent to ${email}`);
     } catch (error) {
       this.logger.error(`Failed to send magic link: ${error.message}`);
@@ -1154,12 +1084,6 @@ export class AuthService {
       await this.redisService.del(`magic_link:${originalToken}`);
       
       // Log the successful magic link login
-      this.kafkaService.emit('auth.magic_link.success', {
-        userId: user.id,
-        email: user.email,
-        timestamp: new Date().toISOString()
-      });
-      
       this.logger.debug(`Magic link login successful for ${user.email}`);
       
       // Log the user in
@@ -1202,12 +1126,7 @@ export class AuthService {
         });
         
         // Log new user creation
-        this.kafkaService.emit('auth.social_login.new_user', {
-          userId: user.id,
-          provider: 'google',
-          email: user.email,
-          timestamp: new Date().toISOString()
-        });
+        this.logger.debug(`New user created: ${user.email}`);
       } else if (!user.googleId) {
         // Update existing user with Google ID if not already set
         user = await this.prisma.user.update({
@@ -1221,12 +1140,7 @@ export class AuthService {
       }
       
       // Log successful Google login
-      this.kafkaService.emit('auth.social_login.success', {
-        userId: user.id,
-        provider: 'google',
-        email: user.email,
-        timestamp: new Date().toISOString()
-      });
+      this.logger.debug(`Google login successful for user ${user.email}`);
       
       // Generate tokens and return login response
       return this.login(user, request);
@@ -1263,12 +1177,7 @@ export class AuthService {
         });
         
         // Log new user creation
-        this.kafkaService.emit('auth.social_login.new_user', {
-          userId: user.id,
-          provider: 'facebook',
-          email: user.email,
-          timestamp: new Date().toISOString()
-        });
+        this.logger.debug(`New user created: ${user.email}`);
       } else if (!user.facebookId) {
         // Update existing user with Facebook ID if not already set
         user = await this.prisma.user.update({
@@ -1282,19 +1191,13 @@ export class AuthService {
       }
       
       // Log successful Facebook login
-      this.kafkaService.emit('auth.social_login.success', {
-        userId: user.id,
-        provider: 'facebook',
-        email: user.email,
-        timestamp: new Date().toISOString()
-      });
+      this.logger.debug(`Facebook login successful for user ${user.email}`);
       
       // Generate tokens and return login response
       return this.login(user, request);
     } catch (error) {
       this.logger.error(`Facebook login failed: ${error.message}`);
-      this.logger.error(`Google token verification failed: ${error.message}`);
-      throw new UnauthorizedException('Invalid Google token');
+      throw new UnauthorizedException('Invalid Facebook login');
     }
   }
   
@@ -1369,12 +1272,7 @@ export class AuthService {
         });
         
         // Log new user creation
-        this.kafkaService.emit('auth.social_login.new_user', {
-          userId: user.id,
-          provider: 'apple',
-          email: user.email,
-          timestamp: new Date().toISOString()
-        });
+        this.logger.debug(`New user created: ${user.email}`);
       } else if (!user.appleId) {
         // Update existing user with Apple ID if not already set
         user = await this.prisma.user.update({
@@ -1387,12 +1285,7 @@ export class AuthService {
       }
       
       // Log successful Apple login
-      this.kafkaService.emit('auth.social_login.success', {
-        userId: user.id,
-        provider: 'apple',
-        email: user.email,
-        timestamp: new Date().toISOString()
-      });
+      this.logger.debug(`Apple login successful for user ${user.email}`);
       
       // Generate tokens and return login response
       return this.login(user, request);
