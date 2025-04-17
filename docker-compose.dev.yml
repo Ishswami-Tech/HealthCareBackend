@@ -25,7 +25,12 @@ services:
     networks:
       - app-network
     restart: unless-stopped
-    command: npm run start:dev
+    command: >
+      sh -c "
+        npm run start:dev &
+        sleep 10 &&
+        npx prisma studio --schema=src/shared/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
+      "
 
   postgres:
     image: postgres:latest
