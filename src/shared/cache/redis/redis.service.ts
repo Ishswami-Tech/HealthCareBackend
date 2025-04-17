@@ -316,22 +316,46 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async clearAllCache(): Promise<void> {
+  async clearAllCache(): Promise<number> {
     this.logger.warn('Clearing all cache');
-    await this.retryOperation(async () => {
+    
+    try {
       // Get all keys
-      const keys = await this.client.keys('*');
-      if (keys.length > 0) {
-        // Delete all keys except stats and security events
-        const keysToDelete = keys.filter(key => 
-          !key.startsWith('cache:stats') && 
-          !key.startsWith('security:events')
-        );
-        if (keysToDelete.length > 0) {
-          await this.client.del(...keysToDelete);
+      const keys = await this.keys('*');
+      
+      if (keys.length === 0) {
+        return 0;
+      }
+      
+      // Filter out system keys
+      const keysToDelete = keys.filter(key => 
+        !key.startsWith('cache:stats') && 
+        !key.startsWith('security:events') &&
+        !key.startsWith('system:')
+      );
+      
+      if (keysToDelete.length === 0) {
+        return 0;
+      }
+      
+      // Delete keys in batches to avoid blocking
+      const BATCH_SIZE = 1000;
+      let deletedCount = 0;
+      
+      for (let i = 0; i < keysToDelete.length; i += BATCH_SIZE) {
+        const batch = keysToDelete.slice(i, i + BATCH_SIZE);
+        if (batch.length > 0) {
+          const count = await this.retryOperation(() => this.client.del(...batch));
+          deletedCount += count;
         }
       }
-    });
+      
+      this.logger.debug(`Cleared ${deletedCount} keys from cache`);
+      return deletedCount;
+    } catch (error) {
+      this.logger.error('Error clearing all cache:', error);
+      throw error;
+    }
   }
 
   async resetCacheStats(): Promise<void> {
@@ -514,5 +538,514 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   // Hash operations for metrics
   async hincrby(key: string, field: string, increment: number): Promise<number> {
     return this.retryOperation(() => this.client.hincrby(key, field, increment));
+  }
+
+  /**
+   * Gets the health status of the Redis connection.
+   * Returns a tuple with health status boolean and ping time in milliseconds.
+   */
+  async getHealthStatus(): Promise<[boolean, number]> {
+    try {
+      const startTime = Date.now();
+      const pingResult = await this.ping();
+      const pingTime = Date.now() - startTime;
+      
+      return [pingResult === 'PONG', pingTime];
+    } catch (error) {
+      this.logger.error('Redis health check failed:', error);
+      return [false, 0];
+    }
+  }
+
+  /**
+   * Clears cache entries matching the given pattern.
+   * Returns the number of keys that were removed.
+   * 
+   * @param pattern - Pattern to match keys (e.g. "user:*")
+   * @returns Number of keys cleared
+   */
+  async clearCache(pattern?: string): Promise<number> {
+    this.logger.log(`Clearing cache with pattern: ${pattern || 'ALL'}`);
+    
+    try {
+      // If no pattern is provided, clear all non-system keys
+      if (!pattern) {
+        return await this.clearAllCache();
+      }
+      
+      // Get all keys matching the pattern
+      const keys = await this.keys(pattern);
+      
+      if (keys.length === 0) {
+        return 0;
+      }
+      
+      // Delete keys in batches to avoid blocking the Redis server
+      const BATCH_SIZE = 1000;
+      let deletedCount = 0;
+      
+      for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+        const batch = keys.slice(i, i + BATCH_SIZE);
+        if (batch.length > 0) {
+          const count = await this.retryOperation(() => this.client.del(...batch));
+          deletedCount += count;
+        }
+      }
+      
+      this.logger.debug(`Cleared ${deletedCount} keys matching pattern: ${pattern}`);
+      return deletedCount;
+    } catch (error) {
+      this.logger.error(`Error clearing cache with pattern ${pattern}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Unified caching service that handles all caching operations.
+   * This is the main method to use for all caching needs with built-in SWR.
+   * 
+   * @param key - Cache key
+   * @param fetchFn - Function to fetch data
+   * @param options - Caching options
+   * @returns Cached or fresh data
+   */
+  async cache<T>(
+    key: string, 
+    fetchFn: () => Promise<T>, 
+    options: {
+      ttl?: number;                  // Cache TTL in seconds
+      staleTime?: number;            // When data becomes stale
+      forceRefresh?: boolean;        // Force refresh regardless of cache
+      compress?: boolean;            // Compress large data
+      priority?: 'high' | 'low';     // Operation priority  
+      enableSwr?: boolean;           // Enable SWR (defaults to true)
+      tags?: string[];               // Cache tags for grouped invalidation
+    } = {}
+  ): Promise<T> {
+    const {
+      ttl = 3600,
+      staleTime = Math.floor(ttl / 2),
+      forceRefresh = false,
+      compress = false,
+      priority = 'high',
+      enableSwr = true,
+      tags = []
+    } = options;
+
+    // Add tags to this key if provided
+    if (tags.length > 0) {
+      await this.addKeyToTags(key, tags);
+    }
+
+    // If SWR is disabled, use standard caching
+    if (!enableSwr) {
+      return this.standardCacheFetch(key, fetchFn, ttl, forceRefresh);
+    }
+
+    const revalidationKey = `${key}:revalidating`;
+    
+    try {
+      // Use pipelining to reduce round-trips to Redis
+      const [isRevalidating, cachedData, remainingTtlRaw] = await this.retryOperation(async () => {
+        const pipeline = this.client.pipeline();
+        pipeline.get(revalidationKey);
+        pipeline.get(key);
+        pipeline.ttl(key);
+        const results = await pipeline.exec();
+        return results.map(result => result[1]);
+      });
+      
+      // Convert TTL to number
+      const remainingTtl = typeof remainingTtlRaw === 'number' ? remainingTtlRaw : 0;
+      
+      // Cache miss or forced refresh
+      if (!cachedData || forceRefresh) {
+        await this.incrementCacheStats('misses');
+        
+        // Skip locking for low priority operations under high load
+        if (priority === 'low' && await this.isHighLoad()) {
+          this.logger.debug(`Skipping lock acquisition for low priority operation: ${key}`);
+        } else {
+          // Set revalidation flag with a short expiry
+          await this.set(revalidationKey, 'true', 30);
+        }
+        
+        try {
+          const freshData = await fetchFn();
+          
+          // Only cache valid data
+          if (freshData !== undefined && freshData !== null) {
+            // Store data with optional compression
+            if (compress) {
+              await this.setCompressed(key, freshData, ttl);
+            } else {
+              await this.set(key, JSON.stringify(freshData), ttl);
+            }
+          }
+          
+          // Clear revalidation flag
+          await this.del(revalidationKey);
+          
+          return freshData;
+        } catch (error) {
+          // Clear revalidation flag on error
+          await this.del(revalidationKey);
+          throw error;
+        }
+      }
+      
+      // Record cache hit
+      await this.incrementCacheStats('hits');
+      
+      // Check if we're in the stale period
+      const isStale = remainingTtl <= staleTime;
+      
+      // If stale and not already revalidating, trigger background refresh
+      if (isStale && !isRevalidating) {
+        // Skip background revalidation for low priority during high load
+        if (priority === 'low' && await this.isHighLoad()) {
+          this.logger.debug(`Skipping background revalidation for low priority cache: ${key}`);
+        } else {
+          // Use set with NX option to prevent race conditions
+          const lockAcquired = await this.retryOperation(() => 
+            this.client.set(revalidationKey, 'true', 'EX', 30, 'NX')
+          );
+          
+          if (lockAcquired) {
+            // Background revalidation with optimized lock
+            this.backgroundRevalidate(key, fetchFn, ttl, revalidationKey, compress, tags)
+              .catch(err => this.logger.error(`Background revalidation failed for ${key}:`, err));
+          }
+        }
+      }
+      
+      // Return cached data immediately
+      return compress ? 
+        await this.getDecompressed<T>(cachedData as string) : 
+        JSON.parse(cachedData as string);
+    } catch (error) {
+      this.logger.error(`Cache error for ${key}:`, error);
+      
+      // If anything fails, fall back to direct fetch
+      try {
+        return await fetchFn();
+      } catch (fetchError) {
+        this.logger.error(`Fallback fetch also failed for ${key}:`, fetchError);
+        throw fetchError;
+      }
+    }
+  }
+
+  /**
+   * Invalidate a specific cache key.
+   * 
+   * @param key - The cache key to invalidate
+   * @returns Boolean indicating success
+   */
+  async invalidateCache(key: string): Promise<boolean> {
+    try {
+      await this.del(key);
+      this.logger.debug(`Invalidated cache for key: ${key}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to invalidate cache for key: ${key}`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Invalidate multiple cache keys by pattern.
+   * 
+   * @param pattern - Pattern to match keys for invalidation (e.g., "user:*")
+   * @returns Number of keys invalidated
+   */
+  async invalidateCacheByPattern(pattern: string): Promise<number> {
+    try {
+      const keys = await this.keys(pattern);
+      if (keys.length === 0) {
+        return 0;
+      }
+      
+      // Delete keys in batches
+      const BATCH_SIZE = 1000;
+      let invalidatedCount = 0;
+      
+      for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+        const batch = keys.slice(i, i + BATCH_SIZE);
+        if (batch.length > 0) {
+          const count = await this.retryOperation(() => this.client.del(...batch));
+          invalidatedCount += count;
+        }
+      }
+      
+      this.logger.debug(`Invalidated ${invalidatedCount} keys matching pattern: ${pattern}`);
+      return invalidatedCount;
+    } catch (error) {
+      this.logger.error(`Failed to invalidate cache by pattern: ${pattern}`, error);
+      return 0;
+    }
+  }
+
+  /**
+   * Invalidate cache by tag.
+   * Use tags to group related cache entries for easier invalidation.
+   * 
+   * @param tag - Tag name to invalidate
+   * @returns Number of keys invalidated
+   */
+  async invalidateCacheByTag(tag: string): Promise<number> {
+    try {
+      const tagKey = `tag:${tag}`;
+      const keys = await this.sMembers(tagKey);
+      
+      if (keys.length === 0) {
+        return 0;
+      }
+      
+      // Delete all keys in the tag
+      const BATCH_SIZE = 1000;
+      let invalidatedCount = 0;
+      
+      for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+        const batch = keys.slice(i, i + BATCH_SIZE);
+        if (batch.length > 0) {
+          const count = await this.retryOperation(() => this.client.del(...batch));
+          invalidatedCount += count;
+        }
+      }
+      
+      // Clean up the tag itself
+      await this.del(tagKey);
+      
+      this.logger.debug(`Invalidated ${invalidatedCount} keys with tag: ${tag}`);
+      return invalidatedCount;
+    } catch (error) {
+      this.logger.error(`Failed to invalidate cache by tag: ${tag}`, error);
+      return 0;
+    }
+  }
+
+  /**
+   * Associate a key with one or more tags for grouped invalidation.
+   * 
+   * @param key - Cache key to tag
+   * @param tags - Array of tags to associate with the key
+   */
+  private async addKeyToTags(key: string, tags: string[]): Promise<void> {
+    try {
+      for (const tag of tags) {
+        const tagKey = `tag:${tag}`;
+        await this.sAdd(tagKey, key);
+        
+        // Set expiration on tag to prevent forever growth
+        const keyTtl = await this.ttl(key);
+        
+        // If key exists and has TTL, set tag expiry to match the longest-lived key
+        if (keyTtl > 0) {
+          const tagTtl = await this.ttl(tagKey);
+          // Only update if the current key has a longer TTL than the tag
+          if (tagTtl === -1 || keyTtl > tagTtl) {
+            await this.expire(tagKey, keyTtl + 60); // Add buffer time
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to add key ${key} to tags: ${tags.join(', ')}`, error);
+    }
+  }
+
+  /**
+   * Enhanced background revalidation with adaptive retry and circuit breaking.
+   */
+  private async backgroundRevalidate<T>(
+    key: string,
+    fetchFn: () => Promise<T>,
+    cacheTtl: number,
+    revalidationKey: string,
+    compression: boolean = false,
+    tags: string[] = []
+  ): Promise<void> {
+    try {
+      // Check system load before proceeding
+      if (await this.isHighLoad()) {
+        // Under high load, extend the TTL of the existing cache to reduce pressure
+        await this.client.expire(key, cacheTtl);
+        this.logger.debug(`Extended TTL for ${key} due to high system load`);
+        return;
+      }
+      
+      // Fetch fresh data
+      const freshData = await fetchFn();
+      
+      // Update cache with fresh data if valid
+      if (freshData !== undefined && freshData !== null) {
+        if (compression) {
+          await this.setCompressed(key, freshData, cacheTtl);
+        } else {
+          // Use pipeline to set data and update metadata in one go
+          await this.retryOperation(async () => {
+            const pipeline = this.client.pipeline();
+            pipeline.set(key, JSON.stringify(freshData));
+            pipeline.expire(key, cacheTtl);
+            await pipeline.exec();
+          });
+        }
+        
+        // Update tags if needed
+        if (tags.length > 0) {
+          await this.addKeyToTags(key, tags);
+        }
+      }
+      
+      this.logger.debug(`Background revalidation completed for: ${key}`);
+    } catch (error) {
+      this.logger.error(`Background revalidation failed for ${key}:`, error);
+      
+      // On error, keep the current cache valid longer to prevent stampedes
+      await this.client.expire(key, cacheTtl);
+    } finally {
+      // Always clear the revalidation flag when done
+      await this.del(revalidationKey);
+    }
+  }
+
+  // Deprecated but kept for backward compatibility
+  async cacheWithSWR<T>(
+    key: string, 
+    fetchFn: () => Promise<T>, 
+    options: {
+      cacheTtl?: number;
+      staleWhileRevalidateTtl?: number;
+      revalidationKey?: string;
+      forceRefresh?: boolean;
+      useSwr?: boolean;
+      compression?: boolean;
+      priority?: 'high' | 'low';
+    } = {}
+  ): Promise<T> {
+    this.logger.warn('cacheWithSWR is deprecated, please use cache() instead');
+    return this.cache(key, fetchFn, {
+      ttl: options.cacheTtl,
+      staleTime: options.staleWhileRevalidateTtl,
+      forceRefresh: options.forceRefresh,
+      enableSwr: options.useSwr,
+      compress: options.compression,
+      priority: options.priority
+    });
+  }
+
+  /**
+   * Check if the Redis server is under high load.
+   * Used for adaptive caching strategies.
+   */
+  private async isHighLoad(): Promise<boolean> {
+    try {
+      const info = await this.client.info('stats');
+      
+      // Extract operations per second
+      const opsPerSecMatch = info.match(/instantaneous_ops_per_sec:(\d+)/);
+      if (opsPerSecMatch) {
+        const opsPerSec = parseInt(opsPerSecMatch[1], 10);
+        // Consider high load if more than 1000 ops/sec
+        return opsPerSec > 1000;
+      }
+      
+      return false;
+    } catch (error) {
+      this.logger.error('Error checking Redis load:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Store compressed data in Redis to save memory.
+   * Used for large cache entries.
+   */
+  private async setCompressed<T>(key: string, value: T, ttl?: number): Promise<void> {
+    const stringValue = JSON.stringify(value);
+    
+    // Only compress if data is large enough to benefit
+    if (stringValue.length < 1024) {
+      return this.set(key, stringValue, ttl);
+    }
+    
+    try {
+      // This would use a compression library in a real implementation
+      // For now we'll just use a placeholder
+      const compressed = Buffer.from(`compressed:${stringValue}`).toString('base64');
+      
+      await this.set(key, compressed, ttl);
+    } catch (error) {
+      this.logger.error(`Error compressing data for key ${key}:`, error);
+      // Fall back to uncompressed storage
+      await this.set(key, stringValue, ttl);
+    }
+  }
+
+  /**
+   * Retrieve and decompress data from Redis.
+   */
+  private async getDecompressed<T>(data: string): Promise<T> {
+    if (!data.startsWith('compressed:')) {
+      return JSON.parse(data);
+    }
+    
+    try {
+      // This would decompress using the same library in a real implementation
+      // For now we'll just use a placeholder
+      const decompressed = Buffer.from(data, 'base64').toString();
+      const jsonString = decompressed.substring('compressed:'.length);
+      
+      return JSON.parse(jsonString);
+    } catch (error) {
+      this.logger.error(`Error decompressing data:`, error);
+      // Attempt to parse as if it wasn't compressed
+      return JSON.parse(data);
+    }
+  }
+
+  /**
+   * Standard cache method without SWR behavior.
+   * Used when SWR is disabled but caching is still needed.
+   * 
+   * @param key - Cache key
+   * @param fetchFn - Function to fetch fresh data
+   * @param cacheTtl - Cache time-to-live in seconds
+   * @param forceRefresh - Whether to bypass cache and force fresh data
+   * @returns Cached or fresh data
+   * @private
+   */
+  private async standardCacheFetch<T>(
+    key: string,
+    fetchFn: () => Promise<T>,
+    cacheTtl: number,
+    forceRefresh: boolean
+  ): Promise<T> {
+    // If force refresh, skip cache check
+    if (forceRefresh) {
+      const data = await fetchFn();
+      if (data !== undefined && data !== null) {
+        await this.set(key, JSON.stringify(data), cacheTtl);
+      }
+      return data;
+    }
+    
+    // Check cache first
+    const cachedData = await this.get(key);
+    if (cachedData) {
+      await this.incrementCacheStats('hits');
+      return JSON.parse(cachedData);
+    }
+    
+    // Cache miss
+    await this.incrementCacheStats('misses');
+    const data = await fetchFn();
+    
+    // Store in cache
+    if (data !== undefined && data !== null) {
+      await this.set(key, JSON.stringify(data), cacheTtl);
+    }
+    
+    return data;
   }
 }

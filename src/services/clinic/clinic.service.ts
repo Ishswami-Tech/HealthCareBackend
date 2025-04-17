@@ -6,6 +6,8 @@ import { EventService } from '../../shared/events/event.service';
 import { ClinicPermissionService } from './shared/permission.utils';
 import { ClinicErrorService } from './shared/error.utils';
 import { ClinicLocationService } from './cliniclocation/clinic-location.service';
+import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
+import { RedisService } from '../../shared/cache/redis/redis.service';
 
 @Injectable()
 export class ClinicService {
@@ -16,6 +18,7 @@ export class ClinicService {
     private readonly permissionService: ClinicPermissionService,
     private readonly errorService: ClinicErrorService,
     private readonly clinicLocationService: ClinicLocationService,
+    private readonly redis: RedisService,
   ) {}
 
   /**
@@ -232,6 +235,9 @@ export class ClinicService {
         clinicAdminId
       });
 
+      // Invalidate clinic list cache after creating a new clinic
+      await this.redis.invalidateCacheByTag('clinics');
+
       // Return the clinic with its main location
       return {
         ...clinic,
@@ -254,6 +260,12 @@ export class ClinicService {
    * SuperAdmin can see all clinics
    * ClinicAdmin can only see their assigned clinics
    */
+  @RedisCache({
+    ttl: 1800,              // 30 minutes cache TTL
+    prefix: 'clinics:list', // Cache key prefix
+    staleTime: 600,         // Data becomes stale after 10 minutes
+    tags: ['clinics']       // Tag for grouped invalidation
+  })
   async getAllClinics(userId: string) {
     try {
       // Check if userId is undefined or empty
@@ -434,6 +446,12 @@ export class ClinicService {
    * SuperAdmin can see any clinic
    * ClinicAdmin can only see their assigned clinics
    */
+  @RedisCache({
+    ttl: 1800,                      // 30 minutes cache TTL
+    prefix: 'clinics:detail',       // Cache key prefix
+    staleTime: 600,                 // Data becomes stale after 10 minutes
+    tags: ['clinics', 'clinic']     // Tags for grouped invalidation
+  })
   async getClinicById(id: string, userId: string) {
     try {
       // First check if the user exists
@@ -512,6 +530,12 @@ export class ClinicService {
    * Get a clinic by app name
    * This is used for public access to determine which clinic database to connect to
    */
+  @RedisCache({
+    ttl: 3600,                      // 1 hour cache TTL
+    prefix: 'clinics:appname',      // Cache key prefix
+    staleTime: 1800,                // Data becomes stale after 30 minutes
+    tags: ['clinics', 'clinic']     // Tags for grouped invalidation
+  })
   async getClinicByAppName(appName: string) {
     try {
     const clinic = await this.prisma.clinic.findUnique({
@@ -692,6 +716,10 @@ export class ClinicService {
         userName: user.email
       });
 
+      // After successfully assigning clinic admin, invalidate clinic caches
+      await this.redis.invalidateCacheByPattern(`clinics:detail:${data.clinicId}:*`);
+      await this.redis.invalidateCacheByTag(`clinic:${data.clinicId}`);
+
       return assignment;
     } catch (error) {
       await this.errorService.logError(
@@ -749,13 +777,23 @@ export class ClinicService {
       });
     }
 
-    return { message: 'Clinic admin removed successfully' };
+    // After successfully removing clinic admin, invalidate clinic caches
+    await this.redis.invalidateCacheByPattern(`clinics:detail:${clinicAdmin.clinicId}:*`);
+    await this.redis.invalidateCacheByTag(`clinic:${clinicAdmin.clinicId}`);
+
+    return { success: true, message: 'Clinic admin removed successfully' };
   }
 
   /**
    * Get all doctors for a specific clinic
    * SuperAdmin and ClinicAdmin can see all doctors
    */
+  @RedisCache({
+    ttl: 900,                                   // 15 minutes cache TTL
+    prefix: 'clinics:doctors',                  // Cache key prefix
+    staleTime: 300,                             // Data becomes stale after 5 minutes
+    tags: ['clinics', 'clinic', 'clinic-doctors'] // Tags for grouped invalidation
+  })
   async getClinicDoctors(clinicId: string, userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -814,6 +852,12 @@ export class ClinicService {
    * Get all patients for a specific clinic
    * SuperAdmin and ClinicAdmin can see all patients
    */
+  @RedisCache({
+    ttl: 600,                                     // 10 minutes cache TTL
+    prefix: 'clinics:patients',                   // Cache key prefix
+    staleTime: 300,                               // Data becomes stale after 5 minutes
+    tags: ['clinics', 'clinic', 'clinic-patients'] // Tags for grouped invalidation
+  })
   async getClinicPatients(clinicId: string, userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -895,7 +939,12 @@ export class ClinicService {
     // Connect to the clinic's database and register the patient
     // This is a placeholder - in a real implementation, you would create a record in the clinic's database
     // For now, we'll just return a success message
-    return { message: 'Patient registered to clinic successfully' };
+
+    // After successfully registering patient, invalidate patients cache
+    await this.redis.invalidateCacheByTag('clinic-patients');
+    await this.redis.invalidateCacheByTag(`clinic:${clinic.id}`);
+    
+    return { success: true, message: 'Patient registered to clinic successfully' };
   }
 
   async updateClinic(id: string, data: {
@@ -985,6 +1034,14 @@ export class ClinicService {
         updatedBy: userId
       });
 
+      // After successfully updating clinic, invalidate clinic caches
+      await Promise.all([
+        this.redis.invalidateCacheByPattern(`clinics:detail:${id}:*`),
+        this.redis.invalidateCacheByPattern(`clinics:appname:${clinic.app_name}`),
+        this.redis.invalidateCacheByTag('clinics'),
+        this.redis.invalidateCacheByTag(`clinic:${id}`)
+      ]);
+
       return updatedClinic;
     } catch (error) {
       await this.errorService.logError(
@@ -1064,7 +1121,17 @@ export class ClinicService {
         deletedBy: userId
       });
 
-      return { message: 'Clinic deleted successfully' };
+      // After successfully deleting clinic, invalidate all clinic-related caches
+      await Promise.all([
+        this.redis.invalidateCacheByPattern(`clinics:detail:${id}:*`),
+        this.redis.invalidateCacheByPattern(`clinics:appname:${clinicData.app_name}`),
+        this.redis.invalidateCacheByTag('clinics'),
+        this.redis.invalidateCacheByTag(`clinic:${id}`),
+        this.redis.invalidateCacheByTag('clinic-doctors'),
+        this.redis.invalidateCacheByTag('clinic-patients')
+      ]);
+
+      return { success: true, message: 'Clinic deleted successfully' };
     } catch (error) {
       await this.errorService.logError(
         error,

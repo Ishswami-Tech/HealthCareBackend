@@ -128,7 +128,10 @@ start_prisma_studio() {
     exit 1
   else
     echo -e "${YELLOW}Starting Prisma Studio on port 5555...${NC}"
-    docker-compose -f docker-compose.dev.yml exec -T api npx prisma studio --schema=src/shared/database/prisma/schema.prisma
+    # Run Prisma Studio in its own container, binding to 0.0.0.0 so it's accessible from outside
+    docker-compose -f docker-compose.dev.yml exec -d api npx prisma studio --schema=src/shared/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
+    echo -e "${GREEN}Prisma Studio started! Access it at http://localhost:5555${NC}"
+    echo -e "${YELLOW}Press Ctrl+C if this command doesn't return to the prompt automatically.${NC}"
   fi
 }
 
@@ -154,6 +157,7 @@ case "$ENV" in
         echo -e "${GREEN}PgAdmin: http://localhost:5050 (admin@admin.com/admin)${NC}"
         echo -e "${GREEN}Redis Commander: http://localhost:8082 (admin/admin)${NC}"
         echo -e "${YELLOW}Showing logs from the API container. Press Ctrl+C to exit logs (containers will keep running).${NC}"
+        
         docker-compose -f docker-compose.dev.yml logs -f api
         ;;
       stop)

@@ -3,6 +3,8 @@ import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { LoggingService } from '../../shared/logging/logging.service';
 import { EventService } from '../../shared/events/event.service';
 import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
+import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
+import { RedisService } from '../../shared/cache/redis/redis.service';
 
 // Define the Role enum locally since it's not exported from @prisma/client
 enum Role {
@@ -18,6 +20,7 @@ export class UsersService {
     private prisma: PrismaService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
+    private readonly redis: RedisService,
   ) {}
 
   async createUser(data: {
@@ -87,6 +90,9 @@ export class UsersService {
         createdBy: data.createdBy
       });
 
+      // Invalidate any user list caches when a new user is created
+      await this.redis.invalidateCacheByTag('users');
+
       return user;
     } catch (error) {
       await this.loggingService.log(
@@ -100,6 +106,12 @@ export class UsersService {
     }
   }
 
+  @RedisCache({
+    ttl: 600,              // 10 minutes cache TTL
+    prefix: 'users:list',  // Cache key prefix
+    staleTime: 300,        // Data becomes stale after 5 minutes
+    tags: ['users']        // Tag for grouped invalidation
+  })
   async getAllUsers(userId: string) {
     try {
       const user = await this.prisma.user.findUnique({
@@ -148,6 +160,12 @@ export class UsersService {
     }
   }
 
+  @RedisCache({
+    ttl: 1800,                  // 30 minutes cache TTL
+    prefix: 'users:profile',    // Cache key prefix
+    staleTime: 600,             // Data becomes stale after 10 minutes
+    tags: ['users', 'user']     // Tags for grouped invalidation
+  })
   async getUserById(id: string, userId: string) {
     try {
       const requestingUser = await this.prisma.user.findUnique({
@@ -253,24 +271,13 @@ export class UsersService {
         throw new UnauthorizedException('You do not have permission to update this user');
       }
 
-      const user = await this.prisma.user.findUnique({
-        where: { id },
-      });
-
-      if (!user) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'User not found for update',
-          'UsersService',
-          { userId: id }
-        );
-        throw new NotFoundException('User not found');
-      }
-
-      if (data.email && data.email !== user.email) {
-        const existingUser = await this.prisma.user.findUnique({
-          where: { email: data.email },
+      // If email is being updated, check if it's already taken
+      if (data.email) {
+        const existingUser = await this.prisma.user.findFirst({
+          where: {
+            email: data.email,
+            id: { not: id },
+          },
         });
 
         if (existingUser) {
@@ -279,15 +286,18 @@ export class UsersService {
             LogLevel.WARN,
             'User update failed - email already exists',
             'UsersService',
-            { userId: id, email: data.email }
+            { email: data.email }
           );
           throw new ConflictException('Email already exists');
         }
       }
 
-      const updatedUser = await this.prisma.user.update({
+      const user = await this.prisma.user.update({
         where: { id },
-        data,
+        data: {
+          ...data,
+          updatedAt: new Date(),
+        },
       });
 
       await this.loggingService.log(
@@ -295,23 +305,30 @@ export class UsersService {
         LogLevel.INFO,
         'User updated successfully',
         'UsersService',
-        { userId: id, updatedFields: Object.keys(data) }
+        { userId: id }
       );
 
       await this.eventService.emit('user.updated', {
         userId: id,
-        updatedFields: Object.keys(data),
-        updatedBy: userId
+        updatedBy: userId,
+        data
       });
 
-      return updatedUser;
+      // Invalidate user-specific and users list caches
+      await Promise.all([
+        this.redis.invalidateCache(`users:profile:${id}:${userId}`),
+        this.redis.invalidateCacheByTag('users'),
+        this.redis.invalidateCacheByTag(`user:${id}`)
+      ]);
+
+      return user;
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to update user',
         'UsersService',
-        { error: error.message, userId: id, ...data }
+        { error: error.message, userId: id }
       );
       throw error;
     }
@@ -324,18 +341,7 @@ export class UsersService {
         include: { superAdmin: true },
       });
 
-      if (!requestingUser) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'User not found while deleting user',
-          'UsersService',
-          { userId }
-        );
-        throw new NotFoundException('User not found');
-      }
-
-      if (requestingUser.role !== Role.SUPER_ADMIN) {
+      if (!requestingUser || requestingUser.role !== Role.SUPER_ADMIN) {
         await this.loggingService.log(
           LogType.SECURITY,
           LogLevel.WARN,
@@ -346,6 +352,7 @@ export class UsersService {
         throw new UnauthorizedException('Only SuperAdmin can delete users');
       }
 
+      // Check if user exists
       const user = await this.prisma.user.findUnique({
         where: { id },
       });
@@ -361,6 +368,7 @@ export class UsersService {
         throw new NotFoundException('User not found');
       }
 
+      // Delete the user
       await this.prisma.user.delete({
         where: { id },
       });
@@ -378,7 +386,14 @@ export class UsersService {
         deletedBy: userId
       });
 
-      return { message: 'User deleted successfully' };
+      // Invalidate all user-related caches
+      await Promise.all([
+        this.redis.invalidateCache(`users:profile:${id}:${userId}`),
+        this.redis.invalidateCacheByTag('users'),
+        this.redis.invalidateCacheByTag(`user:${id}`)
+      ]);
+
+      return { success: true, message: 'User deleted successfully' };
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
