@@ -21,7 +21,9 @@
     "seed": "ts-node prisma/seed.ts",
     "db:seed": "ts-node prisma/seed.ts",
     "db:reset": "prisma migrate reset && prisma db seed",
-    "prisma:generate": "prisma generate --schema=./src/shared/database/prisma/schema.prisma",
+    "prisma:generate": "ts-node src/shared/database/prisma/generate-all-schemas.ts",
+    "prisma:generate:main": "prisma generate --schema=./src/shared/database/prisma/schema.prisma",
+    "prisma:generate:tenant": "prisma generate --schema=./src/shared/database/prisma/tenant.schema.prisma",
     "prisma:migrate": "prisma migrate deploy --schema=./src/shared/database/prisma/schema.prisma",
     "prisma:seed": "ts-node src/shared/database/prisma/seed.ts",
     "prisma:studio": "prisma studio --schema=./src/shared/database/prisma/schema.prisma",
@@ -34,7 +36,8 @@
     "docker:logs": "docker-compose logs -f",
     "docker:restart": "docker-compose restart",
     "docker:clean": "docker-compose down -v",
-    "docker:rebuild": "docker-compose down && docker-compose up -d --build"
+    "docker:rebuild": "docker-compose down && docker-compose up -d --build",
+    "tenant:update-schema": "ts-node src/shared/database/prisma/tenant-schema-update.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

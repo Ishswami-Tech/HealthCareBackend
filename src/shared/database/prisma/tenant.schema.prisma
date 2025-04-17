@@ -1,0 +1,299 @@
+generator client {
+    provider      = "prisma-client-js"
+    output        = "../generated/tenant-client"
+    binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+    engineType    = "binary"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("TENANT_DATABASE_URL")
+}
+
+// Tenant database models - Used for each clinic's isolated database
+
+model Patient {
+    id            String         @id @default(uuid())
+    userId        String         @unique
+    prakriti      Prakriti?
+    dosha         Dosha?
+    firstName     String
+    lastName      String
+    email         String         @unique
+    phone         String?
+    gender        String?
+    dateOfBirth   DateTime?
+    address       String?
+    city          String?
+    state         String?
+    country       String?
+    zipCode       String?
+    createdAt     DateTime       @default(now())
+    updatedAt     DateTime       @updatedAt
+    appointments  Appointment[]
+    healthRecords HealthRecord[]
+    prescriptions Prescription[]
+    reviews       Review[]
+
+    @@map("patients")
+}
+
+model Doctor {
+    id              String           @id @default(uuid())
+    userId          String           @unique
+    firstName       String
+    lastName        String
+    email           String           @unique
+    phone           String?
+    specialization  String
+    experience      Int
+    qualification   String?
+    consultationFee Float?
+    rating          Float?           @default(0.0)
+    isAvailable     Boolean          @default(true)
+    workingHours    Json?
+    createdAt       DateTime         @default(now())
+    updatedAt       DateTime         @updatedAt
+    appointments    Appointment[]
+    healthRecords   HealthRecord[]
+    prescriptions   Prescription[]
+    reviews         Review[]
+    locations       DoctorLocation[]
+
+    @@map("doctors")
+}
+
+model DoctorLocation {
+    doctorId   String
+    locationId String
+    startTime  DateTime?
+    endTime    DateTime?
+    doctor     Doctor    @relation(fields: [doctorId], references: [id])
+    location   Location  @relation(fields: [locationId], references: [id])
+
+    @@id([doctorId, locationId])
+    @@map("doctor_locations")
+}
+
+model Location {
+    id           String           @id @default(uuid())
+    name         String
+    address      String
+    city         String
+    state        String
+    country      String
+    zipCode      String
+    phone        String?
+    email        String?
+    isActive     Boolean          @default(true)
+    isMainBranch Boolean          @default(false)
+    createdAt    DateTime         @default(now())
+    updatedAt    DateTime         @updatedAt
+    latitude     Float?
+    longitude    Float?
+    timezone     String           @default("Asia/Kolkata")
+    workingHours Json?
+    appointments Appointment[]
+    doctors      DoctorLocation[]
+
+    @@map("locations")
+}
+
+model Appointment {
+    id         String            @id @default(uuid())
+    patientId  String
+    doctorId   String
+    locationId String
+    status     AppointmentStatus @default(PENDING)
+    type       AppointmentType   @default(IN_PERSON)
+    date       DateTime
+    time       String
+    duration   Int               @default(30)
+    notes      String?
+    createdAt  DateTime          @default(now())
+    updatedAt  DateTime          @updatedAt
+    doctor     Doctor            @relation(fields: [doctorId], references: [id])
+    patient    Patient           @relation(fields: [patientId], references: [id])
+    location   Location          @relation(fields: [locationId], references: [id])
+    payment    Payment?
+    therapy    Therapy?          @relation(fields: [therapyId], references: [id])
+    therapyId  String?
+    queueItem  QueueItem?
+
+    @@map("appointments")
+}
+
+model Therapy {
+    id           String        @id @default(uuid())
+    name         String
+    description  String?
+    duration     Int?
+    createdAt    DateTime      @default(now())
+    updatedAt    DateTime      @updatedAt
+    appointments Appointment[]
+
+    @@map("therapies")
+}
+
+model Payment {
+    id            String         @id @default(uuid())
+    appointmentId String         @unique
+    amount        Float
+    status        PaymentStatus  @default(PENDING)
+    method        PaymentMethod?
+    transactionId String?
+    createdAt     DateTime       @default(now())
+    updatedAt     DateTime       @updatedAt
+    appointment   Appointment    @relation(fields: [appointmentId], references: [id])
+
+    @@map("payments")
+}
+
+model QueueItem {
+    id                String      @id @default(uuid())
+    appointmentId     String      @unique
+    queueNumber       Int
+    estimatedWaitTime Int?
+    status            QueueStatus @default(WAITING)
+    createdAt         DateTime    @default(now())
+    updatedAt         DateTime    @updatedAt
+    appointment       Appointment @relation(fields: [appointmentId], references: [id])
+
+    @@map("queue_items")
+}
+
+model Prescription {
+    id        String             @id @default(uuid())
+    patientId String
+    doctorId  String
+    date      DateTime           @default(now())
+    notes     String?
+    createdAt DateTime           @default(now())
+    updatedAt DateTime           @updatedAt
+    doctor    Doctor             @relation(fields: [doctorId], references: [id])
+    patient   Patient            @relation(fields: [patientId], references: [id])
+    items     PrescriptionItem[]
+
+    @@map("prescriptions")
+}
+
+model PrescriptionItem {
+    id             String       @id @default(uuid())
+    prescriptionId String
+    medicineId     String
+    dosage         String?
+    frequency      String?
+    duration       String?
+    instructions   String?
+    createdAt      DateTime     @default(now())
+    updatedAt      DateTime     @updatedAt
+    medicine       Medicine     @relation(fields: [medicineId], references: [id])
+    prescription   Prescription @relation(fields: [prescriptionId], references: [id])
+
+    @@map("prescription_items")
+}
+
+model Medicine {
+    id                String             @id @default(uuid())
+    name              String
+    description       String?
+    ingredients       String?
+    dosage            String?
+    manufacturer      String?
+    price             Float?
+    stock             Int                @default(0)
+    createdAt         DateTime           @default(now())
+    updatedAt         DateTime           @updatedAt
+    prescriptionItems PrescriptionItem[]
+
+    @@map("medicines")
+}
+
+model HealthRecord {
+    id         String           @id @default(uuid())
+    patientId  String
+    doctorId   String
+    recordType HealthRecordType
+    report     String?
+    fileUrl    String?
+    createdAt  DateTime         @default(now())
+    updatedAt  DateTime         @updatedAt
+    doctor     Doctor           @relation(fields: [doctorId], references: [id])
+    patient    Patient          @relation(fields: [patientId], references: [id])
+
+    @@map("health_records")
+}
+
+model Review {
+    id        String   @id @default(uuid())
+    rating    Int      @default(0)
+    comment   String?
+    patientId String
+    doctorId  String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    doctor    Doctor   @relation(fields: [doctorId], references: [id])
+    patient   Patient  @relation(fields: [patientId], references: [id])
+
+    @@map("reviews")
+}
+
+enum AppointmentStatus {
+    PENDING
+    SCHEDULED
+    CONFIRMED
+    CANCELLED
+    COMPLETED
+    NO_SHOW
+}
+
+enum AppointmentType {
+    IN_PERSON
+    VIDEO_CALL
+    HOME_VISIT
+}
+
+enum PaymentStatus {
+    PENDING
+    COMPLETED
+    FAILED
+    REFUNDED
+}
+
+enum PaymentMethod {
+    CASH
+    CARD
+    UPI
+    NET_BANKING
+}
+
+enum QueueStatus {
+    WAITING
+    IN_PROGRESS
+    COMPLETED
+}
+
+enum HealthRecordType {
+    LAB_TEST
+    XRAY
+    MRI
+    PRESCRIPTION
+    DIAGNOSIS_REPORT
+    PULSE_DIAGNOSIS
+}
+
+enum Dosha {
+    VATA
+    PITTA
+    KAPHA
+}
+
+enum Prakriti {
+    VATA
+    PITTA
+    KAPHA
+    VATA_PITTA
+    PITTA_KAPHA
+    VATA_KAPHA
+    TRIDOSHA
+}

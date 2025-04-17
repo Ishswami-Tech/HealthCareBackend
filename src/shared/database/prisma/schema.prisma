@@ -46,6 +46,7 @@ model User {
   googleId          String?
   facebookId        String?
   appleId           String?
+  Clinic            Clinic[]
 
   @@map("users")
 }
@@ -61,20 +62,63 @@ model Receptionist {
 }
 
 model Clinic {
-  id                   String         @id @default(uuid())
+  id                   String           @id @default(uuid())
   name                 String
   address              String
   phone                String
-  email                String         @unique
-  app_name             String         @unique
-  db_connection_string String         @unique
-  isActive             Boolean        @default(true)
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  email                String           @unique
+  app_name             String           @unique
+  db_connection_string String           @unique
+  databaseName         String           @unique
+  databaseStatus       DatabaseStatus   @default(CREATING)
+  databaseCreatedAt    DateTime?
+  databaseLastSync     DateTime?
+  isActive             Boolean          @default(true)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
   admins               ClinicAdmin[]
   doctors              DoctorClinic[]
   Receptionist         Receptionist[]
-  receptionists        Receptionist[] @relation("ReceptionistsAtClinic")
+  receptionists        Receptionist[]   @relation("ReceptionistsAtClinic")
+  locations            ClinicLocation[]
+  createdBy            String
+  createdByUser        User             @relation(fields: [createdBy], references: [id])
+  subdomain            String?          @unique
+  logo                 String?
+  website              String?
+  description          String?
+  timezone             String?          @default("UTC")
+  currency             String?          @default("INR")
+  language             String?          @default("en")
+  settings             Json?
+
+  @@map("clinics")
+}
+
+model ClinicLocation {
+  id           String         @id @default(uuid())
+  name         String
+  address      String
+  city         String
+  state        String
+  country      String
+  zipCode      String?
+  phone        String?
+  email        String?
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  clinicId     String
+  clinic       Clinic         @relation(fields: [clinicId], references: [id])
+  latitude     Float?
+  longitude    Float?
+  timezone     String?        @default("UTC")
+  workingHours Json?
+  settings     Json?
+  Appointment  Appointment[]
+  DoctorClinic DoctorClinic[]
+
+  @@map("clinic_locations")
 }
 
 model SuperAdmin {
@@ -91,6 +135,7 @@ model ClinicAdmin {
   createdAt DateTime @default(now())
   clinic    Clinic   @relation(fields: [clinicId], references: [id])
   user      User     @relation(fields: [userId], references: [id])
+  isOwner   Boolean  @default(false)
 }
 
 model Doctor {
@@ -126,28 +171,31 @@ model Patient {
 }
 
 model Appointment {
-  id        String            @id @default(uuid())
-  patientId String
-  doctorId  String
-  status    AppointmentStatus @default(PENDING)
-  type      AppointmentType   @default(IN_PERSON)
-  date      DateTime
-  time      String
-  duration  Int               @default(30)
-  notes     String?
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
-  payment   Payment?
-  doctor    Doctor            @relation(fields: [doctorId], references: [id])
-  patient   Patient           @relation(fields: [patientId], references: [id])
-  therapy   Therapy?          @relation(fields: [therapyId], references: [id])
-  therapyId String?
-  queue     Queue?
-  User      User?             @relation(fields: [userId], references: [id])
-  userId    String?
+  id         String            @id @default(uuid())
+  patientId  String
+  doctorId   String
+  status     AppointmentStatus @default(PENDING)
+  type       AppointmentType   @default(IN_PERSON)
+  date       DateTime
+  time       String
+  duration   Int               @default(30)
+  notes      String?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  payment    Payment?
+  doctor     Doctor            @relation(fields: [doctorId], references: [id])
+  patient    Patient           @relation(fields: [patientId], references: [id])
+  therapy    Therapy?          @relation(fields: [therapyId], references: [id])
+  therapyId  String?
+  queue      Queue?
+  User       User?             @relation(fields: [userId], references: [id])
+  userId     String?
+  locationId String?
+  location   ClinicLocation?   @relation(fields: [locationId], references: [id])
 
   @@index([patientId], name: "appointment_patient_idx")
   @@index([doctorId], name: "appointment_doctor_idx")
+  @@index([locationId], name: "appointment_location_idx")
 }
 
 model Therapy {
@@ -193,12 +241,14 @@ model Medicine {
 }
 
 model DoctorClinic {
-  doctorId  String
-  clinicId  String
-  startTime DateTime?
-  endTime   DateTime?
-  clinic    Clinic    @relation(fields: [clinicId], references: [id])
-  doctor    Doctor    @relation(fields: [doctorId], references: [id])
+  doctorId   String
+  clinicId   String
+  startTime  DateTime?
+  endTime    DateTime?
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
+  doctor     Doctor          @relation(fields: [doctorId], references: [id])
+  locationId String?
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
 
   @@id([doctorId, clinicId])
 }
@@ -386,4 +436,12 @@ enum MedicineType {
   CLASSICAL
   PROPRIETARY
   HERBAL
+}
+
+enum DatabaseStatus {
+  CREATING
+  ACTIVE
+  ERROR
+  MIGRATING
+  DISABLED
 }

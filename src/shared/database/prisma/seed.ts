@@ -82,14 +82,19 @@ async function main() {
       console.log('Creating Aadesh Ayurvedalay clinic...');
       aadeshClinic = await prisma.clinic.create({
         data: {
-          name: "Aadesh Ayurvedalay",
-          address: "Pune, Maharashtra",
-          phone: "1234567890",
-          email: "aadesh@ayurvedalay.com",
-          app_name: "aadesh_app",
-          db_connection_string: "postgresql://postgres:postgres@postgres:5432/clinic_aadesh_app?schema=public",
-        }
+          name: 'Aadesh Ayurvedalay',
+          address: 'Bangalore Road, Bangalore',
+          phone: '+919876543210',
+          email: 'info@aadeshayurvedalay.in',
+          app_name: 'aadesh',
+          db_connection_string: 'postgresql://postgres:postgres@localhost:5432/clinic_aadesh_db',
+          databaseName: 'clinic_aadesh_db',
+          createdBy: superAdminUser.id,
+          databaseStatus: 'ACTIVE',
+          isActive: true,
+        } as any,
       });
+      
       console.log(`Aadesh Ayurvedalay clinic created with ID: ${aadeshClinic.id}`);
     } else {
       console.log('Aadesh Ayurvedalay clinic already exists, skipping creation.');
@@ -106,14 +111,19 @@ async function main() {
       console.log('Creating Shri Vishwamurthi Ayurvedalay clinic...');
       vishwamurthiClinic = await prisma.clinic.create({
         data: {
-          name: "Shri Vishwamurthi Ayurvedalay",
-          address: "Mumbai, Maharashtra",
-          phone: "0987654321",
-          email: "vishwamurthi@ayurvedalay.com",
-          app_name: "vishwamurthi_app",
-          db_connection_string: "postgresql://postgres:postgres@postgres:5432/clinic_vishwamurthi_app?schema=public",
-        }
+          name: 'Vishwamurthi Ayurvedalay',
+          address: 'MG Road, Mumbai',
+          phone: '+919876543211',
+          email: 'info@vishwamurthiayurvedalay.in',
+          app_name: 'vishwamurthi',
+          db_connection_string: 'postgresql://postgres:postgres@localhost:5432/clinic_vishwamurthi_db',
+          databaseName: 'clinic_vishwamurthi_db',
+          createdBy: superAdminUser.id,
+          databaseStatus: 'ACTIVE',
+          isActive: true,
+        } as any,
       });
+      
       console.log(`Shri Vishwamurthi Ayurvedalay clinic created with ID: ${vishwamurthiClinic.id}`);
     } else {
       console.log('Shri Vishwamurthi Ayurvedalay clinic already exists, skipping creation.');

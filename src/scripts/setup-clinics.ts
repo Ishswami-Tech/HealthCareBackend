@@ -62,7 +62,19 @@ async function setupClinics() {
         address: '123 Main St, Mumbai, India',
         phone: '+91 9876543210',
         email: 'aadeshayurvedalay@example.com',
+        subdomain: 'aadesh',
         createdBy: superAdmin.id,
+        mainLocation: {
+          name: 'Main Branch',
+          address: '123 Main St',
+          city: 'Mumbai',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '400001',
+          phone: '+91 9876543210',
+          email: 'aadeshayurvedalay@example.com',
+          timezone: 'Asia/Kolkata'
+        }
       });
       console.log('Aadesh Ayurvedalay clinic created successfully:', aadeshClinic.id);
     } catch (error) {
@@ -81,7 +93,19 @@ async function setupClinics() {
         address: '456 Oak St, Delhi, India',
         phone: '+91 9876543211',
         email: 'vishwamurthiayurvedalay@example.com',
+        subdomain: 'vishwamurthi',
         createdBy: superAdmin.id,
+        mainLocation: {
+          name: 'Main Branch',
+          address: '456 Oak St',
+          city: 'Delhi',
+          state: 'Delhi',
+          country: 'India',
+          zipCode: '110001',
+          phone: '+91 9876543211',
+          email: 'vishwamurthiayurvedalay@example.com',
+          timezone: 'Asia/Kolkata'
+        }
       });
       console.log('Shri Vishwamurthi Ayurvedalay clinic created successfully:', vishwamurthiClinic.id);
     } catch (error) {
