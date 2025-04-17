@@ -33,7 +33,7 @@ export class UsersService {
         include: { superAdmin: true },
       });
 
-      if (!creator || creator.role !== Role.SUPER_ADMIN || !creator.superAdmin) {
+      if (!creator || creator.role !== Role.SUPER_ADMIN) {
         await this.loggingService.log(
           LogType.SECURITY,
           LogLevel.WARN,
@@ -107,7 +107,7 @@ export class UsersService {
         include: { superAdmin: true },
       });
 
-      if (!user || user.role !== Role.SUPER_ADMIN || !user.superAdmin) {
+      if (!user || user.role !== Role.SUPER_ADMIN) {
         await this.loggingService.log(
           LogType.SECURITY,
           LogLevel.WARN,

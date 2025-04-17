@@ -14,31 +14,34 @@ ENV=${1:-dev}
 # Function to display help
 show_help() {
   echo -e "${BLUE}Healthcare Backend Run Script${NC}"
-  echo "Usage: ./run.sh [environment] [command]"
+  echo "Usage: ./run.sh [environment] [command] [options]"
   echo ""
   echo "Environments:"
-  echo "  dev     - Run in development mode with hot-reloading (default)"
-  echo "  prod    - Run in production mode"
+  echo "  dev, development   Run in development mode with hot-reloading"
+  echo "  prod, production   Run in production mode"
   echo ""
   echo "Commands:"
-  echo "  start       - Start the Docker containers (default)"
-  echo "  stop        - Stop the Docker containers"
-  echo "  restart     - Restart the Docker containers"
-  echo "  logs        - Show logs from all containers"
-  echo "  logs:api    - Show logs from the API container"
-  echo "  logs:db     - Show logs from the database container"
-  echo "  logs:redis  - Show logs from the Redis container"
-  echo "  status      - Show status of all containers"
-  echo "  backup      - Create a backup of the database (development only)"
-  echo "  restore     - Restore a backup of the database (development only)"
-  echo "  clean       - Remove all containers and volumes"
-  echo "  help        - Show this help message"
+  echo "  start              Start services"
+  echo "  stop               Stop services"
+  echo "  restart            Restart services"
+  echo "  logs               Show logs"
+  echo "  status             Show status of services"
+  echo "  backup             Create database backup (dev mode only)"
+  echo "  restore            Restore database from backup (dev mode only)"
+  echo "  clean              Remove containers and volumes"
+  echo "  studio             Start Prisma Studio on port 5555"
+  echo ""
+  echo "Options:"
+  echo "  --volumes          With clean command, also removes volumes"
   echo ""
   echo "Examples:"
-  echo "  ./run.sh dev start    - Start in development mode with hot-reloading"
-  echo "  ./run.sh prod start   - Start in production mode"
-  echo "  ./run.sh dev backup   - Create a backup in development mode"
-  echo "  ./run.sh dev restore  - Restore a backup in development mode"
+  echo "  ./run.sh dev start"
+  echo "  ./run.sh prod start"
+  echo "  ./run.sh dev logs"
+  echo "  ./run.sh dev backup"
+  echo "  ./run.sh dev restore backup_file.sql"
+  echo "  ./run.sh dev clean --volumes"
+  echo "  ./run.sh dev studio"
 }
 
 # Check if Docker is running
@@ -118,9 +121,20 @@ create_production_backup() {
   echo -e "${GREEN}Backup created successfully. Proceeding to production mode.${NC}"
 }
 
+# Add a function to start Prisma Studio
+start_prisma_studio() {
+  if [[ "$ENV" == "production" ]]; then
+    echo -e "${RED}Prisma Studio is disabled in production mode.${NC}"
+    exit 1
+  else
+    echo -e "${YELLOW}Starting Prisma Studio on port 5555...${NC}"
+    docker-compose -f docker-compose.dev.yml exec -T api npx prisma studio --schema=src/shared/database/prisma/schema.prisma
+  fi
+}
+
 # Main script
 case "$ENV" in
-  dev)
+  dev|development)
     check_docker
     check_docker_compose
     
@@ -188,12 +202,15 @@ case "$ENV" in
         fi
         echo -e "${GREEN}Cleanup completed successfully!${NC}"
         ;;
+      studio)
+        start_prisma_studio
+        ;;
       help|*)
         show_help
         ;;
     esac
     ;;
-  prod)
+  prod|production)
     check_docker
     check_docker_compose
     
@@ -262,6 +279,9 @@ case "$ENV" in
           docker-compose down
         fi
         echo -e "${GREEN}Cleanup completed successfully!${NC}"
+        ;;
+      studio)
+        start_prisma_studio
         ;;
       help|*)
         show_help

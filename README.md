@@ -700,3 +700,40 @@ The application includes integration with WhatsApp Business API for enhanced com
 - **Rich Media Support**: Send documents, images, and interactive messages
 
 For detailed setup instructions, see [WHATSAPP_INTEGRATION.md](WHATSAPP_INTEGRATION.md).
+
+## Multi-Tenant Architecture
+
+This application uses a multi-tenant architecture with database-per-tenant isolation:
+
+- **Super Admin** can create **Clinic Admins**
+- **Clinic Admins** can create **Clinics**
+- Each **Clinic** has:
+  - Its own isolated database
+  - Multiple locations/branches
+  - Dedicated application instance
+
+### Key Components
+
+- **Central Database**: Stores system-wide data and tenant metadata
+- **Tenant Databases**: Each clinic gets its own PostgreSQL database
+- **Dynamic Routing**: Requests are routed to the appropriate database based on clinic subdomain
+
+### Managing Tenant Schemas
+
+When modifying database schemas:
+
+1. Update the schema files:
+   - Main schema: `src/shared/database/prisma/schema.prisma`
+   - Tenant schema: `src/shared/database/prisma/tenant.schema.prisma`
+
+2. Generate Prisma clients:
+   ```
+   npm run prisma:generate
+   ```
+
+3. Apply schema changes to all tenant databases:
+   ```
+   npm run tenant:update-schema
+   ```
+
+For more details, see [Multi-Tenant Architecture Documentation](src/services/clinic/README.md).
