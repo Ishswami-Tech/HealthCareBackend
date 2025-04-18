@@ -12,6 +12,9 @@ import { ClinicContextMiddleware } from './shared/middleware/clinic-context.midd
 import { LoggingModule } from './shared/logging/logging.module';
 import { JwtModule } from '@nestjs/jwt';
 import { AppService } from './app.service';
+import { QueueModule } from './shared/queue/queue.module';
+import { AppointmentsModule } from './services/appointments/appointments.module';
+import { SharedModule } from './shared/shared.module';
 
 @Module({
   imports: [
@@ -22,13 +25,21 @@ import { AppService } from './app.service';
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
+    // Initialize the queuing system
+    QueueModule.forRoot(),
+    // Core modules
+    SharedModule,
+    PrismaModule,
+    CacheModule,
+    // Auth and user management
     AuthModule,
     UsersModule,
-    HealthModule,
-    CacheModule,
-    WhatsAppModule,
-    PrismaModule,
+    // Business modules
+    AppointmentsModule,
     ClinicModule,
+    // Support modules
+    HealthModule,
+    WhatsAppModule,
     LoggingModule,
   ],
   controllers: [AppController],

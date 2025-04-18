@@ -12,13 +12,15 @@ import { GuardsModule } from '../../libs/guards/guards.module';
 import { ClinicPermissionService } from './shared/permission.utils';
 import { ClinicErrorService } from './shared/error.utils';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 
 @Module({
   imports: [
     LoggingModule,
     ConfigModule,
     GuardsModule,
-    RateLimitModule
+    RateLimitModule,
+    EventEmitterModule.forRoot()
   ],
   controllers: [ClinicController, ClinicLocationController],
   providers: [

@@ -4,14 +4,17 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
 import fastifyHelmet from '@fastify/helmet';
-import fastifyCors from '@fastify/cors';
+import { ConfigService } from '@nestjs/config';
+import { FastifyAdapter as BullBoardFastifyAdapter } from '@bull-board/fastify';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+  
   try {
     await initDatabase();
 
@@ -25,6 +28,16 @@ async function bootstrap() {
       whitelist: true,
     }));
     app.useGlobalFilters(new HttpExceptionFilter());
+    
+    // Set up WebSocket adapter if available
+    try {
+      // Dynamically import the IoAdapter to avoid TypeScript errors
+      const { IoAdapter } = await import('@nestjs/platform-socket.io');
+      app.useWebSocketAdapter(new IoAdapter(app));
+      logger.log('WebSocket adapter initialized successfully');
+    } catch (error) {
+      logger.warn(`WebSocket adapter could not be initialized. Websocket functionality will be disabled: ${error.message}`);
+    }
 
     // Security headers
     await app.register(fastifyHelmet, {
@@ -43,42 +56,75 @@ async function bootstrap() {
       }
     });
 
-    // CORS configuration
-    await app.register(fastifyCors, {
-      origin: (origin, cb) => {
-        if (!origin || origin.startsWith('http://localhost')) {
-          cb(null, true); // Allow requests from any localhost
-        } else {
-          cb(null, false); // Block other origins
-        }
+    // Get config service
+    const configService = app.get(ConfigService);
+    
+    // Retrieve the Bull Board adapter from the DI container
+    const bullBoardAdapter = app.get<{ serverAdapter: BullBoardFastifyAdapter }>(
+      'BULL_BOARD'
+    ).serverAdapter;
+    
+    // Register the Bull Board adapter with Fastify
+    // This connects the Bull Board UI to your Fastify server
+    await app.register(
+      (fastify, options, done) => {
+        bullBoardAdapter.setBasePath('/admin/queues');
+        bullBoardAdapter.registerPlugin();
+        done();
       },
-      methods: process.env.CORS_METHODS || 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-      credentials: process.env.CORS_CREDENTIALS === 'true',
-      allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With'],
-      exposedHeaders: ['Content-Range', 'X-Content-Range'],
-      maxAge: 86400 // 24 hours
+      { prefix: '/admin/queues' }
+    );
+
+    // Configure CORS
+    app.enableCors({
+      origin: configService.get('CORS_ORIGIN', '*'),
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      credentials: true,
     });
     
-
+    // Configure Bull Board UI path in Swagger
     const config = new DocumentBuilder()
       .setTitle("Healthcare API")
       .setDescription("The Healthcare API description")
       .setVersion("1.0")
       .addBearerAuth()
+      .addServer('/admin/queues', 'Bull Queue Dashboard')
       .build();
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup("api", app, document);
 
+    // Setup graceful shutdown
+    const shutdown = async () => {
+      logger.log('Received shutdown signal, gracefully shutting down...');
+      
+      try {
+        await app.close();
+        logger.log('Application closed successfully');
+        process.exit(0);
+      } catch (err) {
+        logger.error(`Error during shutdown: ${err.message}`, err.stack);
+        process.exit(1);
+      }
+    };
+
+    // Listen for termination signals
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+
+    // Log available routes
     const httpAdapter = app.getHttpAdapter();
     const server = httpAdapter.getInstance();
-    console.log('\nAvailable Routes:');
+    logger.log('\nAvailable Routes:');
     server.printRoutes();
 
-    await app.listen(process.env.PORT || 8088, "0.0.0.0");
-    console.log(`\nApplication is running on: ${await app.getUrl()}`);
-    console.log(`Swagger documentation is available at: ${await app.getUrl()}/api`);
+    // Start the server
+    const port = configService.get<number>('PORT', 3000);
+    await app.listen(port, "0.0.0.0");
+    logger.log(`\nApplication is running on: ${await app.getUrl()}`);
+    logger.log(`Swagger documentation is available at: ${await app.getUrl()}/api`);
+    logger.log(`Bull Board is available at: ${await app.getUrl()}/admin/queues`);
   } catch (error) {
-    console.error('Failed to start application:', error);
+    logger.error('Failed to start application:', error);
     process.exit(1);
   }
 }

@@ -144,4 +144,41 @@ export class LoggingService {
       throw new Error('Failed to clear logs');
     }
   }
+
+  /**
+   * Get events from Redis
+   */
+  async getEvents(type?: string): Promise<any[]> {
+    try {
+      // Get events from Redis
+      const redisEvents = await this.redis.lRange('events', 0, -1);
+      let events = redisEvents.map(event => JSON.parse(event));
+
+      // Apply filters
+      if (type) {
+        events = events.filter(event => event.type === type);
+      }
+
+      // Sort by timestamp descending
+      return events.sort((a, b) => 
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+    } catch (error) {
+      this.logger.error('Failed to retrieve events:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Clear events from Redis
+   */
+  async clearEvents() {
+    try {
+      await this.redis.del('events');
+      return { success: true, message: 'Events cleared successfully' };
+    } catch (error) {
+      console.error('Error clearing events:', error);
+      throw new Error('Failed to clear events');
+    }
+  }
 } 

@@ -1,14 +1,12 @@
 import { Controller, Get, Query, Res, Post } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { LoggingService } from './logging.service';
-import { EventService } from '../events/event.service';
 import { LogType } from './types/logging.types';
 
 @Controller('logger')
 export class LoggingController {
   constructor(
     private readonly loggingService: LoggingService,
-    private readonly eventService: EventService,
   ) {}
 
   private getHtmlTemplate(activeTab: 'logs' | 'events' = 'logs'): string {
@@ -310,7 +308,7 @@ export class LoggingController {
   async getEvents(
     @Query('type') type?: string,
   ) {
-    return this.eventService.getEvents(type);
+    return this.loggingService.getEvents(type);
   }
 
   @Post('logs/clear')
@@ -320,6 +318,6 @@ export class LoggingController {
 
   @Post('events/clear')
   async clearEvents() {
-    return this.eventService.clearEvents();
+    return this.loggingService.clearEvents();
   }
 } 
