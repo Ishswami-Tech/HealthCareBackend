@@ -1,18 +1,24 @@
 import { Module } from '@nestjs/common';
-import { EventEmitterModule } from '@nestjs/event-emitter';
-
-import { LoggingService } from './logging/logging.service';
-import { EventService } from './events/event.service';
+import { QrModule } from './QR/qr.module';
+import { QueueModule } from './queue/queue.module';
+import { SocketModule } from './socket/socket.module';
 import { PrismaModule } from './database/prisma/prisma.module';
-import { RedisModule } from './cache/redis/redis.module';
+import { CacheModule } from './cache/cache.module';
 
 @Module({
   imports: [
-    EventEmitterModule.forRoot(),
+    QrModule,
+    QueueModule.forRoot(),
+    SocketModule,
     PrismaModule,
-    RedisModule,
+    CacheModule,
   ],
-  providers: [LoggingService, EventService],
-  exports: [LoggingService, EventService],
+  exports: [
+    QrModule,
+    QueueModule,
+    SocketModule,
+    PrismaModule,
+    CacheModule,
+  ],
 })
 export class SharedModule {} 

@@ -11,6 +11,8 @@ import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
 import { ClinicModule } from '../clinic/clinic.module';
 import { SharedModule } from '../../shared/shared.module';
 import { JwtModule } from '@nestjs/jwt';
+import { LoggingModule } from '../../shared/logging/logging.module';
+import { EventsModule } from '../../shared/events/events.module';
 
 @Module({
   imports: [
@@ -23,6 +25,8 @@ import { JwtModule } from '@nestjs/jwt';
     RateLimitModule,
     ClinicModule,
     SharedModule,
+    LoggingModule,
+    EventsModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
