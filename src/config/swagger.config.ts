@@ -40,7 +40,7 @@ A comprehensive API system providing seamless integration for healthcare service
   .addServer('http://localhost:8088', 'Local API Server')
   .addServer('/queue-dashboard', 'Bull Queue Dashboard')
   .addSecurityRequirements('JWT-auth')
-  .addBearerAuth(  )
+  .addBearerAuth()
   .build();
 
 export const swaggerCustomOptions: SwaggerCustomOptions = {
