@@ -18,6 +18,10 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect {
   protected readonly logger: Logger;
   protected readonly roomsByClient: Map<string, Set<string>> = new Map();
   protected readonly clientsByRoom: Map<string, Set<string>> = new Map();
+  private readonly reconnectAttempts: Map<string, number> = new Map();
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private readonly RECONNECT_INTERVAL = 5000; // 5 seconds
+  private readonly clientMetadata: Map<string, Record<string, any>> = new Map();
 
   constructor(
     protected readonly socketService: SocketService,
@@ -29,13 +33,61 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect {
   async afterInit() {
     this.socketService.setServer(this.server);
     this.logger.log('WebSocket server initialized');
+    
+    // Configure Socket.IO server options for optimal performance
+    if (this.server && this.server.engine && this.server.engine.opts) {
+      this.server.engine.opts.pingTimeout = 60000; // 60 seconds
+      this.server.engine.opts.pingInterval = 25000; // 25 seconds
+      this.server.engine.opts.maxHttpBufferSize = 1e8; // 100 MB
+      this.server.engine.opts.transports = ['websocket', 'polling']; // Prefer WebSocket
+    } else {
+      this.logger.warn('Socket.IO engine options not available, using default settings');
+    }
+    
+    // Set up server-wide error handling
+    this.server.on('error', (error) => {
+      this.logger.error(`Socket.IO server error: ${error.message}`, error.stack);
+    });
   }
 
   async handleConnection(client: Socket) {
     try {
       this.logger.log(`Client connected: ${client.id}`);
+      
+      // Reset reconnect attempts on successful connection
+      this.reconnectAttempts.delete(client.id);
+      
       // Initialize client rooms tracking
       this.roomsByClient.set(client.id, new Set());
+      
+      // Store client metadata
+      this.clientMetadata.set(client.id, {
+        connectedAt: new Date(),
+        userAgent: client.handshake.headers['user-agent'],
+        ip: client.handshake.address,
+      });
+      
+      // Set up error handling for this client
+      client.on('error', (error) => {
+        this.logger.error(`Socket error for client ${client.id}: ${error.message}`, error.stack);
+        this.handleSocketError(client, error);
+      });
+      
+      // Set up reconnection handling
+      client.on('disconnect', (reason) => {
+        this.logger.warn(`Client ${client.id} disconnected. Reason: ${reason}`);
+        if (reason === 'transport close' || reason === 'ping timeout') {
+          this.handleReconnection(client);
+        }
+      });
+      
+      // Send welcome message
+      client.emit('connected', { 
+        id: client.id, 
+        timestamp: new Date().toISOString(),
+        message: 'Connected to WebSocket server'
+      });
+      
     } catch (error) {
       this.logger.error(`Error handling connection: ${error.message}`, error.stack);
       client.disconnect();
@@ -47,8 +99,39 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`Client disconnected: ${client.id}`);
       this.leaveAllRooms(client);
       this.roomsByClient.delete(client.id);
+      this.reconnectAttempts.delete(client.id);
+      this.clientMetadata.delete(client.id);
     } catch (error) {
       this.logger.error(`Error handling disconnect: ${error.message}`, error.stack);
+    }
+  }
+
+  private handleSocketError(client: Socket, error: Error) {
+    // Implement exponential backoff for reconnection
+    const attempts = this.reconnectAttempts.get(client.id) || 0;
+    if (attempts < this.MAX_RECONNECT_ATTEMPTS) {
+      const delay = Math.min(1000 * Math.pow(2, attempts), 30000); // Max 30 seconds
+      this.reconnectAttempts.set(client.id, attempts + 1);
+      
+      setTimeout(() => {
+        this.logger.log(`Attempting to reconnect client ${client.id} (attempt ${attempts + 1})`);
+        this.server.sockets.sockets.get(client.id)?.disconnect(true);
+      }, delay);
+    } else {
+      this.logger.error(`Max reconnection attempts reached for client ${client.id}`);
+      client.disconnect();
+    }
+  }
+
+  private handleReconnection(client: Socket) {
+    const attempts = this.reconnectAttempts.get(client.id) || 0;
+    if (attempts < this.MAX_RECONNECT_ATTEMPTS) {
+      this.reconnectAttempts.set(client.id, attempts + 1);
+      
+      setTimeout(() => {
+        this.logger.log(`Attempting to reconnect client ${client.id} (attempt ${attempts + 1})`);
+        this.server.sockets.sockets.get(client.id)?.disconnect(true);
+      }, this.RECONNECT_INTERVAL);
     }
   }
 
@@ -141,5 +224,41 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect {
   protected getRoomSize(room: string): number {
     const roomClients = this.clientsByRoom.get(room);
     return roomClients ? roomClients.size : 0;
+  }
+  
+  /**
+   * Get client metadata
+   * @param clientId - Client ID
+   * @returns Client metadata or undefined if not found
+   */
+  protected getClientMetadata(clientId: string): Record<string, any> | undefined {
+    return this.clientMetadata.get(clientId);
+  }
+  
+  /**
+   * Broadcast a message to all clients in a room
+   * @param room - Room name
+   * @param event - Event name
+   * @param data - Data to send
+   */
+  protected broadcastToRoom(room: string, event: string, data: any): void {
+    this.server.to(room).emit(event, data);
+    this.logger.debug(`Broadcasted ${event} to room ${room}`);
+  }
+  
+  /**
+   * Send a message to a specific client
+   * @param clientId - Client ID
+   * @param event - Event name
+   * @param data - Data to send
+   */
+  protected sendToClient(clientId: string, event: string, data: any): void {
+    const socket = this.server.sockets.sockets.get(clientId);
+    if (socket) {
+      socket.emit(event, data);
+      this.logger.debug(`Sent ${event} to client ${clientId}`);
+    } else {
+      this.logger.warn(`Client ${clientId} not found for sending ${event}`);
+    }
   }
 } 

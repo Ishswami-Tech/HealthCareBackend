@@ -15,12 +15,20 @@ import { AppService } from './app.service';
 import { QueueModule } from './shared/queue/queue.module';
 import { AppointmentsModule } from './services/appointments/appointments.module';
 import { SharedModule } from './shared/shared.module';
+import { BullBoardModule } from './shared/queue/bull-board/bull-board.module';
+import { SocketModule } from './shared/socket/socket.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
+import configuration from './config/configuration';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      load: [configuration],
     }),
+    EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
@@ -41,6 +49,8 @@ import { SharedModule } from './shared/shared.module';
     HealthModule,
     WhatsAppModule,
     LoggingModule,
+    BullBoardModule,
+    SocketModule,
   ],
   controllers: [AppController],
   providers: [AppService],
