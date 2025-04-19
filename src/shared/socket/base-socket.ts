@@ -31,6 +31,16 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async afterInit() {
+    if (!this.socketService) {
+      this.logger.error('SocketService is not initialized');
+      return;
+    }
+    
+    if (!this.server) {
+      this.logger.error('WebSocket server is not initialized');
+      return;
+    }
+    
     this.socketService.setServer(this.server);
     this.logger.log('WebSocket server initialized');
     

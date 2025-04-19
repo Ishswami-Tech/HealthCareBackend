@@ -11,7 +11,7 @@ import { RegisterPatientDto } from './dto/register-patient.dto';
 import { UpdateClinicDto } from './dto/update-clinic.dto';
 import { Request } from 'express';
 
-@ApiTags('Clinics')
+@ApiTags('clinic')
 @ApiBearerAuth()
 @Controller('clinics')
 @UseGuards(JwtAuthGuard, RolesGuard)

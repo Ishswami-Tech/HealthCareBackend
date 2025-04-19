@@ -3,12 +3,20 @@ import {
   SubscribeMessage,
   MessageBody,
   ConnectedSocket,
+  WsResponse,
 } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
 import { BaseSocket } from '../../../shared/socket/base-socket';
 import { QueueService } from '../../../shared/queue/queue.service';
 import { SocketService } from '../../../shared/socket/socket.service';
 import { Logger } from '@nestjs/common';
+import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
+
+interface QueuePosition {
+  position: number;
+  estimatedWaitTime: number;
+  totalAhead: number;
+}
 
 @WebSocketGateway({
   cors: {
@@ -24,17 +32,33 @@ export class AppointmentSocket extends BaseSocket {
   private readonly userSessions: Map<string, Set<string>> = new Map(); // userId -> Set<socketId>
   private readonly doctorSessions: Map<string, Set<string>> = new Map(); // doctorId -> Set<socketId>
   private readonly locationSessions: Map<string, Set<string>> = new Map(); // locationId -> Set<socketId>
+  private readonly queuePositions: Map<string, QueuePosition> = new Map();
+  private queueUpdateInterval: NodeJS.Timeout;
 
   constructor(
     private readonly queueService: QueueService,
-    socketService: SocketService,
+    protected readonly socketService: SocketService,
   ) {
     super(socketService, 'Appointment');
   }
 
   async afterInit() {
-    await super.afterInit();
-    this.logger.log('Appointment Socket initialized');
+    try {
+      if (!this.socketService) {
+        console.error('SocketService is not initialized');
+        return;
+      }
+      
+      await super.afterInit();
+      this.logger.log('Appointment Socket initialized');
+      
+      // Start queue position update interval
+      this.queueUpdateInterval = setInterval(async () => {
+        await this.updateAllQueuePositions();
+      }, 30000); // Update every 30 seconds
+    } catch (error) {
+      console.error('Error in AppointmentSocket.afterInit:', error);
+    }
   }
 
   async handleConnection(client: Socket) {
@@ -52,6 +76,9 @@ export class AppointmentSocket extends BaseSocket {
       }
       this.userSessions.get(userId).add(client.id);
       this.logger.debug(`User ${userId} connected with socket ${client.id}`);
+      
+      // Send initial queue position if user has active appointments
+      await this.sendUserQueuePosition(userId);
     }
     
     if (doctorId) {
@@ -60,6 +87,7 @@ export class AppointmentSocket extends BaseSocket {
       }
       this.doctorSessions.get(doctorId).add(client.id);
       this.logger.debug(`Doctor ${doctorId} connected with socket ${client.id}`);
+      await this.sendDoctorQueueStatus(doctorId);
     }
     
     if (locationId) {
@@ -68,6 +96,7 @@ export class AppointmentSocket extends BaseSocket {
       }
       this.locationSessions.get(locationId).add(client.id);
       this.logger.debug(`Location ${locationId} connected with socket ${client.id}`);
+      await this.sendLocationQueueStats(locationId);
     }
   }
 
@@ -80,6 +109,7 @@ export class AppointmentSocket extends BaseSocket {
         sessions.delete(client.id);
         if (sessions.size === 0) {
           this.userSessions.delete(userId);
+          this.queuePositions.delete(userId);
         }
         this.logger.debug(`User ${userId} disconnected socket ${client.id}`);
       }
@@ -148,7 +178,7 @@ export class AppointmentSocket extends BaseSocket {
       const result = this.joinRoom(client, room);
       
       // Send initial queue stats
-      await this.sendQueueStats(locationId);
+      await this.sendLocationQueueStats(locationId);
       
       return result;
     } catch (error) {
@@ -157,18 +187,111 @@ export class AppointmentSocket extends BaseSocket {
     }
   }
 
-  /**
-   * Send queue statistics to location room
-   */
-  async sendQueueStats(locationId: string) {
+  @SubscribeMessage('subscribeToQueueUpdates')
+  async handleQueueSubscription(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { appointmentId: string },
+  ): Promise<WsResponse<any>> {
+    try {
+      const { appointmentId } = data;
+      const appointment = await this.queueService.getAppointmentDetails(appointmentId);
+      
+      if (!appointment) {
+        throw new Error('Appointment not found');
+      }
+      
+      const room = `queue:${appointmentId}`;
+      await this.joinRoom(client, room);
+      
+      // Send initial queue position
+      const position = await this.calculateQueuePosition(appointmentId);
+      return { event: 'queuePosition', data: position };
+    } catch (error) {
+      this.logger.error(`Error in queue subscription: ${error.message}`, error.stack);
+      return { event: 'error', data: { message: error.message } };
+    }
+  }
+
+  @SubscribeMessage('requestQueueUpdate')
+  async handleQueueUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { appointmentId: string },
+  ): Promise<WsResponse<any>> {
+    try {
+      const position = await this.calculateQueuePosition(data.appointmentId);
+      return { event: 'queuePosition', data: position };
+    } catch (error) {
+      this.logger.error(`Error updating queue position: ${error.message}`, error.stack);
+      return { event: 'error', data: { message: error.message } };
+    }
+  }
+
+  private async calculateQueuePosition(appointmentId: string): Promise<QueuePosition> {
+    const stats = await this.queueService.getAppointmentQueuePosition(appointmentId);
+    return {
+      position: stats.position,
+      estimatedWaitTime: stats.estimatedWaitTime,
+      totalAhead: stats.totalAhead,
+    };
+  }
+
+  private async updateAllQueuePositions() {
+    try {
+      const activeAppointments = await this.queueService.getActiveAppointments();
+      
+      for (const appointment of activeAppointments) {
+        const position = await this.calculateQueuePosition(appointment.id);
+        this.queuePositions.set(appointment.id, position);
+        
+        // Emit updates to relevant rooms
+        this.server.to(`queue:${appointment.id}`).emit('queuePosition', position);
+        
+        if (appointment.userId) {
+          this.socketService.sendToUser(appointment.userId, 'queueUpdate', {
+            appointmentId: appointment.id,
+            ...position,
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error updating queue positions: ${error.message}`, error.stack);
+    }
+  }
+
+  private async sendUserQueuePosition(userId: string) {
+    try {
+      const activeAppointments = await this.queueService.getUserActiveAppointments(userId);
+      
+      for (const appointment of activeAppointments) {
+        const position = await this.calculateQueuePosition(appointment.id);
+        this.socketService.sendToUser(userId, 'queuePosition', {
+          appointmentId: appointment.id,
+          ...position,
+        });
+      }
+    } catch (error) {
+      this.logger.error(`Error sending user queue position: ${error.message}`, error.stack);
+    }
+  }
+
+  private async sendDoctorQueueStatus(doctorId: string) {
+    try {
+      const queueStatus = await this.queueService.getDoctorQueueStatus(doctorId);
+      this.socketService.sendToResource('doctor', doctorId, 'queueStatus', queueStatus);
+    } catch (error) {
+      this.logger.error(`Error sending doctor queue status: ${error.message}`, error.stack);
+    }
+  }
+
+  private async sendLocationQueueStats(locationId: string) {
     try {
       const stats = await this.queueService.getQueueStatsByLocation(locationId, 'appointment');
-      
-      this.socketService.sendToLocation(locationId, 'queueStats', stats);
-      
-      this.logger.log(`Sent queue stats to location ${locationId}`);
+      this.socketService.sendToLocation(locationId, 'queueStats', {
+        ...stats,
+        timestamp: new Date().toISOString(),
+      });
     } catch (error) {
-      this.logger.error(`Error sending queue stats: ${error.message}`, error.stack);
+      this.logger.error(`Error sending location queue stats: ${error.message}`, error.stack);
     }
   }
 
@@ -183,28 +306,43 @@ export class AppointmentSocket extends BaseSocket {
         appointmentId: id,
         status,
         message: `Appointment status updated to ${status}`,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        progress: this.calculateProgressPercentage(status),
       };
       
-      // Send to user room
       if (userId) {
         this.socketService.sendToUser(userId, 'appointmentUpdate', updateData);
+        await this.sendUserQueuePosition(userId);
       }
       
-      // Send to doctor room
       if (doctorId) {
         this.socketService.sendToResource('doctor', doctorId, 'appointmentUpdate', updateData);
+        await this.sendDoctorQueueStatus(doctorId);
       }
       
-      // Send updated queue stats to location room
       if (locationId) {
-        await this.sendQueueStats(locationId);
+        await this.sendLocationQueueStats(locationId);
       }
+      
+      // Notify all clients in the appointment's queue room
+      this.server.to(`queue:${id}`).emit('appointmentUpdate', updateData);
       
       this.logger.log(`Sent appointment update for appointment ${id} to relevant rooms`);
     } catch (error) {
-      this.logger.error(`Error notifying appointment update: ${error.message}`, error.stack);
+      this.logger.error(`Error in appointment update notification: ${error.message}`, error.stack);
     }
+  }
+
+  private calculateProgressPercentage(status: AppointmentStatus): number {
+    const statusProgress = {
+      [AppointmentStatus.PENDING]: 0,
+      [AppointmentStatus.SCHEDULED]: 25,
+      [AppointmentStatus.CONFIRMED]: 50,
+      [AppointmentStatus.COMPLETED]: 100,
+      [AppointmentStatus.CANCELLED]: 0,
+      [AppointmentStatus.NO_SHOW]: 0,
+    };
+    return statusProgress[status] || 0;
   }
 
   /**
@@ -266,5 +404,11 @@ export class AppointmentSocket extends BaseSocket {
    */
   isLocationActive(locationId: string): boolean {
     return this.locationSessions.has(locationId) && this.locationSessions.get(locationId).size > 0;
+  }
+
+  onModuleDestroy() {
+    if (this.queueUpdateInterval) {
+      clearInterval(this.queueUpdateInterval);
+    }
   }
 } 
