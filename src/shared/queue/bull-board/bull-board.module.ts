@@ -1,10 +1,8 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
-import { RouterModule } from '@nestjs/core';
-import { createBullBoard } from '@bull-board/api';
-import { BullAdapter } from '@bull-board/api/bullAdapter';
+import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
 import { FastifyAdapter } from '@bull-board/fastify';
-import { BullBoardController } from './bull-board.controller';
+import { BullAdapter } from '@bull-board/api/bullAdapter';
 
 @Module({
   imports: [
@@ -12,22 +10,18 @@ import { BullBoardController } from './bull-board.controller';
       { name: 'appointment-queue' },
       { name: 'service-queue' }
     ),
+    BullBoardNestModule.forRoot({
+      route: '/admin/queues',
+      adapter: FastifyAdapter,
+    }),
+    BullBoardNestModule.forFeature({
+      name: 'appointment-queue',
+      adapter: BullAdapter,
+    }),
+    BullBoardNestModule.forFeature({
+      name: 'service-queue',
+      adapter: BullAdapter,
+    }),
   ],
-  controllers: [BullBoardController],
-  providers: [
-    {
-      provide: 'BULL_BOARD',
-      useFactory: () => {
-        const serverAdapter = new FastifyAdapter();
-        
-        // Don't call setBasePath here, we'll do it in main.ts
-        
-        return {
-          serverAdapter
-        };
-      }
-    }
-  ],
-  exports: ['BULL_BOARD'],
 })
 export class BullBoardModule {} 

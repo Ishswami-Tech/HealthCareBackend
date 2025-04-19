@@ -24,6 +24,7 @@ show_help() {
   echo "  start              Start services"
   echo "  stop               Stop services"
   echo "  restart            Restart services"
+  echo "  rebuild            Rebuild and restart services"
   echo "  logs               Show logs"
   echo "  status             Show status of services"
   echo "  backup             Create database backup (dev mode only)"
@@ -64,14 +65,10 @@ check_docker_compose() {
 create_backup() {
   echo -e "${YELLOW}Creating database backup...${NC}"
   
-  # Create backups directory if it doesn't exist
   mkdir -p backups
-  
-  # Generate timestamp for backup filename
   TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
   BACKUP_FILE="backups/backup_${TIMESTAMP}.sql"
   
-  # Create backup using pg_dump
   docker-compose -f docker-compose.dev.yml exec -T postgres pg_dump -U postgres userdb > "${BACKUP_FILE}"
   
   if [ $? -eq 0 ]; then
@@ -102,7 +99,6 @@ restore_backup() {
   
   echo -e "${YELLOW}Restoring backup from ${BACKUP_FILE}...${NC}"
   
-  # Restore backup using psql
   docker-compose -f docker-compose.dev.yml exec -T postgres psql -U postgres -d userdb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
   cat "${BACKUP_FILE}" | docker-compose -f docker-compose.dev.yml exec -T postgres psql -U postgres -d userdb
   
@@ -128,7 +124,6 @@ start_prisma_studio() {
     exit 1
   else
     echo -e "${YELLOW}Starting Prisma Studio on port 5555...${NC}"
-    # Run Prisma Studio in its own container, binding to 0.0.0.0 so it's accessible from outside
     docker-compose -f docker-compose.dev.yml exec -d api npx prisma studio --schema=src/shared/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
     echo -e "${GREEN}Prisma Studio started! Access it at http://localhost:5555${NC}"
     echo -e "${YELLOW}Press Ctrl+C if this command doesn't return to the prompt automatically.${NC}"
@@ -141,7 +136,6 @@ case "$ENV" in
     check_docker
     check_docker_compose
     
-    # Get command (default to start if not specified)
     CMD=${2:-start}
     
     case "$CMD" in
@@ -157,7 +151,6 @@ case "$ENV" in
         echo -e "${GREEN}PgAdmin: http://localhost:5050 (admin@admin.com/admin)${NC}"
         echo -e "${GREEN}Redis Commander: http://localhost:8082 (admin/admin)${NC}"
         echo -e "${YELLOW}Showing logs from the API container. Press Ctrl+C to exit logs (containers will keep running).${NC}"
-        
         docker-compose -f docker-compose.dev.yml logs -f api
         ;;
       stop)
@@ -170,24 +163,27 @@ case "$ENV" in
         docker-compose -f docker-compose.dev.yml restart
         echo -e "${GREEN}Environment restarted successfully!${NC}"
         ;;
+      rebuild)
+        echo -e "${YELLOW}Rebuilding and restarting Healthcare Backend in DEVELOPMENT mode...${NC}"
+        docker-compose -f docker-compose.dev.yml down
+        docker-compose -f docker-compose.dev.yml build
+        docker-compose -f docker-compose.dev.yml up -d
+        echo -e "${GREEN}Rebuild completed!${NC}"
+        docker-compose -f docker-compose.dev.yml logs -f api
+        ;;
       logs)
-        echo -e "${YELLOW}Showing logs from all containers...${NC}"
         docker-compose -f docker-compose.dev.yml logs -f
         ;;
       logs:api)
-        echo -e "${YELLOW}Showing logs from the API container...${NC}"
         docker-compose -f docker-compose.dev.yml logs -f api
         ;;
       logs:db)
-        echo -e "${YELLOW}Showing logs from the database container...${NC}"
         docker-compose -f docker-compose.dev.yml logs -f postgres
         ;;
       logs:redis)
-        echo -e "${YELLOW}Showing logs from the Redis container...${NC}"
         docker-compose -f docker-compose.dev.yml logs -f redis
         ;;
       status)
-        echo -e "${YELLOW}Container status:${NC}"
         docker-compose -f docker-compose.dev.yml ps
         ;;
       backup)
@@ -198,10 +194,8 @@ case "$ENV" in
         ;;
       clean)
         if [ "$3" == "--volumes" ]; then
-          echo -e "${YELLOW}Removing all containers and volumes...${NC}"
           docker-compose -f docker-compose.dev.yml down -v
         else
-          echo -e "${YELLOW}Removing all containers...${NC}"
           docker-compose -f docker-compose.dev.yml down
         fi
         echo -e "${GREEN}Cleanup completed successfully!${NC}"
@@ -218,14 +212,11 @@ case "$ENV" in
     check_docker
     check_docker_compose
     
-    # Get command (default to start if not specified)
     CMD=${2:-start}
     
     case "$CMD" in
       start)
-        # Create a backup before switching to production
         create_production_backup
-        
         echo -e "${YELLOW}Starting Healthcare Backend in PRODUCTION mode...${NC}"
         export NODE_ENV=production
         export APP_ENV=production
@@ -237,49 +228,47 @@ case "$ENV" in
         docker-compose logs -f api
         ;;
       stop)
-        echo -e "${YELLOW}Stopping Healthcare Backend...${NC}"
         docker-compose down
         echo -e "${GREEN}Environment stopped successfully!${NC}"
         ;;
       restart)
-        echo -e "${YELLOW}Restarting Healthcare Backend...${NC}"
         docker-compose restart
         echo -e "${GREEN}Environment restarted successfully!${NC}"
         ;;
+      rebuild)
+        create_production_backup
+        echo -e "${YELLOW}Rebuilding and restarting Healthcare Backend in PRODUCTION mode...${NC}"
+        docker-compose down
+        docker-compose build
+        docker-compose up -d
+        echo -e "${GREEN}Rebuild completed!${NC}"
+        docker-compose logs -f api
+        ;;
       logs)
-        echo -e "${YELLOW}Showing logs from all containers...${NC}"
         docker-compose logs -f
         ;;
       logs:api)
-        echo -e "${YELLOW}Showing logs from the API container...${NC}"
         docker-compose logs -f api
         ;;
       logs:db)
-        echo -e "${YELLOW}Showing logs from the database container...${NC}"
         docker-compose logs -f postgres
         ;;
       logs:redis)
-        echo -e "${YELLOW}Showing logs from the Redis container...${NC}"
         docker-compose logs -f redis
         ;;
       status)
-        echo -e "${YELLOW}Container status:${NC}"
         docker-compose ps
         ;;
       backup)
         echo -e "${RED}Backup functionality is not available in production mode.${NC}"
-        echo -e "${YELLOW}Please use development mode for backups.${NC}"
         ;;
       restore)
         echo -e "${RED}Restore functionality is not available in production mode.${NC}"
-        echo -e "${YELLOW}Please use development mode for restores.${NC}"
         ;;
       clean)
         if [ "$3" == "--volumes" ]; then
-          echo -e "${YELLOW}Removing all containers and volumes...${NC}"
           docker-compose down -v
         else
-          echo -e "${YELLOW}Removing all containers...${NC}"
           docker-compose down
         fi
         echo -e "${GREEN}Cleanup completed successfully!${NC}"
@@ -295,4 +284,4 @@ case "$ENV" in
   help|*)
     show_help
     ;;
-esac 
+esac
