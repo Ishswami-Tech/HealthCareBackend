@@ -2,7 +2,9 @@ import { Controller, Get, Query, Res, Post } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { LoggingService } from './logging.service';
 import { LogType } from './types/logging.types';
+import { ApiTags } from '@nestjs/swagger';
 
+@ApiTags('Logging')
 @Controller('logger')
 export class LoggingController {
   constructor(

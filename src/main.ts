@@ -3,13 +3,16 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
-import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
+import { SwaggerModule } from "@nestjs/swagger";
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
 import fastifyHelmet from '@fastify/helmet';
 import { ConfigService } from '@nestjs/config';
+
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -28,20 +31,55 @@ async function bootstrap() {
     }));
     app.useGlobalFilters(new HttpExceptionFilter());
     
-    // Set up WebSocket adapter if available
+    const configService = app.get(ConfigService);
+    const eventEmitter = new EventEmitter2();
+
+    // Set up WebSocket adapter with Redis
     try {
-      // Dynamically import the IoAdapter and createAdapter to avoid TypeScript errors
       const { IoAdapter } = await import('@nestjs/platform-socket.io');
-      const { createAdapter } = await import('@socket.io/redis-streams-adapter');
+      const { createAdapter } = await import('@socket.io/redis-adapter');
       const { createClient } = await import('redis');
       const { instrument } = await import('@socket.io/admin-ui');
       
-      const redisClient = createClient({
-        url: `redis://${process.env.REDIS_HOST || (process.env.NODE_ENV === 'production' ? 'redis' : 'localhost')}:${process.env.REDIS_PORT || '6379'}`,
-        password: process.env.REDIS_PASSWORD,
-      });
+      // Redis client configuration
+      const redisConfig = {
+        url: `redis://${configService.get('REDIS_HOST', 'localhost')}:${configService.get('REDIS_PORT', '6379')}`,
+        password: configService.get('REDIS_PASSWORD'),
+        retryStrategy: (times: number) => {
+          const delay = Math.min(times * 50, 2000);
+          logger.log(`Redis reconnection attempt ${times}, delay: ${delay}ms`);
+          return delay;
+        },
+        reconnectOnError: (err: Error) => {
+          logger.error('Redis reconnection error:', err);
+          return true;
+        },
+        maxRetriesPerRequest: 3,
+        enableReadyCheck: true,
+        commandTimeout: 5000
+      };
 
-      await redisClient.connect();
+      // Create Redis pub/sub clients
+      const pubClient = createClient(redisConfig);
+      const subClient = pubClient.duplicate();
+
+      // Enhanced Redis connection event handling
+      const handleRedisError = (client: string, err: Error) => {
+        logger.error(`Redis ${client} Client Error:`, err);
+        eventEmitter.emit('redisError', { client, error: err.message });
+      };
+
+      const handleRedisConnect = (client: string) => {
+        logger.log(`Redis ${client} Client Connected`);
+        eventEmitter.emit('redisConnect', { client });
+      };
+
+      pubClient.on('error', (err) => handleRedisError('Pub', err));
+      subClient.on('error', (err) => handleRedisError('Sub', err));
+      pubClient.on('connect', () => handleRedisConnect('Pub'));
+      subClient.on('connect', () => handleRedisConnect('Sub'));
+      
+      await Promise.all([pubClient.connect(), subClient.connect()]);
 
       class CustomIoAdapter extends IoAdapter {
         constructor(private app: any) {
@@ -54,20 +92,34 @@ async function bootstrap() {
               origin: ["https://admin.socket.io"],
               credentials: true
             },
-            adapter: createAdapter(redisClient)
+            adapter: createAdapter(pubClient, subClient, {
+              key: 'healthcare-socket',
+              publishOnSpecificResponseChannel: true,
+              requestsTimeout: 5000,
+              parser: {
+                encode: JSON.stringify,
+                decode: JSON.parse
+              }
+            }),
+            transports: ['websocket', 'polling'],
+            pingTimeout: 20000,
+            pingInterval: 25000,
+            upgradeTimeout: 10000,
+            maxHttpBufferSize: 1e6,
+            connectTimeout: 45000,
+            allowEIO3: true
           });
           
-          // Set up Socket.IO Admin UI
           instrument(server, {
             auth: {
               type: "basic",
               username: "admin",
-              password: "$2a$10$toNinhAQwXmVekZrNrRrh.9BCQS.iY9GslqYodhlAc0/KW9X0RXkC" // "admin" encrypted with bcryptjs
+              password: "$2a$10$toNinhAQwXmVekZrNrRrh.9BCQS.iY9GslqYodhlAc0/KW9X0RXkC"
             },
-            mode: "development",
+            mode: process.env.NODE_ENV === 'production' ? "production" : "development",
             namespaceName: "/admin",
             readonly: false,
-            serverId: "healthcare-api"
+            serverId: `healthcare-api-${process.pid}`
           });
           
           return server;
@@ -76,12 +128,9 @@ async function bootstrap() {
 
       const customAdapter = new CustomIoAdapter(app);
       app.useWebSocketAdapter(customAdapter);
-      logger.log('WebSocket adapter initialized successfully');
-      logger.log('Socket.IO Admin UI is available at https://admin.socket.io');
-      logger.log('Use http://localhost:8088 as the Server URL when connecting');
 
     } catch (error) {
-      logger.warn(`WebSocket adapter could not be initialized. Websocket functionality will be disabled: ${error.message}`);
+      logger.warn(`WebSocket adapter could not be initialized: ${error.message}`);
     }
 
     // Security headers
@@ -92,7 +141,7 @@ async function bootstrap() {
           styleSrc: [`'self'`, `'unsafe-inline'`],
           imgSrc: [`'self'`, 'data:', 'validator.swagger.io'],
           scriptSrc: [`'self'`, `'unsafe-inline'`, `'unsafe-eval'`],
-          connectSrc: [`'self'`, 'wss://admin.socket.io', 'https://admin.socket.io', 'ws://localhost:8088', 'http://localhost:8088'],
+          connectSrc: [`'self'`, 'wss://admin.socket.io', 'https://admin.socket.io', 'ws://localhost:*', 'http://localhost:*'],
           fontSrc: [`'self'`, 'data:'],
           objectSrc: [`'none'`],
           mediaSrc: [`'self'`],
@@ -102,52 +151,42 @@ async function bootstrap() {
       }
     });
 
-    // Get config service
-    const configService = app.get(ConfigService);
-
-    // Configure CORS with specific origins
+    // Configure CORS
     const corsOrigins = configService.get('CORS_ORIGIN', '*').split(',').map(origin => origin.trim());
     await app.enableCors({
       origin: corsOrigins,
       methods: configService.get('CORS_METHODS', ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']),
       credentials: configService.get('CORS_CREDENTIALS', true),
     });
-    
+
     // Configure Swagger
-    const config = new DocumentBuilder()
-      .setTitle("Healthcare API")
-      .setDescription("The Healthcare API description")
-      .setVersion("1.0")
-      .addBearerAuth()
-      .addServer('/admin/queues', 'Bull Queue Dashboard')
-      .build();
-    const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup("docs", app, document);
+    const document = SwaggerModule.createDocument(app, swaggerConfig, {
+      deepScanRoutes: true,
+      operationIdFactory: (
+        controllerKey: string,
+        methodKey: string
+      ) => methodKey
+    });
 
-    // Setup graceful shutdown
-    const shutdown = async () => {
-      logger.log('Received shutdown signal, gracefully shutting down...');
-      
-      try {
-        await app.close();
-        logger.log('Application closed successfully');
-        process.exit(0);
-      } catch (err) {
-        logger.error(`Error during shutdown: ${err.message}`, err.stack);
-        process.exit(1);
+    SwaggerModule.setup("docs", app, document, swaggerCustomOptions);
+
+    // Configure route handling to prevent Bull Board from intercepting other routes
+    const fastifyInstance = app.getHttpAdapter().getInstance();
+    fastifyInstance.addHook('onRequest', (request, reply, done) => {
+      // Skip Bull Board handling for non-queue routes
+      if (!request.url.startsWith('/queue-dashboard')) {
+        done();
+      } else {
+        done();
       }
-    };
-
-    // Listen for termination signals
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
+    });
 
     // Start the server
-    const port = configService.get<number>('PORT', 3000);
+    const port = configService.get<number>('PORT', 8088);
     await app.listen(port, "0.0.0.0");
-    logger.log(`\nApplication is running on: ${await app.getUrl()}`);
+    logger.log(`Application is running on: ${await app.getUrl()}`);
     logger.log(`Swagger documentation is available at: ${await app.getUrl()}/docs`);
-    logger.log(`Bull Board is available at: ${await app.getUrl()}/admin/queues`);
+    logger.log(`Bull Board is available at: ${await app.getUrl()}/queue-dashboard`);
   } catch (error) {
     logger.error('Failed to start application:', error);
     process.exit(1);

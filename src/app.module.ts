@@ -12,11 +12,9 @@ import { ClinicContextMiddleware } from './shared/middleware/clinic-context.midd
 import { LoggingModule } from './shared/logging/logging.module';
 import { JwtModule } from '@nestjs/jwt';
 import { AppService } from './app.service';
-import { QueueModule } from './shared/queue/queue.module';
 import { AppointmentsModule } from './services/appointments/appointments.module';
 import { SharedModule } from './shared/shared.module';
 import { BullBoardModule } from './shared/queue/bull-board/bull-board.module';
-import { SocketModule } from './shared/socket/socket.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import configuration from './config/configuration';
@@ -33,15 +31,14 @@ import configuration from './config/configuration';
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
-    // Initialize the queuing system
-    QueueModule.forRoot(),
+    // Auth and user management
+    AuthModule,
+    UsersModule,
     // Core modules
     SharedModule,
     PrismaModule,
     CacheModule,
-    // Auth and user management
-    AuthModule,
-    UsersModule,
+
     // Business modules
     AppointmentsModule,
     ClinicModule,
@@ -50,16 +47,19 @@ import configuration from './config/configuration';
     WhatsAppModule,
     LoggingModule,
     BullBoardModule,
-    SocketModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
-    // Apply the clinic context middleware to all routes
+    // Apply the clinic context middleware to all routes except queue-dashboard
     consumer
       .apply(ClinicContextMiddleware)
+      .exclude(
+        { path: 'queue-dashboard', method: RequestMethod.ALL },
+        { path: 'queue-dashboard/(.*)', method: RequestMethod.ALL }
+      )
       .forRoutes({ path: '*', method: RequestMethod.ALL });
   }
 }

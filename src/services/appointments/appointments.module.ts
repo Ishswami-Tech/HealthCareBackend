@@ -4,21 +4,17 @@ import { AppointmentLocationModule } from './appointment-location/appointment-lo
 import { AppointmentConfirmationModule } from './appointment-confirmation/appointment-confirmation.module';
 import { AppointmentSocketModule } from './appointment-socket/appointment-socket.module';
 import { AppointmentProcessorModule } from './appointment-processor/appointment-processor.module';
-import { PrismaModule } from '../../shared/database/prisma/prisma.module';
-import { QrModule } from '../../shared/QR/qr.module';
-import { QueueModule } from '../../shared/queue/queue.module';
+import { SharedModule } from '../../shared/shared.module';
 import { LoggingModule } from '../../shared/logging/logging.module';
 import { AppointmentService } from './appointments.service';
 
 @Module({
   imports: [
-    PrismaModule,
-    QueueModule.register('appointment-queue'),
+    SharedModule,
     AppointmentLocationModule,
     AppointmentConfirmationModule,
     AppointmentSocketModule,
     AppointmentProcessorModule,
-    QrModule,
     LoggingModule,
   ],
   controllers: [AppointmentController],

@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common';
 import { AppointmentSocket } from './appointment.socket';
-import { QueueModule } from '../../../shared/queue/queue.module';
+import { SharedModule } from '../../../shared/shared.module';
+import { PrismaModule } from '../../../shared/database/prisma/prisma.module';
 import { SocketModule } from '../../../shared/socket/socket.module';
 
 @Module({
   imports: [
-    QueueModule.register('appointment-queue'),
+    SharedModule,
+    PrismaModule,
     SocketModule,
   ],
   providers: [AppointmentSocket],

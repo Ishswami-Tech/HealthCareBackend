@@ -4,7 +4,6 @@ import { AppService } from './app.service';
 import { Public } from './libs/decorators/public.decorator';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from './shared/database/prisma/prisma.service';
-import { Role } from '@prisma/client';
 import { FastifyReply } from 'fastify';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -45,7 +44,7 @@ export class AppController {
       {
         name: 'Bull Board',
         description: 'Queue management and monitoring dashboard.',
-        url: `${baseUrl}/admin/queues`,
+        url: `${baseUrl}/queue-dashboard`,
         active: true,
         category: 'Monitoring'
       },

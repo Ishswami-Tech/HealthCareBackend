@@ -1,10 +1,14 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue, Job } from 'bull';
+import { PrismaService } from '../database/prisma/prisma.service';
+import { AppointmentStatus } from '../database/prisma/prisma.types';
+import { SERVICE_QUEUE, APPOINTMENT_QUEUE } from './queue.constants';
 
 export enum JobType {
   CREATE = 'create',
   UPDATE = 'update',
+  DELETE = 'delete',
   CONFIRM = 'confirm',
   COMPLETE = 'complete',
   NOTIFY = 'notify',
@@ -19,12 +23,23 @@ export enum JobPriority {
 
 export interface JobData {
   id: string;
+  type?: JobType;
   userId?: string;
-  resourceId?: string;
-  resourceType?: string;
   locationId?: string;
-  date?: Date;
   metadata?: Record<string, any>;
+  resourceType?: string;
+  resourceId?: string;
+  date?: Date;
+}
+
+export interface QueueStats {
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  paused: number;
+  timestamp: string;
 }
 
 @Injectable()
@@ -33,8 +48,9 @@ export class QueueService implements OnModuleInit {
   private jobCleanupInterval: NodeJS.Timeout;
 
   constructor(
-    private readonly serviceQueue: Queue,
-    private readonly appointmentQueue: Queue,
+    @InjectQueue(SERVICE_QUEUE) private readonly serviceQueue: Queue,
+    @InjectQueue(APPOINTMENT_QUEUE) private readonly appointmentQueue: Queue,
+    private readonly prisma: PrismaService,
   ) {}
 
   async onModuleInit() {
@@ -386,5 +402,153 @@ export class QueueService implements OnModuleInit {
     // Close the queue when the app shuts down
     await this.serviceQueue.close();
     this.logger.log('Queue closed');
+  }
+
+  /**
+   * Get appointment details by ID
+   */
+  async getAppointmentDetails(appointmentId: string) {
+    try {
+      return await this.prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          User: true,
+          doctor: true,
+          location: true,
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Error getting appointment details: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Get appointment queue position and estimated wait time
+   */
+  async getAppointmentQueuePosition(appointmentId: string) {
+    try {
+      const appointment = await this.prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          location: true,
+        },
+      });
+
+      if (!appointment) {
+        throw new Error('Appointment not found');
+      }
+
+      const appointmentsAhead = await this.prisma.appointment.count({
+        where: {
+          locationId: appointment.locationId,
+          status: {
+            in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          },
+          date: {
+            lt: appointment.date,
+          },
+        },
+      });
+
+      // Calculate estimated wait time (15 minutes per appointment ahead)
+      const estimatedWaitTime = appointmentsAhead * 15;
+
+      return {
+        position: appointmentsAhead + 1,
+        estimatedWaitTime,
+        totalAhead: appointmentsAhead,
+      };
+    } catch (error) {
+      this.logger.error(`Error getting queue position: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all active appointments
+   */
+  async getActiveAppointments() {
+    try {
+      return await this.prisma.appointment.findMany({
+        where: {
+          status: {
+            in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          },
+        },
+        include: {
+          User: true,
+          doctor: true,
+          location: true,
+        },
+        orderBy: {
+          date: 'asc',
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Error getting active appointments: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user's active appointments
+   */
+  async getUserActiveAppointments(userId: string) {
+    try {
+      return await this.prisma.appointment.findMany({
+        where: {
+          userId,
+          status: {
+            in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          },
+        },
+        include: {
+          User: true,
+          doctor: true,
+          location: true,
+        },
+        orderBy: {
+          date: 'asc',
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Error getting user appointments: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Get doctor's queue status
+   */
+  async getDoctorQueueStatus(doctorId: string) {
+    try {
+      const appointments = await this.prisma.appointment.findMany({
+        where: {
+          doctorId,
+          status: {
+            in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          },
+        },
+        orderBy: {
+          date: 'asc',
+        },
+      });
+
+      const currentTime = new Date();
+      const upcomingAppointments = appointments.filter(
+        (apt) => apt.date > currentTime
+      );
+
+      return {
+        totalAppointments: appointments.length,
+        upcomingAppointments: upcomingAppointments.length,
+        nextAppointment: upcomingAppointments[0] || null,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Error getting doctor queue status: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 } 

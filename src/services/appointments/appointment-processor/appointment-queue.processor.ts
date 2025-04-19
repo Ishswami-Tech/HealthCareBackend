@@ -5,6 +5,7 @@ import { JobType, JobData } from '../../../shared/queue/queue.service';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { SocketService } from '../../../shared/socket/socket.service';
 import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // Extend the JobData interface for appointment-specific data
 interface AppointmentJobData extends JobData {
@@ -12,6 +13,13 @@ interface AppointmentJobData extends JobData {
   retryCount?: number;
   lastError?: string;
   processingTime?: number;
+  priority?: number;
+}
+
+interface ProcessingMetrics {
+  startTime: number;
+  attempts: number;
+  errors: string[];
 }
 
 @Injectable()
@@ -22,20 +30,46 @@ export class AppointmentQueueProcessor implements OnModuleInit {
   private readonly MAX_RETRIES = 3;
   private readonly RETRY_DELAYS = [5000, 15000, 30000]; // 5s, 15s, 30s
   private readonly JOB_TIMEOUT = 30000; // 30 seconds
+  private readonly processingJobs = new Map<string, ProcessingMetrics>();
   
   constructor(
     private readonly prisma: PrismaService,
-    private readonly socketService: SocketService
+    private readonly socketService: SocketService,
+    private readonly eventEmitter: EventEmitter2
   ) {}
 
   // Implementation of OnModuleInit
   onModuleInit() {
     this.logger.log('Appointment Queue Processor initialized');
+    this.setupQueueMonitoring();
+  }
+
+  private setupQueueMonitoring() {
+    // Monitor active jobs
+    setInterval(async () => {
+      for (const [jobId, metrics] of this.processingJobs.entries()) {
+        const processingTime = Date.now() - metrics.startTime;
+        if (processingTime > this.JOB_TIMEOUT) {
+          this.logger.warn(`Job ${jobId} is taking longer than expected: ${processingTime}ms`);
+          this.eventEmitter.emit('appointment.job.slow', { jobId, processingTime, metrics });
+        }
+      }
+    }, 10000);
   }
 
   private async handleJobError(job: Job<AppointmentJobData>, error: Error, operation: string) {
     const retryCount = job.data.retryCount || 0;
     const lastError = error.message;
+    
+    // Update processing metrics
+    const metrics = this.processingJobs.get(job.id.toString()) || {
+      startTime: Date.now(),
+      attempts: 0,
+      errors: []
+    };
+    metrics.attempts++;
+    metrics.errors.push(lastError);
+    this.processingJobs.set(job.id.toString(), metrics);
     
     if (retryCount < this.MAX_RETRIES) {
       const delay = this.RETRY_DELAYS[retryCount];
@@ -43,14 +77,22 @@ export class AppointmentQueueProcessor implements OnModuleInit {
         `Retrying ${operation} for appointment ${job.data.id} after ${delay}ms. Attempt ${retryCount + 1}/${this.MAX_RETRIES}`
       );
       
-      // Update job data with retry information
       await job.progress({
         retryCount: retryCount + 1,
         lastError,
-        nextRetry: new Date(Date.now() + delay).toISOString()
+        nextRetry: new Date(Date.now() + delay).toISOString(),
+        metrics
       });
       
-      // Throw error to trigger retry
+      this.eventEmitter.emit('appointment.job.retry', {
+        jobId: job.id,
+        appointmentId: job.data.id,
+        operation,
+        retryCount: retryCount + 1,
+        delay,
+        error: lastError
+      });
+      
       throw error;
     } else {
       this.logger.error(
@@ -58,39 +100,64 @@ export class AppointmentQueueProcessor implements OnModuleInit {
         error.stack
       );
       
-      // Notify about permanent failure
       await this.notifyCriticalError(job.data, error);
-      
-      // Mark job as failed
       await job.moveToFailed({ message: lastError }, true);
+      
+      this.eventEmitter.emit('appointment.job.failed', {
+        jobId: job.id,
+        appointmentId: job.data.id,
+        operation,
+        attempts: metrics.attempts,
+        errors: metrics.errors,
+        processingTime: Date.now() - metrics.startTime
+      });
+      
       return { success: false, error: lastError };
     }
   }
 
   @Process(JobType.CREATE)
   async processCreateJob(job: Job<AppointmentJobData>) {
-    const startTime = Date.now();
+    const metrics: ProcessingMetrics = {
+      startTime: Date.now(),
+      attempts: 0,
+      errors: []
+    };
+    this.processingJobs.set(job.id.toString(), metrics);
+    
     try {
       this.logger.log(`Processing create appointment job ${job.id}`);
       const { id, locationId, userId, doctorId } = job.data;
       
-      // Set job timeout
       await job.progress(0);
       
-      // Update appointment status in the database
-      await this.prisma.appointment.update({
+      // Update appointment status
+      const appointment = await this.prisma.appointment.update({
         where: { id },
-        data: { status: AppointmentStatus.SCHEDULED },
+        data: { 
+          status: AppointmentStatus.SCHEDULED,
+        },
+        include: {
+          User: true,
+          doctor: true,
+          location: true
+        }
       });
       
       // Notify via WebSocket
-      await this.notifyAppointmentUpdate(job.data, AppointmentStatus.SCHEDULED);
+      await this.notifyAppointmentUpdate(appointment);
       
-      const processingTime = Date.now() - startTime;
+      const processingTime = Date.now() - metrics.startTime;
       this.logger.log(`Appointment ${id} created and scheduled successfully in ${processingTime}ms`);
       
-      // Update job with processing time
       await job.progress(100);
+      this.processingJobs.delete(job.id.toString());
+      
+      this.eventEmitter.emit('appointment.created', {
+        appointment,
+        processingTime,
+        metrics
+      });
       
       return { 
         success: true, 
@@ -105,28 +172,46 @@ export class AppointmentQueueProcessor implements OnModuleInit {
 
   @Process(JobType.CONFIRM)
   async processConfirmJob(job: Job<AppointmentJobData>) {
-    const startTime = Date.now();
+    const metrics: ProcessingMetrics = {
+      startTime: Date.now(),
+      attempts: 0,
+      errors: []
+    };
+    this.processingJobs.set(job.id.toString(), metrics);
+    
     try {
       this.logger.log(`Processing confirm appointment job ${job.id}`);
       const { id } = job.data;
       
-      // Set job timeout
       await job.progress(0);
       
-      // Update appointment status in database
-      await this.prisma.appointment.update({
+      // Update appointment status
+      const appointment = await this.prisma.appointment.update({
         where: { id },
-        data: { status: AppointmentStatus.CONFIRMED },
+        data: { 
+          status: AppointmentStatus.CONFIRMED,
+        },
+        include: {
+          User: true,
+          doctor: true,
+          location: true
+        }
       });
       
       // Notify via WebSocket
-      await this.notifyAppointmentUpdate(job.data, AppointmentStatus.CONFIRMED);
+      await this.notifyAppointmentUpdate(appointment);
       
-      const processingTime = Date.now() - startTime;
+      const processingTime = Date.now() - metrics.startTime;
       this.logger.log(`Appointment ${id} confirmed successfully in ${processingTime}ms`);
       
-      // Update job with processing time
       await job.progress(100);
+      this.processingJobs.delete(job.id.toString());
+      
+      this.eventEmitter.emit('appointment.confirmed', {
+        appointment,
+        processingTime,
+        metrics
+      });
       
       return { 
         success: true, 
@@ -150,13 +235,18 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       await job.progress(0);
       
       // Update appointment status in database
-      await this.prisma.appointment.update({
+      const appointment = await this.prisma.appointment.update({
         where: { id },
         data: { status: AppointmentStatus.COMPLETED },
+        include: {
+          User: true,
+          doctor: true,
+          location: true
+        }
       });
       
       // Notify via WebSocket
-      await this.notifyAppointmentUpdate(job.data, AppointmentStatus.COMPLETED);
+      await this.notifyAppointmentUpdate(appointment);
       
       const processingTime = Date.now() - startTime;
       this.logger.log(`Appointment ${id} marked as completed in ${processingTime}ms`);
@@ -217,34 +307,44 @@ export class AppointmentQueueProcessor implements OnModuleInit {
   /**
    * Notify all relevant parties about an appointment update
    */
-  private async notifyAppointmentUpdate(data: AppointmentJobData, status: AppointmentStatus) {
+  private async notifyAppointmentUpdate(appointment: any) {
     try {
-      const { id, userId, doctorId, locationId } = data;
+      const { id, userId, doctorId, locationId, status } = appointment;
       
       const updateData = {
         appointmentId: id,
         status,
         message: `Appointment status updated to ${status}`,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        queueInfo: await this.calculateQueuePosition(id, locationId)
       };
       
-      // Send to user
+      // Emit event for external subscribers
+      this.eventEmitter.emit('appointment.updated', {
+        appointment,
+        updateData
+      });
+      
+      // Send notifications via WebSocket
       if (userId) {
-        await this.socketService.sendToUser(userId, 'appointmentUpdate', updateData);
+        this.socketService.sendToUser(userId, 'appointmentUpdate', updateData);
       }
       
-      // Send to doctor
       if (doctorId) {
-        await this.socketService.sendToResource('doctor', doctorId, 'appointmentUpdate', updateData);
+        this.socketService.sendToResource('doctor', doctorId, 'appointmentUpdate', updateData);
       }
       
-      // Send to location staff
       if (locationId) {
-        await this.socketService.sendToLocation(locationId, 'appointmentUpdate', updateData);
+        this.socketService.sendToLocation(locationId, 'queueUpdate', {
+          appointment: id,
+          ...updateData
+        });
       }
+      
+      this.logger.log(`Sent appointment update notifications for appointment ${id}`);
     } catch (error) {
-      this.logger.error(`Failed to send WebSocket notification: ${error.message}`, error.stack);
-      throw error; // Propagate error to trigger retry
+      this.logger.error(`Error sending appointment update notifications: ${error.message}`, error.stack);
+      throw error;
     }
   }
 
@@ -253,35 +353,57 @@ export class AppointmentQueueProcessor implements OnModuleInit {
    */
   private async notifyCriticalError(data: AppointmentJobData, error: any) {
     try {
-      const { id, locationId } = data;
+      const { id, userId, doctorId, locationId } = data;
       
-      // Only notify for locationId if it exists
-      if (locationId) {
-        await this.socketService.sendToLocation(locationId, 'systemAlert', {
-          type: 'error',
-          source: 'appointment-processor',
-          message: `Failed to process appointment ${id}: ${error.message}`,
-          timestamp: new Date().toISOString(),
-          error: {
-            message: error.message,
-            stack: error.stack,
-            code: error.code
-          }
-        });
+      const errorData = {
+        appointmentId: id,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+        type: 'CRITICAL_ERROR'
+      };
+      
+      // Emit error event
+      this.eventEmitter.emit('appointment.error', {
+        appointment: data,
+        error: errorData
+      });
+      
+      // Send error notifications
+      if (userId) {
+        this.socketService.sendToUser(userId, 'appointmentError', errorData);
       }
       
-      // Log to monitoring system
-      this.logger.error(`Critical error in appointment processing: ${error.message}`, {
-        appointmentId: id,
-        locationId,
-        error: {
-          message: error.message,
-          stack: error.stack,
-          code: error.code
-        }
-      });
-    } catch (err) {
-      this.logger.error(`Failed to send error notification: ${err.message}`, err.stack);
+      if (doctorId) {
+        this.socketService.sendToResource('doctor', doctorId, 'appointmentError', errorData);
+      }
+      
+      if (locationId) {
+        this.socketService.sendToLocation(locationId, 'appointmentError', errorData);
+      }
+      
+      this.logger.error(`Sent critical error notifications for appointment ${id}`);
+    } catch (notifyError) {
+      this.logger.error(`Error sending critical error notifications: ${notifyError.message}`, notifyError.stack);
     }
+  }
+
+  private async calculateQueuePosition(appointmentId: string, locationId: string) {
+    const appointmentsAhead = await this.prisma.appointment.count({
+      where: {
+        locationId,
+        status: {
+          in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED]
+        },
+        id: {
+          not: appointmentId
+        }
+      }
+    });
+    
+    return {
+      position: appointmentsAhead + 1,
+      estimatedWaitTime: appointmentsAhead * 15, // 15 minutes per appointment
+      updatedAt: new Date().toISOString()
+    };
   }
 } 
