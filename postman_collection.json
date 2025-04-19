@@ -1,0 +1,1254 @@
+{
+  "info": {
+    "name": "Healthcare API",
+    "description": "A comprehensive API system providing seamless integration for healthcare services. This collection includes all endpoints for authentication, user management, appointments, clinics, and system health.\n\n## Getting Started\n1. Import both the collection and environment files\n2. Set up your environment variables\n3. Use the Login endpoint to get your access token\n4. The collection will automatically handle authentication\n\n## Environment Variables\n- baseUrl: API base URL\n- accessToken: JWT access token\n- refreshToken: JWT refresh token\n- userId: Current user ID\n- doctorId: Selected doctor ID\n- clinicId: Selected clinic ID\n- appointmentId: Current appointment ID\n- locationId: Selected location ID\n- appName: Clinic app name/subdomain\n- email: User email for testing\n- password: User password for testing",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8088",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global Pre-request Script",
+          "if (!pm.environment.get('accessToken')) {",
+          "    console.log('No access token found. Please login first.');",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global Test Script",
+          "if (pm.response.code === 401) {",
+          "    console.log('Unauthorized. Your access token might be expired.');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "description": "Authentication and authorization endpoints including login, registration, password management, and social logins.",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Response has user data', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.have.property('id');",
+                  "    pm.expect(responseData).to.have.property('email');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "description": "Create a new user account with role-specific details",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\",\n  \"dateOfBirth\": \"1990-01-01\",\n  \"gender\": \"MALE\",\n  \"address\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"country\": \"USA\",\n  \"zipCode\": \"10001\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "Successful Registration",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\"\n}"
+                },
+                "url": "{{baseUrl}}/auth/register"
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"e1a53f98-1194-47b7-baec-3a893576fe1e\",\n  \"email\": \"user@example.com\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\",\n  \"isVerified\": false,\n  \"createdAt\": \"2024-04-19T13:59:55.409Z\"\n}"
+            },
+            {
+              "name": "Email Already Exists",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"existing@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\"\n}"
+                },
+                "url": "{{baseUrl}}/auth/register"
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 400,\n  \"message\": \"User with this email already exists\",\n  \"error\": \"Bad Request\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Register With Clinic",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register-with-clinic",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register-with-clinic"]
+            },
+            "description": "Create a new user account and associate it with a specific clinic",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\",\n  \"appName\": \"clinic-name\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has tokens', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.have.property('access_token');",
+                  "    pm.expect(responseData).to.have.property('refresh_token');",
+                  "",
+                  "    // Save tokens to environment",
+                  "    pm.environment.set('accessToken', responseData.access_token);",
+                  "    pm.environment.set('refreshToken', responseData.refresh_token);",
+                  "    ",
+                  "    // Save user ID if present",
+                  "    if (responseData.user && responseData.user.id) {",
+                  "        pm.environment.set('userId', responseData.user.id);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Authenticate using either password or OTP",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "Successful Login",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\"\n}"
+                },
+                "url": "{{baseUrl}}/auth/login"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"access_token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n  \"refresh_token\": \"31c2cc03-90be-4427-aead-08b5723097c0\",\n  \"session_id\": \"0da8c6a9-4f0c-4465-aaec-5971f3022511\",\n  \"user\": {\n    \"id\": \"e1a53f98-1194-47b7-baec-3a893576fe1e\",\n    \"email\": \"user@example.com\",\n    \"role\": \"PATIENT\"\n  },\n  \"permissions\": [\n    \"view_profile\",\n    \"edit_profile\"\n  ]\n}"
+            },
+            {
+              "name": "Invalid Credentials",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"WrongPassword\"\n}"
+                },
+                "url": "{{baseUrl}}/auth/login"
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Invalid email or password\",\n  \"error\": \"Unauthorized\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has success message', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.have.property('message');",
+                  "    pm.expect(responseData.message).to.include('logged out');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            },
+            "description": "Logout user from current session or all devices",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"allDevices\": false\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "Successful Logout",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"allDevices\": false\n}"
+                },
+                "url": "{{baseUrl}}/auth/logout"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"Successfully logged out\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has new access token', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.have.property('access_token');",
+                  "    ",
+                  "    // Save new access token",
+                  "    if (responseData.access_token) {",
+                  "        pm.environment.set('accessToken', responseData.access_token);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "description": "Get a new access token using refresh token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "Successful Token Refresh",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"refreshToken\": \"31c2cc03-90be-4427-aead-08b5723097c0\"\n}"
+                },
+                "url": "{{baseUrl}}/auth/refresh"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"access_token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"\n}"
+            },
+            {
+              "name": "Invalid Refresh Token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"refreshToken\": \"invalid-token\"\n}"
+                },
+                "url": "{{baseUrl}}/auth/refresh"
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Invalid refresh token\",\n  \"error\": \"Unauthorized\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/forgot-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "forgot-password"]
+            },
+            "description": "Request a password reset link",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/reset-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "reset-password"]
+            },
+            "description": "Reset password using token from email",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"reset-token\",\n  \"newPassword\": \"NewPassword123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Request OTP",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/request-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "request-otp"]
+            },
+            "description": "Request an OTP for authentication",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"user@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "verify-otp"]
+            },
+            "description": "Verify OTP and get access token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"otp\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Social Login - Google",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/google",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "google"]
+            },
+            "description": "Login with Google OAuth token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"google-oauth-token\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "description": "User management endpoints for viewing and managing user profiles, roles, and settings.",
+      "item": [
+        {
+          "name": "Get All Users",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is an array of users', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.be.an('array');",
+                  "    if (responseData.length > 0) {",
+                  "        pm.expect(responseData[0]).to.have.property('id');",
+                  "        pm.expect(responseData[0]).to.have.property('email');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/user/all",
+              "host": ["{{baseUrl}}"],
+              "path": ["user", "all"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "role",
+                  "value": "PATIENT"
+                }
+              ]
+            },
+            "description": "Get a paginated list of users with optional role filtering"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/user/all",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["user", "all"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [],
+              "cookie": [],
+              "body": {
+                "users": [
+                  {
+                    "id": "e1a53f98-1194-47b7-baec-3a893576fe1e",
+                    "email": "user@example.com",
+                    "role": "PATIENT"
+                  }
+                ],
+                "total": 1,
+                "page": 1,
+                "limit": 10
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get User Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has user data', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.have.property('id');",
+                  "    pm.expect(responseData).to.have.property('email');",
+                  "    pm.expect(responseData).to.have.property('firstName');",
+                  "    pm.expect(responseData).to.have.property('lastName');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/user/profile/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["user", "profile", "{{userId}}"]
+            },
+            "description": "Get detailed user profile information"
+          },
+          "response": [
+            {
+              "name": "Successful Response",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/user/profile/e1a53f98-1194-47b7-baec-3a893576fe1e"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"e1a53f98-1194-47b7-baec-3a893576fe1e\",\n  \"email\": \"user@example.com\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\",\n  \"dateOfBirth\": \"1990-01-01\",\n  \"gender\": \"MALE\",\n  \"address\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"country\": \"USA\",\n  \"zipCode\": \"10001\",\n  \"isVerified\": true,\n  \"createdAt\": \"2024-04-19T13:59:55.409Z\",\n  \"updatedAt\": \"2024-04-19T14:30:22.156Z\"\n}"
+            },
+            {
+              "name": "User Not Found",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/user/profile/invalid-id"
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 404,\n  \"message\": \"User not found\",\n  \"error\": \"Not Found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update User Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has updated user data', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.have.property('id');",
+                  "    pm.expect(responseData).to.have.property('email');",
+                  "    pm.expect(responseData).to.have.property('firstName');",
+                  "    pm.expect(responseData).to.have.property('lastName');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/profile/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["user", "profile", "{{userId}}"]
+            },
+            "description": "Update user profile information",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Updated First Name\",\n  \"lastName\": \"Updated Last Name\",\n  \"phone\": \"+1987654321\",\n  \"dateOfBirth\": \"1990-01-01\",\n  \"gender\": \"MALE\",\n  \"address\": \"456 New St\",\n  \"city\": \"Los Angeles\",\n  \"state\": \"CA\",\n  \"country\": \"USA\",\n  \"zipCode\": \"90001\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "Successful Update",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"firstName\": \"Updated First Name\",\n  \"lastName\": \"Updated Last Name\",\n  \"phone\": \"+1987654321\"\n}"
+                },
+                "url": "{{baseUrl}}/user/profile/e1a53f98-1194-47b7-baec-3a893576fe1e"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"e1a53f98-1194-47b7-baec-3a893576fe1e\",\n  \"email\": \"user@example.com\",\n  \"firstName\": \"Updated First Name\",\n  \"lastName\": \"Updated Last Name\",\n  \"phone\": \"+1987654321\",\n  \"role\": \"PATIENT\",\n  \"dateOfBirth\": \"1990-01-01\",\n  \"gender\": \"MALE\",\n  \"address\": \"456 New St\",\n  \"city\": \"Los Angeles\",\n  \"state\": \"CA\",\n  \"country\": \"USA\",\n  \"zipCode\": \"90001\",\n  \"isVerified\": true,\n  \"updatedAt\": \"2024-04-19T15:45:33.789Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Change Password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has success message', function () {",
+                  "    const responseData = pm.response.json();",
+                  "    pm.expect(responseData).to.have.property('message');",
+                  "    pm.expect(responseData.message).to.include('password updated');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/change-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["user", "change-password"]
+            },
+            "description": "Change user password with current password verification",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{password}}\",\n  \"newPassword\": \"NewPassword123!\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "Successful Password Change",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"OldPassword123!\",\n  \"newPassword\": \"NewPassword123!\"\n}"
+                },
+                "url": "{{baseUrl}}/user/change-password"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"Password successfully updated\"\n}"
+            },
+            {
+              "name": "Invalid Current Password",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"WrongPassword123!\",\n  \"newPassword\": \"NewPassword123!\"\n}"
+                },
+                "url": "{{baseUrl}}/user/change-password"
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Current password is incorrect\",\n  \"error\": \"Unauthorized\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Appointments",
+      "description": "Appointment management endpoints for scheduling, updating, and canceling appointments.",
+      "item": [
+        {
+          "name": "Create Appointment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments"]
+            },
+            "description": "Create a new appointment with specified details",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"user-id\",\n  \"doctorId\": \"doctor-id\",\n  \"locationId\": \"location-id\",\n  \"date\": \"2024-04-19\",\n  \"time\": \"14:30\",\n  \"duration\": 30,\n  \"type\": \"CONSULTATION\",\n  \"notes\": \"Regular checkup\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get All Appointments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments?userId=user-id&doctorId=doctor-id&status=SCHEDULED&locationId=location-id&date=2024-04-19",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "user-id",
+                  "description": "Filter by user ID"
+                },
+                {
+                  "key": "doctorId",
+                  "value": "doctor-id",
+                  "description": "Filter by doctor ID"
+                },
+                {
+                  "key": "status",
+                  "value": "SCHEDULED",
+                  "description": "Filter by status"
+                },
+                {
+                  "key": "locationId",
+                  "value": "location-id",
+                  "description": "Filter by location ID"
+                },
+                {
+                  "key": "date",
+                  "value": "2024-04-19",
+                  "description": "Filter by date"
+                }
+              ]
+            },
+            "description": "Get appointments with optional filtering"
+          }
+        },
+        {
+          "name": "Get Appointment by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/:appointmentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", ":appointmentId"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get detailed information about a specific appointment"
+          }
+        },
+        {
+          "name": "Update Appointment",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/:appointmentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", ":appointmentId"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Update an existing appointment's details",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2024-04-20\",\n  \"time\": \"15:30\",\n  \"duration\": 45,\n  \"status\": \"CONFIRMED\",\n  \"notes\": \"Updated appointment notes\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cancel Appointment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/:appointmentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", ":appointmentId"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Cancel an existing appointment"
+          }
+        },
+        {
+          "name": "Get Doctor Availability",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/doctor/:doctorId/availability?date=2024-04-19",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "api",
+                "appointments",
+                "doctor",
+                ":doctorId",
+                "availability"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "2024-04-19",
+                  "description": "Date to check availability"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "doctorId",
+                  "value": "",
+                  "description": "ID of the doctor"
+                }
+              ]
+            },
+            "description": "Check a doctor's availability for a specific date"
+          }
+        },
+        {
+          "name": "Get User Upcoming Appointments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/user/:userId/upcoming",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "user", ":userId", "upcoming"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get upcoming appointments for a specific user"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Clinic",
+      "description": "Clinic management endpoints for creating and managing healthcare facilities.",
+      "item": [
+        {
+          "name": "Create Clinic",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics"]
+            },
+            "description": "Create a new clinic (Super Admin or Clinic Admin only)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Main Street Clinic\",\n  \"address\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"country\": \"USA\",\n  \"zipCode\": \"10001\",\n  \"phone\": \"+1234567890\",\n  \"email\": \"clinic@example.com\",\n  \"website\": \"https://clinic.example.com\",\n  \"clinicAdminIdentifier\": \"admin@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get All Clinics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics"]
+            },
+            "description": "Get all clinics based on user permissions"
+          }
+        },
+        {
+          "name": "Get Clinic by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get detailed information about a specific clinic"
+          }
+        },
+        {
+          "name": "Update Clinic",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Update clinic details (Super Admin only)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Clinic Name\",\n  \"address\": \"456 New St\",\n  \"phone\": \"+1987654321\",\n  \"email\": \"updated@clinic.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Clinic",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Delete a clinic (Super Admin only)"
+          }
+        },
+        {
+          "name": "Assign Clinic Admin",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/admin",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", "admin"]
+            },
+            "description": "Assign a user as clinic admin (Super Admin only)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"user-id\",\n  \"clinicId\": \"clinic-id\",\n  \"isOwner\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Clinic by App Name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/app/:appName",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", "app", ":appName"],
+              "variable": [
+                {
+                  "key": "appName",
+                  "value": "",
+                  "description": "App name (subdomain) of the clinic"
+                }
+              ]
+            },
+            "description": "Get clinic details by app name/subdomain"
+          }
+        },
+        {
+          "name": "Get Clinic Doctors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:id/doctors",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":id", "doctors"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get all doctors associated with a clinic"
+          }
+        },
+        {
+          "name": "Get Clinic Patients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:id/patients",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":id", "patients"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get all patients associated with a clinic"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "description": "System health check endpoints for monitoring service status.",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Check the health status of the API and its dependencies"
+          }
+        }
+      ]
+    }
+  ]
+}
