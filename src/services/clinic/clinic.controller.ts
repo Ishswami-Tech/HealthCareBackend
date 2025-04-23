@@ -9,7 +9,9 @@ import { CreateClinicDto } from './dto/create-clinic.dto';
 import { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { UpdateClinicDto } from './dto/update-clinic.dto';
-import { Request } from 'express';
+import { Public } from '../../libs/decorators/public.decorator';
+import { AuthenticatedRequest } from '../../libs/types/clinic.types';
+import { FastifyRequest } from 'fastify';
 
 @ApiTags('clinic')
 @ApiBearerAuth()
@@ -40,13 +42,10 @@ export class ClinicController {
     status: 404, 
     description: 'Not Found - Specified Clinic Admin not found.'
   })
-
-  // AuthService, the JWT payload contains the user ID in the sub field, not the id field:
-  async createClinic(@Body() createClinicDto: CreateClinicDto, @Req() req: Request) {
-    const userId = req.user['sub'];
+  async createClinic(@Body() createClinicDto: CreateClinicDto, @Req() req: AuthenticatedRequest) {
     return this.clinicService.createClinic({
       ...createClinicDto,
-      createdBy: userId,
+      createdBy: req.user.sub,
     });
   }
 
@@ -64,10 +63,8 @@ export class ClinicController {
     status: 401, 
     description: 'Unauthorized - User does not have permission to view clinics.'
   })
-  async getAllClinics(@Req() req: Request) {
-    const userId = req.user['sub'];
-    console.log('User ID from request:', userId);
-    return this.clinicService.getAllClinics(userId);
+  async getAllClinics(@Req() req: AuthenticatedRequest) {
+    return this.clinicService.getAllClinics(req.user.sub);
   }
 
   @Get(':id')
@@ -89,9 +86,8 @@ export class ClinicController {
     status: 404, 
     description: 'Not Found - Clinic not found.'
   })
-  async getClinicById(@Param('id') id: string, @Req() req: Request) {
-    const userId = req.user['sub'];
-    return this.clinicService.getClinicById(id, userId);
+  async getClinicById(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.clinicService.getClinicById(id, req.user.sub);
   }
 
   @Put(':id')
@@ -116,10 +112,9 @@ export class ClinicController {
   async updateClinic(
     @Param('id') id: string,
     @Body() updateClinicDto: UpdateClinicDto,
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ) {
-    const userId = req.user['sub'];
-    return this.clinicService.updateClinic(id, updateClinicDto, userId);
+    return this.clinicService.updateClinic(id, updateClinicDto, req.user.sub);
   }
 
   @Delete(':id')
@@ -141,9 +136,8 @@ export class ClinicController {
     status: 404, 
     description: 'Not Found - Clinic not found.'
   })
-  async deleteClinic(@Param('id') id: string, @Req() req: Request) {
-    const userId = req.user['sub'];
-    return this.clinicService.deleteClinic(id, userId);
+  async deleteClinic(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.clinicService.deleteClinic(id, req.user.sub);
   }
 
   @Post('admin')
@@ -170,9 +164,9 @@ export class ClinicController {
   })
   async assignClinicAdmin(
     @Body() data: { userId: string; clinicId: string; isOwner?: boolean },
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ) {
-    const assignedBy = req.user['sub'];
+    const assignedBy = req.user.sub;
     return this.clinicService.assignClinicAdmin({
       ...data,
       assignedBy,
@@ -216,9 +210,8 @@ export class ClinicController {
     status: 404, 
     description: 'Not Found - Clinic not found.'
   })
-  async getClinicDoctors(@Param('id') id: string, @Req() req: Request) {
-    const userId = req.user['sub'];
-    return this.clinicService.getClinicDoctors(id, userId);
+  async getClinicDoctors(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.clinicService.getClinicDoctors(id, req.user.sub);
   }
 
   @Get(':id/patients')
@@ -240,9 +233,8 @@ export class ClinicController {
     status: 404, 
     description: 'Not Found - Clinic not found.'
   })
-  async getClinicPatients(@Param('id') id: string, @Req() req: Request) {
-    const userId = req.user['sub'];
-    return this.clinicService.getClinicPatients(id, userId);
+  async getClinicPatients(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.clinicService.getClinicPatients(id, req.user.sub);
   }
 
   @Post('register')
@@ -265,12 +257,70 @@ export class ClinicController {
   })
   async registerPatientToClinic(
     @Body() data: { appName: string },
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest
   ) {
-    const userId = req.user['sub'];
     return this.clinicService.registerPatientToClinic({
-      userId,
+      userId: req.user.sub,
       appName: data.appName,
     });
+  }
+
+  @Post('validate-app-name')
+  @Public()
+  @ApiOperation({ 
+    summary: 'Validate clinic app name',
+    description: 'Validates if a clinic exists with the given app name and returns basic clinic information'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Returns clinic information if app name is valid'
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Clinic not found with given app name'
+  })
+  async validateAppName(@Body('appName') appName: string) {
+    const clinic = await this.clinicService.getClinicByAppName(appName);
+    
+    // Return only necessary information
+    return {
+      clinicId: clinic.clinicId,
+      name: clinic.name,
+      locations: await this.clinicService.getActiveLocations(clinic.id),
+      settings: clinic.settings
+    };
+  }
+
+  @Post('associate-user')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ 
+    summary: 'Associate user with clinic',
+    description: 'Associates an existing user with a clinic based on app name'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User successfully associated with clinic'
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Clinic or user not found'
+  })
+  async associateUser(
+    @Body('appName') appName: string,
+    @Req() req: AuthenticatedRequest
+  ) {
+    const userId = req.user.sub;
+    const clinic = await this.clinicService.getClinicByAppName(appName);
+    
+    await this.clinicService.associateUserWithClinic(userId, clinic.id);
+    
+    // Return updated clinic information
+    return {
+      clinicId: clinic.clinicId,
+      name: clinic.name,
+      locations: await this.clinicService.getActiveLocations(clinic.id),
+      settings: clinic.settings,
+      token: await this.clinicService.generateClinicToken(userId, clinic.id)
+    };
   }
 } 

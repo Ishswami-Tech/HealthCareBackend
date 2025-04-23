@@ -15,6 +15,8 @@ import { LoggingService } from '../../../shared/logging/logging.service';
 import { EventService } from '../../../shared/events/event.service';
 import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
 import { RedisCache } from '../../../shared/cache/decorators/redis-cache.decorator';
+import { ClinicService } from '../../clinic/clinic.service';
+import { ClinicUserService } from '../../clinic/services/clinic-user.service';
 
 @Injectable()
 export class AuthService {
@@ -41,6 +43,8 @@ export class AuthService {
     private readonly clinicDatabaseService: ClinicDatabaseService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
+    private readonly clinicService: ClinicService,
+    private readonly clinicUserService: ClinicUserService,
   ) {
     this.ensureSuperAdmin();
   }
@@ -136,7 +140,7 @@ export class AuthService {
    * Login a user and generate JWT tokens
    * No caching here as it's security-sensitive and dynamic
    */
-  async login(user: User, request: any) {
+  async login(user: User, request: any, appName?: string) {
     try {
       const payload = { email: user.email, sub: user.id, role: user.role };
       const accessToken = this.jwtService.sign(payload);
@@ -227,7 +231,8 @@ export class AuthService {
 
       const { password: _, ...userWithoutPassword } = updatedUser;
 
-      return {
+      // Get basic login response
+      const loginResponse = {
         access_token: accessToken,
         refresh_token: refreshToken,
         session_id: sessionId,
@@ -235,6 +240,47 @@ export class AuthService {
         redirectPath: this.getRedirectPathForRole(user.role),
         permissions: this.getRolePermissions(user.role)
       };
+
+      // If appName is provided, add clinic-specific information
+      if (appName) {
+        try {
+          const clinic = await this.clinicService.getClinicByAppName(appName);
+          if (clinic) {
+            // Get user's role in this clinic
+            const clinicUsers = await this.clinicUserService.getClinicUsers(clinic.id);
+            let userRole = null;
+
+            if (clinicUsers.doctors.some(d => d.doctor.userId === user.id)) {
+              userRole = 'DOCTOR';
+            } else if (clinicUsers.receptionists.some(r => r.userId === user.id)) {
+              userRole = 'RECEPTIONIST';
+            } else if (clinicUsers.patients.some(p => p.userId === user.id)) {
+              userRole = 'PATIENT';
+            }
+
+            if (userRole) {
+              // Generate clinic-specific token
+              const clinicToken = await this.clinicService.generateClinicToken(user.id, clinic.id);
+
+              // Add clinic information to response
+              return {
+                ...loginResponse,
+                clinicToken,
+                clinic: {
+                  id: clinic.id,
+                  name: clinic.name,
+                  role: userRole,
+                  locations: await this.clinicService.getActiveLocations(clinic.id)
+                }
+              };
+            }
+          }
+        } catch (error) {
+          this.logger.error(`Failed to add clinic context to login: ${error.message}`, error.stack);
+        }
+      }
+
+      return loginResponse;
     } catch (error) {
       await this.loggingService.log(
         LogType.AUTH,
@@ -418,6 +464,57 @@ export class AuthService {
         'AuthService',
         { error: error.message, email: createUserDto.email }
       );
+      throw error;
+    }
+  }
+
+  /**
+   * Register a new user with clinic-specific context
+   * @param createUserDto User registration data
+   * @param appName Optional clinic app name for clinic-specific registration
+   * @returns The registered user
+   */
+  async registerWithClinic(createUserDto: CreateUserDto, appName?: string): Promise<UserResponseDto> {
+    try {
+      // First, register the user in the global database
+      const user = await this.register(createUserDto);
+
+      // If an app name is provided, register the user to the specific clinic
+      if (appName) {
+        try {
+          // Get the clinic by app name using ClinicService
+          const clinic = await this.clinicService.getClinicByAppName(appName);
+          
+          if (clinic) {
+            // Associate user with clinic using ClinicUserService
+            await this.clinicService.associateUserWithClinic(user.id, clinic.id);
+
+            // Log the clinic registration
+            this.logger.log(`User ${user.id} registered to clinic ${clinic.id} (${appName})`);
+
+            // Generate clinic-specific token
+            const clinicToken = await this.clinicService.generateClinicToken(user.id, clinic.id);
+
+            // Return user with clinic information
+            return {
+              ...user,
+              clinicToken,
+              clinic: {
+                id: clinic.id,
+                name: clinic.name,
+                locations: await this.clinicService.getActiveLocations(clinic.id)
+              }
+            };
+          }
+        } catch (error) {
+          // Log the error but don't fail the registration
+          this.logger.error(`Failed to register user to clinic: ${error.message}`, error.stack);
+        }
+      }
+
+      return user;
+    } catch (error) {
+      this.logger.error(`Registration with clinic failed: ${error.message}`, error.stack);
       throw error;
     }
   }
@@ -1421,45 +1518,6 @@ export class AuthService {
       this.logger.error(`Google token verification failed: ${error.message}`);
       throw new UnauthorizedException('Invalid Google token');
     }
-  }
-
-  /**
-   * Register a new user with clinic-specific context
-   * @param createUserDto User registration data
-   * @param appName Optional clinic app name for clinic-specific registration
-   * @returns The registered user
-   */
-  async registerWithClinic(createUserDto: CreateUserDto, appName?: string): Promise<UserResponseDto> {
-    // First, register the user in the global database
-    const user = await this.register(createUserDto);
-
-    // If an app name is provided, register the user to the specific clinic
-    if (appName) {
-      try {
-        // Get the clinic by app name
-        const clinic = await this.clinicDatabaseService.getClinicByAppName(appName);
-        
-        if (clinic) {
-          // Get a client for the clinic's database
-          const clinicClient = await this.prisma.getClinicClient(clinic.id);
-          
-          // Create a patient record in the clinic's database
-          await clinicClient.patient.create({
-            data: {
-              userId: user.id,
-            },
-          });
-
-          // Log the clinic registration
-          this.logger.log(`User ${user.id} registered to clinic ${clinic.id} (${appName})`);
-        }
-      } catch (error) {
-        // Log the error but don't fail the registration
-        this.logger.error(`Failed to register user to clinic: ${error.message}`, error.stack);
-      }
-    }
-
-    return user;
   }
 
   /**

@@ -1,6 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Role, Gender } from '@prisma/client';
-import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID } from 'class-validator';
+import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID, IsNumber, MinLength, IsArray } from 'class-validator';
 
 // Base interface with required fields matching schema
 interface BaseUserFields {
@@ -37,67 +37,94 @@ type CreateUserFields = BaseUserFields & RoleSpecificFields;
 type UpdateUserFields = Partial<BaseUserFields>;
 
 export class CreateUserDto implements CreateUserFields {
+  @ApiProperty({ example: 'john.doe@example.com', description: 'User email address' })
   @IsEmail()
-  email!: string;
+  email: string;
 
+  @ApiProperty({ example: 'password123', description: 'User password' })
   @IsString()
-  password!: string;
+  @MinLength(8)
+  password: string;
 
+  @ApiProperty({ example: 'John Doe', description: 'User full name' })
   @IsString()
-  name!: string;
+  name: string;
 
-  @IsInt()
-  age!: number;
-
+  @ApiProperty({ example: 'John', description: 'User first name' })
   @IsString()
-  firstName!: string;
+  firstName: string;
 
+  @ApiProperty({ example: 'Doe', description: 'User last name' })
   @IsString()
-  lastName!: string;
+  lastName: string;
 
-  @IsString()
-  phone!: string;
+  @ApiProperty({ example: 'MALE', description: 'User gender', enum: Gender })
+  @IsEnum(Gender)
+  gender: Gender;
 
+  @ApiProperty({ example: 'PATIENT', description: 'User role', enum: Role })
   @IsEnum(Role)
-  @IsOptional()
-  role?: Role;
+  role: Role;
 
-  @IsString()
+  @ApiProperty({ example: 'aadeshayruvedelay', description: 'Clinic app name', required: false })
   @IsOptional()
+  @IsString()
+  appName?: string;
+
+  @ApiProperty({ example: 30, description: 'User age', required: false })
+  @IsOptional()
+  @IsNumber()
+  age?: number;
+
+  @ApiProperty({ example: '+1234567890', description: 'User phone number' })
+  @IsString()
+  phone: string;
+
+  @ApiProperty({ example: 'profile.jpg', description: 'User profile picture URL', required: false })
+  @IsOptional()
+  @IsString()
   profilePicture?: string;
 
-  @IsEnum(Gender)
+  @ApiProperty({ example: '1990-01-01', description: 'User date of birth', required: false })
   @IsOptional()
-  gender?: Gender;
-
-  @ApiProperty({
-    description: 'Date of birth in ISO format (YYYY-MM-DD)',
-    example: '1990-01-01',
-    required: false
-  })
   @IsString()
-  @IsOptional()
   dateOfBirth?: string;
 
-  @IsString()
+  @ApiProperty({ example: '123 Main St', description: 'User address', required: false })
   @IsOptional()
+  @IsString()
   address?: string;
 
-  @IsString()
+  @ApiProperty({ example: 'New York', description: 'User city', required: false })
   @IsOptional()
+  @IsString()
   city?: string;
 
-  @IsString()
+  @ApiProperty({ example: 'NY', description: 'User state', required: false })
   @IsOptional()
+  @IsString()
   state?: string;
 
-  @IsString()
+  @ApiProperty({ example: 'USA', description: 'User country', required: false })
   @IsOptional()
+  @IsString()
   country?: string;
 
-  @IsString()
+  @ApiProperty({ example: '10001', description: 'User zip code', required: false })
   @IsOptional()
+  @IsString()
   zipCode?: string;
+
+  @ApiProperty({ example: true, description: 'Whether user is verified', required: false })
+  @IsOptional()
+  @IsBoolean()
+  isVerified?: boolean;
+
+  @ApiProperty({ example: ['allergies', 'diabetes'], description: 'User medical conditions', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  medicalConditions?: string[];
 
   @IsDate()
   @IsOptional()
@@ -199,42 +226,64 @@ export class UserResponseDto {
   email: string;
 
   @ApiProperty()
-  name: string;
-
-  @ApiProperty()
-  age: number;
-
-  @ApiProperty()
   firstName: string;
 
   @ApiProperty()
   lastName: string;
 
   @ApiProperty()
-  phone: string;
-
-  @ApiProperty({ enum: Role })
   role: Role;
+
+  @ApiProperty()
+  isVerified: boolean;
 
   @ApiProperty({ required: false })
   profilePicture?: string;
 
-  @ApiProperty({ enum: Gender, required: false })
-  gender?: Gender;
+  @ApiProperty({ required: false })
+  phone?: string;
 
-  @ApiProperty({ 
-    required: false,
-    description: 'Date of birth in ISO format (YYYY-MM-DD)',
-    example: '1990-01-01'
-  })
-  dateOfBirth?: string;
+  @ApiProperty({ required: false })
+  address?: string;
 
-  @ApiProperty()
-  isVerified: boolean;
+  @ApiProperty({ required: false })
+  city?: string;
+
+  @ApiProperty({ required: false })
+  state?: string;
+
+  @ApiProperty({ required: false })
+  country?: string;
+
+  @ApiProperty({ required: false })
+  zipCode?: string;
+
+  @ApiProperty({ required: false })
+  dateOfBirth?: Date;
+
+  @ApiProperty({ required: false })
+  age?: number;
+
+  @ApiProperty({ required: false })
+  gender?: string;
+
+  @ApiProperty({ required: false })
+  medicalConditions?: string[];
 
   @ApiProperty()
   createdAt: Date;
 
   @ApiProperty()
   updatedAt: Date;
+
+  @ApiProperty({ required: false })
+  clinicToken?: string;
+
+  @ApiProperty({ required: false })
+  clinic?: {
+    id: string;
+    name: string;
+    role?: string;
+    locations?: any[];
+  };
 }

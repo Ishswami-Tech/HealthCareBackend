@@ -5,9 +5,10 @@ import { Role } from '@prisma/client';
 import { EventService } from '../../shared/events/event.service';
 import { ClinicPermissionService } from './shared/permission.utils';
 import { ClinicErrorService } from './shared/error.utils';
-import { ClinicLocationService } from './cliniclocation/clinic-location.service';
 import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
 import { RedisService } from '../../shared/cache/redis/redis.service';
+import { JwtService } from '@nestjs/jwt';
+import { ClinicLocationService } from './services/clinic-location.service';
 
 @Injectable()
 export class ClinicService {
@@ -19,6 +20,7 @@ export class ClinicService {
     private readonly errorService: ClinicErrorService,
     private readonly clinicLocationService: ClinicLocationService,
     private readonly redis: RedisService,
+    private readonly jwtService: JwtService,
   ) {}
 
   /**
@@ -1138,6 +1140,138 @@ export class ClinicService {
         'ClinicService',
         'delete clinic',
         { clinicId: id, userId }
+      );
+      throw error;
+    }
+  }
+
+  async getActiveLocations(clinicId: string) {
+    try {
+      const locations = await this.prisma.clinicLocation.findMany({
+        where: {
+          clinicId,
+          isActive: true
+        },
+        select: {
+          id: true,
+          locationId: true,
+          name: true,
+          address: true,
+          city: true,
+          state: true,
+          country: true,
+          zipCode: true,
+          phone: true,
+          email: true,
+          timezone: true,
+          workingHours: true
+        },
+        orderBy: {
+          locationId: 'asc'
+        }
+      });
+
+      return locations;
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get active locations',
+        { clinicId }
+      );
+      throw error;
+    }
+  }
+
+  async associateUserWithClinic(userId: string, clinicId: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id: clinicId }
+      });
+
+      if (!clinic) {
+        throw new NotFoundException('Clinic not found');
+      }
+
+      // Add the clinic to the user's clinics
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          Clinic: {
+            connect: { id: clinicId }
+          }
+        }
+      });
+
+      await this.errorService.logSuccess(
+        'User associated with clinic successfully',
+        'ClinicService',
+        'associate user with clinic',
+        { userId, clinicId }
+      );
+
+      await this.eventService.emit('clinic.user.associated', {
+        userId,
+        clinicId,
+        clinicName: clinic.name
+      });
+
+      return true;
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'associate user with clinic',
+        { userId, clinicId }
+      );
+      throw error;
+    }
+  }
+
+  async generateClinicToken(userId: string, clinicId: string): Promise<string> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          Clinic: {
+            where: { id: clinicId },
+            select: { clinicId: true }
+          }
+        }
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      if (!user.Clinic.length) {
+        throw new UnauthorizedException('User is not associated with this clinic');
+      }
+
+      // Generate a JWT token with clinic-specific claims
+      const token = await this.jwtService.signAsync({
+        sub: userId,
+        email: user.email,
+        role: user.role,
+        clinicId: clinicId,
+        clinicIdentifier: user.Clinic[0].clinicId
+      });
+
+      return token;
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'generate clinic token',
+        { userId, clinicId }
       );
       throw error;
     }

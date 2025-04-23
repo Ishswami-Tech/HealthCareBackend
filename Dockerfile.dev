@@ -24,6 +24,9 @@ RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 # Make the script executable
 RUN chmod +x /app/src/shared/database/prisma/wait-for-postgres.sh
 
+# Set proper permissions for hot reloading
+RUN chmod -R 777 /app
+
 # Expose ports
 EXPOSE 8088 5555
 

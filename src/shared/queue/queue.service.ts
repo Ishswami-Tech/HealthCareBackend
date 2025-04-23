@@ -412,9 +412,17 @@ export class QueueService implements OnModuleInit {
       return await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
         include: {
-          User: true,
-          doctor: true,
-          location: true,
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          },
+          location: true
         },
       });
     } catch (error) {
@@ -477,9 +485,17 @@ export class QueueService implements OnModuleInit {
           },
         },
         include: {
-          User: true,
-          doctor: true,
-          location: true,
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          },
+          location: true
         },
         orderBy: {
           date: 'asc',
@@ -504,9 +520,17 @@ export class QueueService implements OnModuleInit {
           },
         },
         include: {
-          User: true,
-          doctor: true,
-          location: true,
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          },
+          location: true
         },
         orderBy: {
           date: 'asc',

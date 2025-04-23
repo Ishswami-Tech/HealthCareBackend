@@ -13,59 +13,6 @@ import { Queue } from 'bull';
 @Module({})
 export class QueueModule {
   static forRoot(): DynamicModule {
-    const bullModule = BullModule.registerQueue(
-      {
-        name: SERVICE_QUEUE,
-        defaultJobOptions: {
-          priority: 1,
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 1000
-          }
-        }
-      },
-      {
-        name: APPOINTMENT_QUEUE,
-        processors: [
-          {
-            path: join(__dirname, '../../services/appointments/appointment-processor/appointment-queue.processor.js'),
-            concurrency: 10
-          }
-        ],
-        defaultJobOptions: {
-          priority: 2,
-          attempts: 5,
-          backoff: {
-            type: 'exponential',
-            delay: 2000
-          }
-        }
-      },
-      {
-        name: EMAIL_QUEUE,
-        defaultJobOptions: {
-          priority: 3,
-          attempts: 3,
-          backoff: {
-            type: 'fixed',
-            delay: 5000
-          }
-        }
-      },
-      {
-        name: NOTIFICATION_QUEUE,
-        defaultJobOptions: {
-          priority: 1,
-          attempts: 3,
-          backoff: {
-            type: 'fixed',
-            delay: 1000
-          }
-        }
-      }
-    );
-
     return {
       module: QueueModule,
       imports: [
@@ -115,7 +62,58 @@ export class QueueModule {
           }),
           inject: [ConfigService],
         }),
-        bullModule
+        BullModule.registerQueue(
+          {
+            name: SERVICE_QUEUE,
+            defaultJobOptions: {
+              priority: 1,
+              attempts: 3,
+              backoff: {
+                type: 'exponential',
+                delay: 1000
+              }
+            }
+          },
+          {
+            name: APPOINTMENT_QUEUE,
+            processors: [
+              {
+                path: join(__dirname, '../../services/appointments/appointment-processor/appointment-queue.processor.js'),
+                concurrency: 10
+              }
+            ],
+            defaultJobOptions: {
+              priority: 2,
+              attempts: 5,
+              backoff: {
+                type: 'exponential',
+                delay: 2000
+              }
+            }
+          },
+          {
+            name: EMAIL_QUEUE,
+            defaultJobOptions: {
+              priority: 3,
+              attempts: 3,
+              backoff: {
+                type: 'fixed',
+                delay: 5000
+              }
+            }
+          },
+          {
+            name: NOTIFICATION_QUEUE,
+            defaultJobOptions: {
+              priority: 1,
+              attempts: 3,
+              backoff: {
+                type: 'fixed',
+                delay: 1000
+              }
+            }
+          }
+        )
       ],
       providers: [
         QueueService,
@@ -148,20 +146,31 @@ export class QueueModule {
           ]
         }
       ],
-      exports: [QueueService, bullModule]
+      exports: [QueueService, BullModule]
     };
   }
 
-  static register(queueName: string): DynamicModule {
-    const bullModule = BullModule.registerQueue({
-      name: queueName,
-    });
-
+  static register(): DynamicModule {
     return {
       module: QueueModule,
-      imports: [bullModule],
+      imports: [
+        BullModule.registerQueue(
+          {
+            name: SERVICE_QUEUE,
+          },
+          {
+            name: APPOINTMENT_QUEUE,
+          },
+          {
+            name: EMAIL_QUEUE,
+          },
+          {
+            name: NOTIFICATION_QUEUE,
+          }
+        )
+      ],
       providers: [QueueService],
-      exports: [bullModule, QueueService],
+      exports: [BullModule, QueueService],
     };
   }
 } 

@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { AuthController } from "./controllers/auth.controller";
 import { PrismaModule } from "../../shared/database/prisma/prisma.module";
 import { RedisModule } from "../../shared/cache/redis/redis.module";
@@ -9,10 +9,9 @@ import { AuthService } from "./services/auth.service";
 import { GuardsModule } from "../../libs/guards/guards.module";
 import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
 import { ClinicModule } from '../clinic/clinic.module';
-import { SharedModule } from '../../shared/shared.module';
 import { JwtModule } from '@nestjs/jwt';
-import { LoggingModule } from '../../shared/logging/logging.module';
 import { EventsModule } from '../../shared/events/events.module';
+import { LoggingModule } from '../../shared/logging/logging.module';
 
 @Module({
   imports: [
@@ -23,10 +22,9 @@ import { EventsModule } from '../../shared/events/events.module';
     UsersModule,
     GuardsModule,
     RateLimitModule,
-    ClinicModule,
-    SharedModule,
-    LoggingModule,
+    forwardRef(() => ClinicModule),
     EventsModule,
+    LoggingModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },

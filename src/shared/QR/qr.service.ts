@@ -46,4 +46,30 @@ export class QrService {
       throw new Error('Failed to verify QR code');
     }
   }
+
+  /**
+   * Generate a QR code from data
+   * @param data - Data to encode in QR code
+   * @returns Promise<string> - Base64 encoded QR code image
+   */
+  async generateQR(data: string): Promise<string> {
+    try {
+      return await QRCode.toDataURL(data);
+    } catch (error) {
+      throw new Error(`Failed to generate QR code: ${error.message}`);
+    }
+  }
+
+  /**
+   * Verify QR code data
+   * @param qrData - Data from scanned QR code
+   * @returns Decoded data object
+   */
+  verifyQR(qrData: string): any {
+    try {
+      return JSON.parse(qrData);
+    } catch (error) {
+      throw new Error(`Invalid QR code data: ${error.message}`);
+    }
+  }
 } 

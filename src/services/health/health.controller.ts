@@ -6,6 +6,7 @@ import { HealthCheckResponse, ServiceHealth, SystemMetrics, RedisMetrics, Databa
 import { ConfigService } from '@nestjs/config';
 import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
+import { Public } from '../../libs/decorators/public.decorator';
 
 @ApiTags('health')
 @Controller('health')
@@ -231,5 +232,87 @@ export class HealthController {
       this.logger.error('Redis health check failed:', error);
       throw new ServiceUnavailableException('Redis health check failed');
     }
+  }
+
+  @Get('services')
+  @Public()
+  @ApiOperation({ 
+    summary: 'Get services status for dashboard',
+    description: 'Returns the status of all services for the dashboard display.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Services status data'
+  })
+  async getServicesStatus() {
+    const baseUrl = this.config.get('BASE_URL', 'http://localhost:8088');
+    
+    // Get health data
+    const health = await this.getHealth();
+    
+    // Define services with their status
+    const services = [
+      {
+        name: 'API Documentation',
+        description: 'Swagger API documentation and testing interface.',
+        url: `${baseUrl}/docs`,
+        active: health.status === 'healthy',
+        category: 'Documentation'
+      },
+      {
+        name: 'Bull Board',
+        description: 'Queue management and monitoring dashboard.',
+        url: `${baseUrl}/queue-dashboard`,
+        active: health.status === 'healthy',
+        category: 'Monitoring'
+      },
+      {
+        name: 'Socket.IO Admin',
+        description: 'WebSocket monitoring dashboard. To connect: 1) Go to admin.socket.io 2) Enter Server URL: http://localhost:8088 3) Use credentials below',
+        url: 'https://admin.socket.io',
+        credentials: 'Username: admin, Password: admin',
+        active: health.status === 'healthy',
+        category: 'Monitoring'
+      },
+      {
+        name: 'Redis Commander',
+        description: 'Redis database management interface.',
+        url: 'http://localhost:8082',
+        credentials: 'Username: admin, Password: admin',
+        active: health.services.redis.status === 'healthy',
+        category: 'Database'
+      },
+      {
+        name: 'Prisma Studio',
+        description: 'PostgreSQL database management through Prisma.',
+        url: 'http://localhost:5555',
+        active: health.services.database.status === 'healthy',
+        category: 'Database'
+      },
+      {
+        name: 'pgAdmin',
+        description: 'PostgreSQL database management interface.',
+        url: 'http://localhost:5050',
+        credentials: 'Email: admin@admin.com, Password: admin',
+        active: health.services.database.status === 'healthy',
+        category: 'Database'
+      },
+      {
+        name: 'Logger API',
+        description: 'Application logs and error tracking interface.',
+        url: `${baseUrl}/logger`,
+        active: health.status === 'healthy',
+        category: 'Monitoring'
+      },
+      {
+        name: 'Health Check',
+        description: 'API health status and metrics dashboard.',
+        url: `${baseUrl}/health`,
+        active: health.status === 'healthy',
+        category: 'Monitoring'
+      },
+    ];
+
+    return services;
   }
 } 

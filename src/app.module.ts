@@ -17,7 +17,10 @@ import { SharedModule } from './shared/shared.module';
 import { BullBoardModule } from './shared/queue/bull-board/bull-board.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
+import { QueueModule } from './shared/queue/queue.module';
+import { APPOINTMENT_QUEUE, SERVICE_QUEUE } from './shared/queue/queue.constants';
 import configuration from './config/configuration';
+import { HealthController } from './services/health/health.controller';
 
 @Module({
   imports: [
@@ -27,6 +30,8 @@ import configuration from './config/configuration';
     }),
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
+    QueueModule.forRoot(),
+    QueueModule.register(),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
@@ -49,7 +54,7 @@ import configuration from './config/configuration';
     BullBoardModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, HealthController],
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {

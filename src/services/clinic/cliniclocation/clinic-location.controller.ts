@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { ClinicLocationService } from './clinic-location.service';
+import { ClinicLocationService } from '../services/clinic-location.service';
 import { CreateClinicLocationDto } from '../dto/create-clinic-location.dto';
 import { UpdateClinicLocationDto } from '../dto/update-clinic-location.dto';
 
