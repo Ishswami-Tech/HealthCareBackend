@@ -2,8 +2,11 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
+import { ClinicGuard } from './clinic.guard';
 import { RedisModule } from '../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
+import { PrismaModule } from '../../shared/database/prisma/prisma.module';
+import { LoggingModule } from '../../shared/logging/logging.module';
 
 @Module({
   imports: [
@@ -12,9 +15,11 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
       signOptions: { expiresIn: '24h' },
     }),
     RedisModule,
-    RateLimitModule
+    RateLimitModule,
+    PrismaModule,
+    LoggingModule,
   ],
-  providers: [JwtAuthGuard, RolesGuard],
-  exports: [JwtAuthGuard, RolesGuard, JwtModule],
+  providers: [JwtAuthGuard, RolesGuard, ClinicGuard],
+  exports: [JwtAuthGuard, RolesGuard, ClinicGuard, JwtModule],
 })
 export class GuardsModule {} 

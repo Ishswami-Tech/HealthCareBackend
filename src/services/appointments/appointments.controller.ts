@@ -1,6 +1,11 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, Logger } from '@nestjs/common';
 import { AppointmentService } from './appointments.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { JwtAuthGuard } from 'src/libs/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/libs/guards/roles.guard';
+import { Roles } from 'src/libs/decorators/roles.decorator';
 
 @ApiTags('Appointment')
 @Controller('api/appointments')
@@ -12,6 +17,8 @@ export class AppointmentController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST)
   @ApiOperation({
     summary: 'Create new appointment',
     description: 'Create a new appointment with the specified details'
@@ -20,16 +27,19 @@ export class AppointmentController {
     status: 201,
     description: 'Appointment created successfully'
   })
-  async createAppointment(@Body() appointmentData: {
-    userId: string;
-    doctorId: string;
-    locationId: string;
-    date: string;
-    time: string;
-    duration: number;
-    type: string;
-    notes?: string;
-  }) {
+  async createAppointment(
+    @Body() appointmentData: {
+      userId: string;
+      doctorId: string;
+      locationId: string;
+      date: string;
+      time: string;
+      duration: number;
+      type: string;
+      notes?: string;
+      clinicId: string;
+    }
+  ) {
     try {
       return await this.appointmentService.createAppointment(appointmentData);
     } catch (error) {
@@ -151,4 +161,4 @@ export class AppointmentController {
       throw error;
     }
   }
-} 
+}

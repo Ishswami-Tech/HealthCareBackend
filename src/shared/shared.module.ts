@@ -1,24 +1,27 @@
-import { Module } from '@nestjs/common';
-import { QrModule } from './QR/qr.module';
-import { QueueModule } from './queue/queue.module';
-import { SocketModule } from './socket/socket.module';
+import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from './database/prisma/prisma.module';
+import { LoggingModule } from './logging/logging.module';
 import { CacheModule } from './cache/cache.module';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
+import { QrModule } from './QR/qr.module';
+import { ClinicModule } from '../services/clinic/clinic.module';
 
 @Module({
   imports: [
-    QrModule,
-    QueueModule.forRoot(),
-    SocketModule,
     PrismaModule,
+    LoggingModule,
     CacheModule,
+    RateLimitModule,
+    QrModule,
+    forwardRef(() => ClinicModule),
   ],
   exports: [
-    QrModule,
-    QueueModule,
-    SocketModule,
     PrismaModule,
+    LoggingModule,
     CacheModule,
+    RateLimitModule,
+    QrModule,
+    forwardRef(() => ClinicModule),
   ],
 })
 export class SharedModule {} 

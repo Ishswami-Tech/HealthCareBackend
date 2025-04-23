@@ -27,6 +27,7 @@ export class AppointmentService {
     duration: number;
     type: string;
     notes?: string;
+    clinicId: string;
   }) {
     try {
       // Validate doctor exists and is available at the requested time
@@ -43,16 +44,42 @@ export class AppointmentService {
       // Create appointment in the database with appropriate type casting
       const appointment = await this.prisma.appointment.create({
         data: {
-          doctorId: data.doctorId,
-          patientId: data.userId,
-          locationId: data.locationId,
+          doctor: {
+            connect: { id: data.doctorId }
+          },
+          patient: {
+            connect: { id: data.userId }
+          },
+          location: {
+            connect: { id: data.locationId }
+          },
           date: new Date(data.date),
           time: data.time,
           duration: data.duration,
           type: data.type as AppointmentType,
           notes: data.notes,
           status: AppointmentStatus.SCHEDULED,
+          clinic: {
+            connect: { id: data.clinicId }
+          },
+          user: {
+            connect: { id: data.userId }
+          }
         },
+        include: {
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          },
+          location: true,
+          user: true
+        }
       });
 
       // Add to queue for processing
@@ -154,7 +181,7 @@ export class AppointmentService {
       const appointments = await this.prisma.appointment.findMany({
         where,
         include: {
-          User: true,
+          user: true,
           doctor: {
             include: {
               user: true
@@ -188,7 +215,7 @@ export class AppointmentService {
       const appointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
         include: {
-          User: {
+          user: {
             select: {
               id: true,
               firstName: true,

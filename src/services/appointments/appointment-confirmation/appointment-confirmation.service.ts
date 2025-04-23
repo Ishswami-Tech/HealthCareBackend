@@ -1,26 +1,27 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { QrService } from '../../../shared/QR/qr.service';
-import { QueueService, JobType } from '../../../shared/queue/queue.service';
+import { LocationQrService } from '../../../shared/QR/location-qr.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
+import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
+import { AppointmentStatus } from '@prisma/client';
+import { AppointmentQueueService } from '../appointment-queue/appointment-queue.service';
 
 @Injectable()
 export class AppointmentConfirmationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly qrService: QrService,
-    private readonly queueService: QueueService,
+    private readonly locationQrService: LocationQrService,
     private readonly loggingService: LoggingService,
+    private readonly queueService: AppointmentQueueService,
   ) {}
 
   /**
-   * Generate QR code for appointment confirmation
-   * @param appointmentId - The appointment ID
+   * Generate QR code for appointment check-in
    */
-  async generateConfirmationQR(appointmentId: string): Promise<string> {
+  async generateCheckInQR(appointmentId: string) {
     try {
-      // Verify appointment exists
       const appointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
       });
@@ -29,137 +30,119 @@ export class AppointmentConfirmationService {
         throw new NotFoundException(`Appointment with ID ${appointmentId} not found`);
       }
 
-      // Generate QR code
-      const qrCode = await this.qrService.generateAppointmentQR(appointmentId);
-      
-      this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        `Generated QR code for appointment ${appointmentId}`,
-        'AppointmentConfirmationService',
-        { appointmentId }
-      );
-      
-      return qrCode;
+      if (appointment.status !== AppointmentStatus.SCHEDULED) {
+        throw new BadRequestException('Appointment is not in SCHEDULED status');
+      }
+
+      const qrData = {
+        appointmentId,
+        type: 'CHECK_IN',
+        timestamp: new Date().toISOString(),
+      };
+
+      return this.qrService.generateQR(JSON.stringify(qrData));
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to generate QR code: ${error.message}`,
+        `Failed to generate check-in QR: ${error.message}`,
         'AppointmentConfirmationService',
         { appointmentId, error: error.stack }
       );
-      
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      throw new Error(`Failed to generate QR code: ${error.message}`);
+      throw error;
     }
   }
 
   /**
-   * Verify QR code to confirm appointment
-   * @param qrData - Data scanned from QR code
-   * @param locationId - Location ID where QR is being scanned
+   * Process check-in when QR is scanned and directly confirm the appointment
    */
-  async verifyAppointmentQR(qrData: string, locationId: string): Promise<{ 
-    success: boolean; 
-    appointmentId: string;
-    message: string;
-  }> {
+  async processCheckIn(qrData: string, appointmentId: string) {
     try {
-      // Extract appointment ID from QR code
-      const appointmentId = this.qrService.verifyAppointmentQR(qrData);
-      
-      // Verify appointment exists
       const appointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
+        include: {
+          location: true,
+        },
       });
 
       if (!appointment) {
         throw new NotFoundException(`Appointment with ID ${appointmentId} not found`);
       }
 
-      // Check if appointment is at the correct location
-      if (appointment.locationId !== locationId) {
-        throw new BadRequestException('Appointment is for a different location');
+      if (appointment.status !== AppointmentStatus.SCHEDULED) {
+        throw new BadRequestException('Appointment is not in SCHEDULED status');
       }
 
-      // Check if appointment is already confirmed
-      if (appointment.status === 'CONFIRMED') {
-        this.loggingService.log(
-          LogType.APPOINTMENT,
-          LogLevel.INFO,
-          `Appointment ${appointmentId} is already confirmed`,
-          'AppointmentConfirmationService',
-          { appointmentId, locationId }
-        );
-        
-        return {
-          success: true,
-          appointmentId,
-          message: 'Appointment is already confirmed',
-        };
+      // Verify if the QR code is valid for this location
+      await this.locationQrService.verifyLocationQR(qrData, appointment.locationId);
+
+      // Check if patient arrived within the allowed time window (15-30 minutes before appointment)
+      const appointmentTime = new Date(appointment.date);
+      const currentTime = new Date();
+      const timeDifference = appointmentTime.getTime() - currentTime.getTime();
+      const minutesDifference = timeDifference / (1000 * 60);
+
+      if (minutesDifference < 15 || minutesDifference > 30) {
+        throw new BadRequestException('Please arrive 15-30 minutes before your appointment time');
       }
 
-      // Check if appointment is already completed
-      if (appointment.status === 'COMPLETED') {
-        throw new BadRequestException('Appointment is already completed');
-      }
+      // Update appointment status directly to CONFIRMED
+      const updatedAppointment = await this.prisma.appointment.update({
+        where: { id: appointmentId },
+        data: { status: AppointmentStatus.CONFIRMED },
+      });
 
-      // Add confirmation job to queue
-      await this.queueService.addJob(
-        JobType.CONFIRM,
-        {
-          id: appointmentId,
-          userId: appointment.userId,
-          resourceId: appointmentId,
-          resourceType: 'appointment',
-          locationId,
-          date: appointment.date,
-        },
-      );
+      // Get queue position
+      const queuePosition = await this.queueService.getPatientQueuePosition(appointmentId);
 
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        `Appointment ${appointmentId} confirmed successfully`,
+        `Patient checked in and confirmed for appointment ${appointmentId} at location ${appointment.location.name}`,
         'AppointmentConfirmationService',
-        { appointmentId, locationId }
+        { appointmentId, locationId: appointment.locationId }
       );
-      
+
       return {
-        success: true,
-        appointmentId,
-        message: 'Appointment confirmed successfully',
+        appointment: updatedAppointment,
+        queuePosition,
+        message: 'Check-in and confirmation successful',
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to verify QR code: ${error.message}`,
+        `Failed to process check-in: ${error.message}`,
         'AppointmentConfirmationService',
-        { locationId, error: error.stack }
+        { qrData, appointmentId, error: error.stack }
       );
-      
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new Error(`Failed to verify QR code: ${error.message}`);
+      throw error;
     }
   }
 
   /**
-   * Mark appointment as completed by doctor
-   * @param appointmentId - The appointment ID
-   * @param doctorId - The doctor ID
+   * Confirm appointment after check-in
    */
-  async markAppointmentCompleted(appointmentId: string, doctorId: string): Promise<{ 
-    success: boolean; 
-    message: string;
-  }> {
+  async confirmAppointment(appointmentId: string) {
     try {
-      // Verify appointment exists and belongs to doctor
+      return await this.queueService.confirmAppointment(appointmentId);
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to confirm appointment: ${error.message}`,
+        'AppointmentConfirmationService',
+        { appointmentId, error: error.stack }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Mark appointment as completed
+   */
+  async markAppointmentCompleted(appointmentId: string, doctorId: string) {
+    try {
       const appointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
       });
@@ -172,21 +155,13 @@ export class AppointmentConfirmationService {
         throw new BadRequestException('This appointment does not belong to this doctor');
       }
 
-      if (appointment.status !== 'CONFIRMED') {
-        throw new BadRequestException('Only confirmed appointments can be marked as completed');
+      if (appointment.status !== AppointmentStatus.IN_PROGRESS) {
+        throw new BadRequestException('Only in-progress appointments can be marked as completed');
       }
 
-      // Add completion job to queue
-      await this.queueService.addJob(JobType.COMPLETE, {
-        id: appointmentId,
-        userId: appointment.userId,
-        resourceId: appointmentId,
-        resourceType: 'appointment',
-        locationId: appointment.locationId,
-        date: appointment.date,
-        metadata: {
-          doctorId: appointment.doctorId
-        }
+      const updatedAppointment = await this.prisma.appointment.update({
+        where: { id: appointmentId },
+        data: { status: AppointmentStatus.COMPLETED },
       });
 
       this.loggingService.log(
@@ -196,9 +171,9 @@ export class AppointmentConfirmationService {
         'AppointmentConfirmationService',
         { appointmentId, doctorId }
       );
-      
+
       return {
-        success: true,
+        appointment: updatedAppointment,
         message: 'Appointment marked as completed',
       };
     } catch (error) {
@@ -209,11 +184,91 @@ export class AppointmentConfirmationService {
         'AppointmentConfirmationService',
         { appointmentId, doctorId, error: error.stack }
       );
+      throw error;
+    }
+  }
+
+  async generateConfirmationQR(appointmentId: string): Promise<string> {
+    const appointment = await this.prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        doctor: true,
+        patient: true,
+        location: true,
+      },
+    });
+
+    if (!appointment) {
+      throw new NotFoundException('Appointment not found');
+    }
+
+    const qrData = {
+      appointmentId,
+      doctorId: appointment.doctorId,
+      patientId: appointment.patientId,
+      locationId: appointment.locationId,
+      timestamp: new Date().toISOString(),
+    };
+
+    return this.qrService.generateQR(JSON.stringify(qrData));
+  }
+
+  async verifyAppointmentQR(qrData: string, clinicId: string): Promise<any> {
+    try {
+      const data = JSON.parse(qrData);
       
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
-        throw error;
+      const appointment = await this.prisma.appointment.findFirst({
+        where: { 
+          id: data.appointmentId,
+          clinicId: clinicId
+        },
+        include: {
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          },
+          location: true,
+        },
+      });
+
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
       }
-      throw new Error(`Failed to mark appointment as completed: ${error.message}`);
+
+      // Verify the QR code is not too old (e.g., within 5 minutes)
+      const timestamp = new Date(data.timestamp);
+      const now = new Date();
+      const fiveMinutes = 5 * 60 * 1000;
+      if (now.getTime() - timestamp.getTime() > fiveMinutes) {
+        throw new BadRequestException('QR code has expired');
+      }
+
+      return {
+        ...appointment,
+        doctor: {
+          ...appointment.doctor,
+          name: `${appointment.doctor.user.firstName} ${appointment.doctor.user.lastName}`
+        },
+        patient: {
+          ...appointment.patient,
+          name: `${appointment.patient.user.firstName} ${appointment.patient.user.lastName}`
+        }
+      };
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to verify appointment QR: ${error.message}`,
+        'AppointmentConfirmationService',
+        { error: error.stack }
+      );
+      throw error;
     }
   }
 } 

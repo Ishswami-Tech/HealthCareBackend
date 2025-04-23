@@ -99,6 +99,41 @@
             color: #991b1b;
         }
 
+        .refresh-status {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 1rem;
+            text-align: right;
+        }
+
+        .refresh-button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 0.375rem;
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-bottom: 1rem;
+        }
+
+        .refresh-button:hover {
+            background-color: var(--secondary-color);
+        }
+
+        .refresh-button:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
         @media (max-width: 640px) {
             body {
                 padding: 1rem;
@@ -107,20 +142,35 @@
             .services-grid {
                 grid-template-columns: 1fr;
             }
+
+            .header-container {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .refresh-button {
+                margin-top: 1rem;
+            }
         }
     </style>
 </head>
 
 <body>
     <div class="container">
-        <h1>Healthcare API Dashboard</h1>
+        <div class="header-container">
+            <h1>Healthcare API Dashboard</h1>
+            <button id="refreshButton" class="refresh-button">Refresh Status</button>
+        </div>
         <div class="services-grid" id="servicesGrid">
             <!-- Services will be dynamically inserted here -->
         </div>
+        <div class="refresh-status" id="refreshStatus">Last updated: <span id="lastUpdated">Loading...</span></div>
     </div>
     <script>
-        // Get services data from the server
-        const servicesData = JSON.parse('{{ services }}');
+        // Initial services data from the server
+        let servicesData = JSON.parse('{{ services }}');
+        let isRefreshing = false;
+        const REFRESH_INTERVAL = 30000; // 30 seconds
 
         function createServiceCard(service) {
             return `
@@ -142,7 +192,50 @@
             grid.innerHTML = servicesData.map(createServiceCard).join('');
         }
 
-        document.addEventListener('DOMContentLoaded', renderServices);
+        function updateLastUpdated() {
+            const now = new Date();
+            document.getElementById('lastUpdated').textContent = now.toLocaleTimeString();
+        }
+
+        async function fetchServiceStatus() {
+            if (isRefreshing) return;
+
+            isRefreshing = true;
+            const refreshButton = document.getElementById('refreshButton');
+            refreshButton.disabled = true;
+            refreshButton.textContent = 'Refreshing...';
+
+            try {
+                const response = await fetch('/health/services');
+                if (!response.ok) throw new Error('Failed to fetch service status');
+
+                servicesData = await response.json();
+                renderServices();
+                updateLastUpdated();
+            } catch (error) {
+                console.error('Error fetching service status:', error);
+                document.getElementById('refreshStatus').textContent = `Error updating status: ${error.message}`;
+            } finally {
+                isRefreshing = false;
+                refreshButton.disabled = false;
+                refreshButton.textContent = 'Refresh Status';
+            }
+        }
+
+        function startAutoRefresh() {
+            // Initial render
+            renderServices();
+            updateLastUpdated();
+
+            // Set up auto-refresh
+            setInterval(fetchServiceStatus, REFRESH_INTERVAL);
+        }
+
+        // Add event listener for manual refresh
+        document.getElementById('refreshButton').addEventListener('click', fetchServiceStatus);
+
+        // Start the auto-refresh when the page loads
+        document.addEventListener('DOMContentLoaded', startAutoRefresh);
     </script>
 </body>
 

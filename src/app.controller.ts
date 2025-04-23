@@ -8,6 +8,7 @@ import { FastifyReply } from 'fastify';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { ConfigService } from '@nestjs/config';
+import { HealthController } from './services/health/health.controller';
 
 @ApiTags('root')
 @Controller()
@@ -17,6 +18,7 @@ export class AppController {
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly healthController: HealthController,
   ) {}
 
   @Get()
@@ -30,73 +32,10 @@ export class AppController {
     description: 'Dashboard HTML'
   })
   async getDashboard(@Res() res: FastifyReply) {
-    const baseUrl = this.configService.get('BASE_URL', 'http://localhost:8088');
-    const isDev = this.configService.get('NODE_ENV') === 'development';
-    
-    const services = [
-      {
-        name: 'API Documentation',
-        description: 'Swagger API documentation and testing interface.',
-        url: `${baseUrl}/docs`,
-        active: true,
-        category: 'Documentation'
-      },
-      {
-        name: 'Bull Board',
-        description: 'Queue management and monitoring dashboard.',
-        url: `${baseUrl}/queue-dashboard`,
-        active: true,
-        category: 'Monitoring'
-      },
-      {
-        name: 'Socket.IO Admin',
-        description: 'WebSocket monitoring dashboard. To connect: 1) Go to admin.socket.io 2) Enter Server URL: http://localhost:8088 3) Use credentials below',
-        url: 'https://admin.socket.io',
-        credentials: 'Username: admin, Password: admin',
-        active: true,
-        category: 'Monitoring'
-      },
-      {
-        name: 'Redis Commander',
-        description: 'Redis database management interface.',
-        url: 'http://localhost:8082',
-        credentials: 'Username: admin, Password: admin',
-        active: true,
-        category: 'Database'
-      },
-      {
-        name: 'Prisma Studio',
-        description: 'PostgreSQL database management through Prisma.',
-        url: 'http://localhost:5555',
-        active: true,
-        category: 'Database'
-      },
-      {
-        name: 'pgAdmin',
-        description: 'PostgreSQL database management interface.',
-        url: 'http://localhost:5050',
-        credentials: 'Email: admin@admin.com, Password: admin',
-        active: true,
-        category: 'Database'
-      },
-      {
-        name: 'Logger API',
-        description: 'Application logs and error tracking interface.',
-        url: `${baseUrl}/logger`,
-        active: true,
-        category: 'Monitoring'
-      },
-      {
-        name: 'Health Check',
-        description: 'API health status and metrics dashboard.',
-        url: `${baseUrl}/health`,
-        active: true,
-        category: 'Monitoring'
-      },
-
-    ];
-
     try {
+      // Get real-time service status from health controller
+      const services = await this.healthController.getServicesStatus();
+      
       const viewsPath = join(process.cwd(), 'dist/src/views/dashboard.html');
       console.log('Attempting to read template from:', viewsPath);
       
@@ -110,14 +49,78 @@ export class AppController {
       console.error('Current directory:', process.cwd());
       console.error('__dirname:', __dirname);
       
-      // Fallback HTML with better styling and categorized services
-      const groupedServices = services.reduce((acc, service) => {
+      // Create fallback services data
+      const baseUrl = this.configService.get('BASE_URL', 'http://localhost:8088');
+      const fallbackServices = [
+        {
+          name: 'API Documentation',
+          description: 'Swagger API documentation and testing interface.',
+          url: `${baseUrl}/docs`,
+          active: false,
+          category: 'Documentation'
+        },
+        {
+          name: 'Bull Board',
+          description: 'Queue management and monitoring dashboard.',
+          url: `${baseUrl}/queue-dashboard`,
+          active: false,
+          category: 'Monitoring'
+        },
+        {
+          name: 'Socket.IO Admin',
+          description: 'WebSocket monitoring dashboard.',
+          url: 'https://admin.socket.io',
+          credentials: 'Username: admin, Password: admin',
+          active: false,
+          category: 'Monitoring'
+        },
+        {
+          name: 'Redis Commander',
+          description: 'Redis database management interface.',
+          url: 'http://localhost:8082',
+          credentials: 'Username: admin, Password: admin',
+          active: false,
+          category: 'Database'
+        },
+        {
+          name: 'Prisma Studio',
+          description: 'PostgreSQL database management through Prisma.',
+          url: 'http://localhost:5555',
+          active: false,
+          category: 'Database'
+        },
+        {
+          name: 'pgAdmin',
+          description: 'PostgreSQL database management interface.',
+          url: 'http://localhost:5050',
+          credentials: 'Email: admin@admin.com, Password: admin',
+          active: false,
+          category: 'Database'
+        },
+        {
+          name: 'Logger API',
+          description: 'Application logs and error tracking interface.',
+          url: `${baseUrl}/logger`,
+          active: false,
+          category: 'Monitoring'
+        },
+        {
+          name: 'Health Check',
+          description: 'API health status and metrics dashboard.',
+          url: `${baseUrl}/health`,
+          active: false,
+          category: 'Monitoring'
+        },
+      ];
+      
+      // Group services by category
+      const groupedServices = fallbackServices.reduce((acc, service) => {
         if (!acc[service.category]) {
           acc[service.category] = [];
         }
         acc[service.category].push(service);
         return acc;
-      }, {} as Record<string, typeof services>);
+      }, {} as Record<string, typeof fallbackServices>);
 
       return res.send(`
         <!DOCTYPE html>

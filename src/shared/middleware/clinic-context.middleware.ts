@@ -1,5 +1,5 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaService } from '../database/prisma/prisma.service';
 import { ClinicDatabaseService } from '../../services/clinic/clinic-database.service';
 
@@ -15,38 +15,31 @@ export class ClinicContextMiddleware implements NestMiddleware {
     private clinicDatabaseService: ClinicDatabaseService
   ) {}
 
-  async use(req: Request, res: Response, next: NextFunction) {
-    // Extract clinic identifier from request
-    // Priority: 1. Header clinic-id, 2. Header app-name, 3. Query param, 4. Body
-    const clinicId = 
-      req.headers['x-clinic-id'] as string || 
-      req.query.clinicId as string || 
-      (req.body && req.body.clinicId);
+  use(req: FastifyRequest, res: FastifyReply, next: () => void) {
+    // Extract clinic identifier from subdomain or header
+    const clinicIdentifier = this.extractClinicIdentifier(req);
+    
+    // Attach clinic context to request
+    if (clinicIdentifier) {
+      (req as any).clinicContext = {
+        identifier: clinicIdentifier
+      };
+    }
+    
+    next();
+  }
 
-    const appName = 
-      req.headers['x-app-name'] as string || 
-      req.query.appName as string || 
-      (req.body && req.body.appName);
-
-    try {
-      if (clinicId) {
-        // Set the clinic client in the request object using clinic ID
-        req['clinicClient'] = await this.prismaService.getClinicClient(clinicId);
-        req['clinicId'] = clinicId;
-      } else if (appName) {
-        // Get clinic by app name
-        const clinic = await this.clinicDatabaseService.getClinicByAppName(appName);
-        if (clinic) {
-          req['clinicClient'] = await this.prismaService.getClinicClient(clinic.id);
-          req['clinicId'] = clinic.id;
-          req['appName'] = appName;
-        }
+  private extractClinicIdentifier(req: FastifyRequest): string | null {
+    // Try to get from subdomain first
+    const host = req.headers.host;
+    if (host) {
+      const subdomain = host.split('.')[0];
+      if (subdomain && subdomain !== 'www' && subdomain !== 'api') {
+        return subdomain;
       }
-    } catch (error) {
-      console.error(`Error connecting to clinic database: ${error.message}`);
-      // Continue with the default database if there's an error
     }
 
-    next();
+    // Fallback to header
+    return (req.headers['x-clinic-identifier'] as string) || null;
   }
 } 

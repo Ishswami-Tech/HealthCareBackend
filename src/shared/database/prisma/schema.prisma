@@ -63,6 +63,7 @@ model Receptionist {
 
 model Clinic {
   id                   String           @id @default(uuid())
+  clinicId             String           @unique // Format: CL0001
   name                 String
   address              String
   phone                String
@@ -91,12 +92,14 @@ model Clinic {
   currency             String?          @default("INR")
   language             String?          @default("en")
   settings             Json?
+  Appointment          Appointment[]
 
   @@map("clinics")
 }
 
 model ClinicLocation {
   id           String         @id @default(uuid())
+  locationId   String         @unique // Format: LOC0001
   name         String
   address      String
   city         String
@@ -171,31 +174,37 @@ model Patient {
 }
 
 model Appointment {
-  id         String            @id @default(uuid())
-  patientId  String
-  doctorId   String
-  status     AppointmentStatus @default(PENDING)
-  type       AppointmentType   @default(IN_PERSON)
-  date       DateTime
-  time       String
-  duration   Int               @default(30)
-  notes      String?
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
-  payment    Payment?
-  doctor     Doctor            @relation(fields: [doctorId], references: [id])
-  patient    Patient           @relation(fields: [patientId], references: [id])
-  therapy    Therapy?          @relation(fields: [therapyId], references: [id])
-  therapyId  String?
-  queue      Queue?
-  User       User?             @relation(fields: [userId], references: [id])
-  userId     String?
-  locationId String?
-  location   ClinicLocation?   @relation(fields: [locationId], references: [id])
+  id          String            @id @default(uuid())
+  type        AppointmentType
+  doctorId    String
+  patientId   String
+  locationId  String
+  clinicId    String // Added for clinic-specific appointments
+  date        DateTime
+  time        String
+  duration    Int
+  status      AppointmentStatus
+  notes       String?
+  checkInTime String?
+  userId      String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  therapyId   String?
 
-  @@index([patientId], name: "appointment_patient_idx")
-  @@index([doctorId], name: "appointment_doctor_idx")
-  @@index([locationId], name: "appointment_location_idx")
+  doctor   Doctor         @relation(fields: [doctorId], references: [id])
+  patient  Patient        @relation(fields: [patientId], references: [id])
+  location ClinicLocation @relation(fields: [locationId], references: [id])
+  clinic   Clinic         @relation(fields: [clinicId], references: [id])
+  user     User           @relation(fields: [userId], references: [id])
+  therapy  Therapy?       @relation(fields: [therapyId], references: [id])
+  payment  Payment?
+  queue    Queue?
+
+  @@index([doctorId])
+  @@index([patientId])
+  @@index([locationId])
+  @@index([clinicId])
+  @@index([userId])
 }
 
 model Therapy {
@@ -361,12 +370,13 @@ enum Gender {
 }
 
 enum AppointmentStatus {
-  PENDING
-  SCHEDULED
-  CONFIRMED
-  CANCELLED
-  COMPLETED
-  NO_SHOW
+  SCHEDULED // Initial state when appointment is booked
+  CHECKED_IN // When user scans QR code
+  CONFIRMED // After check-in is verified
+  IN_PROGRESS // When doctor starts consultation
+  COMPLETED // After consultation
+  CANCELLED // If cancelled
+  NO_SHOW // If patient doesn't show up
 }
 
 enum PaymentStatus {

@@ -138,9 +138,16 @@ export class AppointmentQueueProcessor implements OnModuleInit {
           status: AppointmentStatus.SCHEDULED,
         },
         include: {
-          User: true,
-          doctor: true,
-          location: true
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          }
         }
       });
       
@@ -192,9 +199,16 @@ export class AppointmentQueueProcessor implements OnModuleInit {
           status: AppointmentStatus.CONFIRMED,
         },
         include: {
-          User: true,
-          doctor: true,
-          location: true
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          }
         }
       });
       
@@ -239,9 +253,16 @@ export class AppointmentQueueProcessor implements OnModuleInit {
         where: { id },
         data: { status: AppointmentStatus.COMPLETED },
         include: {
-          User: true,
-          doctor: true,
-          location: true
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
+            include: {
+              user: true
+            }
+          }
         }
       });
       

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEmail, IsBoolean, IsOptional, IsPhoneNumber, Length } from 'class-validator';
+import { IsString, IsEmail, IsBoolean, IsOptional, IsPhoneNumber, Length, IsObject } from 'class-validator';
 
 export class CreateClinicLocationDto {
     @ApiProperty({
@@ -80,4 +80,21 @@ export class CreateClinicLocationDto {
     @IsBoolean()
     @IsOptional()
     isActive?: boolean;
+
+    @ApiProperty({
+        example: {
+            monday: { start: '09:00', end: '17:00' },
+            tuesday: { start: '09:00', end: '17:00' },
+            wednesday: { start: '09:00', end: '17:00' },
+            thursday: { start: '09:00', end: '17:00' },
+            friday: { start: '09:00', end: '17:00' },
+            saturday: { start: '09:00', end: '13:00' },
+            sunday: null
+        },
+        description: 'Working hours of the clinic location',
+        required: false
+    })
+    @IsOptional()
+    @IsObject()
+    workingHours?: Record<string, { start: string; end: string } | null>;
 } 
