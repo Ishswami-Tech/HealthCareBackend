@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${DOCKERHUB_USERNAME}/healthcare-backend:latest
+    image: healthcare-backend:latest
     container_name: healthcarebackend-api-1
     ports:
       - "8088:8088"
@@ -112,7 +112,7 @@ services:
       - nginx_html:/usr/share/nginx/html
       - ./nginx/conf.d:/etc/nginx/conf.d
     environment:
-      ENABLE_IPV6: true
+      ENABLE_IPV6: "true"
     networks:
       - nginx-proxy
     restart: unless-stopped
