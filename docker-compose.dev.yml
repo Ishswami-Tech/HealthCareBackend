@@ -55,20 +55,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pgadmin-dev
-    ports:
-      - "5050:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    depends_on:
-      - postgres
-    networks:
-      - app-network
-    restart: unless-stopped
-
   redis:
     image: redis:latest
     container_name: redis-dev

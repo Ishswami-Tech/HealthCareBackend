@@ -47,6 +47,8 @@ model User {
   facebookId        String?
   appleId           String?
   Clinic            Clinic[]
+  appName           String?
+  medicalConditions String?
 
   @@map("users")
 }
