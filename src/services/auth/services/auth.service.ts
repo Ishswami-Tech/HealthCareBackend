@@ -53,7 +53,9 @@ export class AuthService {
     try {
       const superAdminEmail = 'superadmin@healthcare.com';
       const existingSuperAdmin = await this.prisma.user.findFirst({
-        where: { role: Role.SUPER_ADMIN }
+        where: { 
+          role: Role.SUPER_ADMIN 
+        }
       });
 
       if (!existingSuperAdmin) {
@@ -62,9 +64,9 @@ export class AuthService {
           data: {
             email: superAdminEmail,
             password: hashedPassword,
-            name: 'Super Admin',
             firstName: 'Super',
             lastName: 'Admin',
+            name: 'Super Admin',
             phone: '+1234567890',
             role: Role.SUPER_ADMIN,
             age: 30,
@@ -393,11 +395,16 @@ export class AuthService {
         userData.dateOfBirth = new Date(`${userData.dateOfBirth}T00:00:00Z`);
       }
       
+      // Generate full name from firstName and lastName
+      const fullName = `${createUserDto.firstName} ${createUserDto.lastName}`.trim();
+      
       const user = await this.prisma.user.create({
         data: {
           ...userData,
           password: hashedPassword,
-          isVerified: false
+          name: fullName,
+          isVerified: false,
+          medicalConditions: this.stringifyMedicalConditions(userData.medicalConditions)
         },
       });
 
@@ -479,9 +486,19 @@ export class AuthService {
       // First, register the user in the global database
       const user = await this.register(createUserDto);
 
-      // If an app name is provided, register the user to the specific clinic
+      // If an app name is provided, update the user's appName and register with clinic
       if (appName) {
         try {
+          // Update user's appName using StringFieldUpdateOperationsInput
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+              appName: {
+                set: appName
+              }
+            }
+          });
+
           // Get the clinic by app name using ClinicService
           const clinic = await this.clinicService.getClinicByAppName(appName);
           
@@ -1671,5 +1688,19 @@ export class AuthService {
   })
   async getUserRoles(userId: string) {
     // ... existing implementation ...
+  }
+
+  private parseMedicalConditions(medicalConditions: string | null): string[] {
+    if (!medicalConditions) return [];
+    try {
+      return JSON.parse(medicalConditions);
+    } catch {
+      return [];
+    }
+  }
+
+  private stringifyMedicalConditions(medicalConditions?: string[]): string | null {
+    if (!medicalConditions?.length) return null;
+    return JSON.stringify(medicalConditions);
   }
 } 

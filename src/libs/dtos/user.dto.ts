@@ -1,13 +1,11 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Role, Gender } from '@prisma/client';
-import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID, IsNumber, MinLength, IsArray } from 'class-validator';
+import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID, IsNumber, MinLength, IsArray, IsNotEmpty } from 'class-validator';
 
 // Base interface with required fields matching schema
 interface BaseUserFields {
   email: string;
   password: string;
-  name: string;
-  age?: number;
   firstName: string;
   lastName: string;
   phone: string;
@@ -46,16 +44,14 @@ export class CreateUserDto implements CreateUserFields {
   @MinLength(8)
   password: string;
 
-  @ApiProperty({ example: 'John Doe', description: 'User full name' })
-  @IsString()
-  name: string;
-
   @ApiProperty({ example: 'John', description: 'User first name' })
   @IsString()
+  @IsNotEmpty()
   firstName: string;
 
   @ApiProperty({ example: 'Doe', description: 'User last name' })
   @IsString()
+  @IsNotEmpty()
   lastName: string;
 
   @ApiProperty({ example: 'MALE', description: 'User gender', enum: Gender })
@@ -65,11 +61,6 @@ export class CreateUserDto implements CreateUserFields {
   @ApiProperty({ example: 'PATIENT', description: 'User role', enum: Role })
   @IsEnum(Role)
   role: Role;
-
-  @ApiProperty({ example: 'aadeshayruvedelay', description: 'Clinic app name', required: false })
-  @IsOptional()
-  @IsString()
-  appName?: string;
 
   @ApiProperty({ example: 30, description: 'User age', required: false })
   @IsOptional()
@@ -115,6 +106,11 @@ export class CreateUserDto implements CreateUserFields {
   @IsString()
   zipCode?: string;
 
+  @ApiProperty({ example: 'myapp', description: 'Application name for clinic registration', required: false })
+  @IsOptional()
+  @IsString()
+  appName?: string;
+
   @ApiProperty({ example: true, description: 'Whether user is verified', required: false })
   @IsOptional()
   @IsBoolean()
@@ -151,14 +147,6 @@ export class UpdateUserDto implements UpdateUserFields {
   @IsString()
   @IsOptional()
   password?: string;
-
-  @IsString()
-  @IsOptional()
-  name?: string;
-
-  @IsInt()
-  @IsOptional()
-  age?: number;
 
   @IsString()
   @IsOptional()
