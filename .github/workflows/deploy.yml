@@ -1,0 +1,157 @@
+name: Deploy Healthcare Backend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  DOCKER_COMPOSE_VERSION: v2.20.2
+  SERVER_HOST: ishswami.in
+  SERVER_USER: ${{ secrets.SERVER_USER }}
+  SERVER_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run linting
+        run: npm run lint
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker images
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          docker build -t $DOCKERHUB_USERNAME/healthcare-backend:latest .
+          docker push $DOCKERHUB_USERNAME/healthcare-backend:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Copy deployment files
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          source: "docker-compose.prod.yml,.env.production,nginx/"
+          target: "/var/www/healthcare/backend"
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@master
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        with:
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          envs: DOCKERHUB_USERNAME
+          script: |
+            cd /var/www/healthcare/backend
+
+            # Create required directories
+            mkdir -p logs init-scripts nginx/conf.d
+
+            # Create docker network if not exists
+            docker network create nginx-proxy || true
+
+            # Pull latest images
+            docker-compose -f docker-compose.prod.yml pull
+
+            # Stop current deployment (if exists)
+            docker-compose -f docker-compose.prod.yml down || true
+
+            # Start new deployment
+            DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME docker-compose -f docker-compose.prod.yml up -d
+
+            # Wait for health checks
+            echo "Waiting for services to be healthy..."
+            sleep 30
+
+            # Check container health
+            if ! docker ps | grep -q "healthcarebackend-api-1.*healthy"; then
+              echo "API container is not healthy"
+              exit 1
+            fi
+
+            # Check API health
+            if ! curl -f http://localhost:8088/health; then
+              echo "API health check failed"
+              exit 1
+            fi
+
+            echo "Deployment successful!"
+
+  rollback:
+    if: failure() && github.event_name == 'push'
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rollback deployment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            cd /var/www/healthcare/backend
+
+            # Get the previous image
+            PREV_IMAGE=$(docker images --format "{{.ID}} {{.CreatedAt}}" | sort -k2 -r | awk 'NR==2{print $1}')
+
+            if [ ! -z "$PREV_IMAGE" ]; then
+              echo "Rolling back to previous image: $PREV_IMAGE"
+              
+              # Stop current deployment
+              docker-compose -f docker-compose.prod.yml down
+              
+              # Start with previous image
+              docker tag $PREV_IMAGE ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-backend:latest
+              docker-compose -f docker-compose.prod.yml up -d
+              
+              # Wait for health checks
+              sleep 30
+              
+              # Verify rollback
+              if docker ps | grep -q "healthcarebackend-api-1.*healthy"; then
+                echo "Rollback successful"
+                exit 0
+              fi
+            fi
+
+            echo "Rollback failed"
+            exit 1
