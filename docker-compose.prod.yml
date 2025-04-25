@@ -32,11 +32,27 @@ services:
       - nginx-proxy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1"]
+      interval: 20s
       timeout: 10s
-      retries: 3
-      start_period: 40s
+      retries: 5
+      start_period: 120s
+    command: >
+      sh -c "
+        echo 'Waiting for PostgreSQL to be ready...' &&
+        while ! nc -z postgres 5432; do sleep 1; done &&
+        echo 'Creating database if not exists...' &&
+        PGPASSWORD=postgres psql -h postgres -U postgres -c 'CREATE DATABASE userdb;' || true &&
+        echo 'Setting up database permissions...' &&
+        PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'CREATE SCHEMA IF NOT EXISTS public;' &&
+        PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'ALTER DATABASE userdb OWNER TO postgres;' &&
+        PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON DATABASE userdb TO postgres;' &&
+        PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON SCHEMA public TO postgres;' &&
+        echo 'Running database migrations...' &&
+        npx prisma migrate deploy &&
+        echo 'Starting the application...' &&
+        npm run start:prod
+      "
 
   postgres:
     image: postgres:latest
@@ -46,11 +62,9 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-userdb}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data/pgdata
-      - ./init-scripts:/docker-entrypoint-initdb.d
     networks:
       - app-network
     healthcheck:
@@ -101,11 +115,11 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 8081 || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8081 || exit 1"]
+      interval: 20s
+      timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 40s
     restart: unless-stopped
 
   nginx-proxy:

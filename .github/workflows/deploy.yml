@@ -21,6 +21,8 @@ env:
   DEPLOY_PATH: /var/www/healthcare/backend
   IMAGE_NAME: healthcare-backend
   SERVER_IP: 82.208.20.16
+  DOMAIN: api.ishswami.in
+  FRONTEND_DOMAIN: ishswami.in
 
 jobs:
   test:
@@ -40,8 +42,50 @@ jobs:
       - name: Run tests
         run: npm test -- --passWithNoTests
 
+  pre-deployment-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check domain DNS
+        run: |
+          echo "Checking DNS for ${{ env.DOMAIN }}..."
+          if ! nslookup ${{ env.DOMAIN }} > /dev/null 2>&1; then
+            echo "Warning: Domain ${{ env.DOMAIN }} DNS resolution failed"
+            echo "Please ensure domain is properly configured"
+          fi
+
+      - name: Check server connectivity
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            echo "Checking system resources..."
+            df -h
+            free -m
+            docker system df
+
+            echo "Checking required ports..."
+            for port in 80 443 8088 5432 6379 8082; do
+              if netstat -tuln | grep -q ":$port "; then
+                echo "Warning: Port $port is already in use"
+                netstat -tuln | grep ":$port "
+              fi
+            done
+
+            echo "Checking Docker status..."
+            docker info
+
+            echo "Checking existing containers..."
+            docker ps -a
+
+            echo "Checking nginx configuration..."
+            if [ -f /etc/nginx/nginx.conf ]; then
+              nginx -t || echo "Warning: Nginx configuration test failed"
+            fi
+
   build-and-push:
-    needs: test
+    needs: [test, pre-deployment-check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -68,13 +112,29 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Prepare deployment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            echo "Creating backup of existing configuration..."
+            cd ${{ env.DEPLOY_PATH }}
+            if [ -f docker-compose.prod.yml ]; then
+              cp docker-compose.prod.yml docker-compose.prod.yml.backup
+            fi
+            if [ -f .env.production ]; then
+              cp .env.production .env.production.backup
+            fi
+
       - name: Copy deployment files
         uses: appleboy/scp-action@master
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          source: "docker-compose.prod.yml,.env.production,nginx/,init-scripts/"
+          source: "docker-compose.prod.yml,.env.production,nginx/"
           target: ${{ env.DEPLOY_PATH }}
           strip_components: 0
           overwrite: true
@@ -93,27 +153,63 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_PATH }}
 
+            echo "Performing pre-deployment checks..."
+
+            # Check disk space
+            DISK_SPACE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+            if [ "$DISK_SPACE" -gt 85 ]; then
+              echo "Warning: Low disk space. Current usage: ${DISK_SPACE}%"
+              docker system prune -f
+            fi
+
+            # Check Docker daemon
+            if ! docker info > /dev/null 2>&1; then
+              echo "Error: Docker daemon is not running"
+              exit 1
+            fi
+
             # Login to Docker Hub
             echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
             # Create required directories
-            mkdir -p logs init-scripts nginx/conf.d
+            mkdir -p logs nginx/conf.d
+
+            # Validate nginx configuration
+            if [ -f nginx/conf.d/default.conf ]; then
+              echo "Validating Nginx configuration..."
+              docker run --rm -v $(pwd)/nginx/conf.d:/etc/nginx/conf.d:ro nginx:latest nginx -t
+            fi
 
             # Create docker network if not exists
             docker network create nginx-proxy || true
 
+            # Check and stop conflicting services
+            echo "Checking for port conflicts..."
+            for port in 80 443 8088 5432 6379 8082; do
+              if netstat -tuln | grep -q ":$port "; then
+                echo "Stopping service using port $port..."
+                fuser -k $port/tcp || true
+              fi
+            done
+
             # Pull latest images
+            echo "Pulling latest images..."
             docker-compose -f docker-compose.prod.yml pull
 
             # Stop current deployment (if exists)
+            echo "Stopping current deployment..."
             docker-compose -f docker-compose.prod.yml down --remove-orphans || true
 
             # Start new deployment
+            echo "Starting new deployment..."
             DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME docker-compose -f docker-compose.prod.yml up -d
 
             # Wait for services to be healthy with timeout
-            timeout=300
+            timeout=360
             start_time=$(date +%s)
+
+            echo "Waiting for services to start up (initial delay: 60s)..."
+            sleep 60
 
             while true; do
               current_time=$(date +%s)
@@ -121,34 +217,42 @@ jobs:
               
               if [ $elapsed -gt $timeout ]; then
                 echo "Timeout waiting for services to be healthy"
+                docker-compose -f docker-compose.prod.yml logs
                 exit 1
               fi
               
-              if docker ps | grep -q "healthcarebackend-api-1.*healthy"; then
+              # Check all required services health
+              api_healthy=$(docker ps --filter "name=healthcarebackend-api-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
+              postgres_healthy=$(docker ps --filter "name=postgres" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
+              redis_healthy=$(docker ps --filter "name=healthcarebackend-redis-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
+              nginx_running=$(docker ps --filter "name=nginx-proxy" --format "{{.Status}}" | grep -q "Up" && echo "yes" || echo "no")
+              
+              if [ "$api_healthy" = "yes" ] && [ "$postgres_healthy" = "yes" ] && [ "$redis_healthy" = "yes" ] && [ "$nginx_running" = "yes" ]; then
+                echo "All services are healthy!"
                 break
               fi
               
               echo "Waiting for services to be healthy... ($elapsed seconds elapsed)"
-              sleep 10
+              echo "API: $api_healthy, PostgreSQL: $postgres_healthy, Redis: $redis_healthy, Nginx: $nginx_running"
+              sleep 20
             done
 
-            # Verify API health with retry
-            max_retries=5
-            retry_count=0
-
-            while [ $retry_count -lt $max_retries ]; do
-              if curl -f http://localhost:8088/health; then
-                echo "API health check passed!"
-                exit 0
+            # Verify domain accessibility
+            echo "Verifying domain accessibility..."
+            if ! curl -f -s -k https://${{ env.DOMAIN }}/health > /dev/null; then
+              echo "Warning: Unable to access API through domain. Checking local access..."
+              if wget --spider -q http://localhost:8088/health; then
+                echo "API is accessible locally but not through domain. Check DNS and Nginx configuration."
+                exit 1
+              else
+                echo "API is not accessible locally either. Deployment failed."
+                docker-compose -f docker-compose.prod.yml logs
+                exit 1
               fi
-              
-              retry_count=$((retry_count + 1))
-              echo "API health check failed, retrying ($retry_count/$max_retries)..."
-              sleep 10
-            done
+            fi
 
-            echo "API health check failed after $max_retries attempts"
-            exit 1
+            echo "Deployment successful - All checks passed!"
+            exit 0
 
   rollback:
     if: failure() && github.event_name == 'push'
@@ -170,7 +274,15 @@ jobs:
 
             echo "Starting rollback procedure..."
 
-            # Get the previous image with proper filtering
+            # Restore configuration backups if they exist
+            if [ -f docker-compose.prod.yml.backup ]; then
+              mv docker-compose.prod.yml.backup docker-compose.prod.yml
+            fi
+            if [ -f .env.production.backup ]; then
+              mv .env.production.backup .env.production
+            fi
+
+            # Get the previous image
             PREV_IMAGE=$(docker images $DOCKERHUB_USERNAME/healthcare-backend --format "{{.ID}} {{.CreatedAt}}" | sort -k2 -r | awk 'NR==2{print $1}')
 
             if [ -z "$PREV_IMAGE" ]; then
@@ -197,23 +309,25 @@ jobs:
               
               if [ $elapsed -gt $timeout ]; then
                 echo "Timeout waiting for rollback services to be healthy"
+                docker-compose -f docker-compose.prod.yml logs
                 exit 1
               fi
               
-              if docker ps | grep -q "healthcarebackend-api-1.*healthy"; then
+              if docker ps --filter "name=healthcarebackend-api-1" --format "{{.Status}}" | grep -q "healthy"; then
                 echo "Rollback successful - services are healthy"
                 break
               fi
               
               echo "Waiting for rollback services to be healthy... ($elapsed seconds elapsed)"
-              sleep 10
+              sleep 20
             done
 
             # Verify API health after rollback
-            if curl -f http://localhost:8088/health; then
+            if wget --spider -q http://localhost:8088/health; then
               echo "Rollback successful - API is healthy"
               exit 0
             else
               echo "Rollback failed - API health check failed"
+              docker-compose -f docker-compose.prod.yml logs
               exit 1
             fi
