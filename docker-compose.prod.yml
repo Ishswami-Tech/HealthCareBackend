@@ -1,10 +1,7 @@
 version: '3.8'
 services:
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: healthcare-backend:latest
+    image: ${DOCKERHUB_USERNAME}/healthcare-backend:latest
     container_name: healthcarebackend-api-1
     ports:
       - "8088:8088"
@@ -34,11 +31,11 @@ services:
       - nginx-proxy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8088"]
+      test: ["CMD-SHELL", "nc -z localhost 8088 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 40s
 
   postgres:
     image: postgres:latest
@@ -46,9 +43,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: userdb
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-userdb}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data/pgdata
@@ -87,15 +84,15 @@ services:
       - "8082:8081"
     environment:
       - REDIS_HOSTS=local:redis:6379
-      - HTTP_USER=admin
-      - HTTP_PASSWORD=admin
+      - HTTP_USER=${REDIS_COMMANDER_USER:-admin}
+      - HTTP_PASSWORD=${REDIS_COMMANDER_PASSWORD:-admin}
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8081"]
+      test: ["CMD-SHELL", "nc -z localhost 8081 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -130,7 +127,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - acme:/etc/acme.sh
     environment:
-      DEFAULT_EMAIL: your-email@example.com
+      DEFAULT_EMAIL: noreply@ishswami.in
     depends_on:
       - nginx-proxy
     networks:
