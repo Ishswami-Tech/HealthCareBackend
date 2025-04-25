@@ -134,6 +134,7 @@ services:
       - nginx_vhost:/etc/nginx/vhost.d
       - nginx_html:/usr/share/nginx/html
       - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/dhparam:/etc/nginx/dhparam:ro
     environment:
       ENABLE_IPV6: "true"
       DEFAULT_HOST: api.ishswami.in

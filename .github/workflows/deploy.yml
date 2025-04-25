@@ -172,7 +172,13 @@ jobs:
             echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
             # Create required directories
-            mkdir -p logs nginx/conf.d
+            mkdir -p logs nginx/conf.d nginx/dhparam
+
+            # Generate DH parameters if not exists
+            if [ ! -f nginx/dhparam/dhparam.pem ]; then
+              echo "Generating DH parameters..."
+              openssl dhparam -out nginx/dhparam/dhparam.pem 2048
+            fi
 
             # Validate nginx configuration
             if [ -f nginx/conf.d/default.conf ]; then
