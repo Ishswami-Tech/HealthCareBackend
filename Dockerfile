@@ -12,7 +12,8 @@ RUN npm install --legacy-peer-deps
 # Copy the rest of the application
 COPY . .
 
-# Generate Prisma client
+# Set Prisma schema path and generate client
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
 RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 
 # Production stage
@@ -41,8 +42,8 @@ COPY --from=builder /app/node_modules/rxjs ./node_modules/rxjs
 COPY --from=builder /app/node_modules/tslib ./node_modules/tslib
 COPY --from=builder /app/node_modules/zone.js ./node_modules/zone.js
 
-# Copy Prisma schema
-COPY prisma ./prisma
+# Copy Prisma schema and migrations
+COPY src/shared/database/prisma ./prisma
 
 # Set environment variables
 ENV NODE_ENV=production
