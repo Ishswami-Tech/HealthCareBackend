@@ -49,7 +49,7 @@ services:
         PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON DATABASE userdb TO postgres;' &&
         PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON SCHEMA public TO postgres;' &&
         echo 'Running database migrations...' &&
-        npx prisma migrate deploy &&
+        npx prisma migrate deploy --schema=/app/prisma/schema.prisma &&
         echo 'Starting the application...' &&
         npm run start:prod
       "
