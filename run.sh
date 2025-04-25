@@ -8,8 +8,57 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default to development if no environment specified
-ENV=${1:-dev}
+# Function to display usage
+show_usage() {
+    echo "Usage: ./run.sh [dev|prod] [up|down|logs|restart]"
+    echo "  dev    - Run in development mode"
+    echo "  prod   - Run in production mode"
+    echo "  up     - Start the services"
+    echo "  down   - Stop the services"
+    echo "  logs   - Show logs"
+    echo "  restart- Restart services"
+    exit 1
+}
+
+# Check if environment argument is provided
+if [ "$#" -lt 2 ]; then
+    show_usage
+fi
+
+ENV=$1
+ACTION=$2
+COMPOSE_FILE=""
+ENV_FILE=""
+
+# Set the appropriate compose and env files based on environment
+case $ENV in
+    "dev")
+        COMPOSE_FILE="docker-compose.dev.yml"
+        ENV_FILE=".env.development"
+        ;;
+    "prod")
+        COMPOSE_FILE="docker-compose.prod.yml"
+        ENV_FILE=".env.production"
+        ;;
+    *)
+        echo "Invalid environment. Use 'dev' or 'prod'"
+        show_usage
+        ;;
+esac
+
+# Check if required files exist
+if [ ! -f "$COMPOSE_FILE" ]; then
+    echo "Error: $COMPOSE_FILE not found!"
+    exit 1
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: $ENV_FILE not found!"
+    exit 1
+fi
+
+# Export environment variables
+export $(cat $ENV_FILE | grep -v '^#' | xargs)
 
 # Function to display help
 show_help() {
@@ -130,158 +179,33 @@ start_prisma_studio() {
   fi
 }
 
-# Main script
-case "$ENV" in
-  dev|development)
-    check_docker
-    check_docker_compose
-    
-    CMD=${2:-start}
-    
-    case "$CMD" in
-      start)
-        echo -e "${YELLOW}Starting Healthcare Backend in DEVELOPMENT mode with hot-reloading...${NC}"
-        export NODE_ENV=development
-        export APP_ENV=development
-        export IS_DEV=true
-        docker-compose -f docker-compose.dev.yml up -d
-        echo -e "${GREEN}Development environment started successfully!${NC}"
-        echo -e "${GREEN}API: http://localhost:8088${NC}"
-        echo -e "${GREEN}Prisma Studio: http://localhost:5555${NC}"
-        echo -e "${GREEN}PgAdmin: http://localhost:5050 (admin@admin.com/admin)${NC}"
-        echo -e "${GREEN}Redis Commander: http://localhost:8082 (admin/admin)${NC}"
-        echo -e "${YELLOW}Showing logs from the API container. Press Ctrl+C to exit logs (containers will keep running).${NC}"
-        docker-compose -f docker-compose.dev.yml logs -f api
+# Execute docker-compose commands based on action
+case $ACTION in
+    "up")
+        echo "Starting services in $ENV mode..."
+        docker-compose -f $COMPOSE_FILE up -d
         ;;
-      stop)
-        echo -e "${YELLOW}Stopping Healthcare Backend...${NC}"
-        docker-compose -f docker-compose.dev.yml down
-        echo -e "${GREEN}Environment stopped successfully!${NC}"
+    "down")
+        echo "Stopping services..."
+        docker-compose -f $COMPOSE_FILE down
         ;;
-      restart)
-        echo -e "${YELLOW}Restarting Healthcare Backend...${NC}"
-        docker-compose -f docker-compose.dev.yml restart
-        echo -e "${GREEN}Environment restarted successfully!${NC}"
+    "logs")
+        echo "Showing logs..."
+        docker-compose -f $COMPOSE_FILE logs -f
         ;;
-      rebuild)
-        echo -e "${YELLOW}Rebuilding and restarting Healthcare Backend in DEVELOPMENT mode...${NC}"
-        docker-compose -f docker-compose.dev.yml down
-        docker-compose -f docker-compose.dev.yml build
-        docker-compose -f docker-compose.dev.yml up -d
-        echo -e "${GREEN}Rebuild completed!${NC}"
-        docker-compose -f docker-compose.dev.yml logs -f api
+    "restart")
+        echo "Restarting services..."
+        docker-compose -f $COMPOSE_FILE down
+        docker-compose -f $COMPOSE_FILE up -d
         ;;
-      logs)
-        docker-compose -f docker-compose.dev.yml logs -f
+    *)
+        echo "Invalid action"
+        show_usage
         ;;
-      logs:api)
-        docker-compose -f docker-compose.dev.yml logs -f api
-        ;;
-      logs:db)
-        docker-compose -f docker-compose.dev.yml logs -f postgres
-        ;;
-      logs:redis)
-        docker-compose -f docker-compose.dev.yml logs -f redis
-        ;;
-      status)
-        docker-compose -f docker-compose.dev.yml ps
-        ;;
-      backup)
-        create_backup
-        ;;
-      restore)
-        restore_backup
-        ;;
-      clean)
-        if [ "$3" == "--volumes" ]; then
-          docker-compose -f docker-compose.dev.yml down -v
-        else
-          docker-compose -f docker-compose.dev.yml down
-        fi
-        echo -e "${GREEN}Cleanup completed successfully!${NC}"
-        ;;
-      studio)
-        start_prisma_studio
-        ;;
-      help|*)
-        show_help
-        ;;
-    esac
-    ;;
-  prod|production)
-    check_docker
-    check_docker_compose
-    
-    CMD=${2:-start}
-    
-    case "$CMD" in
-      start)
-        create_production_backup
-        echo -e "${YELLOW}Starting Healthcare Backend in PRODUCTION mode...${NC}"
-        export NODE_ENV=production
-        export APP_ENV=production
-        export IS_DEV=false
-        docker-compose up -d
-        echo -e "${GREEN}Production environment started successfully!${NC}"
-        echo -e "${GREEN}API: http://localhost:8088${NC}"
-        echo -e "${YELLOW}Showing logs from the API container. Press Ctrl+C to exit logs (containers will keep running).${NC}"
-        docker-compose logs -f api
-        ;;
-      stop)
-        docker-compose down
-        echo -e "${GREEN}Environment stopped successfully!${NC}"
-        ;;
-      restart)
-        docker-compose restart
-        echo -e "${GREEN}Environment restarted successfully!${NC}"
-        ;;
-      rebuild)
-        create_production_backup
-        echo -e "${YELLOW}Rebuilding and restarting Healthcare Backend in PRODUCTION mode...${NC}"
-        docker-compose down
-        docker-compose build
-        docker-compose up -d
-        echo -e "${GREEN}Rebuild completed!${NC}"
-        docker-compose logs -f api
-        ;;
-      logs)
-        docker-compose logs -f
-        ;;
-      logs:api)
-        docker-compose logs -f api
-        ;;
-      logs:db)
-        docker-compose logs -f postgres
-        ;;
-      logs:redis)
-        docker-compose logs -f redis
-        ;;
-      status)
-        docker-compose ps
-        ;;
-      backup)
-        echo -e "${RED}Backup functionality is not available in production mode.${NC}"
-        ;;
-      restore)
-        echo -e "${RED}Restore functionality is not available in production mode.${NC}"
-        ;;
-      clean)
-        if [ "$3" == "--volumes" ]; then
-          docker-compose down -v
-        else
-          docker-compose down
-        fi
-        echo -e "${GREEN}Cleanup completed successfully!${NC}"
-        ;;
-      studio)
-        start_prisma_studio
-        ;;
-      help|*)
-        show_help
-        ;;
-    esac
-    ;;
-  help|*)
-    show_help
-    ;;
 esac
+
+# Show running containers after up or restart
+if [ "$ACTION" = "up" ] || [ "$ACTION" = "restart" ]; then
+    echo "Running containers:"
+    docker-compose -f $COMPOSE_FILE ps
+fi
