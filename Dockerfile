@@ -12,8 +12,8 @@ RUN npm install --legacy-peer-deps
 # Copy the rest of the application
 COPY . .
 
-# Generate Prisma Client
-RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
+# Generate Prisma Client with original schema location
+RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma
 
 # Build the application
 RUN npm run build
@@ -35,11 +35,13 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
-# Copy Prisma files
+# Copy Prisma files to their original location
 COPY --from=builder /app/src/shared/database/prisma ./src/shared/database/prisma
 
 # Set environment variables
 ENV NODE_ENV=production
+ENV DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public"
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
 
 # Debug: List contents to verify files
 RUN echo "Listing Prisma directory:" && \
@@ -69,15 +71,12 @@ CMD ["sh", "-c", "\
     PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON DATABASE userdb TO postgres;' && \
     PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON SCHEMA public TO postgres;' && \
     echo 'Running database migrations...' && \
-    npx prisma migrate deploy --schema=./src/shared/database/prisma/schema.prisma && \
+    npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && \
     echo 'Starting the application...' && \
     node dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
-
-# Add build argument for Prisma schema path
-ARG PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
 
 # Install necessary tools
 RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++
@@ -94,11 +93,8 @@ RUN npm install -g nodemon
 # Copy the rest of the application
 COPY . .
 
-# Create prisma directory and ensure schema exists
-RUN mkdir -p /app/src/shared/database/prisma
-
 # Set Prisma schema path and generate client
-ENV PRISMA_SCHEMA_PATH=$PRISMA_SCHEMA_PATH
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
 RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 
 # Make the script executable
@@ -112,4 +108,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
 # Use nodemon in development with migrations
-CMD ["sh", "-c", "npx prisma migrate deploy && nodemon --watch src --ext ts --exec npm run start:dev"] 
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && nodemon --watch src --ext ts --exec npm run start:dev"] 
