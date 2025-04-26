@@ -12,14 +12,9 @@ RUN npm install --legacy-peer-deps
 # Copy the rest of the application
 COPY . .
 
-# Ensure Prisma schema is in the standard location
-RUN mkdir -p prisma
-RUN cp src/shared/database/prisma/schema.prisma prisma/
-RUN cp src/shared/database/prisma/tenant.schema.prisma prisma/
-RUN cp -r src/shared/database/prisma/migrations prisma/
-
-# Generate Prisma Client
-RUN npx prisma generate
+# Generate Prisma Client for both schemas
+RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma
+RUN npx prisma generate --schema=src/shared/database/prisma/tenant.schema.prisma
 
 # Build the application
 RUN npm run build
@@ -41,8 +36,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
-# Copy Prisma files from builder stage
-COPY --from=builder /app/prisma ./prisma
+# Copy Prisma schema files to their original location
+COPY --from=builder /app/src/shared/database/prisma ./src/shared/database/prisma
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -50,9 +45,9 @@ ENV DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=pub
 
 # Debug: List contents to verify files
 RUN echo "Listing Prisma directory:" && \
-    ls -la /app/prisma && \
+    ls -la /app/src/shared/database/prisma && \
     echo "Content of schema file:" && \
-    cat /app/prisma/schema.prisma
+    cat /app/src/shared/database/prisma/schema.prisma
 
 # Expose ports
 EXPOSE 8088 5555
@@ -65,7 +60,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD ["sh", "-c", "\
     echo 'Current directory:' && pwd && \
     echo 'Listing contents:' && ls -la && \
-    echo 'Listing Prisma directory:' && ls -la prisma && \
+    echo 'Listing Prisma directory:' && ls -la src/shared/database/prisma && \
     echo 'Waiting for PostgreSQL to be ready...' && \
     while ! nc -z postgres 5432; do sleep 1; done && \
     echo 'Creating database if not exists...' && \
@@ -76,7 +71,7 @@ CMD ["sh", "-c", "\
     PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON DATABASE userdb TO postgres;' && \
     PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON SCHEMA public TO postgres;' && \
     echo 'Running database migrations...' && \
-    npx prisma migrate deploy && \
+    npx prisma migrate deploy --schema=src/shared/database/prisma/schema.prisma && \
     echo 'Starting the application...' && \
     node dist/main"]
 
