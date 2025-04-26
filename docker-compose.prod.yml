@@ -19,10 +19,6 @@ services:
       PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
     volumes:
       - ./logs:/app/logs
-      - type: bind
-        source: ./src/shared/database/prisma
-        target: /app/src/shared/database/prisma
-        read_only: true
     depends_on:
       postgres:
         condition: service_healthy

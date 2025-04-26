@@ -12,10 +12,12 @@ RUN npm install --legacy-peer-deps
 # Copy the rest of the application
 COPY . .
 
-# Verify and generate Prisma Client for both schemas
+# Verify schema files exist
 RUN ls -la src/shared/database/prisma/ && \
-    echo "Generating Prisma clients..." && \
-    npx prisma generate --schema=src/shared/database/prisma/schema.prisma && \
+    echo "Schema files found, proceeding with build..."
+
+# Generate Prisma Client for both schemas
+RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma && \
     npx prisma generate --schema=src/shared/database/prisma/tenant.schema.prisma
 
 # Build the application
@@ -34,23 +36,25 @@ COPY package*.json ./
 RUN npm install --only=production --legacy-peer-deps
 
 # Create necessary directories
-RUN mkdir -p src/shared/database/prisma
+RUN mkdir -p /app/src/shared/database/prisma
+
+# Copy schema files first (for verification)
+COPY src/shared/database/prisma/*.prisma /app/src/shared/database/prisma/
 
 # Copy built application and necessary files
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/src/shared/database/prisma ./src/shared/database/prisma
 
 # Set environment variables
 ENV NODE_ENV=production
 ENV DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public"
 
-# Verify schema files are present
-RUN echo "Verifying Prisma schema files:" && \
-    ls -la src/shared/database/prisma/ && \
-    echo "Schema file contents:" && \
-    cat src/shared/database/prisma/schema.prisma
+# Verify schema files are present and show contents
+RUN echo "Verifying schema files:" && \
+    ls -la /app/src/shared/database/prisma/ && \
+    echo "Schema contents:" && \
+    cat /app/src/shared/database/prisma/schema.prisma
 
 # Expose ports
 EXPOSE 8088 5555
@@ -63,8 +67,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD ["sh", "-c", "\
     echo 'Verifying environment and files:' && \
     pwd && \
-    echo 'Prisma schema location:' && \
-    ls -la src/shared/database/prisma/ && \
+    echo 'Schema files:' && \
+    ls -la /app/src/shared/database/prisma/ && \
     echo 'Waiting for PostgreSQL to be ready...' && \
     while ! nc -z postgres 5432; do sleep 1; done && \
     echo 'Creating database if not exists...' && \
