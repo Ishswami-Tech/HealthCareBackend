@@ -16,8 +16,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TRUST_PROXY: 1
+      PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
     volumes:
       - ./logs:/app/logs
+      - ./src/shared/database/prisma:/app/src/shared/database/prisma
     depends_on:
       postgres:
         condition: service_healthy
