@@ -1,9 +1,6 @@
 # Build stage
 FROM node:20-alpine AS builder
 
-# Add build argument for Prisma schema path
-ARG PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
-
 WORKDIR /app
 
 # Copy package files
@@ -15,12 +12,8 @@ RUN npm install --legacy-peer-deps
 # Copy the rest of the application
 COPY . .
 
-# Create prisma directory and ensure schema exists
-RUN mkdir -p /app/src/shared/database/prisma
-
-# Set Prisma schema path and generate client
-ENV PRISMA_SCHEMA_PATH=$PRISMA_SCHEMA_PATH
-RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
+# Generate Prisma Client
+RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
 
 # Build the application
 RUN npm run build
@@ -28,39 +21,31 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine AS production
 
-# Add build argument for Prisma schema path
-ARG PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
-
 # Install necessary tools
 RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install production dependencies
 COPY package*.json ./
-
-# Install production dependencies only
 RUN npm install --only=production --legacy-peer-deps
 
-# Copy built application from builder stage
+# Copy built application and necessary files
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/@nestjs ./node_modules/@nestjs
-COPY --from=builder /app/node_modules/class-validator ./node_modules/class-validator
-COPY --from=builder /app/node_modules/class-transformer ./node_modules/class-transformer
-COPY --from=builder /app/node_modules/reflect-metadata ./node_modules/reflect-metadata
-COPY --from=builder /app/node_modules/rxjs ./node_modules/rxjs
-COPY --from=builder /app/node_modules/tslib ./node_modules/tslib
-COPY --from=builder /app/node_modules/zone.js ./node_modules/zone.js
 
-# Create prisma directory and copy schema files from builder
-RUN mkdir -p /app/src/shared/database/prisma
-COPY --from=builder /app/src/shared/database/prisma/ /app/src/shared/database/prisma/
+# Copy Prisma files
+COPY --from=builder /app/src/shared/database/prisma ./src/shared/database/prisma
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV PRISMA_SCHEMA_PATH=$PRISMA_SCHEMA_PATH
+
+# Debug: List contents to verify files
+RUN echo "Listing Prisma directory:" && \
+    ls -la /app/src/shared/database/prisma && \
+    echo "Content of schema file:" && \
+    cat /app/src/shared/database/prisma/schema.prisma
 
 # Expose ports
 EXPOSE 8088 5555
@@ -69,8 +54,24 @@ EXPOSE 8088 5555
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
-# Start the application with migrations
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+# Start script with explicit schema path
+CMD ["sh", "-c", "\
+    echo 'Current directory:' && pwd && \
+    echo 'Listing contents:' && ls -la && \
+    echo 'Listing Prisma directory:' && ls -la src/shared/database/prisma && \
+    echo 'Waiting for PostgreSQL to be ready...' && \
+    while ! nc -z postgres 5432; do sleep 1; done && \
+    echo 'Creating database if not exists...' && \
+    PGPASSWORD=postgres psql -h postgres -U postgres -c 'CREATE DATABASE userdb;' || true && \
+    echo 'Setting up database permissions...' && \
+    PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'CREATE SCHEMA IF NOT EXISTS public;' && \
+    PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'ALTER DATABASE userdb OWNER TO postgres;' && \
+    PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON DATABASE userdb TO postgres;' && \
+    PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON SCHEMA public TO postgres;' && \
+    echo 'Running database migrations...' && \
+    npx prisma migrate deploy --schema=./src/shared/database/prisma/schema.prisma && \
+    echo 'Starting the application...' && \
+    node dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
