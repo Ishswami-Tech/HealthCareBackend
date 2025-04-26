@@ -66,7 +66,7 @@ jobs:
             docker system df
 
             echo "Checking required ports..."
-            for port in 80 443 8088 5432 6379 8082; do
+            for port in 8088 5432 6379 8082; do
               if netstat -tuln | grep -q ":$port "; then
                 echo "Warning: Port $port is already in use"
                 netstat -tuln | grep ":$port "
@@ -164,32 +164,20 @@ jobs:
             echo "Performing pre-deployment checks..."
 
             # Create required directories
-            mkdir -p logs nginx/conf.d nginx/dhparam src/shared/database/prisma
+            mkdir -p logs
 
-            # Ensure Prisma directory permissions
-            chmod -R 755 src/shared/database/prisma
-
-            # Generate DH parameters if not exists
-            if [ ! -f nginx/dhparam/dhparam.pem ]; then
-              echo "Generating DH parameters..."
-              openssl dhparam -out nginx/dhparam/dhparam.pem 2048
+            # Copy Nginx configuration files to host nginx
+            if [ -d "nginx/conf.d" ]; then
+              echo "Copying Nginx configuration files to host..."
+              sudo cp -f nginx/conf.d/*.conf /etc/nginx/conf.d/
+              
+              # Test and reload Nginx
+              sudo nginx -t && sudo systemctl reload nginx
             fi
-
-            # Basic Nginx syntax validation (skip upstream checks)
-            if [ -f nginx/conf.d/default.conf ]; then
-              echo "Validating basic Nginx configuration syntax..."
-              docker run --rm \
-                -v $(pwd)/nginx/conf.d:/etc/nginx/conf.d:ro \
-                nginx:latest \
-                nginx -t -c /etc/nginx/nginx.conf || echo "Warning: Nginx configuration test failed (this may be expected if containers are not running)"
-            fi
-
-            # Create docker network if not exists
-            docker network create nginx-proxy || true
 
             # Check and stop conflicting services
             echo "Checking for port conflicts..."
-            for port in 80 443 8088 5432 6379 8082; do
+            for port in 8088 5432 6379 8082; do
               if netstat -tuln | grep -q ":$port "; then
                 echo "Stopping service using port $port..."
                 fuser -k $port/tcp || true
@@ -229,15 +217,14 @@ jobs:
               api_healthy=$(docker ps --filter "name=healthcarebackend-api-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
               postgres_healthy=$(docker ps --filter "name=postgres" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
               redis_healthy=$(docker ps --filter "name=healthcarebackend-redis-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
-              nginx_running=$(docker ps --filter "name=nginx-proxy" --format "{{.Status}}" | grep -q "Up" && echo "yes" || echo "no")
               
-              if [ "$api_healthy" = "yes" ] && [ "$postgres_healthy" = "yes" ] && [ "$redis_healthy" = "yes" ] && [ "$nginx_running" = "yes" ]; then
+              if [ "$api_healthy" = "yes" ] && [ "$postgres_healthy" = "yes" ] && [ "$redis_healthy" = "yes" ]; then
                 echo "All services are healthy!"
                 break
               fi
               
               echo "Waiting for services to be healthy... ($elapsed seconds elapsed)"
-              echo "API: $api_healthy, PostgreSQL: $postgres_healthy, Redis: $redis_healthy, Nginx: $nginx_running"
+              echo "API: $api_healthy, PostgreSQL: $postgres_healthy, Redis: $redis_healthy"
               sleep 20
             done
 

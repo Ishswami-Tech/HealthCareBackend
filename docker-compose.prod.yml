@@ -10,10 +10,6 @@ services:
       - .env.production
     environment:
       NODE_ENV: production
-      VIRTUAL_HOST: api.ishswami.in
-      VIRTUAL_PORT: 8088
-      LETSENCRYPT_HOST: api.ishswami.in
-      LETSENCRYPT_EMAIL: noreply@ishswami.in
       CORS_ORIGIN: https://ishswami.in
       FRONTEND_URL: https://ishswami.in
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
@@ -29,7 +25,6 @@ services:
         condition: service_healthy
     networks:
       - app-network
-      - nginx-proxy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1"]
@@ -122,53 +117,10 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  nginx-proxy:
-    image: nginxproxy/nginx-proxy
-    container_name: nginx-proxy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /var/run/docker.sock:/tmp/docker.sock:ro
-      - nginx_certs:/etc/nginx/certs
-      - nginx_vhost:/etc/nginx/vhost.d
-      - nginx_html:/usr/share/nginx/html
-      - ./nginx/conf.d:/etc/nginx/conf.d
-      - ./nginx/dhparam:/etc/nginx/dhparam:ro
-    environment:
-      ENABLE_IPV6: "true"
-      DEFAULT_HOST: api.ishswami.in
-    networks:
-      - nginx-proxy
-    restart: unless-stopped
-
-  acme-companion:
-    image: nginxproxy/acme-companion
-    container_name: nginx-proxy-acme
-    volumes_from:
-      - nginx-proxy
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - acme:/etc/acme.sh
-    environment:
-      DEFAULT_EMAIL: noreply@ishswami.in
-    depends_on:
-      - nginx-proxy
-    networks:
-      - nginx-proxy
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   redis_data:
-  nginx_certs:
-  nginx_vhost:
-  nginx_html:
-  acme:
 
 networks:
   app-network:
-    driver: bridge
-  nginx-proxy:
-    external: true
- 
+    driver: bridge 

@@ -1,3 +1,4 @@
+# Development environment with host-level Nginx handling routing/SSL
 services:
   api:
     build:
