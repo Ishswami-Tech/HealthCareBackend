@@ -12,9 +12,11 @@ RUN npm install --legacy-peer-deps
 # Copy the rest of the application
 COPY . .
 
-# Generate Prisma Client for both schemas
-RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma
-RUN npx prisma generate --schema=src/shared/database/prisma/tenant.schema.prisma
+# Verify and generate Prisma Client for both schemas
+RUN ls -la src/shared/database/prisma/ && \
+    echo "Generating Prisma clients..." && \
+    npx prisma generate --schema=src/shared/database/prisma/schema.prisma && \
+    npx prisma generate --schema=src/shared/database/prisma/tenant.schema.prisma
 
 # Build the application
 RUN npm run build
@@ -31,23 +33,24 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --only=production --legacy-peer-deps
 
+# Create necessary directories
+RUN mkdir -p src/shared/database/prisma
+
 # Copy built application and necessary files
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-
-# Copy Prisma schema files to their original location
 COPY --from=builder /app/src/shared/database/prisma ./src/shared/database/prisma
 
 # Set environment variables
 ENV NODE_ENV=production
 ENV DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public"
 
-# Debug: List contents to verify files
-RUN echo "Listing Prisma directory:" && \
-    ls -la /app/src/shared/database/prisma && \
-    echo "Content of schema file:" && \
-    cat /app/src/shared/database/prisma/schema.prisma
+# Verify schema files are present
+RUN echo "Verifying Prisma schema files:" && \
+    ls -la src/shared/database/prisma/ && \
+    echo "Schema file contents:" && \
+    cat src/shared/database/prisma/schema.prisma
 
 # Expose ports
 EXPOSE 8088 5555
@@ -56,11 +59,12 @@ EXPOSE 8088 5555
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
-# Start script
+# Start script with explicit schema path verification
 CMD ["sh", "-c", "\
-    echo 'Current directory:' && pwd && \
-    echo 'Listing contents:' && ls -la && \
-    echo 'Listing Prisma directory:' && ls -la src/shared/database/prisma && \
+    echo 'Verifying environment and files:' && \
+    pwd && \
+    echo 'Prisma schema location:' && \
+    ls -la src/shared/database/prisma/ && \
     echo 'Waiting for PostgreSQL to be ready...' && \
     while ! nc -z postgres 5432; do sleep 1; done && \
     echo 'Creating database if not exists...' && \
@@ -71,7 +75,7 @@ CMD ["sh", "-c", "\
     PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON DATABASE userdb TO postgres;' && \
     PGPASSWORD=postgres psql -h postgres -U postgres -d userdb -c 'GRANT ALL PRIVILEGES ON SCHEMA public TO postgres;' && \
     echo 'Running database migrations...' && \
-    npx prisma migrate deploy --schema=src/shared/database/prisma/schema.prisma && \
+    npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && \
     echo 'Starting the application...' && \
     node dist/main"]
 
