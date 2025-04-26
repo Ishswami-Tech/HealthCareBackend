@@ -103,7 +103,15 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          docker build -t $DOCKERHUB_USERNAME/healthcare-backend:latest .
+          # Ensure Prisma schema directory exists in the correct location
+          mkdir -p src/shared/database/prisma
+
+          # Build the Docker image with proper schema path
+          docker build \
+            --build-arg PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
+            -t $DOCKERHUB_USERNAME/healthcare-backend:latest .
+
+          # Push the image to Docker Hub
           docker push $DOCKERHUB_USERNAME/healthcare-backend:latest
 
   deploy:
@@ -155,24 +163,11 @@ jobs:
 
             echo "Performing pre-deployment checks..."
 
-            # Check disk space
-            DISK_SPACE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
-            if [ "$DISK_SPACE" -gt 85 ]; then
-              echo "Warning: Low disk space. Current usage: ${DISK_SPACE}%"
-              docker system prune -f
-            fi
-
-            # Check Docker daemon
-            if ! docker info > /dev/null 2>&1; then
-              echo "Error: Docker daemon is not running"
-              exit 1
-            fi
-
-            # Login to Docker Hub
-            echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-
             # Create required directories
-            mkdir -p logs nginx/conf.d nginx/dhparam
+            mkdir -p logs nginx/conf.d nginx/dhparam src/shared/database/prisma
+
+            # Ensure Prisma directory permissions
+            chmod -R 755 src/shared/database/prisma
 
             # Generate DH parameters if not exists
             if [ ! -f nginx/dhparam/dhparam.pem ]; then
