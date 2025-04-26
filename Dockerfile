@@ -17,7 +17,6 @@ COPY . .
 
 # Create prisma directory and ensure schema exists
 RUN mkdir -p /app/src/shared/database/prisma
-RUN touch $PRISMA_SCHEMA_PATH
 
 # Set Prisma schema path and generate client
 ENV PRISMA_SCHEMA_PATH=$PRISMA_SCHEMA_PATH
@@ -55,11 +54,9 @@ COPY --from=builder /app/node_modules/rxjs ./node_modules/rxjs
 COPY --from=builder /app/node_modules/tslib ./node_modules/tslib
 COPY --from=builder /app/node_modules/zone.js ./node_modules/zone.js
 
-# Create prisma directory and copy schema
+# Create prisma directory and copy schema files from builder
 RUN mkdir -p /app/src/shared/database/prisma
-COPY src/shared/database/prisma/schema.prisma /app/src/shared/database/prisma/
-COPY src/shared/database/prisma/tenant.schema.prisma /app/src/shared/database/prisma/
-COPY src/shared/database/prisma/migrations /app/src/shared/database/prisma/migrations
+COPY --from=builder /app/src/shared/database/prisma/ /app/src/shared/database/prisma/
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -98,7 +95,6 @@ COPY . .
 
 # Create prisma directory and ensure schema exists
 RUN mkdir -p /app/src/shared/database/prisma
-RUN touch $PRISMA_SCHEMA_PATH
 
 # Set Prisma schema path and generate client
 ENV PRISMA_SCHEMA_PATH=$PRISMA_SCHEMA_PATH
