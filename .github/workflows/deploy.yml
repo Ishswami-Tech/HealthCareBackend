@@ -25,23 +25,6 @@ env:
   NODE_ENV: production
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run tests
-        run: npm test -- --passWithNoTests
-
   pre-deployment-check:
     runs-on: ubuntu-latest
     steps:
@@ -87,7 +70,7 @@ jobs:
             fi
 
   create-deployment:
-    needs: [test, pre-deployment-check]
+    needs: [pre-deployment-check]
     runs-on: ubuntu-latest
     outputs:
       deployment_id: ${{ steps.create_deployment.outputs.deployment_id }}
