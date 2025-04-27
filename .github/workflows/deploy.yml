@@ -124,7 +124,7 @@ jobs:
       - name: Prepare SSL files
         run: |
           # Verify SSL files exist
-          for file in nginx/ssl/ishswami.in.pem nginx/ssl/ishswami.in.key; do
+          for file in nginx/ssl/ishswami.com.pem nginx/ssl/ishswami.com.key; do
             if [ ! -f "$file" ]; then
               echo "Error: SSL file $file not found"
               exit 1
@@ -133,10 +133,10 @@ jobs:
 
           mkdir -p ssl_temp
           # Copy the certificates with correct names for both domains
-          cp nginx/ssl/ishswami.in.pem ssl_temp/ishswami.in.crt
-          cp nginx/ssl/ishswami.in.pem ssl_temp/api.ishswami.in.crt
-          cp nginx/ssl/ishswami.in.key ssl_temp/ishswami.in.key
-          cp nginx/ssl/ishswami.in.key ssl_temp/api.ishswami.in.key
+          cp nginx/ssl/ishswami.com.pem ssl_temp/ishswami.in.crt
+          cp nginx/ssl/ishswami.com.pem ssl_temp/api.ishswami.in.crt
+          cp nginx/ssl/ishswami.com.key ssl_temp/ishswami.in.key
+          cp nginx/ssl/ishswami.com.key ssl_temp/api.ishswami.in.key
 
       - name: Copy SSL certificates
         uses: appleboy/scp-action@master
