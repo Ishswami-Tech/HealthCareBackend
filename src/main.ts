@@ -4,7 +4,7 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { SwaggerModule } from "@nestjs/swagger";
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, LogLevel } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
@@ -22,7 +22,12 @@ async function bootstrap() {
 
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
-      new FastifyAdapter());
+      new FastifyAdapter(),
+      {
+        logger: ['error', 'warn'] as LogLevel[],
+        bufferLogs: true
+      }
+    );
     //   new FastifyAdapter({
     //     logger: true,
     //     trustProxy: true,
@@ -203,12 +208,12 @@ async function bootstrap() {
     // Start the server
     const port = configService.get<number>('PORT', 8088);
     await app.listen(port, "0.0.0.0");
+    
+    // Only log essential information
     logger.log(`Application is running on: ${await app.getUrl()}`);
     logger.log(`Swagger documentation is available at: ${await app.getUrl()}/docs`);
     logger.log(`Bull Board is available at: ${await app.getUrl()}/queue-dashboard`);
     logger.log(`WebSocket server is available at: ${await app.getUrl()}/socket.io`);
-    logger.log(`Socket.IO Admin UI is available at: https://admin.socket.io`);
-    logger.log(`Server ID for Admin UI: healthcare-api-${process.pid}`);
   } catch (error) {
     logger.error('Failed to start application:', error);
     process.exit(1);
