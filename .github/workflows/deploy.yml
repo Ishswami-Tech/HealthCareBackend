@@ -244,11 +244,8 @@ jobs:
             FRONTEND_URL=https://ishswami.in
             EOL
 
-            echo "Setting up Nginx configuration..."
-            if [ -d "releases/${{ github.sha }}/nginx/conf.d" ]; then
-              sudo cp -f releases/${{ github.sha }}/nginx/conf.d/*.conf /etc/nginx/conf.d/
-              sudo nginx -t && sudo systemctl reload nginx
-            fi
+            echo "Setting up Docker network..."
+            docker network create healthcare_network || true
 
             echo "Stopping existing services..."
             cd releases/${{ github.sha }}
@@ -273,9 +270,9 @@ jobs:
                 exit 1
               fi
               
-              api_healthy=$(docker ps --filter "name=healthcarebackend-api-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
+              api_healthy=$(docker ps --filter "name=api" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
               postgres_healthy=$(docker ps --filter "name=postgres" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
-              redis_healthy=$(docker ps --filter "name=healthcarebackend-redis-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
+              redis_healthy=$(docker ps --filter "name=redis" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
               
               echo "API: $api_healthy, PostgreSQL: $postgres_healthy, Redis: $redis_healthy"
               
