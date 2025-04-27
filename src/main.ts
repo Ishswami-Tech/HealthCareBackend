@@ -22,8 +22,13 @@ async function bootstrap() {
 
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
-      new FastifyAdapter()
-    );
+      new FastifyAdapter());
+    //   new FastifyAdapter({
+    //     logger: true,
+    //     trustProxy: true,
+    //     bodyLimit: 10 * 1024 * 1024, // 10MB
+    //   })
+    // );
 
     app.useGlobalPipes(new ValidationPipe({
       transform: true,
@@ -87,9 +92,12 @@ async function bootstrap() {
         }
         
         createIOServer(port: number, options?: any) {
+          const corsOrigins = configService.get('CORS_ORIGIN', 'http://localhost:3000').split(',');
+          corsOrigins.push('https://admin.socket.io');
+
           const server = super.createIOServer(port, {
             cors: {
-              origin: ["https://admin.socket.io"],
+              origin: corsOrigins,
               credentials: true
             },
             adapter: createAdapter(pubClient, subClient, {
@@ -101,36 +109,47 @@ async function bootstrap() {
                 decode: JSON.parse
               }
             }),
+            connectionStateRecovery: {
+              maxDisconnectionDuration: 2 * 60 * 1000,
+              skipMiddlewares: true,
+            },
             transports: ['websocket', 'polling'],
             pingTimeout: 20000,
             pingInterval: 25000,
             upgradeTimeout: 10000,
             maxHttpBufferSize: 1e6,
             connectTimeout: 45000,
-            allowEIO3: true
+            allowEIO3: true,
+            path: '/socket.io/'
           });
           
+          // Configure Socket.IO Admin UI
           instrument(server, {
-            auth: {
-              type: "basic",
-              username: "admin",
-              password: "$2a$10$toNinhAQwXmVekZrNrRrh.9BCQS.iY9GslqYodhlAc0/KW9X0RXkC"
-            },
-            mode: process.env.NODE_ENV === 'production' ? "production" : "development",
+            auth: false,  // Disable auth for testing
+            mode: "development",
             namespaceName: "/admin",
             readonly: false,
             serverId: `healthcare-api-${process.pid}`
           });
-          
+
+          // Log namespace creation
+          server.of('/appointments').on('connection', (socket) => {
+            logger.log(`Client connected to appointments namespace: ${socket.id}`);
+          });
+
+          logger.log('WebSocket server initialized with namespaces:', 
+            Object.keys(server._nsps).join(', '));
           return server;
         }
       }
 
       const customAdapter = new CustomIoAdapter(app);
       app.useWebSocketAdapter(customAdapter);
+      logger.log('WebSocket adapter configured successfully');
 
     } catch (error) {
       logger.warn(`WebSocket adapter could not be initialized: ${error.message}`);
+      logger.error(error.stack);
     }
 
     // Security headers
@@ -187,6 +206,9 @@ async function bootstrap() {
     logger.log(`Application is running on: ${await app.getUrl()}`);
     logger.log(`Swagger documentation is available at: ${await app.getUrl()}/docs`);
     logger.log(`Bull Board is available at: ${await app.getUrl()}/queue-dashboard`);
+    logger.log(`WebSocket server is available at: ${await app.getUrl()}/socket.io`);
+    logger.log(`Socket.IO Admin UI is available at: https://admin.socket.io`);
+    logger.log(`Server ID for Admin UI: healthcare-api-${process.pid}`);
   } catch (error) {
     logger.error('Failed to start application:', error);
     process.exit(1);

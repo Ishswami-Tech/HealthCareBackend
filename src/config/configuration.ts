@@ -13,4 +13,12 @@ export default () => ({
     secret: process.env.JWT_SECRET || 'your-secret-key',
     expiresIn: '24h',
   },
+  email: {
+    host: process.env.EMAIL_HOST || 'sandbox.smtp.mailtrap.io',
+    port: parseInt(process.env.EMAIL_PORT, 10) || 2525,
+    secure: process.env.EMAIL_SECURE === 'true',
+    user: process.env.EMAIL_USER,
+    password: process.env.EMAIL_PASSWORD,
+    from: process.env.EMAIL_FROM || 'noreply@healthcare.com',
+  },
 }); 

@@ -16,13 +16,18 @@ export class EmailService {
 
   private initializeTransporter() {
     try {
+      const emailConfig = this.configService.get('email');
+      if (!emailConfig) {
+        throw new Error('Email configuration not found');
+      }
+
       this.transporter = nodemailer.createTransport({
-        host: this.configService.get<string>('EMAIL_HOST'),
-        port: parseInt(this.configService.get<string>('EMAIL_PORT')),
-        secure: false,
+        host: emailConfig.host,
+        port: emailConfig.port,
+        secure: emailConfig.secure,
         auth: {
-          user: this.configService.get<string>('EMAIL_USER'),
-          pass: this.configService.get<string>('EMAIL_PASSWORD'),
+          user: emailConfig.user,
+          pass: emailConfig.password,
         },
         tls: {
           ciphers: 'SSLv3',
@@ -46,8 +51,13 @@ export class EmailService {
 
   async sendEmail(options: EmailOptions): Promise<boolean> {
     try {
+      const emailConfig = this.configService.get('email');
+      if (!emailConfig) {
+        throw new Error('Email configuration not found');
+      }
+
       const mailOptions = {
-        from: this.configService.get('EMAIL_FROM'),
+        from: emailConfig.from,
         to: options.to,
         subject: options.subject,
         html: this.getEmailTemplate(options.template, options.context),

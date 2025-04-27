@@ -21,6 +21,8 @@ import { QueueModule } from './shared/queue/queue.module';
 import { APPOINTMENT_QUEUE, SERVICE_QUEUE } from './shared/queue/queue.constants';
 import configuration from './config/configuration';
 import { HealthController } from './services/health/health.controller';
+import { SocketModule } from './shared/socket/socket.module';
+import { AppointmentSocketModule } from './services/appointments/appointment-socket/appointment-socket.module';
 
 @Module({
   imports: [
@@ -28,7 +30,15 @@ import { HealthController } from './services/health/health.controller';
       isGlobal: true,
       load: [configuration],
     }),
-    EventEmitterModule.forRoot(),
+    EventEmitterModule.forRoot({
+      // Add WebSocket specific event emitter config
+      wildcard: true,
+      delimiter: '.',
+      newListener: true,
+      removeListener: true,
+      maxListeners: 20,
+      verboseMemoryLeak: true,
+    }),
     ScheduleModule.forRoot(),
     QueueModule.forRoot(),
     QueueModule.register(),
@@ -36,6 +46,9 @@ import { HealthController } from './services/health/health.controller';
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
+    // Socket modules
+    SocketModule,
+    AppointmentSocketModule,
     // Auth and user management
     AuthModule,
     UsersModule,
@@ -58,12 +71,14 @@ import { HealthController } from './services/health/health.controller';
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
-    // Apply the clinic context middleware to all routes except queue-dashboard
+    // Apply the clinic context middleware to all routes except queue-dashboard and socket.io
     consumer
       .apply(ClinicContextMiddleware)
       .exclude(
         { path: 'queue-dashboard', method: RequestMethod.ALL },
-        { path: 'queue-dashboard/(.*)', method: RequestMethod.ALL }
+        { path: 'queue-dashboard/*path', method: RequestMethod.ALL },
+        { path: 'socket.io', method: RequestMethod.ALL },
+        { path: 'socket.io/*path', method: RequestMethod.ALL }
       )
       .forRoutes({ path: '*', method: RequestMethod.ALL });
   }

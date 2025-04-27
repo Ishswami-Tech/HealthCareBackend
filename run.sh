@@ -10,13 +10,14 @@ NC='\033[0m' # No Color
 
 # Function to display usage
 show_usage() {
-    echo "Usage: ./run.sh [dev|prod] [up|down|logs|restart]"
+    echo "Usage: ./run.sh [dev|prod] [start|stop|logs|restart|rebuild]"
     echo "  dev    - Run in development mode"
     echo "  prod   - Run in production mode"
-    echo "  up     - Start the services"
-    echo "  down   - Stop the services"
+    echo "  start  - Start the services"
+    echo "  stop   - Stop the services"
     echo "  logs   - Show logs"
     echo "  restart- Restart services"
+    echo "  rebuild- Rebuild and restart services"
     exit 1
 }
 
@@ -181,31 +182,41 @@ start_prisma_studio() {
 
 # Execute docker-compose commands based on action
 case $ACTION in
-    "up")
-        echo "Starting services in $ENV mode..."
+    "up"|"start")
+        echo -e "${YELLOW}Starting services in $ENV mode...${NC}"
         docker-compose -f $COMPOSE_FILE up -d
+        echo -e "${GREEN}Services started successfully!${NC}"
         ;;
-    "down")
-        echo "Stopping services..."
+    "down"|"stop")
+        echo -e "${YELLOW}Stopping services...${NC}"
         docker-compose -f $COMPOSE_FILE down
+        echo -e "${GREEN}Services stopped successfully!${NC}"
         ;;
     "logs")
-        echo "Showing logs..."
+        echo -e "${YELLOW}Showing logs...${NC}"
         docker-compose -f $COMPOSE_FILE logs -f
         ;;
     "restart")
-        echo "Restarting services..."
+        echo -e "${YELLOW}Restarting services...${NC}"
         docker-compose -f $COMPOSE_FILE down
         docker-compose -f $COMPOSE_FILE up -d
+        echo -e "${GREEN}Services restarted successfully!${NC}"
+        ;;
+    "rebuild")
+        echo -e "${YELLOW}Rebuilding services in $ENV mode...${NC}"
+        docker-compose -f $COMPOSE_FILE down
+        docker-compose -f $COMPOSE_FILE build --no-cache
+        docker-compose -f $COMPOSE_FILE up -d
+        echo -e "${GREEN}Services rebuilt and started successfully!${NC}"
         ;;
     *)
-        echo "Invalid action"
+        echo -e "${RED}Invalid action${NC}"
         show_usage
         ;;
 esac
 
-# Show running containers after up or restart
-if [ "$ACTION" = "up" ] || [ "$ACTION" = "restart" ]; then
-    echo "Running containers:"
+# Show running containers after start, restart, or rebuild
+if [ "$ACTION" = "up" ] || [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "rebuild" ]; then
+    echo -e "\n${BLUE}Running containers:${NC}"
     docker-compose -f $COMPOSE_FILE ps
 fi
