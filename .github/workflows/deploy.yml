@@ -166,13 +166,20 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
+          command_timeout: "30m"
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
-            # Start Docker services
+            # Clear npm cache and remove node_modules if they exist
+            echo "Cleaning up previous builds..."
+            rm -rf node_modules
+            npm cache clean --force
+
+            # Start Docker services with build args to speed up build
             echo "Starting Docker services..."
-            docker compose -f docker-compose.prod.yml up --build -d
+            DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml build --no-cache --parallel
+            docker compose -f docker-compose.prod.yml up -d
 
             echo "Waiting for initial service startup (30s)..."
             sleep 30

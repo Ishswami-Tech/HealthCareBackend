@@ -3,14 +3,13 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files and use npm ci for faster, reliable installs
 COPY package*.json ./
+RUN npm ci --legacy-peer-deps --no-audit --no-progress
 
-# Install dependencies
-RUN npm install --legacy-peer-deps
-
-# Copy the rest of the application
-COPY . .
+# Copy only necessary files for build
+COPY tsconfig*.json ./
+COPY src ./src
 
 # Generate Prisma Client for both schemas
 RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma && \
@@ -22,28 +21,27 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine AS production
 
-# Install necessary tools
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++
+# Install necessary tools in a single layer
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ && \
+    rm -rf /var/cache/apk/*
 
 WORKDIR /app
 
 # Copy package files and install production dependencies
 COPY package*.json ./
-RUN npm install --only=production --legacy-peer-deps
+RUN npm ci --only=production --legacy-peer-deps --no-audit --no-progress && \
+    npm cache clean --force
 
-# Copy the entire src directory to preserve structure
-COPY src ./src
+# Copy only necessary files from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY src/shared/database/prisma ./src/shared/database/prisma
 
 # Set environment variables
-ENV NODE_ENV=production
-ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
-ENV DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public"
-
-# Verify schema files are present
-RUN ls -la /app/src/shared/database/prisma/ || exit 1
+ENV NODE_ENV=production \
+    PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
+    DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public"
 
 # Expose ports
 EXPOSE 8088 5555
@@ -52,31 +50,28 @@ EXPOSE 8088 5555
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
-# Start script
+# Start script with optimized waiting
 CMD ["sh", "-c", "\
-    echo 'Waiting for PostgreSQL...' && \
-    while ! nc -z postgres 5432; do sleep 1; done && \
-    echo 'Running migrations...' && \
+    timeout 60s sh -c 'until nc -z postgres 5432; do sleep 1; done' && \
     npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && \
-    echo 'Starting application...' && \
     node dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
 
-# Install necessary tools
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++
+# Install necessary tools in a single layer
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ && \
+    rm -rf /var/cache/apk/*
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install dependencies
 COPY package*.json ./
+RUN npm ci --legacy-peer-deps --no-audit --no-progress && \
+    npm install -g nodemon && \
+    npm cache clean --force
 
-# Install all dependencies (including devDependencies)
-RUN npm install --legacy-peer-deps
-RUN npm install -g nodemon
-
-# Copy the rest of the application
+# Copy application files
 COPY . .
 
 # Set Prisma schema path and generate client
