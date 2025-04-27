@@ -171,8 +171,13 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
-            # Stop and remove existing containers
-            echo "Stopping existing containers..."
+            echo "Stopping and removing existing containers..."
+            # Stop and remove specific containers if they exist
+            docker stop postgres healthcarebackend-redis-1 healthcarebackend-redis-commander-1 healthcarebackend-api-1 || true
+            docker rm postgres healthcarebackend-redis-1 healthcarebackend-redis-commander-1 healthcarebackend-api-1 || true
+
+            # Remove old containers from previous deployments
+            echo "Cleaning up old deployment containers..."
             docker compose -f docker-compose.prod.yml down --remove-orphans || true
 
             # Clean up Docker system
@@ -182,10 +187,34 @@ jobs:
             # Start Docker services with build args to speed up build
             echo "Starting Docker services..."
             DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml build --no-cache --parallel
+
+            echo "Starting containers..."
+            export DEPLOY_SHA=$(git rev-parse --short HEAD)
+            echo "Using deployment SHA: $DEPLOY_SHA"
             docker compose -f docker-compose.prod.yml up -d
 
             echo "Waiting for initial service startup (30s)..."
             sleep 30
+
+            # Verify containers are running
+            echo "Verifying containers..."
+            if ! docker ps | grep -q "$DEPLOY_SHA-postgres"; then
+              echo "Postgres container failed to start"
+              docker compose -f docker-compose.prod.yml logs postgres
+              exit 1
+            fi
+
+            if ! docker ps | grep -q "$DEPLOY_SHA-redis"; then
+              echo "Redis container failed to start"
+              docker compose -f docker-compose.prod.yml logs redis
+              exit 1
+            fi
+
+            if ! docker ps | grep -q "$DEPLOY_SHA-api"; then
+              echo "API container failed to start"
+              docker compose -f docker-compose.prod.yml logs api
+              exit 1
+            fi
 
             # Setup Nginx configuration
             echo "Setting up Nginx configuration..."
