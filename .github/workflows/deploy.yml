@@ -132,6 +132,49 @@ jobs:
           strip_components: 0
           overwrite: true
 
+      - name: Copy SSL certificates
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          source: "nginx/ssl/*"
+          target: "/tmp/ssl-temp"
+          strip_components: 2
+
+      - name: Install SSL certificates
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            # Create SSL directory if it doesn't exist
+            sudo mkdir -p /etc/nginx/ssl
+
+            # Copy certificates to proper location
+            sudo cp /tmp/ssl-temp/* /etc/nginx/ssl/
+
+            # Set proper permissions
+            sudo chmod 600 /etc/nginx/ssl/*.{crt,key}
+            sudo chmod 755 /etc/nginx/ssl
+            sudo chown -R root:root /etc/nginx/ssl
+
+            # Clean up temp directory
+            rm -rf /tmp/ssl-temp
+
+            # Test Nginx configuration
+            sudo nginx -t
+
+            # Reload Nginx if test passes
+            if [ $? -eq 0 ]; then
+              sudo systemctl reload nginx
+              echo "SSL certificates installed and Nginx reloaded successfully"
+            else
+              echo "Nginx configuration test failed"
+              exit 1
+            fi
+
       - name: Setup permissions and SSL
         uses: appleboy/ssh-action@master
         with:
