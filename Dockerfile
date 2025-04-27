@@ -37,6 +37,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY src/shared/database/prisma ./src/shared/database/prisma
+# Copy views directory for dashboard template
+COPY src/views ./dist/src/views
 
 # Set environment variables
 ENV NODE_ENV=production \
