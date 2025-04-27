@@ -95,6 +95,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Fix file permissions
+        run: |
+          chmod +x nginx/deploy-nginx.sh
+          git add nginx/deploy-nginx.sh
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git commit -m "chore: Make deploy-nginx.sh executable" || true
 
       - name: Create backup
         uses: appleboy/ssh-action@master
@@ -111,16 +121,6 @@ jobs:
               echo $timestamp > backups/latest_backup
             fi
 
-      - name: Setup SSL certificates
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
-          script: |
-            cd ${{ env.DEPLOY_PATH }}
-            ./nginx/deploy-nginx.sh
-
       - name: Copy deployment files
         uses: appleboy/scp-action@master
         with:
@@ -131,6 +131,26 @@ jobs:
           target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
           strip_components: 0
           overwrite: true
+
+      - name: Setup permissions and SSL
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+
+            # Fix permissions for all shell scripts
+            find . -type f -name "*.sh" -exec chmod +x {} \;
+
+            # Ensure nginx directory permissions
+            sudo chown -R $USER:$USER nginx
+            chmod -R 755 nginx
+
+            # Run the deploy-nginx script
+            ./nginx/deploy-nginx.sh
 
       - name: Deploy to server
         uses: appleboy/ssh-action@master
