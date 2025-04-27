@@ -121,16 +121,13 @@ jobs:
               echo $timestamp > backups/latest_backup
             fi
 
-      - name: Copy deployment files
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
-          source: ".,!node_modules,!dist,!.git"
-          target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
-          strip_components: 0
-          overwrite: true
+      - name: Prepare SSL files
+        run: |
+          mkdir -p ssl_temp
+          cp HealthCareBackend/nginx/ssl/ishswami.com.pem ssl_temp/ishswami.in.crt
+          cp HealthCareBackend/nginx/ssl/ishswami.com.pem ssl_temp/api.ishswami.in.crt
+          cp HealthCareBackend/nginx/ssl/ishswami.com.key ssl_temp/ishswami.in.key
+          cp HealthCareBackend/nginx/ssl/ishswami.com.key ssl_temp/api.ishswami.in.key
 
       - name: Copy SSL certificates
         uses: appleboy/scp-action@master
@@ -138,44 +135,11 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          source: "HealthCareBackend/nginx/ssl/*"
+          source: "ssl_temp/*"
           target: "/tmp/ssl-temp"
-          strip_components: 3
+          strip_components: 1
 
-      - name: Install SSL certificates
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
-          script: |
-            set -e
-            echo "Creating SSL directory..."
-            sudo mkdir -p /etc/nginx/ssl
-
-            echo "Copying certificates..."
-            sudo cp -f /tmp/ssl-temp/* /etc/nginx/ssl/ || echo "No SSL files found in temp directory"
-
-            echo "Setting permissions..."
-            sudo find /etc/nginx/ssl/ -type f -name "*.crt" -exec chmod 644 {} \;
-            sudo find /etc/nginx/ssl/ -type f -name "*.key" -exec chmod 600 {} \;
-            sudo chmod 755 /etc/nginx/ssl
-            sudo chown -R root:root /etc/nginx/ssl
-
-            echo "Cleaning up..."
-            rm -rf /tmp/ssl-temp
-
-            echo "Testing Nginx configuration..."
-            if sudo nginx -t; then
-              echo "Reloading Nginx..."
-              sudo systemctl reload nginx
-              echo "SSL certificates installed and Nginx reloaded successfully"
-            else
-              echo "Nginx configuration test failed"
-              exit 1
-            fi
-
-      - name: Setup Nginx configuration
+      - name: Setup Nginx and SSL
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
@@ -186,14 +150,17 @@ jobs:
             echo "Setting up Nginx configuration..."
 
             # Backup existing nginx.conf
-            sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
+            sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup || true
+
+            # Create necessary directories
+            sudo mkdir -p /etc/nginx/ssl
+            sudo mkdir -p /etc/nginx/conf.d
 
             # Copy new nginx configuration
             sudo cp -f ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}/nginx/nginx.conf /etc/nginx/nginx.conf
             sudo cp -f ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}/nginx/conf.d/*.conf /etc/nginx/conf.d/
 
             echo "Setting up SSL..."
-            sudo mkdir -p /etc/nginx/ssl
             if [ -d "/tmp/ssl-temp" ]; then
               sudo cp -f /tmp/ssl-temp/* /etc/nginx/ssl/
               rm -rf /tmp/ssl-temp
@@ -208,7 +175,7 @@ jobs:
             echo "Testing Nginx configuration..."
             if sudo nginx -t; then
               echo "Reloading Nginx..."
-              sudo systemctl reload nginx
+              sudo systemctl reload nginx || sudo systemctl restart nginx
               echo "Nginx configuration updated successfully"
             else
               echo "Nginx configuration test failed"
