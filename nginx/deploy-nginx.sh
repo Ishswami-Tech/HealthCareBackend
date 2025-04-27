@@ -12,14 +12,14 @@ DOMAIN="ishswami.in"
 API_DOMAIN="api.ishswami.in"
 NGINX_CONF_DIR="/etc/nginx/conf.d"
 DEPLOY_PATH="/var/www/healthcare"
-SSL_EMAIL="aadeshbhujbal99@gmail.com"
+SSL_DIR="/etc/nginx/ssl"
 
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
 # Create deployment directories if they don't exist
 echo -e "${YELLOW}Creating deployment directories...${NC}"
 sudo mkdir -p $DEPLOY_PATH/{frontend,backend}/current
-sudo mkdir -p /etc/nginx/ssl
+sudo mkdir -p $SSL_DIR
 
 # Backup existing Nginx configurations
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -29,38 +29,34 @@ sudo cp $NGINX_CONF_DIR/*.conf $NGINX_CONF_DIR/backup_$TIMESTAMP/ 2>/dev/null ||
 
 # Install required packages
 echo -e "${YELLOW}Installing required packages...${NC}"
-if ! command -v certbot &> /dev/null; then
+if ! command -v openssl &> /dev/null; then
     sudo apt-get update
-    sudo apt-get install -y certbot python3-certbot-nginx
+    sudo apt-get install -y openssl
 fi
 
-# Stop Nginx before SSL operations
-echo -e "${YELLOW}Stopping Nginx...${NC}"
-sudo systemctl stop nginx || true
+# Generate self-signed certificates (temporary, will be replaced by Cloudflare Origin Certificates)
+echo -e "${YELLOW}Generating temporary SSL certificates...${NC}"
+if [ ! -f "$SSL_DIR/$DOMAIN.crt" ]; then
+    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout "$SSL_DIR/$DOMAIN.key" \
+        -out "$SSL_DIR/$DOMAIN.crt" \
+        -subj "/CN=$DOMAIN/O=Healthcare App/C=IN"
+fi
 
-# Obtain SSL certificates
-echo -e "${YELLOW}Obtaining SSL certificates...${NC}"
-sudo certbot certonly --standalone \
-    --non-interactive \
-    --agree-tos \
-    --email $SSL_EMAIL \
-    -d $DOMAIN \
-    -d $API_DOMAIN \
-    --keep-until-expiring
-
-# Copy SSL certificates
-echo -e "${YELLOW}Setting up SSL certificates...${NC}"
-sudo cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem /etc/nginx/ssl/$DOMAIN.crt
-sudo cp /etc/letsencrypt/live/$DOMAIN/privkey.pem /etc/nginx/ssl/$DOMAIN.key
-sudo cp /etc/letsencrypt/live/$API_DOMAIN/fullchain.pem /etc/nginx/ssl/$API_DOMAIN.crt
-sudo cp /etc/letsencrypt/live/$API_DOMAIN/privkey.pem /etc/nginx/ssl/$API_DOMAIN.key
+if [ ! -f "$SSL_DIR/$API_DOMAIN.crt" ]; then
+    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout "$SSL_DIR/$API_DOMAIN.key" \
+        -out "$SSL_DIR/$API_DOMAIN.crt" \
+        -subj "/CN=$API_DOMAIN/O=Healthcare App/C=IN"
+fi
 
 # Set proper permissions
 echo -e "${YELLOW}Setting permissions...${NC}"
 sudo chown -R www-data:www-data $DEPLOY_PATH
 sudo chmod -R 755 $DEPLOY_PATH
-sudo chown -R root:root /etc/nginx/ssl
-sudo chmod -R 600 /etc/nginx/ssl
+sudo chown -R root:root $SSL_DIR
+sudo chmod -R 600 $SSL_DIR
+sudo chmod 755 $SSL_DIR
 
 # Copy Nginx configurations
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
@@ -79,12 +75,6 @@ else
     exit 1
 fi
 
-# Setup SSL auto-renewal
-echo -e "${YELLOW}Setting up SSL auto-renewal...${NC}"
-if ! (crontab -l 2>/dev/null | grep -q "certbot renew"); then
-    (crontab -l 2>/dev/null; echo "0 0 * * * certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
-fi
-
 # Verify Nginx is running
 if sudo systemctl is-active --quiet nginx; then
     echo -e "${GREEN}Nginx is running successfully!${NC}"
@@ -94,13 +84,22 @@ else
 fi
 
 echo -e "${GREEN}Deployment completed successfully!${NC}"
-echo -e "${YELLOW}Please ensure DNS records are set correctly:${NC}"
-echo "- A record for $DOMAIN -> 82.208.20.16"
-echo "- A record for $API_DOMAIN -> 82.208.20.16"
-
-# Verify SSL certificates
-echo -e "${YELLOW}Verifying SSL certificates...${NC}"
-for domain in $DOMAIN $API_DOMAIN; do
-    expiry=$(openssl x509 -enddate -noout -in "/etc/nginx/ssl/$domain.crt" | cut -d= -f2)
-    echo "SSL certificate for $domain expires on: $expiry"
-done 
+echo -e "${YELLOW}Important: Please follow these steps to complete the setup:${NC}"
+echo "1. Log in to your Cloudflare dashboard"
+echo "2. Go to SSL/TLS > Origin Server"
+echo "3. Create new Origin Certificate for domains: $DOMAIN, $API_DOMAIN"
+echo "4. Replace the self-signed certificates with Cloudflare Origin Certificates:"
+echo "   - Save the certificate to: $SSL_DIR/$DOMAIN.crt"
+echo "   - Save the private key to: $SSL_DIR/$DOMAIN.key"
+echo "   - Save the certificate to: $SSL_DIR/$API_DOMAIN.crt"
+echo "   - Save the private key to: $SSL_DIR/$API_DOMAIN.key"
+echo "5. Reload Nginx after installing the certificates: sudo systemctl reload nginx"
+echo ""
+echo "DNS Settings (already configured in Cloudflare):"
+echo "- A record for $DOMAIN -> 84.32.84.16"
+echo "- A record for $API_DOMAIN -> 84.32.84.16"
+echo ""
+echo "Cloudflare SSL/TLS Settings:"
+echo "1. Set SSL/TLS encryption mode to 'Full (strict)'"
+echo "2. Enable 'Always Use HTTPS'"
+echo "3. Set minimum TLS version to 1.2" 
