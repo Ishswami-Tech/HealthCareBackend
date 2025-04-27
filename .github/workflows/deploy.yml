@@ -161,12 +161,23 @@ jobs:
             set -e
             echo "Setting up Nginx configuration..."
 
+            # Ensure www-data user exists
+            if ! id -u www-data > /dev/null 2>&1; then
+              sudo useradd -r -s /sbin/nologin www-data
+            fi
+
             # Backup existing nginx.conf
             sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup || true
 
             # Create necessary directories
             sudo mkdir -p /etc/nginx/ssl
             sudo mkdir -p /etc/nginx/conf.d
+            sudo mkdir -p /var/log/nginx
+            sudo mkdir -p /var/www/healthcare
+
+            # Set proper ownership
+            sudo chown -R www-data:www-data /var/www/healthcare
+            sudo chown -R www-data:www-data /var/log/nginx
 
             # Copy new nginx configuration
             sudo cp -f ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}/nginx/nginx.conf /etc/nginx/nginx.conf || true
