@@ -17,12 +17,12 @@ env:
   SERVER_HOST: api.ishswami.in
   SERVER_USER: ${{ secrets.SERVER_USER }}
   SERVER_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
   DEPLOY_PATH: /var/www/healthcare/backend
-  IMAGE_NAME: healthcare-backend
   SERVER_IP: 82.208.20.16
   DOMAIN: api.ishswami.in
   FRONTEND_DOMAIN: ishswami.in
+  SSL_EMAIL: aadeshbhujbal99@gmail.com
+  NODE_ENV: production
 
 jobs:
   test:
@@ -53,7 +53,7 @@ jobs:
             echo "Please ensure domain is properly configured"
           fi
 
-      - name: Check server connectivity
+      - name: Check server connectivity and resources
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
@@ -65,6 +65,12 @@ jobs:
             free -m
             docker system df
 
+            echo "Checking Docker status..."
+            if ! docker info > /dev/null 2>&1; then
+              echo "Docker is not running!"
+              exit 1
+            fi
+
             echo "Checking required ports..."
             for port in 8088 5432 6379 8082; do
               if netstat -tuln | grep -q ":$port "; then
@@ -73,68 +79,64 @@ jobs:
               fi
             done
 
-            echo "Checking Docker status..."
-            docker info
-
-            echo "Checking existing containers..."
-            docker ps -a
-
-            echo "Checking nginx configuration..."
-            if [ -f /etc/nginx/nginx.conf ]; then
-              nginx -t || echo "Warning: Nginx configuration test failed"
+            echo "Checking disk space..."
+            DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+            if [ "$DISK_USAGE" -gt 85 ]; then
+              echo "Warning: Disk usage is above 85%"
+              df -h /
             fi
 
-  build-and-push:
+  create-deployment:
     needs: [test, pre-deployment-check]
     runs-on: ubuntu-latest
+    outputs:
+      deployment_id: ${{ steps.create_deployment.outputs.deployment_id }}
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
+      - name: Create GitHub deployment
+        id: create_deployment
+        uses: actions/github-script@v6
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push Docker images
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        run: |
-          # Ensure Prisma schema directory exists in the correct location
-          mkdir -p src/shared/database/prisma
-
-          # Build the Docker image with proper schema path
-          docker build \
-            --build-arg PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
-            -t $DOCKERHUB_USERNAME/healthcare-backend:latest .
-
-          # Push the image to Docker Hub
-          docker push $DOCKERHUB_USERNAME/healthcare-backend:latest
+          script: |
+            const { data: deployment } = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'production',
+              auto_merge: false,
+              required_contexts: []
+            });
+            return deployment.id;
 
   deploy:
-    needs: build-and-push
+    needs: create-deployment
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
 
-      - name: Prepare deployment
+      - name: Create backup
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
           script: |
-            echo "Creating backup of existing configuration..."
             cd ${{ env.DEPLOY_PATH }}
-            if [ -f docker-compose.prod.yml ]; then
-              cp docker-compose.prod.yml docker-compose.prod.yml.backup
+            timestamp=$(date +%Y%m%d_%H%M%S)
+            mkdir -p backups/$timestamp
+            if [ -d "current" ]; then
+              cp -r current/* backups/$timestamp/
+              echo $timestamp > backups/latest_backup
             fi
-            if [ -f .env.production ]; then
-              cp .env.production .env.production.backup
-            fi
+
+      - name: Setup SSL certificates
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            cd ${{ env.DEPLOY_PATH }}
+            ./nginx/deploy-nginx.sh
 
       - name: Copy deployment files
         uses: appleboy/scp-action@master
@@ -142,66 +144,47 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          source: "docker-compose.prod.yml,.env.production,nginx/"
-          target: ${{ env.DEPLOY_PATH }}
+          source: ".,!node_modules,!dist,!.git"
+          target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
           strip_components: 0
           overwrite: true
 
       - name: Deploy to server
         uses: appleboy/ssh-action@master
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+          envs: NODE_ENV
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
 
-            echo "Performing pre-deployment checks..."
+            # Create production environment file
+            cat > releases/${{ github.sha }}/.env.production << EOL
+            NODE_ENV=${NODE_ENV}
+            CORS_ORIGIN=https://ishswami.in
+            FRONTEND_URL=https://ishswami.in
+            EOL
 
-            # Create required directories
-            mkdir -p logs
-
-            # Copy Nginx configuration files to host nginx
-            if [ -d "nginx/conf.d" ]; then
-              echo "Copying Nginx configuration files to host..."
-              sudo cp -f nginx/conf.d/*.conf /etc/nginx/conf.d/
-              
-              # Test and reload Nginx
+            echo "Setting up Nginx configuration..."
+            if [ -d "releases/${{ github.sha }}/nginx/conf.d" ]; then
+              sudo cp -f releases/${{ github.sha }}/nginx/conf.d/*.conf /etc/nginx/conf.d/
               sudo nginx -t && sudo systemctl reload nginx
             fi
 
-            # Check and stop conflicting services
-            echo "Checking for port conflicts..."
-            for port in 8088 5432 6379 8082; do
-              if netstat -tuln | grep -q ":$port "; then
-                echo "Stopping service using port $port..."
-                fuser -k $port/tcp || true
-              fi
-            done
+            echo "Stopping existing services..."
+            cd releases/${{ github.sha }}
+            docker compose -f docker-compose.prod.yml down --remove-orphans || true
 
-            # Pull latest images
-            echo "Pulling latest images..."
-            docker-compose -f docker-compose.prod.yml pull
-
-            # Stop current deployment (if exists)
-            echo "Stopping current deployment..."
-            docker-compose -f docker-compose.prod.yml down --remove-orphans || true
-
-            # Start new deployment
-            echo "Starting new deployment..."
-            DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME docker-compose -f docker-compose.prod.yml up -d
-
-            # Wait for services to be healthy with timeout
-            timeout=360
-            start_time=$(date +%s)
+            echo "Building and starting services..."
+            docker compose -f docker-compose.prod.yml up --build -d
 
             echo "Waiting for services to start up (initial delay: 60s)..."
             sleep 60
+
+            timeout=360
+            start_time=$(date +%s)
 
             while true; do
               current_time=$(date +%s)
@@ -209,116 +192,91 @@ jobs:
               
               if [ $elapsed -gt $timeout ]; then
                 echo "Timeout waiting for services to be healthy"
-                docker-compose -f docker-compose.prod.yml logs
+                docker compose -f docker-compose.prod.yml logs
                 exit 1
               fi
               
-              # Check all required services health
               api_healthy=$(docker ps --filter "name=healthcarebackend-api-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
               postgres_healthy=$(docker ps --filter "name=postgres" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
               redis_healthy=$(docker ps --filter "name=healthcarebackend-redis-1" --format "{{.Status}}" | grep -q "healthy" && echo "yes" || echo "no")
+              
+              echo "API: $api_healthy, PostgreSQL: $postgres_healthy, Redis: $redis_healthy"
               
               if [ "$api_healthy" = "yes" ] && [ "$postgres_healthy" = "yes" ] && [ "$redis_healthy" = "yes" ]; then
                 echo "All services are healthy!"
                 break
               fi
               
-              echo "Waiting for services to be healthy... ($elapsed seconds elapsed)"
-              echo "API: $api_healthy, PostgreSQL: $postgres_healthy, Redis: $redis_healthy"
               sleep 20
             done
 
-            # Verify domain accessibility
-            echo "Verifying domain accessibility..."
-            if ! curl -f -s -k https://${{ env.DOMAIN }}/health > /dev/null; then
-              echo "Warning: Unable to access API through domain. Checking local access..."
-              if wget --spider -q http://localhost:8088/health; then
-                echo "API is accessible locally but not through domain. Check DNS and Nginx configuration."
-                exit 1
-              else
-                echo "API is not accessible locally either. Deployment failed."
-                docker-compose -f docker-compose.prod.yml logs
-                exit 1
-              fi
+            # Verify API is responding
+            echo "Verifying API health..."
+            if curl -f https://${{ env.DOMAIN }}/health; then
+              echo "API is responding correctly"
+            else
+              echo "API health check failed"
+              exit 1
             fi
 
-            echo "Deployment successful - All checks passed!"
-            exit 0
+            # Update current symlink
+            cd ${{ env.DEPLOY_PATH }}
+            ln -sfn releases/${{ github.sha }} current
+
+            # Keep only last 5 releases
+            cd releases
+            ls -t | tail -n +6 | xargs rm -rf
+
+            echo "Deployment successful!"
 
   rollback:
-    if: failure() && github.event_name == 'push'
-    needs: deploy
+    if: failure() && needs.deploy.result == 'failure'
+    needs: [deploy, create-deployment]
     runs-on: ubuntu-latest
     steps:
       - name: Rollback deployment
         uses: appleboy/ssh-action@master
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          envs: DOCKERHUB_USERNAME
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
 
-            echo "Starting rollback procedure..."
+            if [ -f backups/latest_backup ]; then
+              timestamp=$(cat backups/latest_backup)
+              echo "Rolling back to backup from $timestamp"
 
-            # Restore configuration backups if they exist
-            if [ -f docker-compose.prod.yml.backup ]; then
-              mv docker-compose.prod.yml.backup docker-compose.prod.yml
-            fi
-            if [ -f .env.production.backup ]; then
-              mv .env.production.backup .env.production
-            fi
+              # Stop current services
+              cd current
+              docker compose -f docker-compose.prod.yml down --remove-orphans || true
 
-            # Get the previous image
-            PREV_IMAGE=$(docker images $DOCKERHUB_USERNAME/healthcare-backend --format "{{.ID}} {{.CreatedAt}}" | sort -k2 -r | awk 'NR==2{print $1}')
+              # Restore from backup
+              cd ${{ env.DEPLOY_PATH }}
+              rm -rf current
+              cp -r backups/$timestamp current/
 
-            if [ -z "$PREV_IMAGE" ]; then
-              echo "No previous image found for rollback"
-              exit 1
-            fi
+              # Start services from backup
+              cd current
+              docker compose -f docker-compose.prod.yml up -d
 
-            echo "Rolling back to previous image: $PREV_IMAGE"
-
-            # Stop current deployment
-            docker-compose -f docker-compose.prod.yml down --remove-orphans || true
-
-            # Start with previous image
-            docker tag $PREV_IMAGE $DOCKERHUB_USERNAME/healthcare-backend:latest
-            DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME docker-compose -f docker-compose.prod.yml up -d
-
-            # Wait for services with timeout
-            timeout=300
-            start_time=$(date +%s)
-
-            while true; do
-              current_time=$(date +%s)
-              elapsed=$((current_time - start_time))
-              
-              if [ $elapsed -gt $timeout ]; then
-                echo "Timeout waiting for rollback services to be healthy"
-                docker-compose -f docker-compose.prod.yml logs
-                exit 1
-              fi
-              
-              if docker ps --filter "name=healthcarebackend-api-1" --format "{{.Status}}" | grep -q "healthy"; then
-                echo "Rollback successful - services are healthy"
-                break
-              fi
-              
-              echo "Waiting for rollback services to be healthy... ($elapsed seconds elapsed)"
-              sleep 20
-            done
-
-            # Verify API health after rollback
-            if wget --spider -q http://localhost:8088/health; then
-              echo "Rollback successful - API is healthy"
-              exit 0
+              echo "Rollback completed successfully"
             else
-              echo "Rollback failed - API health check failed"
-              docker-compose -f docker-compose.prod.yml logs
+              echo "No backup found for rollback"
               exit 1
             fi
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: status,
+              environment: 'production'
+            });

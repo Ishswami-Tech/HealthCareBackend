@@ -1,7 +1,10 @@
 version: '3.8'
 services:
   api:
-    image: ${DOCKERHUB_USERNAME}/healthcare-backend:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
     container_name: healthcarebackend-api-1
     ports:
       - "8088:8088"
@@ -28,11 +31,11 @@ services:
       - app-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1"]
-      interval: 20s
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8088/health"]
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 60s
 
   postgres:
     image: postgres:latest
@@ -42,6 +45,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: userdb
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data/pgdata
@@ -70,7 +74,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 10s
     restart: unless-stopped
     sysctls:
       net.core.somaxconn: 1024
