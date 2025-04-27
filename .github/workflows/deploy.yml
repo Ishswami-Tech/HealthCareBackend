@@ -138,9 +138,9 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          source: "nginx/ssl/*"
+          source: "HealthCareBackend/nginx/ssl/*"
           target: "/tmp/ssl-temp"
-          strip_components: 2
+          strip_components: 3
 
       - name: Install SSL certificates
         uses: appleboy/ssh-action@master
@@ -149,25 +149,25 @@ jobs:
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
           script: |
-            # Create SSL directory if it doesn't exist
+            set -e
+            echo "Creating SSL directory..."
             sudo mkdir -p /etc/nginx/ssl
 
-            # Copy certificates to proper location
-            sudo cp /tmp/ssl-temp/* /etc/nginx/ssl/
+            echo "Copying certificates..."
+            sudo cp -f /tmp/ssl-temp/* /etc/nginx/ssl/ || echo "No SSL files found in temp directory"
 
-            # Set proper permissions
-            sudo chmod 600 /etc/nginx/ssl/*.{crt,key}
+            echo "Setting permissions..."
+            sudo find /etc/nginx/ssl/ -type f -name "*.crt" -exec chmod 644 {} \;
+            sudo find /etc/nginx/ssl/ -type f -name "*.key" -exec chmod 600 {} \;
             sudo chmod 755 /etc/nginx/ssl
             sudo chown -R root:root /etc/nginx/ssl
 
-            # Clean up temp directory
+            echo "Cleaning up..."
             rm -rf /tmp/ssl-temp
 
-            # Test Nginx configuration
-            sudo nginx -t
-
-            # Reload Nginx if test passes
-            if [ $? -eq 0 ]; then
+            echo "Testing Nginx configuration..."
+            if sudo nginx -t; then
+              echo "Reloading Nginx..."
               sudo systemctl reload nginx
               echo "SSL certificates installed and Nginx reloaded successfully"
             else
