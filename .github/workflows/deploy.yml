@@ -171,50 +171,79 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
+            # Stop and remove existing containers
             echo "Stopping and removing existing containers..."
-            # Stop and remove specific containers if they exist
-            docker stop postgres healthcarebackend-redis-1 healthcarebackend-redis-commander-1 healthcarebackend-api-1 || true
-            docker rm postgres healthcarebackend-redis-1 healthcarebackend-redis-commander-1 healthcarebackend-api-1 || true
-
-            # Remove old containers from previous deployments
-            echo "Cleaning up old deployment containers..."
-            docker compose -f docker-compose.prod.yml down --remove-orphans || true
+            docker stop $(docker ps -a -q) || true
+            docker rm $(docker ps -a -q) || true
 
             # Clean up Docker system
             echo "Cleaning up Docker system..."
             docker system prune -f
+
+            # Set deployment SHA
+            DEPLOY_SHA="${{ github.sha }}"
+            echo "Using deployment SHA: $DEPLOY_SHA"
 
             # Start Docker services with build args to speed up build
             echo "Starting Docker services..."
             DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml build --no-cache --parallel
 
             echo "Starting containers..."
-            export DEPLOY_SHA=$(git rev-parse --short HEAD)
-            echo "Using deployment SHA: $DEPLOY_SHA"
-            docker compose -f docker-compose.prod.yml up -d
+            DEPLOY_SHA=$DEPLOY_SHA docker compose -f docker-compose.prod.yml up -d
 
             echo "Waiting for initial service startup (30s)..."
             sleep 30
 
             # Verify containers are running
             echo "Verifying containers..."
-            if ! docker ps | grep -q "$DEPLOY_SHA-postgres"; then
+            if ! docker ps --format '{{.Names}}' | grep -q "latest-postgres\|${DEPLOY_SHA}-postgres"; then
               echo "Postgres container failed to start"
               docker compose -f docker-compose.prod.yml logs postgres
               exit 1
             fi
 
-            if ! docker ps | grep -q "$DEPLOY_SHA-redis"; then
+            if ! docker ps --format '{{.Names}}' | grep -q "latest-redis\|${DEPLOY_SHA}-redis"; then
               echo "Redis container failed to start"
               docker compose -f docker-compose.prod.yml logs redis
               exit 1
             fi
 
-            if ! docker ps | grep -q "$DEPLOY_SHA-api"; then
+            if ! docker ps --format '{{.Names}}' | grep -q "latest-api\|${DEPLOY_SHA}-api"; then
               echo "API container failed to start"
               docker compose -f docker-compose.prod.yml logs api
               exit 1
             fi
+
+            # Wait for services to be healthy
+            echo "Waiting for services to be healthy..."
+            timeout=360
+            start_time=$(date +%s)
+
+            while true; do
+              current_time=$(date +%s)
+              elapsed=$((current_time - start_time))
+              
+              if [ $elapsed -ge $timeout ]; then
+                echo "Timeout waiting for services to be healthy"
+                docker compose -f docker-compose.prod.yml logs
+                exit 1
+              fi
+
+              # Check if all required containers are healthy
+              postgres_healthy=$(docker inspect --format='{{.State.Health.Status}}' "latest-postgres" 2>/dev/null || docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-postgres" 2>/dev/null)
+              redis_healthy=$(docker inspect --format='{{.State.Health.Status}}' "latest-redis" 2>/dev/null || docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-redis" 2>/dev/null)
+              api_healthy=$(docker inspect --format='{{.State.Health.Status}}' "latest-api" 2>/dev/null || docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-api" 2>/dev/null)
+
+              echo "Health status - Postgres: $postgres_healthy, Redis: $redis_healthy, API: $api_healthy"
+
+              if [ "$postgres_healthy" = "healthy" ] && [ "$redis_healthy" = "healthy" ] && [ "$api_healthy" = "healthy" ]; then
+                echo "All services are healthy!"
+                break
+              fi
+
+              echo "Waiting for services to be healthy... (${elapsed}s elapsed)"
+              sleep 10
+            done
 
             # Setup Nginx configuration
             echo "Setting up Nginx configuration..."
@@ -247,29 +276,6 @@ jobs:
             sudo find /etc/nginx/ssl/ -type f -name "*.key" -exec chmod 600 {} \; || true
             sudo chmod 755 /etc/nginx/ssl
             sudo chown -R root:root /etc/nginx/ssl
-
-            # Wait for services to be healthy
-            echo "Waiting for services to be healthy..."
-            timeout=360
-            start_time=$(date +%s)
-
-            while true; do
-              current_time=$(date +%s)
-              elapsed=$((current_time - start_time))
-              
-              if [ $elapsed -ge $timeout ]; then
-                echo "Timeout waiting for services to be healthy"
-                exit 1
-              fi
-              
-              if docker compose -f docker-compose.prod.yml ps | grep -q "healthy"; then
-                echo "Services are healthy"
-                break
-              else
-                echo "Waiting for services to be healthy... (${elapsed}s elapsed)"
-                sleep 10
-              fi
-            done
 
             # Test and reload Nginx
             echo "Testing Nginx configuration..."
