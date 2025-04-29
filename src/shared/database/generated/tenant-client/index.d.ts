@@ -7362,50 +7362,59 @@ export namespace Prisma {
 
   export type AppointmentMinAggregateOutputType = {
     id: string | null
-    patientId: string | null
-    doctorId: string | null
-    locationId: string | null
-    status: $Enums.AppointmentStatus | null
     type: $Enums.AppointmentType | null
+    doctorId: string | null
+    patientId: string | null
+    locationId: string | null
     date: Date | null
     time: string | null
     duration: number | null
+    status: $Enums.AppointmentStatus | null
     notes: string | null
     createdAt: Date | null
     updatedAt: Date | null
     therapyId: string | null
+    startedAt: Date | null
+    checkedInAt: Date | null
+    completedAt: Date | null
   }
 
   export type AppointmentMaxAggregateOutputType = {
     id: string | null
-    patientId: string | null
-    doctorId: string | null
-    locationId: string | null
-    status: $Enums.AppointmentStatus | null
     type: $Enums.AppointmentType | null
+    doctorId: string | null
+    patientId: string | null
+    locationId: string | null
     date: Date | null
     time: string | null
     duration: number | null
+    status: $Enums.AppointmentStatus | null
     notes: string | null
     createdAt: Date | null
     updatedAt: Date | null
     therapyId: string | null
+    startedAt: Date | null
+    checkedInAt: Date | null
+    completedAt: Date | null
   }
 
   export type AppointmentCountAggregateOutputType = {
     id: number
-    patientId: number
-    doctorId: number
-    locationId: number
-    status: number
     type: number
+    doctorId: number
+    patientId: number
+    locationId: number
     date: number
     time: number
     duration: number
+    status: number
     notes: number
     createdAt: number
     updatedAt: number
     therapyId: number
+    startedAt: number
+    checkedInAt: number
+    completedAt: number
     _all: number
   }
 
@@ -7420,50 +7429,59 @@ export namespace Prisma {
 
   export type AppointmentMinAggregateInputType = {
     id?: true
-    patientId?: true
-    doctorId?: true
-    locationId?: true
-    status?: true
     type?: true
+    doctorId?: true
+    patientId?: true
+    locationId?: true
     date?: true
     time?: true
     duration?: true
+    status?: true
     notes?: true
     createdAt?: true
     updatedAt?: true
     therapyId?: true
+    startedAt?: true
+    checkedInAt?: true
+    completedAt?: true
   }
 
   export type AppointmentMaxAggregateInputType = {
     id?: true
-    patientId?: true
-    doctorId?: true
-    locationId?: true
-    status?: true
     type?: true
+    doctorId?: true
+    patientId?: true
+    locationId?: true
     date?: true
     time?: true
     duration?: true
+    status?: true
     notes?: true
     createdAt?: true
     updatedAt?: true
     therapyId?: true
+    startedAt?: true
+    checkedInAt?: true
+    completedAt?: true
   }
 
   export type AppointmentCountAggregateInputType = {
     id?: true
-    patientId?: true
-    doctorId?: true
-    locationId?: true
-    status?: true
     type?: true
+    doctorId?: true
+    patientId?: true
+    locationId?: true
     date?: true
     time?: true
     duration?: true
+    status?: true
     notes?: true
     createdAt?: true
     updatedAt?: true
     therapyId?: true
+    startedAt?: true
+    checkedInAt?: true
+    completedAt?: true
     _all?: true
   }
 
@@ -7555,18 +7573,21 @@ export namespace Prisma {
 
   export type AppointmentGroupByOutputType = {
     id: string
-    patientId: string
-    doctorId: string
-    locationId: string
-    status: $Enums.AppointmentStatus
     type: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
+    locationId: string
     date: Date
     time: string
     duration: number
+    status: $Enums.AppointmentStatus
     notes: string | null
     createdAt: Date
     updatedAt: Date
     therapyId: string | null
+    startedAt: Date | null
+    checkedInAt: Date | null
+    completedAt: Date | null
     _count: AppointmentCountAggregateOutputType | null
     _avg: AppointmentAvgAggregateOutputType | null
     _sum: AppointmentSumAggregateOutputType | null
@@ -7590,40 +7611,46 @@ export namespace Prisma {
 
   export type AppointmentSelect<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
     id?: boolean
-    patientId?: boolean
-    doctorId?: boolean
-    locationId?: boolean
-    status?: boolean
     type?: boolean
+    doctorId?: boolean
+    patientId?: boolean
+    locationId?: boolean
     date?: boolean
     time?: boolean
     duration?: boolean
+    status?: boolean
     notes?: boolean
     createdAt?: boolean
     updatedAt?: boolean
     therapyId?: boolean
+    startedAt?: boolean
+    checkedInAt?: boolean
+    completedAt?: boolean
     doctor?: boolean | DoctorDefaultArgs<ExtArgs>
     patient?: boolean | PatientDefaultArgs<ExtArgs>
     location?: boolean | LocationDefaultArgs<ExtArgs>
-    payment?: boolean | Appointment$paymentArgs<ExtArgs>
     therapy?: boolean | Appointment$therapyArgs<ExtArgs>
+    payment?: boolean | Appointment$paymentArgs<ExtArgs>
     queueItem?: boolean | Appointment$queueItemArgs<ExtArgs>
   }, ExtArgs["result"]["appointment"]>
 
   export type AppointmentSelectCreateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
     id?: boolean
-    patientId?: boolean
-    doctorId?: boolean
-    locationId?: boolean
-    status?: boolean
     type?: boolean
+    doctorId?: boolean
+    patientId?: boolean
+    locationId?: boolean
     date?: boolean
     time?: boolean
     duration?: boolean
+    status?: boolean
     notes?: boolean
     createdAt?: boolean
     updatedAt?: boolean
     therapyId?: boolean
+    startedAt?: boolean
+    checkedInAt?: boolean
+    completedAt?: boolean
     doctor?: boolean | DoctorDefaultArgs<ExtArgs>
     patient?: boolean | PatientDefaultArgs<ExtArgs>
     location?: boolean | LocationDefaultArgs<ExtArgs>
@@ -7632,18 +7659,21 @@ export namespace Prisma {
 
   export type AppointmentSelectUpdateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
     id?: boolean
-    patientId?: boolean
-    doctorId?: boolean
-    locationId?: boolean
-    status?: boolean
     type?: boolean
+    doctorId?: boolean
+    patientId?: boolean
+    locationId?: boolean
     date?: boolean
     time?: boolean
     duration?: boolean
+    status?: boolean
     notes?: boolean
     createdAt?: boolean
     updatedAt?: boolean
     therapyId?: boolean
+    startedAt?: boolean
+    checkedInAt?: boolean
+    completedAt?: boolean
     doctor?: boolean | DoctorDefaultArgs<ExtArgs>
     patient?: boolean | PatientDefaultArgs<ExtArgs>
     location?: boolean | LocationDefaultArgs<ExtArgs>
@@ -7652,27 +7682,30 @@ export namespace Prisma {
 
   export type AppointmentSelectScalar = {
     id?: boolean
-    patientId?: boolean
-    doctorId?: boolean
-    locationId?: boolean
-    status?: boolean
     type?: boolean
+    doctorId?: boolean
+    patientId?: boolean
+    locationId?: boolean
     date?: boolean
     time?: boolean
     duration?: boolean
+    status?: boolean
     notes?: boolean
     createdAt?: boolean
     updatedAt?: boolean
     therapyId?: boolean
+    startedAt?: boolean
+    checkedInAt?: boolean
+    completedAt?: boolean
   }
 
-  export type AppointmentOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "patientId" | "doctorId" | "locationId" | "status" | "type" | "date" | "time" | "duration" | "notes" | "createdAt" | "updatedAt" | "therapyId", ExtArgs["result"]["appointment"]>
+  export type AppointmentOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "type" | "doctorId" | "patientId" | "locationId" | "date" | "time" | "duration" | "status" | "notes" | "createdAt" | "updatedAt" | "therapyId" | "startedAt" | "checkedInAt" | "completedAt", ExtArgs["result"]["appointment"]>
   export type AppointmentInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     doctor?: boolean | DoctorDefaultArgs<ExtArgs>
     patient?: boolean | PatientDefaultArgs<ExtArgs>
     location?: boolean | LocationDefaultArgs<ExtArgs>
-    payment?: boolean | Appointment$paymentArgs<ExtArgs>
     therapy?: boolean | Appointment$therapyArgs<ExtArgs>
+    payment?: boolean | Appointment$paymentArgs<ExtArgs>
     queueItem?: boolean | Appointment$queueItemArgs<ExtArgs>
   }
   export type AppointmentIncludeCreateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
@@ -7694,24 +7727,27 @@ export namespace Prisma {
       doctor: Prisma.$DoctorPayload<ExtArgs>
       patient: Prisma.$PatientPayload<ExtArgs>
       location: Prisma.$LocationPayload<ExtArgs>
-      payment: Prisma.$PaymentPayload<ExtArgs> | null
       therapy: Prisma.$TherapyPayload<ExtArgs> | null
+      payment: Prisma.$PaymentPayload<ExtArgs> | null
       queueItem: Prisma.$QueueItemPayload<ExtArgs> | null
     }
     scalars: $Extensions.GetPayloadResult<{
       id: string
-      patientId: string
-      doctorId: string
-      locationId: string
-      status: $Enums.AppointmentStatus
       type: $Enums.AppointmentType
+      doctorId: string
+      patientId: string
+      locationId: string
       date: Date
       time: string
       duration: number
+      status: $Enums.AppointmentStatus
       notes: string | null
       createdAt: Date
       updatedAt: Date
       therapyId: string | null
+      startedAt: Date | null
+      checkedInAt: Date | null
+      completedAt: Date | null
     }, ExtArgs["result"]["appointment"]>
     composites: {}
   }
@@ -8109,8 +8145,8 @@ export namespace Prisma {
     doctor<T extends DoctorDefaultArgs<ExtArgs> = {}>(args?: Subset<T, DoctorDefaultArgs<ExtArgs>>): Prisma__DoctorClient<$Result.GetResult<Prisma.$DoctorPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
     patient<T extends PatientDefaultArgs<ExtArgs> = {}>(args?: Subset<T, PatientDefaultArgs<ExtArgs>>): Prisma__PatientClient<$Result.GetResult<Prisma.$PatientPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
     location<T extends LocationDefaultArgs<ExtArgs> = {}>(args?: Subset<T, LocationDefaultArgs<ExtArgs>>): Prisma__LocationClient<$Result.GetResult<Prisma.$LocationPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
-    payment<T extends Appointment$paymentArgs<ExtArgs> = {}>(args?: Subset<T, Appointment$paymentArgs<ExtArgs>>): Prisma__PaymentClient<$Result.GetResult<Prisma.$PaymentPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
     therapy<T extends Appointment$therapyArgs<ExtArgs> = {}>(args?: Subset<T, Appointment$therapyArgs<ExtArgs>>): Prisma__TherapyClient<$Result.GetResult<Prisma.$TherapyPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+    payment<T extends Appointment$paymentArgs<ExtArgs> = {}>(args?: Subset<T, Appointment$paymentArgs<ExtArgs>>): Prisma__PaymentClient<$Result.GetResult<Prisma.$PaymentPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
     queueItem<T extends Appointment$queueItemArgs<ExtArgs> = {}>(args?: Subset<T, Appointment$queueItemArgs<ExtArgs>>): Prisma__QueueItemClient<$Result.GetResult<Prisma.$QueueItemPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
     /**
      * Attaches callbacks for the resolution and/or rejection of the Promise.
@@ -8142,18 +8178,21 @@ export namespace Prisma {
    */
   interface AppointmentFieldRefs {
     readonly id: FieldRef<"Appointment", 'String'>
-    readonly patientId: FieldRef<"Appointment", 'String'>
-    readonly doctorId: FieldRef<"Appointment", 'String'>
-    readonly locationId: FieldRef<"Appointment", 'String'>
-    readonly status: FieldRef<"Appointment", 'AppointmentStatus'>
     readonly type: FieldRef<"Appointment", 'AppointmentType'>
+    readonly doctorId: FieldRef<"Appointment", 'String'>
+    readonly patientId: FieldRef<"Appointment", 'String'>
+    readonly locationId: FieldRef<"Appointment", 'String'>
     readonly date: FieldRef<"Appointment", 'DateTime'>
     readonly time: FieldRef<"Appointment", 'String'>
     readonly duration: FieldRef<"Appointment", 'Int'>
+    readonly status: FieldRef<"Appointment", 'AppointmentStatus'>
     readonly notes: FieldRef<"Appointment", 'String'>
     readonly createdAt: FieldRef<"Appointment", 'DateTime'>
     readonly updatedAt: FieldRef<"Appointment", 'DateTime'>
     readonly therapyId: FieldRef<"Appointment", 'String'>
+    readonly startedAt: FieldRef<"Appointment", 'DateTime'>
+    readonly checkedInAt: FieldRef<"Appointment", 'DateTime'>
+    readonly completedAt: FieldRef<"Appointment", 'DateTime'>
   }
     
 
@@ -8550,25 +8589,6 @@ export namespace Prisma {
   }
 
   /**
-   * Appointment.payment
-   */
-  export type Appointment$paymentArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
-    /**
-     * Select specific fields to fetch from the Payment
-     */
-    select?: PaymentSelect<ExtArgs> | null
-    /**
-     * Omit specific fields from the Payment
-     */
-    omit?: PaymentOmit<ExtArgs> | null
-    /**
-     * Choose, which related nodes to fetch as well
-     */
-    include?: PaymentInclude<ExtArgs> | null
-    where?: PaymentWhereInput
-  }
-
-  /**
    * Appointment.therapy
    */
   export type Appointment$therapyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
@@ -8585,6 +8605,25 @@ export namespace Prisma {
      */
     include?: TherapyInclude<ExtArgs> | null
     where?: TherapyWhereInput
+  }
+
+  /**
+   * Appointment.payment
+   */
+  export type Appointment$paymentArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the Payment
+     */
+    select?: PaymentSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the Payment
+     */
+    omit?: PaymentOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: PaymentInclude<ExtArgs> | null
+    where?: PaymentWhereInput
   }
 
   /**
@@ -17732,18 +17771,21 @@ export namespace Prisma {
 
   export const AppointmentScalarFieldEnum: {
     id: 'id',
-    patientId: 'patientId',
-    doctorId: 'doctorId',
-    locationId: 'locationId',
-    status: 'status',
     type: 'type',
+    doctorId: 'doctorId',
+    patientId: 'patientId',
+    locationId: 'locationId',
     date: 'date',
     time: 'time',
     duration: 'duration',
+    status: 'status',
     notes: 'notes',
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
-    therapyId: 'therapyId'
+    therapyId: 'therapyId',
+    startedAt: 'startedAt',
+    checkedInAt: 'checkedInAt',
+    completedAt: 'completedAt'
   };
 
   export type AppointmentScalarFieldEnum = (typeof AppointmentScalarFieldEnum)[keyof typeof AppointmentScalarFieldEnum]
@@ -18011,20 +18053,6 @@ export namespace Prisma {
 
 
   /**
-   * Reference to a field of type 'AppointmentStatus'
-   */
-  export type EnumAppointmentStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'AppointmentStatus'>
-    
-
-
-  /**
-   * Reference to a field of type 'AppointmentStatus[]'
-   */
-  export type ListEnumAppointmentStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'AppointmentStatus[]'>
-    
-
-
-  /**
    * Reference to a field of type 'AppointmentType'
    */
   export type EnumAppointmentTypeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'AppointmentType'>
@@ -18035,6 +18063,20 @@ export namespace Prisma {
    * Reference to a field of type 'AppointmentType[]'
    */
   export type ListEnumAppointmentTypeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'AppointmentType[]'>
+    
+
+
+  /**
+   * Reference to a field of type 'AppointmentStatus'
+   */
+  export type EnumAppointmentStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'AppointmentStatus'>
+    
+
+
+  /**
+   * Reference to a field of type 'AppointmentStatus[]'
+   */
+  export type ListEnumAppointmentStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'AppointmentStatus[]'>
     
 
 
@@ -18519,45 +18561,51 @@ export namespace Prisma {
     OR?: AppointmentWhereInput[]
     NOT?: AppointmentWhereInput | AppointmentWhereInput[]
     id?: StringFilter<"Appointment"> | string
-    patientId?: StringFilter<"Appointment"> | string
-    doctorId?: StringFilter<"Appointment"> | string
-    locationId?: StringFilter<"Appointment"> | string
-    status?: EnumAppointmentStatusFilter<"Appointment"> | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFilter<"Appointment"> | $Enums.AppointmentType
+    doctorId?: StringFilter<"Appointment"> | string
+    patientId?: StringFilter<"Appointment"> | string
+    locationId?: StringFilter<"Appointment"> | string
     date?: DateTimeFilter<"Appointment"> | Date | string
     time?: StringFilter<"Appointment"> | string
     duration?: IntFilter<"Appointment"> | number
+    status?: EnumAppointmentStatusFilter<"Appointment"> | $Enums.AppointmentStatus
     notes?: StringNullableFilter<"Appointment"> | string | null
     createdAt?: DateTimeFilter<"Appointment"> | Date | string
     updatedAt?: DateTimeFilter<"Appointment"> | Date | string
     therapyId?: StringNullableFilter<"Appointment"> | string | null
+    startedAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
+    checkedInAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
+    completedAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
     doctor?: XOR<DoctorScalarRelationFilter, DoctorWhereInput>
     patient?: XOR<PatientScalarRelationFilter, PatientWhereInput>
     location?: XOR<LocationScalarRelationFilter, LocationWhereInput>
-    payment?: XOR<PaymentNullableScalarRelationFilter, PaymentWhereInput> | null
     therapy?: XOR<TherapyNullableScalarRelationFilter, TherapyWhereInput> | null
+    payment?: XOR<PaymentNullableScalarRelationFilter, PaymentWhereInput> | null
     queueItem?: XOR<QueueItemNullableScalarRelationFilter, QueueItemWhereInput> | null
   }
 
   export type AppointmentOrderByWithRelationInput = {
     id?: SortOrder
-    patientId?: SortOrder
-    doctorId?: SortOrder
-    locationId?: SortOrder
-    status?: SortOrder
     type?: SortOrder
+    doctorId?: SortOrder
+    patientId?: SortOrder
+    locationId?: SortOrder
     date?: SortOrder
     time?: SortOrder
     duration?: SortOrder
+    status?: SortOrder
     notes?: SortOrderInput | SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
     therapyId?: SortOrderInput | SortOrder
+    startedAt?: SortOrderInput | SortOrder
+    checkedInAt?: SortOrderInput | SortOrder
+    completedAt?: SortOrderInput | SortOrder
     doctor?: DoctorOrderByWithRelationInput
     patient?: PatientOrderByWithRelationInput
     location?: LocationOrderByWithRelationInput
-    payment?: PaymentOrderByWithRelationInput
     therapy?: TherapyOrderByWithRelationInput
+    payment?: PaymentOrderByWithRelationInput
     queueItem?: QueueItemOrderByWithRelationInput
   }
 
@@ -18566,40 +18614,46 @@ export namespace Prisma {
     AND?: AppointmentWhereInput | AppointmentWhereInput[]
     OR?: AppointmentWhereInput[]
     NOT?: AppointmentWhereInput | AppointmentWhereInput[]
-    patientId?: StringFilter<"Appointment"> | string
-    doctorId?: StringFilter<"Appointment"> | string
-    locationId?: StringFilter<"Appointment"> | string
-    status?: EnumAppointmentStatusFilter<"Appointment"> | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFilter<"Appointment"> | $Enums.AppointmentType
+    doctorId?: StringFilter<"Appointment"> | string
+    patientId?: StringFilter<"Appointment"> | string
+    locationId?: StringFilter<"Appointment"> | string
     date?: DateTimeFilter<"Appointment"> | Date | string
     time?: StringFilter<"Appointment"> | string
     duration?: IntFilter<"Appointment"> | number
+    status?: EnumAppointmentStatusFilter<"Appointment"> | $Enums.AppointmentStatus
     notes?: StringNullableFilter<"Appointment"> | string | null
     createdAt?: DateTimeFilter<"Appointment"> | Date | string
     updatedAt?: DateTimeFilter<"Appointment"> | Date | string
     therapyId?: StringNullableFilter<"Appointment"> | string | null
+    startedAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
+    checkedInAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
+    completedAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
     doctor?: XOR<DoctorScalarRelationFilter, DoctorWhereInput>
     patient?: XOR<PatientScalarRelationFilter, PatientWhereInput>
     location?: XOR<LocationScalarRelationFilter, LocationWhereInput>
-    payment?: XOR<PaymentNullableScalarRelationFilter, PaymentWhereInput> | null
     therapy?: XOR<TherapyNullableScalarRelationFilter, TherapyWhereInput> | null
+    payment?: XOR<PaymentNullableScalarRelationFilter, PaymentWhereInput> | null
     queueItem?: XOR<QueueItemNullableScalarRelationFilter, QueueItemWhereInput> | null
   }, "id">
 
   export type AppointmentOrderByWithAggregationInput = {
     id?: SortOrder
-    patientId?: SortOrder
-    doctorId?: SortOrder
-    locationId?: SortOrder
-    status?: SortOrder
     type?: SortOrder
+    doctorId?: SortOrder
+    patientId?: SortOrder
+    locationId?: SortOrder
     date?: SortOrder
     time?: SortOrder
     duration?: SortOrder
+    status?: SortOrder
     notes?: SortOrderInput | SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
     therapyId?: SortOrderInput | SortOrder
+    startedAt?: SortOrderInput | SortOrder
+    checkedInAt?: SortOrderInput | SortOrder
+    completedAt?: SortOrderInput | SortOrder
     _count?: AppointmentCountOrderByAggregateInput
     _avg?: AppointmentAvgOrderByAggregateInput
     _max?: AppointmentMaxOrderByAggregateInput
@@ -18612,18 +18666,21 @@ export namespace Prisma {
     OR?: AppointmentScalarWhereWithAggregatesInput[]
     NOT?: AppointmentScalarWhereWithAggregatesInput | AppointmentScalarWhereWithAggregatesInput[]
     id?: StringWithAggregatesFilter<"Appointment"> | string
-    patientId?: StringWithAggregatesFilter<"Appointment"> | string
-    doctorId?: StringWithAggregatesFilter<"Appointment"> | string
-    locationId?: StringWithAggregatesFilter<"Appointment"> | string
-    status?: EnumAppointmentStatusWithAggregatesFilter<"Appointment"> | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeWithAggregatesFilter<"Appointment"> | $Enums.AppointmentType
+    doctorId?: StringWithAggregatesFilter<"Appointment"> | string
+    patientId?: StringWithAggregatesFilter<"Appointment"> | string
+    locationId?: StringWithAggregatesFilter<"Appointment"> | string
     date?: DateTimeWithAggregatesFilter<"Appointment"> | Date | string
     time?: StringWithAggregatesFilter<"Appointment"> | string
     duration?: IntWithAggregatesFilter<"Appointment"> | number
+    status?: EnumAppointmentStatusWithAggregatesFilter<"Appointment"> | $Enums.AppointmentStatus
     notes?: StringNullableWithAggregatesFilter<"Appointment"> | string | null
     createdAt?: DateTimeWithAggregatesFilter<"Appointment"> | Date | string
     updatedAt?: DateTimeWithAggregatesFilter<"Appointment"> | Date | string
     therapyId?: StringNullableWithAggregatesFilter<"Appointment"> | string | null
+    startedAt?: DateTimeNullableWithAggregatesFilter<"Appointment"> | Date | string | null
+    checkedInAt?: DateTimeNullableWithAggregatesFilter<"Appointment"> | Date | string | null
+    completedAt?: DateTimeNullableWithAggregatesFilter<"Appointment"> | Date | string | null
   }
 
   export type TherapyWhereInput = {
@@ -19700,118 +19757,139 @@ export namespace Prisma {
 
   export type AppointmentCreateInput = {
     id?: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     doctor: DoctorCreateNestedOneWithoutAppointmentsInput
     patient: PatientCreateNestedOneWithoutAppointmentsInput
     location: LocationCreateNestedOneWithoutAppointmentsInput
-    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     therapy?: TherapyCreateNestedOneWithoutAppointmentsInput
+    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemCreateNestedOneWithoutAppointmentInput
   }
 
   export type AppointmentUncheckedCreateInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    locationId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
+    locationId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     payment?: PaymentUncheckedCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemUncheckedCreateNestedOneWithoutAppointmentInput
   }
 
   export type AppointmentUpdateInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     doctor?: DoctorUpdateOneRequiredWithoutAppointmentsNestedInput
     patient?: PatientUpdateOneRequiredWithoutAppointmentsNestedInput
     location?: LocationUpdateOneRequiredWithoutAppointmentsNestedInput
-    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     therapy?: TherapyUpdateOneWithoutAppointmentsNestedInput
+    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
+    locationId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     payment?: PaymentUncheckedUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUncheckedUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentCreateManyInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    locationId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
+    locationId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
   }
 
   export type AppointmentUpdateManyMutationInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   }
 
   export type AppointmentUncheckedUpdateManyInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
+    locationId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   }
 
   export type TherapyCreateInput = {
@@ -20967,13 +21045,6 @@ export namespace Prisma {
     longitude?: SortOrder
   }
 
-  export type EnumAppointmentStatusFilter<$PrismaModel = never> = {
-    equals?: $Enums.AppointmentStatus | EnumAppointmentStatusFieldRefInput<$PrismaModel>
-    in?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
-    notIn?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
-    not?: NestedEnumAppointmentStatusFilter<$PrismaModel> | $Enums.AppointmentStatus
-  }
-
   export type EnumAppointmentTypeFilter<$PrismaModel = never> = {
     equals?: $Enums.AppointmentType | EnumAppointmentTypeFieldRefInput<$PrismaModel>
     in?: $Enums.AppointmentType[] | ListEnumAppointmentTypeFieldRefInput<$PrismaModel>
@@ -20981,19 +21052,26 @@ export namespace Prisma {
     not?: NestedEnumAppointmentTypeFilter<$PrismaModel> | $Enums.AppointmentType
   }
 
+  export type EnumAppointmentStatusFilter<$PrismaModel = never> = {
+    equals?: $Enums.AppointmentStatus | EnumAppointmentStatusFieldRefInput<$PrismaModel>
+    in?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
+    notIn?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
+    not?: NestedEnumAppointmentStatusFilter<$PrismaModel> | $Enums.AppointmentStatus
+  }
+
   export type PatientScalarRelationFilter = {
     is?: PatientWhereInput
     isNot?: PatientWhereInput
   }
 
-  export type PaymentNullableScalarRelationFilter = {
-    is?: PaymentWhereInput | null
-    isNot?: PaymentWhereInput | null
-  }
-
   export type TherapyNullableScalarRelationFilter = {
     is?: TherapyWhereInput | null
     isNot?: TherapyWhereInput | null
+  }
+
+  export type PaymentNullableScalarRelationFilter = {
+    is?: PaymentWhereInput | null
+    isNot?: PaymentWhereInput | null
   }
 
   export type QueueItemNullableScalarRelationFilter = {
@@ -21003,18 +21081,21 @@ export namespace Prisma {
 
   export type AppointmentCountOrderByAggregateInput = {
     id?: SortOrder
-    patientId?: SortOrder
-    doctorId?: SortOrder
-    locationId?: SortOrder
-    status?: SortOrder
     type?: SortOrder
+    doctorId?: SortOrder
+    patientId?: SortOrder
+    locationId?: SortOrder
     date?: SortOrder
     time?: SortOrder
     duration?: SortOrder
+    status?: SortOrder
     notes?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
     therapyId?: SortOrder
+    startedAt?: SortOrder
+    checkedInAt?: SortOrder
+    completedAt?: SortOrder
   }
 
   export type AppointmentAvgOrderByAggregateInput = {
@@ -21023,48 +21104,44 @@ export namespace Prisma {
 
   export type AppointmentMaxOrderByAggregateInput = {
     id?: SortOrder
-    patientId?: SortOrder
-    doctorId?: SortOrder
-    locationId?: SortOrder
-    status?: SortOrder
     type?: SortOrder
+    doctorId?: SortOrder
+    patientId?: SortOrder
+    locationId?: SortOrder
     date?: SortOrder
     time?: SortOrder
     duration?: SortOrder
+    status?: SortOrder
     notes?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
     therapyId?: SortOrder
+    startedAt?: SortOrder
+    checkedInAt?: SortOrder
+    completedAt?: SortOrder
   }
 
   export type AppointmentMinOrderByAggregateInput = {
     id?: SortOrder
-    patientId?: SortOrder
-    doctorId?: SortOrder
-    locationId?: SortOrder
-    status?: SortOrder
     type?: SortOrder
+    doctorId?: SortOrder
+    patientId?: SortOrder
+    locationId?: SortOrder
     date?: SortOrder
     time?: SortOrder
     duration?: SortOrder
+    status?: SortOrder
     notes?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
     therapyId?: SortOrder
+    startedAt?: SortOrder
+    checkedInAt?: SortOrder
+    completedAt?: SortOrder
   }
 
   export type AppointmentSumOrderByAggregateInput = {
     duration?: SortOrder
-  }
-
-  export type EnumAppointmentStatusWithAggregatesFilter<$PrismaModel = never> = {
-    equals?: $Enums.AppointmentStatus | EnumAppointmentStatusFieldRefInput<$PrismaModel>
-    in?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
-    notIn?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
-    not?: NestedEnumAppointmentStatusWithAggregatesFilter<$PrismaModel> | $Enums.AppointmentStatus
-    _count?: NestedIntFilter<$PrismaModel>
-    _min?: NestedEnumAppointmentStatusFilter<$PrismaModel>
-    _max?: NestedEnumAppointmentStatusFilter<$PrismaModel>
   }
 
   export type EnumAppointmentTypeWithAggregatesFilter<$PrismaModel = never> = {
@@ -21075,6 +21152,16 @@ export namespace Prisma {
     _count?: NestedIntFilter<$PrismaModel>
     _min?: NestedEnumAppointmentTypeFilter<$PrismaModel>
     _max?: NestedEnumAppointmentTypeFilter<$PrismaModel>
+  }
+
+  export type EnumAppointmentStatusWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: $Enums.AppointmentStatus | EnumAppointmentStatusFieldRefInput<$PrismaModel>
+    in?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
+    notIn?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
+    not?: NestedEnumAppointmentStatusWithAggregatesFilter<$PrismaModel> | $Enums.AppointmentStatus
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedEnumAppointmentStatusFilter<$PrismaModel>
+    _max?: NestedEnumAppointmentStatusFilter<$PrismaModel>
   }
 
   export type IntNullableFilter<$PrismaModel = never> = {
@@ -22078,16 +22165,16 @@ export namespace Prisma {
     connect?: LocationWhereUniqueInput
   }
 
-  export type PaymentCreateNestedOneWithoutAppointmentInput = {
-    create?: XOR<PaymentCreateWithoutAppointmentInput, PaymentUncheckedCreateWithoutAppointmentInput>
-    connectOrCreate?: PaymentCreateOrConnectWithoutAppointmentInput
-    connect?: PaymentWhereUniqueInput
-  }
-
   export type TherapyCreateNestedOneWithoutAppointmentsInput = {
     create?: XOR<TherapyCreateWithoutAppointmentsInput, TherapyUncheckedCreateWithoutAppointmentsInput>
     connectOrCreate?: TherapyCreateOrConnectWithoutAppointmentsInput
     connect?: TherapyWhereUniqueInput
+  }
+
+  export type PaymentCreateNestedOneWithoutAppointmentInput = {
+    create?: XOR<PaymentCreateWithoutAppointmentInput, PaymentUncheckedCreateWithoutAppointmentInput>
+    connectOrCreate?: PaymentCreateOrConnectWithoutAppointmentInput
+    connect?: PaymentWhereUniqueInput
   }
 
   export type QueueItemCreateNestedOneWithoutAppointmentInput = {
@@ -22108,12 +22195,12 @@ export namespace Prisma {
     connect?: QueueItemWhereUniqueInput
   }
 
-  export type EnumAppointmentStatusFieldUpdateOperationsInput = {
-    set?: $Enums.AppointmentStatus
-  }
-
   export type EnumAppointmentTypeFieldUpdateOperationsInput = {
     set?: $Enums.AppointmentType
+  }
+
+  export type EnumAppointmentStatusFieldUpdateOperationsInput = {
+    set?: $Enums.AppointmentStatus
   }
 
   export type DoctorUpdateOneRequiredWithoutAppointmentsNestedInput = {
@@ -22140,16 +22227,6 @@ export namespace Prisma {
     update?: XOR<XOR<LocationUpdateToOneWithWhereWithoutAppointmentsInput, LocationUpdateWithoutAppointmentsInput>, LocationUncheckedUpdateWithoutAppointmentsInput>
   }
 
-  export type PaymentUpdateOneWithoutAppointmentNestedInput = {
-    create?: XOR<PaymentCreateWithoutAppointmentInput, PaymentUncheckedCreateWithoutAppointmentInput>
-    connectOrCreate?: PaymentCreateOrConnectWithoutAppointmentInput
-    upsert?: PaymentUpsertWithoutAppointmentInput
-    disconnect?: PaymentWhereInput | boolean
-    delete?: PaymentWhereInput | boolean
-    connect?: PaymentWhereUniqueInput
-    update?: XOR<XOR<PaymentUpdateToOneWithWhereWithoutAppointmentInput, PaymentUpdateWithoutAppointmentInput>, PaymentUncheckedUpdateWithoutAppointmentInput>
-  }
-
   export type TherapyUpdateOneWithoutAppointmentsNestedInput = {
     create?: XOR<TherapyCreateWithoutAppointmentsInput, TherapyUncheckedCreateWithoutAppointmentsInput>
     connectOrCreate?: TherapyCreateOrConnectWithoutAppointmentsInput
@@ -22158,6 +22235,16 @@ export namespace Prisma {
     delete?: TherapyWhereInput | boolean
     connect?: TherapyWhereUniqueInput
     update?: XOR<XOR<TherapyUpdateToOneWithWhereWithoutAppointmentsInput, TherapyUpdateWithoutAppointmentsInput>, TherapyUncheckedUpdateWithoutAppointmentsInput>
+  }
+
+  export type PaymentUpdateOneWithoutAppointmentNestedInput = {
+    create?: XOR<PaymentCreateWithoutAppointmentInput, PaymentUncheckedCreateWithoutAppointmentInput>
+    connectOrCreate?: PaymentCreateOrConnectWithoutAppointmentInput
+    upsert?: PaymentUpsertWithoutAppointmentInput
+    disconnect?: PaymentWhereInput | boolean
+    delete?: PaymentWhereInput | boolean
+    connect?: PaymentWhereUniqueInput
+    update?: XOR<XOR<PaymentUpdateToOneWithWhereWithoutAppointmentInput, PaymentUpdateWithoutAppointmentInput>, PaymentUncheckedUpdateWithoutAppointmentInput>
   }
 
   export type QueueItemUpdateOneWithoutAppointmentNestedInput = {
@@ -22746,13 +22833,6 @@ export namespace Prisma {
     not?: InputJsonValue | JsonFieldRefInput<$PrismaModel> | JsonNullValueFilter
   }
 
-  export type NestedEnumAppointmentStatusFilter<$PrismaModel = never> = {
-    equals?: $Enums.AppointmentStatus | EnumAppointmentStatusFieldRefInput<$PrismaModel>
-    in?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
-    notIn?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
-    not?: NestedEnumAppointmentStatusFilter<$PrismaModel> | $Enums.AppointmentStatus
-  }
-
   export type NestedEnumAppointmentTypeFilter<$PrismaModel = never> = {
     equals?: $Enums.AppointmentType | EnumAppointmentTypeFieldRefInput<$PrismaModel>
     in?: $Enums.AppointmentType[] | ListEnumAppointmentTypeFieldRefInput<$PrismaModel>
@@ -22760,14 +22840,11 @@ export namespace Prisma {
     not?: NestedEnumAppointmentTypeFilter<$PrismaModel> | $Enums.AppointmentType
   }
 
-  export type NestedEnumAppointmentStatusWithAggregatesFilter<$PrismaModel = never> = {
+  export type NestedEnumAppointmentStatusFilter<$PrismaModel = never> = {
     equals?: $Enums.AppointmentStatus | EnumAppointmentStatusFieldRefInput<$PrismaModel>
     in?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
     notIn?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
-    not?: NestedEnumAppointmentStatusWithAggregatesFilter<$PrismaModel> | $Enums.AppointmentStatus
-    _count?: NestedIntFilter<$PrismaModel>
-    _min?: NestedEnumAppointmentStatusFilter<$PrismaModel>
-    _max?: NestedEnumAppointmentStatusFilter<$PrismaModel>
+    not?: NestedEnumAppointmentStatusFilter<$PrismaModel> | $Enums.AppointmentStatus
   }
 
   export type NestedEnumAppointmentTypeWithAggregatesFilter<$PrismaModel = never> = {
@@ -22778,6 +22855,16 @@ export namespace Prisma {
     _count?: NestedIntFilter<$PrismaModel>
     _min?: NestedEnumAppointmentTypeFilter<$PrismaModel>
     _max?: NestedEnumAppointmentTypeFilter<$PrismaModel>
+  }
+
+  export type NestedEnumAppointmentStatusWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: $Enums.AppointmentStatus | EnumAppointmentStatusFieldRefInput<$PrismaModel>
+    in?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
+    notIn?: $Enums.AppointmentStatus[] | ListEnumAppointmentStatusFieldRefInput<$PrismaModel>
+    not?: NestedEnumAppointmentStatusWithAggregatesFilter<$PrismaModel> | $Enums.AppointmentStatus
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedEnumAppointmentStatusFilter<$PrismaModel>
+    _max?: NestedEnumAppointmentStatusFilter<$PrismaModel>
   }
 
   export type NestedIntNullableWithAggregatesFilter<$PrismaModel = never> = {
@@ -22882,34 +22969,40 @@ export namespace Prisma {
 
   export type AppointmentCreateWithoutPatientInput = {
     id?: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     doctor: DoctorCreateNestedOneWithoutAppointmentsInput
     location: LocationCreateNestedOneWithoutAppointmentsInput
-    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     therapy?: TherapyCreateNestedOneWithoutAppointmentsInput
+    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemCreateNestedOneWithoutAppointmentInput
   }
 
   export type AppointmentUncheckedCreateWithoutPatientInput = {
     id?: string
+    type?: $Enums.AppointmentType
     doctorId: string
     locationId: string
-    status?: $Enums.AppointmentStatus
-    type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     payment?: PaymentUncheckedCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemUncheckedCreateNestedOneWithoutAppointmentInput
   }
@@ -23033,18 +23126,21 @@ export namespace Prisma {
     OR?: AppointmentScalarWhereInput[]
     NOT?: AppointmentScalarWhereInput | AppointmentScalarWhereInput[]
     id?: StringFilter<"Appointment"> | string
-    patientId?: StringFilter<"Appointment"> | string
-    doctorId?: StringFilter<"Appointment"> | string
-    locationId?: StringFilter<"Appointment"> | string
-    status?: EnumAppointmentStatusFilter<"Appointment"> | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFilter<"Appointment"> | $Enums.AppointmentType
+    doctorId?: StringFilter<"Appointment"> | string
+    patientId?: StringFilter<"Appointment"> | string
+    locationId?: StringFilter<"Appointment"> | string
     date?: DateTimeFilter<"Appointment"> | Date | string
     time?: StringFilter<"Appointment"> | string
     duration?: IntFilter<"Appointment"> | number
+    status?: EnumAppointmentStatusFilter<"Appointment"> | $Enums.AppointmentStatus
     notes?: StringNullableFilter<"Appointment"> | string | null
     createdAt?: DateTimeFilter<"Appointment"> | Date | string
     updatedAt?: DateTimeFilter<"Appointment"> | Date | string
     therapyId?: StringNullableFilter<"Appointment"> | string | null
+    startedAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
+    checkedInAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
+    completedAt?: DateTimeNullableFilter<"Appointment"> | Date | string | null
   }
 
   export type HealthRecordUpsertWithWhereUniqueWithoutPatientInput = {
@@ -23137,34 +23233,40 @@ export namespace Prisma {
 
   export type AppointmentCreateWithoutDoctorInput = {
     id?: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     patient: PatientCreateNestedOneWithoutAppointmentsInput
     location: LocationCreateNestedOneWithoutAppointmentsInput
-    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     therapy?: TherapyCreateNestedOneWithoutAppointmentsInput
+    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemCreateNestedOneWithoutAppointmentInput
   }
 
   export type AppointmentUncheckedCreateWithoutDoctorInput = {
     id?: string
+    type?: $Enums.AppointmentType
     patientId: string
     locationId: string
-    status?: $Enums.AppointmentStatus
-    type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     payment?: PaymentUncheckedCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemUncheckedCreateNestedOneWithoutAppointmentInput
   }
@@ -23585,34 +23687,40 @@ export namespace Prisma {
 
   export type AppointmentCreateWithoutLocationInput = {
     id?: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     doctor: DoctorCreateNestedOneWithoutAppointmentsInput
     patient: PatientCreateNestedOneWithoutAppointmentsInput
-    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     therapy?: TherapyCreateNestedOneWithoutAppointmentsInput
+    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemCreateNestedOneWithoutAppointmentInput
   }
 
   export type AppointmentUncheckedCreateWithoutLocationInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     payment?: PaymentUncheckedCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemUncheckedCreateNestedOneWithoutAppointmentInput
   }
@@ -23828,6 +23936,29 @@ export namespace Prisma {
     create: XOR<LocationCreateWithoutAppointmentsInput, LocationUncheckedCreateWithoutAppointmentsInput>
   }
 
+  export type TherapyCreateWithoutAppointmentsInput = {
+    id?: string
+    name: string
+    description?: string | null
+    duration?: number | null
+    createdAt?: Date | string
+    updatedAt?: Date | string
+  }
+
+  export type TherapyUncheckedCreateWithoutAppointmentsInput = {
+    id?: string
+    name: string
+    description?: string | null
+    duration?: number | null
+    createdAt?: Date | string
+    updatedAt?: Date | string
+  }
+
+  export type TherapyCreateOrConnectWithoutAppointmentsInput = {
+    where: TherapyWhereUniqueInput
+    create: XOR<TherapyCreateWithoutAppointmentsInput, TherapyUncheckedCreateWithoutAppointmentsInput>
+  }
+
   export type PaymentCreateWithoutAppointmentInput = {
     id?: string
     amount: number
@@ -23851,29 +23982,6 @@ export namespace Prisma {
   export type PaymentCreateOrConnectWithoutAppointmentInput = {
     where: PaymentWhereUniqueInput
     create: XOR<PaymentCreateWithoutAppointmentInput, PaymentUncheckedCreateWithoutAppointmentInput>
-  }
-
-  export type TherapyCreateWithoutAppointmentsInput = {
-    id?: string
-    name: string
-    description?: string | null
-    duration?: number | null
-    createdAt?: Date | string
-    updatedAt?: Date | string
-  }
-
-  export type TherapyUncheckedCreateWithoutAppointmentsInput = {
-    id?: string
-    name: string
-    description?: string | null
-    duration?: number | null
-    createdAt?: Date | string
-    updatedAt?: Date | string
-  }
-
-  export type TherapyCreateOrConnectWithoutAppointmentsInput = {
-    where: TherapyWhereUniqueInput
-    create: XOR<TherapyCreateWithoutAppointmentsInput, TherapyUncheckedCreateWithoutAppointmentsInput>
   }
 
   export type QueueItemCreateWithoutAppointmentInput = {
@@ -24064,6 +24172,35 @@ export namespace Prisma {
     doctors?: DoctorLocationUncheckedUpdateManyWithoutLocationNestedInput
   }
 
+  export type TherapyUpsertWithoutAppointmentsInput = {
+    update: XOR<TherapyUpdateWithoutAppointmentsInput, TherapyUncheckedUpdateWithoutAppointmentsInput>
+    create: XOR<TherapyCreateWithoutAppointmentsInput, TherapyUncheckedCreateWithoutAppointmentsInput>
+    where?: TherapyWhereInput
+  }
+
+  export type TherapyUpdateToOneWithWhereWithoutAppointmentsInput = {
+    where?: TherapyWhereInput
+    data: XOR<TherapyUpdateWithoutAppointmentsInput, TherapyUncheckedUpdateWithoutAppointmentsInput>
+  }
+
+  export type TherapyUpdateWithoutAppointmentsInput = {
+    id?: StringFieldUpdateOperationsInput | string
+    name?: StringFieldUpdateOperationsInput | string
+    description?: NullableStringFieldUpdateOperationsInput | string | null
+    duration?: NullableIntFieldUpdateOperationsInput | number | null
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type TherapyUncheckedUpdateWithoutAppointmentsInput = {
+    id?: StringFieldUpdateOperationsInput | string
+    name?: StringFieldUpdateOperationsInput | string
+    description?: NullableStringFieldUpdateOperationsInput | string | null
+    duration?: NullableIntFieldUpdateOperationsInput | number | null
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
   export type PaymentUpsertWithoutAppointmentInput = {
     update: XOR<PaymentUpdateWithoutAppointmentInput, PaymentUncheckedUpdateWithoutAppointmentInput>
     create: XOR<PaymentCreateWithoutAppointmentInput, PaymentUncheckedCreateWithoutAppointmentInput>
@@ -24091,35 +24228,6 @@ export namespace Prisma {
     status?: EnumPaymentStatusFieldUpdateOperationsInput | $Enums.PaymentStatus
     method?: NullableEnumPaymentMethodFieldUpdateOperationsInput | $Enums.PaymentMethod | null
     transactionId?: NullableStringFieldUpdateOperationsInput | string | null
-    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
-    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
-  }
-
-  export type TherapyUpsertWithoutAppointmentsInput = {
-    update: XOR<TherapyUpdateWithoutAppointmentsInput, TherapyUncheckedUpdateWithoutAppointmentsInput>
-    create: XOR<TherapyCreateWithoutAppointmentsInput, TherapyUncheckedCreateWithoutAppointmentsInput>
-    where?: TherapyWhereInput
-  }
-
-  export type TherapyUpdateToOneWithWhereWithoutAppointmentsInput = {
-    where?: TherapyWhereInput
-    data: XOR<TherapyUpdateWithoutAppointmentsInput, TherapyUncheckedUpdateWithoutAppointmentsInput>
-  }
-
-  export type TherapyUpdateWithoutAppointmentsInput = {
-    id?: StringFieldUpdateOperationsInput | string
-    name?: StringFieldUpdateOperationsInput | string
-    description?: NullableStringFieldUpdateOperationsInput | string | null
-    duration?: NullableIntFieldUpdateOperationsInput | number | null
-    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
-    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
-  }
-
-  export type TherapyUncheckedUpdateWithoutAppointmentsInput = {
-    id?: StringFieldUpdateOperationsInput | string
-    name?: StringFieldUpdateOperationsInput | string
-    description?: NullableStringFieldUpdateOperationsInput | string | null
-    duration?: NullableIntFieldUpdateOperationsInput | number | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
@@ -24155,14 +24263,17 @@ export namespace Prisma {
 
   export type AppointmentCreateWithoutTherapyInput = {
     id?: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     doctor: DoctorCreateNestedOneWithoutAppointmentsInput
     patient: PatientCreateNestedOneWithoutAppointmentsInput
     location: LocationCreateNestedOneWithoutAppointmentsInput
@@ -24172,17 +24283,20 @@ export namespace Prisma {
 
   export type AppointmentUncheckedCreateWithoutTherapyInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    locationId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
+    locationId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     payment?: PaymentUncheckedCreateNestedOneWithoutAppointmentInput
     queueItem?: QueueItemUncheckedCreateNestedOneWithoutAppointmentInput
   }
@@ -24215,14 +24329,17 @@ export namespace Prisma {
 
   export type AppointmentCreateWithoutPaymentInput = {
     id?: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     doctor: DoctorCreateNestedOneWithoutAppointmentsInput
     patient: PatientCreateNestedOneWithoutAppointmentsInput
     location: LocationCreateNestedOneWithoutAppointmentsInput
@@ -24232,18 +24349,21 @@ export namespace Prisma {
 
   export type AppointmentUncheckedCreateWithoutPaymentInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    locationId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
+    locationId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     queueItem?: QueueItemUncheckedCreateNestedOneWithoutAppointmentInput
   }
 
@@ -24265,14 +24385,17 @@ export namespace Prisma {
 
   export type AppointmentUpdateWithoutPaymentInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     doctor?: DoctorUpdateOneRequiredWithoutAppointmentsNestedInput
     patient?: PatientUpdateOneRequiredWithoutAppointmentsNestedInput
     location?: LocationUpdateOneRequiredWithoutAppointmentsNestedInput
@@ -24282,52 +24405,61 @@ export namespace Prisma {
 
   export type AppointmentUncheckedUpdateWithoutPaymentInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
+    locationId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     queueItem?: QueueItemUncheckedUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentCreateWithoutQueueItemInput = {
     id?: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     doctor: DoctorCreateNestedOneWithoutAppointmentsInput
     patient: PatientCreateNestedOneWithoutAppointmentsInput
     location: LocationCreateNestedOneWithoutAppointmentsInput
-    payment?: PaymentCreateNestedOneWithoutAppointmentInput
     therapy?: TherapyCreateNestedOneWithoutAppointmentsInput
+    payment?: PaymentCreateNestedOneWithoutAppointmentInput
   }
 
   export type AppointmentUncheckedCreateWithoutQueueItemInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    locationId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
+    locationId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
     payment?: PaymentUncheckedCreateNestedOneWithoutAppointmentInput
   }
 
@@ -24349,35 +24481,41 @@ export namespace Prisma {
 
   export type AppointmentUpdateWithoutQueueItemInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     doctor?: DoctorUpdateOneRequiredWithoutAppointmentsNestedInput
     patient?: PatientUpdateOneRequiredWithoutAppointmentsNestedInput
     location?: LocationUpdateOneRequiredWithoutAppointmentsNestedInput
-    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     therapy?: TherapyUpdateOneWithoutAppointmentsNestedInput
+    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateWithoutQueueItemInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
+    locationId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     payment?: PaymentUncheckedUpdateOneWithoutAppointmentNestedInput
   }
 
@@ -25254,17 +25392,20 @@ export namespace Prisma {
 
   export type AppointmentCreateManyPatientInput = {
     id?: string
+    type?: $Enums.AppointmentType
     doctorId: string
     locationId: string
-    status?: $Enums.AppointmentStatus
-    type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
   }
 
   export type HealthRecordCreateManyPatientInput = {
@@ -25297,51 +25438,60 @@ export namespace Prisma {
 
   export type AppointmentUpdateWithoutPatientInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     doctor?: DoctorUpdateOneRequiredWithoutAppointmentsNestedInput
     location?: LocationUpdateOneRequiredWithoutAppointmentsNestedInput
-    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     therapy?: TherapyUpdateOneWithoutAppointmentsNestedInput
+    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateWithoutPatientInput = {
     id?: StringFieldUpdateOperationsInput | string
+    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     doctorId?: StringFieldUpdateOperationsInput | string
     locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
-    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     payment?: PaymentUncheckedUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUncheckedUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateManyWithoutPatientInput = {
     id?: StringFieldUpdateOperationsInput | string
+    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     doctorId?: StringFieldUpdateOperationsInput | string
     locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
-    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   }
 
   export type HealthRecordUpdateWithoutPatientInput = {
@@ -25432,17 +25582,20 @@ export namespace Prisma {
 
   export type AppointmentCreateManyDoctorInput = {
     id?: string
+    type?: $Enums.AppointmentType
     patientId: string
     locationId: string
-    status?: $Enums.AppointmentStatus
-    type?: $Enums.AppointmentType
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
   }
 
   export type HealthRecordCreateManyDoctorInput = {
@@ -25481,51 +25634,60 @@ export namespace Prisma {
 
   export type AppointmentUpdateWithoutDoctorInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     patient?: PatientUpdateOneRequiredWithoutAppointmentsNestedInput
     location?: LocationUpdateOneRequiredWithoutAppointmentsNestedInput
-    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     therapy?: TherapyUpdateOneWithoutAppointmentsNestedInput
+    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateWithoutDoctorInput = {
     id?: StringFieldUpdateOperationsInput | string
+    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     patientId?: StringFieldUpdateOperationsInput | string
     locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
-    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     payment?: PaymentUncheckedUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUncheckedUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateManyWithoutDoctorInput = {
     id?: StringFieldUpdateOperationsInput | string
+    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     patientId?: StringFieldUpdateOperationsInput | string
     locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
-    type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   }
 
   export type HealthRecordUpdateWithoutDoctorInput = {
@@ -25634,17 +25796,20 @@ export namespace Prisma {
 
   export type AppointmentCreateManyLocationInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
     therapyId?: string | null
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
   }
 
   export type DoctorLocationCreateManyLocationInput = {
@@ -25655,51 +25820,60 @@ export namespace Prisma {
 
   export type AppointmentUpdateWithoutLocationInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     doctor?: DoctorUpdateOneRequiredWithoutAppointmentsNestedInput
     patient?: PatientUpdateOneRequiredWithoutAppointmentsNestedInput
-    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     therapy?: TherapyUpdateOneWithoutAppointmentsNestedInput
+    payment?: PaymentUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateWithoutLocationInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     payment?: PaymentUncheckedUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUncheckedUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateManyWithoutLocationInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     therapyId?: NullableStringFieldUpdateOperationsInput | string | null
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   }
 
   export type DoctorLocationUpdateWithoutLocationInput = {
@@ -25722,29 +25896,35 @@ export namespace Prisma {
 
   export type AppointmentCreateManyTherapyInput = {
     id?: string
-    patientId: string
-    doctorId: string
-    locationId: string
-    status?: $Enums.AppointmentStatus
     type?: $Enums.AppointmentType
+    doctorId: string
+    patientId: string
+    locationId: string
     date: Date | string
     time: string
     duration?: number
+    status?: $Enums.AppointmentStatus
     notes?: string | null
     createdAt?: Date | string
     updatedAt?: Date | string
+    startedAt?: Date | string | null
+    checkedInAt?: Date | string | null
+    completedAt?: Date | string | null
   }
 
   export type AppointmentUpdateWithoutTherapyInput = {
     id?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     doctor?: DoctorUpdateOneRequiredWithoutAppointmentsNestedInput
     patient?: PatientUpdateOneRequiredWithoutAppointmentsNestedInput
     location?: LocationUpdateOneRequiredWithoutAppointmentsNestedInput
@@ -25754,34 +25934,40 @@ export namespace Prisma {
 
   export type AppointmentUncheckedUpdateWithoutTherapyInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
+    locationId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
     payment?: PaymentUncheckedUpdateOneWithoutAppointmentNestedInput
     queueItem?: QueueItemUncheckedUpdateOneWithoutAppointmentNestedInput
   }
 
   export type AppointmentUncheckedUpdateManyWithoutTherapyInput = {
     id?: StringFieldUpdateOperationsInput | string
-    patientId?: StringFieldUpdateOperationsInput | string
-    doctorId?: StringFieldUpdateOperationsInput | string
-    locationId?: StringFieldUpdateOperationsInput | string
-    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     type?: EnumAppointmentTypeFieldUpdateOperationsInput | $Enums.AppointmentType
+    doctorId?: StringFieldUpdateOperationsInput | string
+    patientId?: StringFieldUpdateOperationsInput | string
+    locationId?: StringFieldUpdateOperationsInput | string
     date?: DateTimeFieldUpdateOperationsInput | Date | string
     time?: StringFieldUpdateOperationsInput | string
     duration?: IntFieldUpdateOperationsInput | number
+    status?: EnumAppointmentStatusFieldUpdateOperationsInput | $Enums.AppointmentStatus
     notes?: NullableStringFieldUpdateOperationsInput | string | null
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    startedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    checkedInAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+    completedAt?: NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   }
 
   export type PrescriptionItemCreateManyPrescriptionInput = {

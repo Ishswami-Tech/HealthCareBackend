@@ -100,25 +100,29 @@ model Location {
 }
 
 model Appointment {
-    id         String            @id @default(uuid())
-    patientId  String
-    doctorId   String
-    locationId String
-    status     AppointmentStatus @default(PENDING)
-    type       AppointmentType   @default(IN_PERSON)
-    date       DateTime
-    time       String
-    duration   Int               @default(30)
-    notes      String?
-    createdAt  DateTime          @default(now())
-    updatedAt  DateTime          @updatedAt
-    doctor     Doctor            @relation(fields: [doctorId], references: [id])
-    patient    Patient           @relation(fields: [patientId], references: [id])
-    location   Location          @relation(fields: [locationId], references: [id])
-    payment    Payment?
-    therapy    Therapy?          @relation(fields: [therapyId], references: [id])
-    therapyId  String?
-    queueItem  QueueItem?
+    id          String            @id @default(uuid())
+    type        AppointmentType   @default(IN_PERSON)
+    doctorId    String
+    patientId   String
+    locationId  String
+    date        DateTime
+    time        String
+    duration    Int               @default(30)
+    status      AppointmentStatus @default(PENDING)
+    notes       String?
+    createdAt   DateTime          @default(now())
+    updatedAt   DateTime          @updatedAt
+    therapyId   String?
+    startedAt   DateTime? // When doctor starts the appointment
+    checkedInAt DateTime? // When patient checks in
+    completedAt DateTime? // When appointment is completed
+
+    doctor    Doctor     @relation(fields: [doctorId], references: [id])
+    patient   Patient    @relation(fields: [patientId], references: [id])
+    location  Location   @relation(fields: [locationId], references: [id])
+    therapy   Therapy?   @relation(fields: [therapyId], references: [id])
+    payment   Payment?
+    queueItem QueueItem?
 
     @@map("appointments")
 }

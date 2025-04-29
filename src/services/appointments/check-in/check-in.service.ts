@@ -4,15 +4,22 @@ import { QueueService } from '../../../shared/queue/queue.service';
 import { SocketService } from '../../../shared/socket/socket.service';
 import { AppointmentStatus, Appointment, Doctor, Patient, User, Prisma } from '@prisma/client';
 import { JobType, JobPriority, JobData } from '../../../shared/queue/queue.service';
+import { LoggingService } from '../../../shared/logging/logging.service';
+import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
+import { AppointmentWithRelations } from '../appointment.types';
 
-type AppointmentWithRelations = Appointment & {
-  doctor: Doctor & {
-    user: User;
-  };
-  patient: Patient & {
-    user: User;
-  };
-};
+const appointmentInclude = {
+  doctor: {
+    include: {
+      user: true
+    }
+  },
+  patient: {
+    include: {
+      user: true
+    }
+  }
+} as const;
 
 @Injectable()
 export class CheckInService {
@@ -22,7 +29,115 @@ export class CheckInService {
     private readonly prisma: PrismaService,
     private readonly queueService: QueueService,
     private readonly socketService: SocketService,
+    private readonly loggingService: LoggingService,
   ) {}
+
+  async checkIn(appointmentId: string): Promise<AppointmentWithRelations> {
+    try {
+      // First, verify the appointment exists and is in a valid state
+      const appointment = await this.prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: appointmentInclude
+      });
+
+      if (!appointment) {
+        throw new Error('Appointment not found');
+      }
+
+      if (appointment.status !== AppointmentStatus.SCHEDULED) {
+        throw new Error(`Invalid appointment status for check-in: ${appointment.status}`);
+      }
+
+      // Get current time for check-in
+      const checkedInAt = new Date();
+
+      // Update appointment status and check-in time
+      const updatedAppointment = await this.prisma.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          status: AppointmentStatus.CHECKED_IN,
+          checkedInAt,
+        },
+        include: appointmentInclude
+      });
+
+      this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Patient checked in for appointment ${appointmentId}`,
+        'CheckInService',
+        { appointmentId, checkedInAt }
+      );
+
+      return updatedAppointment as unknown as AppointmentWithRelations;
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to check in for appointment ${appointmentId}: ${error.message}`,
+        'CheckInService',
+        { appointmentId, error: error.stack }
+      );
+      throw error;
+    }
+  }
+
+  async getQueuePosition(appointmentId: string): Promise<number> {
+    const appointment = await this.prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: appointmentInclude
+    });
+
+    if (!appointment) {
+      throw new Error('Appointment not found');
+    }
+
+    // Get all checked-in appointments for the same doctor and location on the same day
+    const queuedAppointments = await this.prisma.appointment.findMany({
+      where: {
+        doctorId: appointment.doctorId,
+        locationId: appointment.locationId,
+        date: appointment.date,
+        status: AppointmentStatus.CHECKED_IN,
+      },
+      orderBy: [
+        { date: 'asc' },
+        { checkedInAt: 'asc' }
+      ],
+      include: appointmentInclude
+    });
+
+    // Find position in queue (1-based index)
+    const position = queuedAppointments.findIndex(a => a.id === appointmentId) + 1;
+    return position > 0 ? position : 0;
+  }
+
+  async getQueueStatus(locationId: string, doctorId?: string): Promise<AppointmentWithRelations[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get all checked-in and in-progress appointments for today
+    const appointments = await this.prisma.appointment.findMany({
+      where: {
+        locationId,
+        ...(doctorId && { doctorId }),
+        date: {
+          gte: today,
+          lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+        },
+        status: {
+          in: [AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS],
+        },
+      },
+      orderBy: [
+        { date: 'asc' },
+        { checkedInAt: 'asc' }
+      ],
+      include: appointmentInclude
+    });
+
+    return appointments as unknown as AppointmentWithRelations[];
+  }
 
   async processCheckIn(appointmentId: string, clinicId: string): Promise<AppointmentWithRelations> {
     const appointment = await this.prisma.appointment.findFirst({
@@ -32,19 +147,7 @@ export class CheckInService {
           { clinicId }
         ]
       },
-      include: {
-        doctor: {
-          include: {
-            user: true
-          }
-        },
-        patient: {
-          include: {
-            user: true
-          }
-        },
-        location: true,
-      },
+      include: appointmentInclude
     });
 
     if (!appointment) {
@@ -56,31 +159,14 @@ export class CheckInService {
     }
 
     const now = new Date();
-    const checkInTime = now.toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
 
     const updatedAppointment = await this.prisma.appointment.update({
       where: { id: appointmentId },
       data: {
         status: AppointmentStatus.CONFIRMED,
-        checkInTime,
+        checkedInAt: now,
       },
-      include: {
-        doctor: {
-          include: {
-            user: true
-          }
-        },
-        patient: {
-          include: {
-            user: true
-          }
-        },
-        location: true,
-      },
+      include: appointmentInclude
     });
 
     // Add to doctor's queue
@@ -94,7 +180,7 @@ export class CheckInService {
       date: now,
       metadata: {
         doctorId: appointment.doctorId,
-        checkInTime,
+        checkedInAt: now.toISOString(),
         clinicId
       },
     };
@@ -103,7 +189,7 @@ export class CheckInService {
       JobType.CONFIRM,
       jobData,
       {
-        priority: this.calculatePriority(appointment.time, checkInTime),
+        priority: this.calculatePriority(appointment.time, now.toLocaleTimeString('en-US', { hour12: false })),
         queueName: `doctor-${appointment.doctorId}`,
       }
     );
@@ -117,7 +203,7 @@ export class CheckInService {
       }
     );
 
-    return updatedAppointment;
+    return updatedAppointment as unknown as AppointmentWithRelations;
   }
 
   private calculatePriority(scheduledTime: string, checkInTime: string): JobPriority {
@@ -145,26 +231,14 @@ export class CheckInService {
         ],
         status: AppointmentStatus.CONFIRMED
       },
-      include: {
-        doctor: {
-          include: {
-            user: true
-          }
-        },
-        patient: {
-          include: {
-            user: true
-          }
-        },
-        location: true,
-      },
+      include: appointmentInclude,
       orderBy: {
-        checkInTime: 'asc',
+        checkedInAt: 'asc',
       },
     });
 
     return {
-      appointments,
+      appointments: appointments as unknown as AppointmentWithRelations[],
       queueStats,
     };
   }
@@ -238,23 +312,11 @@ export class CheckInService {
           { status: AppointmentStatus.CONFIRMED }
         ]
       },
-      include: {
-        doctor: {
-          include: {
-            user: true
-          }
-        },
-        patient: {
-          include: {
-            user: true
-          }
-        },
-        location: true,
-      },
+      include: appointmentInclude,
       orderBy: {
-        checkInTime: 'asc',
+        checkedInAt: 'asc',
       },
-    });
+    }) as unknown as AppointmentWithRelations[];
 
     // Group appointments by doctor
     const queueByDoctor = appointments.reduce((acc, appointment) => {

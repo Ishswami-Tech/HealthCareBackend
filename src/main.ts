@@ -10,7 +10,6 @@ import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
 import fastifyHelmet from '@fastify/helmet';
 import { ConfigService } from '@nestjs/config';
-
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
 
@@ -22,18 +21,31 @@ async function bootstrap() {
 
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
-      new FastifyAdapter(),
+      new FastifyAdapter({
+        logger: {
+          level: 'debug',
+          serializers: {
+            req: (req) => ({
+              method: req.method,
+              url: req.url,
+              path: req.routerPath,
+              parameters: req.params,
+              headers: req.headers
+            }),
+            res: (res) => ({
+              statusCode: res.statusCode,
+              time: res.responseTime
+            })
+          }
+        },
+        trustProxy: true,
+        bodyLimit: 10 * 1024 * 1024, // 10MB
+      }),
       {
-        logger: ['error', 'warn'] as LogLevel[],
+        logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],
         bufferLogs: true
       }
     );
-    //   new FastifyAdapter({
-    //     logger: true,
-    //     trustProxy: true,
-    //     bodyLimit: 10 * 1024 * 1024, // 10MB
-    //   })
-    // );
 
     app.useGlobalPipes(new ValidationPipe({
       transform: true,
@@ -49,7 +61,6 @@ async function bootstrap() {
       const { IoAdapter } = await import('@nestjs/platform-socket.io');
       const { createAdapter } = await import('@socket.io/redis-adapter');
       const { createClient } = await import('redis');
-      const { instrument } = await import('@socket.io/admin-ui');
       
       // Redis client configuration
       const redisConfig = {
@@ -97,13 +108,16 @@ async function bootstrap() {
         }
         
         createIOServer(port: number, options?: any) {
-          const corsOrigins = configService.get('CORS_ORIGIN', 'http://localhost:3000').split(',');
-          corsOrigins.push('https://admin.socket.io');
+          // Allow all origins temporarily for testing
+          const corsOrigins = '*';
+
+          logger.log('WebSocket CORS configuration: Allow all origins (temporary)');
 
           const server = super.createIOServer(port, {
             cors: {
               origin: corsOrigins,
-              credentials: true
+              credentials: true,
+              methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
             },
             adapter: createAdapter(pubClient, subClient, {
               key: 'healthcare-socket',
@@ -127,19 +141,24 @@ async function bootstrap() {
             allowEIO3: true,
             path: '/socket.io/'
           });
-          
-          // Configure Socket.IO Admin UI
-          instrument(server, {
-            auth: false,  // Disable auth for testing
-            mode: "development",
-            namespaceName: "/admin",
-            readonly: false,
-            serverId: `healthcare-api-${process.pid}`
+
+          // Add global error handler
+          server.on('error', (error: Error) => {
+            logger.error('Socket.IO server error:', error?.message || 'Unknown error');
+          });
+
+          // Add connection error handler
+          server.on('connection_error', (error: Error) => {
+            logger.error('Socket.IO connection error:', error?.message || 'Unknown error');
           });
 
           // Log namespace creation
           server.of('/appointments').on('connection', (socket) => {
             logger.log(`Client connected to appointments namespace: ${socket.id}`);
+            
+            socket.on('error', (error: Error) => {
+              logger.error(`Socket error in appointments namespace for client ${socket.id}:`, error?.message || 'Unknown error');
+            });
           });
 
           logger.log('WebSocket server initialized with namespaces:', 
@@ -153,8 +172,8 @@ async function bootstrap() {
       logger.log('WebSocket adapter configured successfully');
 
     } catch (error) {
-      logger.warn(`WebSocket adapter could not be initialized: ${error.message}`);
-      logger.error(error.stack);
+      logger.warn(`WebSocket adapter could not be initialized: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logger.error(error instanceof Error ? error.stack : 'No stack trace available');
     }
 
     // Security headers
@@ -176,12 +195,24 @@ async function bootstrap() {
     });
 
     // Configure CORS
-    const corsOrigins = configService.get('CORS_ORIGIN', '*').split(',').map(origin => origin.trim());
     await app.enableCors({
-      origin: corsOrigins,
-      methods: configService.get('CORS_METHODS', ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']),
-      credentials: configService.get('CORS_CREDENTIALS', true),
+      origin: '*', // Allow all origins temporarily
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      credentials: true,
     });
+
+    // Production CORS configuration (inmented for now)
+    // await app.enableCors({
+    //   origin: [
+    //     'https://ishswami.in',
+    //     'https://api.ishswami.in',
+    //     'https://admin.ishswami.in',
+    //     'http://localhost:3000',
+    //     'http://localhost:3001'
+    //   ],
+    //   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    //   credentials: true,
+    // });
 
     // Configure Swagger
     const document = SwaggerModule.createDocument(app, swaggerConfig, {

@@ -187,11 +187,13 @@ model Appointment {
   duration    Int
   status      AppointmentStatus
   notes       String?
-  checkInTime String?
   userId      String
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   therapyId   String?
+  startedAt   DateTime? // When doctor starts the appointment
+  checkedInAt DateTime? // When patient checks in
+  completedAt DateTime? // When appointment is completed
 
   doctor   Doctor         @relation(fields: [doctorId], references: [id])
   patient  Patient        @relation(fields: [patientId], references: [id])
