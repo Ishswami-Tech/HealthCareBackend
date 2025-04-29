@@ -184,18 +184,21 @@ exports.Prisma.LocationScalarFieldEnum = {
 
 exports.Prisma.AppointmentScalarFieldEnum = {
   id: 'id',
-  patientId: 'patientId',
-  doctorId: 'doctorId',
-  locationId: 'locationId',
-  status: 'status',
   type: 'type',
+  doctorId: 'doctorId',
+  patientId: 'patientId',
+  locationId: 'locationId',
   date: 'date',
   time: 'time',
   duration: 'duration',
+  status: 'status',
   notes: 'notes',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  therapyId: 'therapyId'
+  therapyId: 'therapyId',
+  startedAt: 'startedAt',
+  checkedInAt: 'checkedInAt',
+  completedAt: 'completedAt'
 };
 
 exports.Prisma.TherapyScalarFieldEnum = {
@@ -325,6 +328,12 @@ exports.Dosha = exports.$Enums.Dosha = {
   KAPHA: 'KAPHA'
 };
 
+exports.AppointmentType = exports.$Enums.AppointmentType = {
+  IN_PERSON: 'IN_PERSON',
+  VIDEO_CALL: 'VIDEO_CALL',
+  HOME_VISIT: 'HOME_VISIT'
+};
+
 exports.AppointmentStatus = exports.$Enums.AppointmentStatus = {
   PENDING: 'PENDING',
   SCHEDULED: 'SCHEDULED',
@@ -332,12 +341,6 @@ exports.AppointmentStatus = exports.$Enums.AppointmentStatus = {
   CANCELLED: 'CANCELLED',
   COMPLETED: 'COMPLETED',
   NO_SHOW: 'NO_SHOW'
-};
-
-exports.AppointmentType = exports.$Enums.AppointmentType = {
-  IN_PERSON: 'IN_PERSON',
-  VIDEO_CALL: 'VIDEO_CALL',
-  HOME_VISIT: 'HOME_VISIT'
 };
 
 exports.PaymentStatus = exports.$Enums.PaymentStatus = {

@@ -4,186 +4,253 @@ import {
   MessageBody,
   ConnectedSocket,
   WsResponse,
+  OnGatewayInit,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  WebSocketServer,
 } from '@nestjs/websockets';
-import { Socket } from 'socket.io';
+import { Socket, Server } from 'socket.io';
 import { BaseSocket } from '../../../shared/socket/base-socket';
 import { QueueService } from '../../../shared/queue/queue.service';
 import { SocketService } from '../../../shared/socket/socket.service';
-import { Logger } from '@nestjs/common';
-import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
-
-interface QueuePosition {
-  position: number;
-  estimatedWaitTime: number;
-  totalAhead: number;
-}
+import { Logger, Injectable, Inject, OnModuleInit, Optional } from '@nestjs/common';
+import { AppointmentStatus, QueueStatus } from '../../../shared/database/prisma/prisma.types';
+import { AppointmentQueueService } from '../appointment-queue/appointment-queue.service';
+import { PrismaService } from '../../../shared/database/prisma/prisma.service';
+import { AppointmentService } from '../appointments.service';
+import { QueuePosition, LocationQueueStats } from '../../../libs/types/queue.types';
 
 @WebSocketGateway({
+  namespace: '/appointments',
   cors: {
-    origin: '*',
+    origin: ['http://localhost:3000', 'http://localhost:8088', '*'],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['authorization', 'Authorization', 'Content-Type'],
   },
-  namespace: 'appointments',
+  path: '/socket.io',
+  serveClient: false,
   transports: ['websocket', 'polling'],
   pingInterval: 25000,
   pingTimeout: 60000,
 })
-export class AppointmentSocket extends BaseSocket {
-  protected readonly logger = new Logger(AppointmentSocket.name);
-  private readonly userSessions: Map<string, Set<string>> = new Map(); // userId -> Set<socketId>
-  private readonly doctorSessions: Map<string, Set<string>> = new Map(); // doctorId -> Set<socketId>
-  private readonly locationSessions: Map<string, Set<string>> = new Map(); // locationId -> Set<socketId>
-  private readonly queuePositions: Map<string, QueuePosition> = new Map();
+@Injectable()
+export class AppointmentSocket extends BaseSocket implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
+  @WebSocketServer() protected override server: Server;
+  private userSessions: Map<string, string> = new Map();
+  private doctorSessions: Map<string, string> = new Map();
+  private locationSessions: Map<string, string> = new Map();
+  private queuePositions: Map<string, QueuePosition> = new Map();
   private queueUpdateInterval: NodeJS.Timeout;
 
   constructor(
     private readonly queueService: QueueService,
-    protected readonly socketService: SocketService,
+    @Inject('SOCKET_SERVICE') @Optional() protected readonly socketService: SocketService,
+    private readonly appointmentQueueService: AppointmentQueueService,
+    private readonly prisma: PrismaService,
+    private readonly appointmentService: AppointmentService,
   ) {
-    super(socketService, 'Appointment');
+    super(socketService, 'AppointmentSocket');
+    this.logger = new Logger('AppointmentSocket');
   }
 
-  async afterInit() {
+  onModuleInit() {
+    this.initializeQueueUpdates();
+  }
+
+  async afterInit(server: Server): Promise<void> {
+    // Ensure logger is initialized
+    if (!this.logger) {
+      this.logger = new Logger('AppointmentSocket');
+    }
+
     try {
-      if (!this.socketService) {
-        console.error('SocketService is not initialized');
-        return;
+      // Initialize the server first
+      if (!server) {
+        this.logger.error('WebSocket server instance not provided');
+        throw new Error('WebSocket server instance not provided');
       }
-      
-      await super.afterInit();
-      this.logger.log('Appointment Socket initialized');
-      
-      // Start queue position update interval
-      this.queueUpdateInterval = setInterval(async () => {
-        await this.updateAllQueuePositions();
-      }, 30000); // Update every 30 seconds
+
+      this.server = server;
+
+      // Configure Socket.IO server options
+      if (this.server.engine?.opts) {
+        this.server.engine.opts.pingTimeout = 60000;
+        this.server.engine.opts.pingInterval = 25000;
+        this.server.engine.opts.maxHttpBufferSize = 1e8;
+        this.server.engine.opts.transports = ['websocket', 'polling'];
+      }
+
+      // Set up error handling for the server
+      this.server.on('error', (error: Error) => {
+        const errorMessage = error?.message || 'Unknown error';
+        const errorStack = error?.stack || '';
+        this.logger.error(`Socket.IO server error: ${errorMessage}`, errorStack);
+      });
+
+      this.server.on('connection_error', (error: Error) => {
+        const errorMessage = error?.message || 'Unknown error';
+        const errorStack = error?.stack || '';
+        this.logger.error(`Socket.IO connection error: ${errorMessage}`, errorStack);
+      });
+
+      // Initialize SocketService if available
+      if (this.socketService) {
+        try {
+          await this.socketService.setServer(this.server);
+          this.logger.log('SocketService initialized successfully');
+        } catch (error) {
+          this.logger.warn('Failed to initialize SocketService:', error instanceof Error ? error.message : 'Unknown error');
+          this.logger.warn('Continuing with limited functionality');
+        }
+      } else {
+        this.logger.warn('SocketService is not available, continuing with limited functionality');
+      }
+
+      this.logger.log('Appointment WebSocket Gateway initialized');
     } catch (error) {
-      console.error('Error in AppointmentSocket.afterInit:', error);
+      this.logger.error(
+        'Failed to initialize Appointment WebSocket Gateway:',
+        error instanceof Error ? error.stack : error
+      );
+      throw error;
     }
   }
 
-  async handleConnection(client: Socket) {
-    await super.handleConnection(client);
-    
-    // Extract user information from handshake
-    const userId = client.handshake.query.userId as string;
-    const doctorId = client.handshake.query.doctorId as string;
-    const locationId = client.handshake.query.locationId as string;
-    
-    // Store session information
-    if (userId) {
-      if (!this.userSessions.has(userId)) {
-        this.userSessions.set(userId, new Set());
+  async handleConnection(client: Socket): Promise<WsResponse<any>> {
+    try {
+      await super.handleConnection(client);
+      const { userId, userType } = client.handshake.query;
+
+      if (!userId || !userType) {
+        this.logger.warn(`Invalid connection attempt - missing userId or userType`);
+        client.disconnect();
+        return { event: 'error', data: { message: 'Invalid connection data' } };
       }
-      this.userSessions.get(userId).add(client.id);
-      this.logger.debug(`User ${userId} connected with socket ${client.id}`);
+
+      const userRoom = `user:${userId}`;
+      const typeRoom = `${userType}:${userId}`;
+
+      // Join rooms and wait for completion
+      await client.join([userRoom, typeRoom]);
       
-      // Send initial queue position if user has active appointments
-      await this.sendUserQueuePosition(userId);
-    }
-    
-    if (doctorId) {
-      if (!this.doctorSessions.has(doctorId)) {
-        this.doctorSessions.set(doctorId, new Set());
+      if (userType === 'doctor') {
+        this.doctorSessions.set(userId.toString(), client.id);
+        this.logger.log(`Doctor ${userId} connected and joined rooms: ${userRoom}, ${typeRoom}`);
+      } else if (userType === 'patient') {
+        this.userSessions.set(userId.toString(), client.id);
+        this.logger.log(`Patient ${userId} connected and joined rooms: ${userRoom}, ${typeRoom}`);
       }
-      this.doctorSessions.get(doctorId).add(client.id);
-      this.logger.debug(`Doctor ${doctorId} connected with socket ${client.id}`);
-      await this.sendDoctorQueueStatus(doctorId);
-    }
-    
-    if (locationId) {
-      if (!this.locationSessions.has(locationId)) {
-        this.locationSessions.set(locationId, new Set());
-      }
-      this.locationSessions.get(locationId).add(client.id);
-      this.logger.debug(`Location ${locationId} connected with socket ${client.id}`);
-      await this.sendLocationQueueStats(locationId);
+
+      return { 
+        event: 'connection', 
+        data: { 
+          success: true, 
+          userId, 
+          userType,
+          rooms: [userRoom, typeRoom]
+        } 
+      };
+    } catch (error) {
+      this.logger.error(`Error handling connection: ${error.message}`, error.stack);
+      client.disconnect();
+      return { event: 'error', data: { message: 'Internal server error' } };
     }
   }
 
-  handleDisconnect(client: Socket) {
-    super.handleDisconnect(client);
-    
-    // Clean up session information
-    for (const [userId, sessions] of this.userSessions.entries()) {
-      if (sessions.has(client.id)) {
-        sessions.delete(client.id);
-        if (sessions.size === 0) {
-          this.userSessions.delete(userId);
-          this.queuePositions.delete(userId);
-        }
-        this.logger.debug(`User ${userId} disconnected socket ${client.id}`);
+  async handleDisconnect(client: Socket): Promise<void> {
+    try {
+      const { userId, userType } = client.handshake.query;
+
+      if (userType === 'doctor') {
+        this.doctorSessions.delete(userId.toString());
+        this.logger.log(`Doctor ${userId} disconnected`);
+      } else if (userType === 'patient') {
+        this.userSessions.delete(userId.toString());
+        this.logger.log(`Patient ${userId} disconnected`);
       }
-    }
-    
-    for (const [doctorId, sessions] of this.doctorSessions.entries()) {
-      if (sessions.has(client.id)) {
-        sessions.delete(client.id);
-        if (sessions.size === 0) {
-          this.doctorSessions.delete(doctorId);
-        }
-        this.logger.debug(`Doctor ${doctorId} disconnected socket ${client.id}`);
-      }
-    }
-    
-    for (const [locationId, sessions] of this.locationSessions.entries()) {
-      if (sessions.has(client.id)) {
-        sessions.delete(client.id);
-        if (sessions.size === 0) {
-          this.locationSessions.delete(locationId);
-        }
-        this.logger.debug(`Location ${locationId} disconnected socket ${client.id}`);
-      }
+
+      super.handleDisconnect(client);
+    } catch (error) {
+      this.logger.error(`Error handling disconnect: ${error.message}`, error.stack);
     }
   }
 
   @SubscribeMessage('joinUserRoom')
-  handleJoinUserRoom(
+  async handleJoinUserRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string },
-  ) {
+    @MessageBody() data: { userId: string }
+  ): Promise<WsResponse<any>> {
     try {
       const { userId } = data;
       const room = `user:${userId}`;
-      return this.joinRoom(client, room);
+      
+      await this.joinRoom(client, room);
+      this.userSessions.set(userId, client.id);
+      
+      return {
+        event: 'joinUserRoom',
+        data: { success: true, userId }
+      };
     } catch (error) {
       this.logger.error(`Error joining user room: ${error.message}`, error.stack);
-      return { success: false, error: error.message };
+      return {
+        event: 'joinUserRoom',
+        data: { success: false, error: error.message }
+      };
     }
   }
 
   @SubscribeMessage('joinDoctorRoom')
-  handleJoinDoctorRoom(
+  async handleJoinDoctorRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { doctorId: string },
-  ) {
+    @MessageBody() data: { doctorId: string }
+  ): Promise<WsResponse<any>> {
     try {
       const { doctorId } = data;
       const room = `doctor:${doctorId}`;
-      return this.joinRoom(client, room);
+      
+      await this.joinRoom(client, room);
+      this.doctorSessions.set(doctorId, client.id);
+      
+      return {
+        event: 'joinDoctorRoom',
+        data: { success: true, doctorId }
+      };
     } catch (error) {
       this.logger.error(`Error joining doctor room: ${error.message}`, error.stack);
-      return { success: false, error: error.message };
+      return {
+        event: 'joinDoctorRoom',
+        data: { success: false, error: error.message }
+      };
     }
   }
 
   @SubscribeMessage('joinLocationRoom')
   async handleJoinLocationRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { locationId: string },
-  ) {
+    @MessageBody() data: { locationId: string }
+  ): Promise<WsResponse<any>> {
     try {
       const { locationId } = data;
       const room = `location:${locationId}`;
       
-      const result = this.joinRoom(client, room);
+      await this.joinRoom(client, room);
+      this.locationSessions.set(locationId, client.id);
       
       // Send initial queue stats
       await this.sendLocationQueueStats(locationId);
       
-      return result;
+      return {
+        event: 'joinLocationRoom',
+        data: { success: true, locationId }
+      };
     } catch (error) {
       this.logger.error(`Error joining location room: ${error.message}`, error.stack);
-      return { success: false, error: error.message };
+      return {
+        event: 'joinLocationRoom',
+        data: { success: false, error: error.message }
+      };
     }
   }
 
@@ -235,23 +302,20 @@ export class AppointmentSocket extends BaseSocket {
     };
   }
 
-  private async updateAllQueuePositions() {
+  private initializeQueueUpdates(): void {
+    this.queueUpdateInterval = setInterval(() => {
+      this.updateQueuePositions().catch(error => {
+        this.logger.error('Failed to update queue positions:', error);
+      });
+    }, 30000); // Update every 30 seconds
+  }
+
+  private async updateQueuePositions(): Promise<void> {
     try {
-      const activeAppointments = await this.queueService.getActiveAppointments();
+      const locations = Array.from(this.locationSessions.keys());
       
-      for (const appointment of activeAppointments) {
-        const position = await this.calculateQueuePosition(appointment.id);
-        this.queuePositions.set(appointment.id, position);
-        
-        // Emit updates to relevant rooms
-        this.server.to(`queue:${appointment.id}`).emit('queuePosition', position);
-        
-        if (appointment.userId) {
-          this.socketService.sendToUser(appointment.userId, 'queueUpdate', {
-            appointmentId: appointment.id,
-            ...position,
-          });
-        }
+      for (const locationId of locations) {
+        await this.sendLocationQueueStats(locationId);
       }
     } catch (error) {
       this.logger.error(`Error updating queue positions: ${error.message}`, error.stack);
@@ -283,12 +347,14 @@ export class AppointmentSocket extends BaseSocket {
     }
   }
 
-  private async sendLocationQueueStats(locationId: string) {
+  private async sendLocationQueueStats(locationId: string): Promise<void> {
     try {
-      const stats = await this.queueService.getQueueStatsByLocation(locationId, 'appointment');
-      this.socketService.sendToLocation(locationId, 'queueStats', {
-        ...stats,
-        timestamp: new Date().toISOString(),
+      const queueStats = await this.appointmentQueueService.getLocationQueueStats(locationId);
+      const room = `location:${locationId}`;
+      
+      await this.socketService.sendToRoom(room, 'queueUpdate', {
+        locationId,
+        stats: queueStats
       });
     } catch (error) {
       this.logger.error(`Error sending location queue stats: ${error.message}`, error.stack);
@@ -367,48 +433,107 @@ export class AppointmentSocket extends BaseSocket {
   /**
    * Get active sessions for a user
    */
-  getUserSessions(userId: string): Set<string> {
-    return this.userSessions.get(userId) || new Set();
+  getUserSessions(userId: string): string | undefined {
+    return this.userSessions.get(userId);
   }
   
   /**
    * Get active sessions for a doctor
    */
-  getDoctorSessions(doctorId: string): Set<string> {
-    return this.doctorSessions.get(doctorId) || new Set();
+  getDoctorSessions(doctorId: string): string | undefined {
+    return this.doctorSessions.get(doctorId);
   }
   
   /**
    * Get active sessions for a location
    */
-  getLocationSessions(locationId: string): Set<string> {
-    return this.locationSessions.get(locationId) || new Set();
+  getLocationSessions(locationId: string): string | undefined {
+    return this.locationSessions.get(locationId);
   }
   
   /**
    * Check if a user is online
    */
   isUserOnline(userId: string): boolean {
-    return this.userSessions.has(userId) && this.userSessions.get(userId).size > 0;
+    return this.userSessions.has(userId);
   }
   
   /**
    * Check if a doctor is online
    */
   isDoctorOnline(doctorId: string): boolean {
-    return this.doctorSessions.has(doctorId) && this.doctorSessions.get(doctorId).size > 0;
+    return this.doctorSessions.has(doctorId);
   }
   
   /**
    * Check if a location has active connections
    */
   isLocationActive(locationId: string): boolean {
-    return this.locationSessions.has(locationId) && this.locationSessions.get(locationId).size > 0;
+    return this.locationSessions.has(locationId);
   }
 
   onModuleDestroy() {
-    if (this.queueUpdateInterval) {
-      clearInterval(this.queueUpdateInterval);
+    try {
+      if (this.queueUpdateInterval) {
+        clearInterval(this.queueUpdateInterval);
+      }
+    } catch (error) {
+      const errorMessage = error?.message || 'Unknown error';
+      this.logger.error(`Error in onModuleDestroy: ${errorMessage}`);
     }
+  }
+
+  private async handleUserDisconnect(client: Socket): Promise<void> {
+    try {
+      const userId = this.getUserId(client);
+      if (userId) {
+        const room = `user:${userId}`;
+        await this.leaveRoom(client, room);
+        this.userSessions.delete(userId);
+      }
+    } catch (error) {
+      this.logger.error(`Error handling user disconnect: ${error.message}`, error.stack);
+    }
+  }
+
+  private async handleDoctorDisconnect(client: Socket): Promise<void> {
+    try {
+      const doctorId = this.getDoctorId(client);
+      if (doctorId) {
+        const room = `doctor:${doctorId}`;
+        await this.leaveRoom(client, room);
+        this.doctorSessions.delete(doctorId);
+      }
+    } catch (error) {
+      this.logger.error(`Error handling doctor disconnect: ${error.message}`, error.stack);
+    }
+  }
+
+  private async handleLocationDisconnect(client: Socket): Promise<void> {
+    try {
+      const locationId = this.getLocationId(client);
+      if (locationId) {
+        const room = `location:${locationId}`;
+        await this.leaveRoom(client, room);
+        this.locationSessions.delete(locationId);
+      }
+    } catch (error) {
+      this.logger.error(`Error handling location disconnect: ${error.message}`, error.stack);
+    }
+  }
+
+  private getUserId(client: Socket): string | undefined {
+    return Array.from(this.userSessions.entries())
+      .find(([_, socketId]) => socketId === client.id)?.[0];
+  }
+
+  private getDoctorId(client: Socket): string | undefined {
+    return Array.from(this.doctorSessions.entries())
+      .find(([_, socketId]) => socketId === client.id)?.[0];
+  }
+
+  private getLocationId(client: Socket): string | undefined {
+    return Array.from(this.locationSessions.entries())
+      .find(([_, socketId]) => socketId === client.id)?.[0];
   }
 } 

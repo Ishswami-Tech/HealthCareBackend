@@ -5,6 +5,7 @@ import { CacheModule } from './cache/cache.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { QrModule } from './QR/qr.module';
 import { ClinicModule } from '../services/clinic/clinic.module';
+import { SocketModule } from './socket/socket.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { ClinicModule } from '../services/clinic/clinic.module';
     RateLimitModule,
     QrModule,
     forwardRef(() => ClinicModule),
+    SocketModule,
   ],
   exports: [
     PrismaModule,
@@ -22,6 +24,7 @@ import { ClinicModule } from '../services/clinic/clinic.module';
     RateLimitModule,
     QrModule,
     forwardRef(() => ClinicModule),
+    SocketModule,
   ],
 })
 export class SharedModule {} 

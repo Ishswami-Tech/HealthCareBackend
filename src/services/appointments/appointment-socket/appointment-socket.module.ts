@@ -8,6 +8,10 @@ import { JwtModule } from '@nestjs/jwt';
 import { RedisModule } from '../../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 import { GuardsModule } from '../../../libs/guards/guards.module';
+import { AppointmentQueueModule } from '../appointment-queue/appointment-queue.module';
+import { AppointmentService } from '../appointments.service';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { BullModule } from '@nestjs/bull';
 
 @Module({
   imports: [
@@ -15,15 +19,37 @@ import { GuardsModule } from '../../../libs/guards/guards.module';
     PrismaModule,
     SocketModule,
     QueueModule.register(),
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'your-secret-key',
-      signOptions: { expiresIn: '24h' },
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        secret: configService.get('JWT_SECRET'),
+        signOptions: { 
+          expiresIn: configService.get('JWT_EXPIRATION', '24h') 
+        },
+      }),
+      inject: [ConfigService],
+    }),
+    BullModule.registerQueue({
+      name: 'appointment-queue',
+      defaultJobOptions: {
+        removeOnComplete: false,
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 5000,
+        },
+      },
     }),
     RedisModule,
     RateLimitModule,
     GuardsModule,
+    AppointmentQueueModule,
+    ConfigModule,
   ],
-  providers: [AppointmentSocket],
+  providers: [
+    AppointmentSocket,
+    AppointmentService,
+  ],
   exports: [AppointmentSocket],
 })
 export class AppointmentSocketModule {} 
