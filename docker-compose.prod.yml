@@ -38,8 +38,6 @@ services:
           - api
     volumes:
       - ./logs:/app/logs
-      - /etc/ssl/private:/etc/ssl/private:ro
-      - /etc/ssl/certs:/etc/ssl/certs:ro
     depends_on:
       - postgres
       - redis
@@ -66,7 +64,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      - app-network
+      app-network:
+        aliases:
+          - postgres
     deploy:
       resources:
         limits:
@@ -94,7 +94,9 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - app-network
+      app-network:
+        aliases:
+          - redis
     deploy:
       resources:
         limits:
@@ -124,7 +126,9 @@ services:
     depends_on:
       - redis
     networks:
-      - app-network
+      app-network:
+        aliases:
+          - redis-commander
     deploy:
       resources:
         limits:
