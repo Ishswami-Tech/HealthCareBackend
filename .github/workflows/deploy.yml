@@ -191,8 +191,8 @@ jobs:
             echo "Starting containers..."
             DEPLOY_SHA=$DEPLOY_SHA docker compose -f docker-compose.prod.yml up -d
 
-            echo "Waiting for initial service startup (30s)..."
-            sleep 30
+            echo "Waiting for initial service startup (60s)..."
+            sleep 60
 
             # Verify containers are running
             echo "Verifying containers..."
@@ -202,21 +202,9 @@ jobs:
               exit 1
             fi
 
-            if ! docker ps --format '{{.Names}}' | grep -q "latest-redis\|${DEPLOY_SHA}-redis"; then
-              echo "Redis container failed to start"
-              docker compose -f docker-compose.prod.yml logs redis
-              exit 1
-            fi
-
-            if ! docker ps --format '{{.Names}}' | grep -q "latest-api\|${DEPLOY_SHA}-api"; then
-              echo "API container failed to start"
-              docker compose -f docker-compose.prod.yml logs api
-              exit 1
-            fi
-
-            # Wait for services to be healthy
+            # Wait for services to be healthy with increased timeout
             echo "Waiting for services to be healthy..."
-            timeout=360
+            timeout=600
             start_time=$(date +%s)
 
             while true; do
@@ -230,9 +218,9 @@ jobs:
               fi
 
               # Check if all required containers are healthy
-              postgres_healthy=$(docker inspect --format='{{.State.Health.Status}}' "latest-postgres" 2>/dev/null || docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-postgres" 2>/dev/null)
-              redis_healthy=$(docker inspect --format='{{.State.Health.Status}}' "latest-redis" 2>/dev/null || docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-redis" 2>/dev/null)
-              api_healthy=$(docker inspect --format='{{.State.Health.Status}}' "latest-api" 2>/dev/null || docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-api" 2>/dev/null)
+              postgres_healthy=$(docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-postgres" 2>/dev/null)
+              redis_healthy=$(docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-redis" 2>/dev/null)
+              api_healthy=$(docker inspect --format='{{.State.Health.Status}}' "${DEPLOY_SHA}-api" 2>/dev/null)
 
               echo "Health status - Postgres: $postgres_healthy, Redis: $redis_healthy, API: $api_healthy"
 
@@ -241,9 +229,35 @@ jobs:
                 break
               fi
 
+              # Check API logs if service is unhealthy
+              if [ "$api_healthy" = "unhealthy" ]; then
+                echo "API service logs:"
+                docker logs "${DEPLOY_SHA}-api" --tail 100
+              fi
+
               echo "Waiting for services to be healthy... (${elapsed}s elapsed)"
               sleep 10
             done
+
+            # Verify API health with curl
+            echo "Verifying API health..."
+            max_retries=10
+            counter=0
+            while [ $counter -lt $max_retries ]; do
+              if curl -f http://localhost:8088/health; then
+                echo "API is responding correctly"
+                break
+              fi
+              counter=$((counter + 1))
+              echo "Retrying API health check... ($counter/$max_retries)"
+              sleep 5
+            done
+
+            if [ $counter -eq $max_retries ]; then
+              echo "API health check failed after $max_retries attempts"
+              docker compose -f docker-compose.prod.yml logs api
+              exit 1
+            fi
 
             # Setup Nginx configuration
             echo "Setting up Nginx configuration..."
@@ -285,15 +299,6 @@ jobs:
               echo "Nginx configuration updated successfully"
             else
               echo "Nginx configuration test failed"
-              exit 1
-            fi
-
-            # Verify API health
-            echo "Verifying API health..."
-            if curl -f http://localhost:8088/health; then
-              echo "API is responding correctly"
-            else
-              echo "API health check failed"
               exit 1
             fi
 
