@@ -17,7 +17,7 @@ services:
       - .env.production
     environment:
       NODE_ENV: production
-      CORS_ORIGIN: https://ishswami.in
+      CORS_ORIGIN: "*"
       FRONTEND_URL: https://ishswami.in
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/userdb?schema=public
       REDIS_HOST: redis
