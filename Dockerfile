@@ -56,12 +56,15 @@ EXPOSE 8088 5555
 HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=5 \
     CMD curl -k --fail --max-time 30 --retry 3 --retry-delay 5 https://localhost:8088/health || exit 1
 
-# Start script with optimized waiting
+# Start script with optimized waiting and error handling
 CMD ["sh", "-c", "\
-    timeout 60s sh -c 'until nc -z postgres 5432; do sleep 2; done' && \
-    timeout 30s sh -c 'until nc -z redis 6379; do sleep 2; done' && \
+    echo 'Starting application...' && \
+    timeout 60s sh -c 'until nc -z postgres 5432; do echo \"Waiting for PostgreSQL...\"; sleep 2; done' && \
+    timeout 30s sh -c 'until nc -z redis 6379; do echo \"Waiting for Redis...\"; sleep 2; done' && \
+    echo 'Running database migrations...' && \
     npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && \
-    node dist/main"]
+    echo 'Starting Node.js application...' && \
+    node dist/main || { echo 'Application crashed. Check logs for details.'; exit 1; }"]
 
 # Development stage
 FROM node:20-alpine AS development
