@@ -48,7 +48,7 @@ services:
       interval: 30s
       timeout: 30s
       retries: 5
-      start_period: 60s
+      start_period: 120s
 
   postgres:
     image: postgres:latest
@@ -62,6 +62,7 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data/pgdata
+      - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - app-network
     deploy:
@@ -73,7 +74,7 @@ services:
           cpus: '0.25'
           memory: 256M
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -106,6 +107,7 @@ services:
     restart: unless-stopped
     sysctls:
       net.core.somaxconn: 1024
+      vm.overcommit_memory: 1
     ulimits:
       nproc: 65535
       nofile:

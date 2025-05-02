@@ -238,13 +238,15 @@ async function bootstrap() {
 
     // Start the server
     const port = configService.get<number>('PORT', 8088);
-    await app.listen(port, "0.0.0.0");
+    const host = configService.get<string>('HOST', '0.0.0.0');
+    await app.listen(port, host);
     
     // Only log essential information
-    logger.log(`Application is running on: ${await app.getUrl()}`);
-    logger.log(`Swagger documentation is available at: ${await app.getUrl()}/docs`);
-    logger.log(`Bull Board is available at: ${await app.getUrl()}/queue-dashboard`);
-    logger.log(`WebSocket server is available at: ${await app.getUrl()}/socket.io`);
+    const serverUrl = await app.getUrl();
+    logger.log(`Application is running on: http://${host}:${port}`);
+    logger.log(`Swagger documentation is available at: http://${host}:${port}/docs`);
+    logger.log(`Bull Board is available at: http://${host}:${port}/queue-dashboard`);
+    logger.log(`WebSocket server is available at: http://${host}:${port}/socket.io`);
   } catch (error) {
     logger.error('Failed to start application:', error);
     process.exit(1);
