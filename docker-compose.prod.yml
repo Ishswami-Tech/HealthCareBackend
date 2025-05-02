@@ -30,10 +30,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-        timeout: 60s
       redis:
         condition: service_healthy
-        timeout: 30s
     networks:
       - app-network
     restart: unless-stopped
