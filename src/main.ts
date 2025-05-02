@@ -21,35 +21,66 @@ async function bootstrap() {
   try {
     await initDatabase();
 
-    // SSL configuration - check both development and production paths
+    // SSL configuration
     let httpsOptions = undefined;
     const isProduction = process.env.NODE_ENV === 'production';
     
-    // In production, certificates are copied to /etc/nginx/ssl by GitHub Actions
-    const prodKeyPath = '/etc/nginx/ssl/api.ishswami.in.key';
-    const prodCertPath = '/etc/nginx/ssl/api.ishswami.in.crt';
+    // Get SSL paths from environment variables or use defaults
+    const sslKeyPath = process.env.SSL_KEY_PATH || '/app/ssl/api.ishswami.in.key';
+    const sslCertPath = process.env.SSL_CERT_PATH || '/app/ssl/api.ishswami.in.crt';
+
+    logger.log('SSL Configuration:');
+    logger.log(`Environment: ${isProduction ? 'Production' : 'Development'}`);
+    logger.log(`SSL Key Path: ${sslKeyPath}`);
+    logger.log(`SSL Cert Path: ${sslCertPath}`);
+
+    // Check if files exist
+    const keyExists = fs.existsSync(sslKeyPath);
+    const certExists = fs.existsSync(sslCertPath);
     
-    // In development, certificates are in the nginx/ssl directory
-    const devKeyPath = path.join(__dirname, '..', 'nginx', 'ssl', 'ishswami.com.key');
-    const devCertPath = path.join(__dirname, '..', 'nginx', 'ssl', 'ishswami.com.pem');
+    logger.log(`SSL Key exists: ${keyExists}`);
+    logger.log(`SSL Cert exists: ${certExists}`);
 
-    // Use environment variables if provided, otherwise use default paths
-    const sslKeyPath = process.env.SSL_KEY_PATH || (isProduction ? prodKeyPath : devKeyPath);
-    const sslCertPath = process.env.SSL_CERT_PATH || (isProduction ? prodCertPath : devCertPath);
-
-    if (fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
-      httpsOptions = {
-        key: fs.readFileSync(sslKeyPath),
-        cert: fs.readFileSync(sslCertPath),
-      };
-      logger.log(`SSL certificates found at ${sslKeyPath}, enabling HTTPS`);
-      logger.log(`Running in ${isProduction ? 'production' : 'development'} mode`);
+    if (keyExists && certExists) {
+      try {
+        const key = fs.readFileSync(sslKeyPath);
+        const cert = fs.readFileSync(sslCertPath);
+        
+        httpsOptions = { key, cert };
+        logger.log('SSL certificates loaded successfully, enabling HTTPS');
+        
+        // Log certificate details
+        logger.log(`Key file size: ${key.length} bytes`);
+        logger.log(`Cert file size: ${cert.length} bytes`);
+      } catch (error) {
+        logger.error(`Error reading SSL certificates: ${error.message}`);
+        logger.error(error.stack);
+        logger.warn('Falling back to HTTP mode due to SSL read error');
+        
+        // Additional error details
+        if (error.code === 'EACCES') {
+          logger.error('Permission denied. Check file permissions and ownership.');
+        } else if (error.code === 'ENOENT') {
+          logger.error('File not found. Check if SSL files are properly mounted.');
+        }
+      }
     } else {
-      logger.warn(`SSL certificates not found at ${sslKeyPath}, running in HTTP mode`);
-      logger.warn('Expected SSL files at:');
-      logger.warn(`Key: ${sslKeyPath}`);
-      logger.warn(`Cert: ${sslCertPath}`);
-      logger.warn(`Environment: ${isProduction ? 'production' : 'development'}`);
+      logger.warn('SSL certificates not found, running in HTTP mode');
+      if (!keyExists) logger.warn(`Key file not found: ${sslKeyPath}`);
+      if (!certExists) logger.warn(`Cert file not found: ${sslCertPath}`);
+      
+      // Log mounted volumes for debugging
+      try {
+        const sslDir = path.dirname(sslKeyPath);
+        if (fs.existsSync(sslDir)) {
+          const files = fs.readdirSync(sslDir);
+          logger.log(`Contents of ${sslDir}:`, files);
+        } else {
+          logger.warn(`SSL directory ${sslDir} does not exist`);
+        }
+      } catch (error) {
+        logger.error(`Error checking SSL directory: ${error.message}`);
+      }
     }
 
     const app = await NestFactory.create<NestFastifyApplication>(
@@ -75,7 +106,7 @@ async function bootstrap() {
         bodyLimit: 10 * 1024 * 1024, // 10MB
         ignoreTrailingSlash: true,
         disableRequestLogging: false,
-        https: httpsOptions // Will be undefined if certs don't exist
+        https: httpsOptions
       }),
       {
         logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],

@@ -29,6 +29,8 @@ services:
       BIND_ADDRESS: 0.0.0.0
       SOCKET_HOST: 0.0.0.0
       SOCKET_PORT: 8088
+      SSL_KEY_PATH: /app/ssl/api.ishswami.in.key
+      SSL_CERT_PATH: /app/ssl/api.ishswami.in.crt
     expose:
       - "8088"
       - "5555"
@@ -38,6 +40,7 @@ services:
           - api
     volumes:
       - ./logs:/app/logs
+      - /etc/nginx/ssl:/app/ssl:ro
     depends_on:
       - postgres
       - redis
