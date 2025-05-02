@@ -59,7 +59,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: userdb
-      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -73,8 +72,9 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
+    command: ["postgres", "-c", "logging_collector=on", "-c", "log_statement=all", "-c", "log_directory=/var/log/postgresql", "-c", "log_filename=postgresql-%Y-%m-%d_%H%M%S.log"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d userdb"]
+      test: ["CMD-SHELL", "pg_isready"]
       interval: 10s
       timeout: 5s
       retries: 5
