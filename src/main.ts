@@ -43,7 +43,13 @@ async function bootstrap() {
       }),
       {
         logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],
-        bufferLogs: true
+        bufferLogs: true,
+        cors: {
+          origin: '*',
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+          credentials: true
+        }
       }
     );
 
@@ -238,11 +244,17 @@ async function bootstrap() {
 
     // Start the server
     const port = configService.get<number>('PORT', 8088);
-    const host = configService.get<string>('HOST', '0.0.0.0');
-    await app.listen(port, host);
+    const host = '0.0.0.0'; // Force binding to all interfaces
+    
+    await app.listen(port, host, (err, address) => {
+      if (err) {
+        logger.error('Failed to start server:', err);
+        process.exit(1);
+      }
+      logger.log(`Server is listening on ${address}`);
+    });
     
     // Only log essential information
-    const serverUrl = await app.getUrl();
     logger.log(`Application is running on: http://${host}:${port}`);
     logger.log(`Swagger documentation is available at: http://${host}:${port}/docs`);
     logger.log(`Bull Board is available at: http://${host}:${port}/queue-dashboard`);
