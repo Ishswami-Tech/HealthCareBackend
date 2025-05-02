@@ -21,11 +21,36 @@ async function bootstrap() {
   try {
     await initDatabase();
 
-    // SSL configuration
-    const httpsOptions = {
-      key: fs.readFileSync(process.env.SSL_KEY_PATH || '/etc/ssl/private/private.key'),
-      cert: fs.readFileSync(process.env.SSL_CERT_PATH || '/etc/ssl/certs/certificate.crt'),
-    };
+    // SSL configuration - check both development and production paths
+    let httpsOptions = undefined;
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    // In production, certificates are copied to /etc/nginx/ssl by GitHub Actions
+    const prodKeyPath = '/etc/nginx/ssl/api.ishswami.in.key';
+    const prodCertPath = '/etc/nginx/ssl/api.ishswami.in.crt';
+    
+    // In development, certificates are in the nginx/ssl directory
+    const devKeyPath = path.join(__dirname, '..', 'nginx', 'ssl', 'ishswami.com.key');
+    const devCertPath = path.join(__dirname, '..', 'nginx', 'ssl', 'ishswami.com.pem');
+
+    // Use environment variables if provided, otherwise use default paths
+    const sslKeyPath = process.env.SSL_KEY_PATH || (isProduction ? prodKeyPath : devKeyPath);
+    const sslCertPath = process.env.SSL_CERT_PATH || (isProduction ? prodCertPath : devCertPath);
+
+    if (fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
+      httpsOptions = {
+        key: fs.readFileSync(sslKeyPath),
+        cert: fs.readFileSync(sslCertPath),
+      };
+      logger.log(`SSL certificates found at ${sslKeyPath}, enabling HTTPS`);
+      logger.log(`Running in ${isProduction ? 'production' : 'development'} mode`);
+    } else {
+      logger.warn(`SSL certificates not found at ${sslKeyPath}, running in HTTP mode`);
+      logger.warn('Expected SSL files at:');
+      logger.warn(`Key: ${sslKeyPath}`);
+      logger.warn(`Cert: ${sslCertPath}`);
+      logger.warn(`Environment: ${isProduction ? 'production' : 'development'}`);
+    }
 
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
@@ -50,7 +75,7 @@ async function bootstrap() {
         bodyLimit: 10 * 1024 * 1024, // 10MB
         ignoreTrailingSlash: true,
         disableRequestLogging: false,
-        https: httpsOptions // Enable HTTPS
+        https: httpsOptions // Will be undefined if certs don't exist
       }),
       {
         logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],
