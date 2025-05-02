@@ -290,11 +290,16 @@ async function bootstrap() {
     const host = '0.0.0.0'; // Force binding to all interfaces
     
     try {
-      await app.listen(port, host);
-      logger.log(`Server is running on: ${httpsOptions ? 'https' : 'http'}://${host}:${port}`);
-      logger.log(`Swagger documentation is available at: ${httpsOptions ? 'https' : 'http'}://${host}:${port}/docs`);
-      logger.log(`Bull Board is available at: ${httpsOptions ? 'https' : 'http'}://${host}:${port}/queue-dashboard`);
-      logger.log(`WebSocket server is available at: ${httpsOptions ? 'wss' : 'ws'}://${host}:${port}/socket.io`);
+      await app.listen(port, host, () => {
+        const protocol = httpsOptions ? 'https' : 'http';
+        const wsProtocol = httpsOptions ? 'wss' : 'ws';
+        logger.log(`Server is running on: ${protocol}://${host}:${port}`);
+        logger.log(`Swagger documentation is available at: ${protocol}://${host}:${port}/docs`);
+        logger.log(`Bull Board is available at: ${protocol}://${host}:${port}/queue-dashboard`);
+        logger.log(`WebSocket server is available at: ${wsProtocol}://${host}:${port}/socket.io`);
+        logger.log(`Environment: ${process.env.NODE_ENV}`);
+        logger.log(`SSL Enabled: ${!!httpsOptions}`);
+      });
     } catch (error) {
       logger.error('Failed to start server:', error);
       process.exit(1);
