@@ -43,13 +43,14 @@ COPY src/views ./dist/src/views
 # Set environment variables
 ENV NODE_ENV=production \
     PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
-    DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public"
+    DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public" \
+    HOST=0.0.0.0
 
 # Expose ports
 EXPOSE 8088 5555
 
-# Add healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Add healthcheck with increased timeout and start period
+HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
 # Start script with optimized waiting
