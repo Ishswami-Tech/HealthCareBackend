@@ -142,7 +142,8 @@ async function bootstrap() {
         url: `redis://${configService.get('REDIS_HOST', 'localhost')}:${configService.get('REDIS_PORT', '6379')}`,
         password: configService.get('REDIS_PASSWORD'),
         retryStrategy: (times: number) => {
-          const delay = Math.min(times * 50, 2000);
+          const maxDelay = 3000;
+          const delay = Math.min(times * 100, maxDelay);
           logger.log(`Redis reconnection attempt ${times}, delay: ${delay}ms`);
           return delay;
         },
@@ -150,9 +151,14 @@ async function bootstrap() {
           logger.error('Redis reconnection error:', err);
           return true;
         },
-        maxRetriesPerRequest: 3,
+        maxRetriesPerRequest: 5,
         enableReadyCheck: true,
-        commandTimeout: 5000
+        commandTimeout: 10000,
+        connectTimeout: 20000,
+        lazyConnect: true,
+        retryMaxDelay: 3000,
+        maxLoadingRetryTime: 30000,
+        enableOfflineQueue: true
       };
 
       // Create Redis pub/sub clients
@@ -259,7 +265,7 @@ async function bootstrap() {
           styleSrc: [`'self'`, `'unsafe-inline'`],
           imgSrc: [`'self'`, 'data:', 'validator.swagger.io'],
           scriptSrc: [`'self'`, `'unsafe-inline'`, `'unsafe-eval'`],
-          connectSrc: [`'self'`, 'wss://admin.socket.io', 'https://admin.socket.io', 'ws://localhost:*', 'http://localhost:*'],
+          connectSrc: [`'self'`, 'wss://admin.socket.io', 'https://admin.socket.io', 'ws://localhost:*', 'http://localhost:*', 'https://*.ishswami.in', 'wss://*.ishswami.in'],
           fontSrc: [`'self'`, 'data:'],
           objectSrc: [`'none'`],
           mediaSrc: [`'self'`],
@@ -272,7 +278,6 @@ async function bootstrap() {
     // Configure route handling to prevent Bull Board from intercepting other routes
     const fastifyInstance = app.getHttpAdapter().getInstance();
     fastifyInstance.addHook('onRequest', (request, reply, done) => {
-      // Skip Bull Board handling for non-queue routes
       if (!request.url.startsWith('/queue-dashboard')) {
         done();
       } else {
@@ -286,10 +291,10 @@ async function bootstrap() {
     
     try {
       await app.listen(port, host);
-      logger.log(`Server is running on: http://${host}:${port}`);
-      logger.log(`Swagger documentation is available at: http://${host}:${port}/docs`);
-      logger.log(`Bull Board is available at: http://${host}:${port}/queue-dashboard`);
-      logger.log(`WebSocket server is available at: http://${host}:${port}/socket.io`);
+      logger.log(`Server is running on: ${httpsOptions ? 'https' : 'http'}://${host}:${port}`);
+      logger.log(`Swagger documentation is available at: ${httpsOptions ? 'https' : 'http'}://${host}:${port}/docs`);
+      logger.log(`Bull Board is available at: ${httpsOptions ? 'https' : 'http'}://${host}:${port}/queue-dashboard`);
+      logger.log(`WebSocket server is available at: ${httpsOptions ? 'wss' : 'ws'}://${host}:${port}/socket.io`);
     } catch (error) {
       logger.error('Failed to start server:', error);
       process.exit(1);

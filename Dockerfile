@@ -22,10 +22,13 @@ RUN npm run build
 FROM node:20-alpine AS production
 
 # Install necessary tools in a single layer
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ curl && \
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ curl openssl ca-certificates && \
     rm -rf /var/cache/apk/*
 
 WORKDIR /app
+
+# Create SSL directory
+RUN mkdir -p /app/ssl && chmod 755 /app/ssl
 
 # Copy package files and install production dependencies
 COPY package*.json ./
@@ -50,12 +53,13 @@ ENV NODE_ENV=production \
 EXPOSE 8088 5555
 
 # Add healthcheck with increased timeout and start period
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -k --fail --max-time 10 https://localhost:8088/health || exit 1
+HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=5 \
+    CMD curl -k --fail --max-time 30 --retry 3 --retry-delay 5 https://localhost:8088/health || exit 1
 
 # Start script with optimized waiting
 CMD ["sh", "-c", "\
-    timeout 60s sh -c 'until nc -z postgres 5432; do sleep 1; done' && \
+    timeout 60s sh -c 'until nc -z postgres 5432; do sleep 2; done' && \
+    timeout 30s sh -c 'until nc -z redis 6379; do sleep 2; done' && \
     npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && \
     node dist/main"]
 

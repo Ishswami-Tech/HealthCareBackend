@@ -46,11 +46,11 @@ services:
       - redis
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-k", "--fail", "--max-time", "10", "https://localhost:8088/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      test: ["CMD", "curl", "-k", "--fail", "--max-time", "30", "--retry", "3", "--retry-delay", "5", "https://localhost:8088/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
     deploy:
       resources:
         limits:
