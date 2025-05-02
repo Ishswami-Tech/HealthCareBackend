@@ -45,10 +45,12 @@ async function bootstrap() {
         logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],
         bufferLogs: true,
         cors: {
-          origin: '*',
+          origin: '*', // Allow all origins temporarily
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-          credentials: true
+          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'authorization'],
+          credentials: true,
+          preflightContinue: false,
+          optionsSuccessStatus: 204
         }
       }
     );
@@ -199,37 +201,6 @@ async function bootstrap() {
         },
       }
     });
-
-    // Configure CORS
-    await app.enableCors({
-      origin: '*', // Allow all origins temporarily
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      credentials: true,
-    });
-
-    // Production CORS configuration (inmented for now)
-    // await app.enableCors({
-    //   origin: [
-    //     'https://ishswami.in',
-    //     'https://api.ishswami.in',
-    //     'https://admin.ishswami.in',
-    //     'http://localhost:3000',
-    //     'http://localhost:3001'
-    //   ],
-    //   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    //   credentials: true,
-    // });
-
-    // Configure Swagger
-    const document = SwaggerModule.createDocument(app, swaggerConfig, {
-      deepScanRoutes: true,
-      operationIdFactory: (
-        controllerKey: string,
-        methodKey: string
-      ) => methodKey
-    });
-
-    SwaggerModule.setup("docs", app, document, swaggerCustomOptions);
 
     // Configure route handling to prevent Bull Board from intercepting other routes
     const fastifyInstance = app.getHttpAdapter().getInstance();
