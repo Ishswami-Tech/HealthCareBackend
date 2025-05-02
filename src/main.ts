@@ -12,12 +12,20 @@ import fastifyHelmet from '@fastify/helmet';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
+import * as fs from 'fs';
+import * as path from 'path';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   
   try {
     await initDatabase();
+
+    // SSL configuration
+    const httpsOptions = {
+      key: fs.readFileSync(process.env.SSL_KEY_PATH || '/etc/ssl/private/private.key'),
+      cert: fs.readFileSync(process.env.SSL_CERT_PATH || '/etc/ssl/certs/certificate.crt'),
+    };
 
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
@@ -40,6 +48,9 @@ async function bootstrap() {
         },
         trustProxy: true,
         bodyLimit: 10 * 1024 * 1024, // 10MB
+        ignoreTrailingSlash: true,
+        disableRequestLogging: false,
+        https: httpsOptions // Enable HTTPS
       }),
       {
         logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],

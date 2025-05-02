@@ -29,13 +29,20 @@ services:
       BIND_ADDRESS: 0.0.0.0
       SOCKET_HOST: 0.0.0.0
       SOCKET_PORT: 8088
+    expose:
+      - "8088"
+      - "5555"
+    networks:
+      app-network:
+        aliases:
+          - api
     volumes:
       - ./logs:/app/logs
+      - /etc/ssl/private:/etc/ssl/private:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
     depends_on:
       - postgres
       - redis
-    networks:
-      - app-network
     restart: unless-stopped
     deploy:
       resources:
