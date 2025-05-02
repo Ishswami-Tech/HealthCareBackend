@@ -25,6 +25,10 @@ services:
       TRUST_PROXY: 1
       PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
       HOST: 0.0.0.0
+      PORT: 8088
+      BIND_ADDRESS: 0.0.0.0
+      SOCKET_HOST: 0.0.0.0
+      SOCKET_PORT: 8088
     volumes:
       - ./logs:/app/logs
     depends_on:
