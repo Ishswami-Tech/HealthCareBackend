@@ -22,7 +22,7 @@ RUN npm run build
 FROM node:20-alpine AS production
 
 # Install necessary tools in a single layer
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ && \
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ curl && \
     rm -rf /var/cache/apk/*
 
 WORKDIR /app
@@ -50,8 +50,8 @@ ENV NODE_ENV=production \
 EXPOSE 8088 5555
 
 # Add healthcheck with increased timeout and start period
-HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -k --fail --max-time 10 https://localhost:8088/health || exit 1
 
 # Start script with optimized waiting
 CMD ["sh", "-c", "\
