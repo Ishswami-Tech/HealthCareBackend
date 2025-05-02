@@ -30,8 +30,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        timeout: 60s
       redis:
         condition: service_healthy
+        timeout: 30s
     networks:
       - app-network
     restart: unless-stopped
@@ -59,6 +61,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: userdb
+      POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -72,14 +75,14 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-    command: ["postgres", "-c", "logging_collector=on", "-c", "log_statement=all", "-c", "log_directory=/var/log/postgresql", "-c", "log_filename=postgresql-%Y-%m-%d_%H%M%S.log"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 20
+      start_period: 60s
     restart: unless-stopped
+    shm_size: 128mb
 
   redis:
     image: redis:latest
