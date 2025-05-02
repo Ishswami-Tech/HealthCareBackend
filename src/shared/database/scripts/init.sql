@@ -1,9 +1,3 @@
--- Create the database if it doesn't exist
-CREATE DATABASE userdb;
-
--- Connect to the database
-\c userdb;
-
 -- Create the public schema if it doesn't exist
 CREATE SCHEMA IF NOT EXISTS public;
 
