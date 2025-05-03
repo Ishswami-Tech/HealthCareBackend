@@ -331,12 +331,29 @@ jobs:
 
             # Verify network connectivity after containers are healthy
             echo "Verifying network connectivity..."
+            # Wait a bit for network connections to be established
+            sleep 10
+
+            # Check if containers are in the network
             if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
               echo "Error: API container not found in network $NETWORK_NAME"
               echo "Network details:"
               docker network inspect $NETWORK_NAME
               echo "Container details:"
               docker ps -a
+              echo "Container network details:"
+              docker inspect latest-api | grep -A 10 "Networks"
+              exit 1
+            fi
+
+            # Verify container-to-container communication
+            echo "Verifying container-to-container communication..."
+            if ! docker exec latest-api ping -c 1 postgres > /dev/null 2>&1; then
+              echo "Error: API container cannot reach postgres container"
+              exit 1
+            fi
+            if ! docker exec latest-api ping -c 1 redis > /dev/null 2>&1; then
+              echo "Error: API container cannot reach redis container"
               exit 1
             fi
 
