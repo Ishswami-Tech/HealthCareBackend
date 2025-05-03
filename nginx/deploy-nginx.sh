@@ -67,7 +67,12 @@ sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 echo -e "${YELLOW}Updating network configuration...${NC}"
 for conf_file in $NGINX_CONF_DIR/*.conf; do
     if [ -f "$conf_file" ]; then
-        sudo sed -i "s/\${NETWORK_NAME}/$NETWORK_NAME/g" "$conf_file"
+        # Escape network name for sed
+        ESCAPED_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/[\/&]/\\&/g' | sed 's/\./\\./g' | sed 's/-/\\-/g')
+        if ! sudo sed -i "s/\${NETWORK_NAME}/$ESCAPED_NETWORK_NAME/g" "$conf_file"; then
+            echo -e "${RED}Error: Failed to update $conf_file${NC}"
+            exit 1
+        fi
     fi
 done
 
