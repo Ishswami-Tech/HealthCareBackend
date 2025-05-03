@@ -13,6 +13,7 @@ API_DOMAIN="api.ishswami.in"
 NGINX_CONF_DIR="/etc/nginx/conf.d"
 DEPLOY_PATH="/var/www/healthcare"
 SSL_DIR="/etc/nginx/ssl"
+NETWORK_NAME="${NETWORK_NAME:-app-network}"
 
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
@@ -61,6 +62,14 @@ sudo chmod 755 $SSL_DIR
 # Copy Nginx configurations
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
 sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
+
+# Update network name in Nginx configuration
+echo -e "${YELLOW}Updating network configuration...${NC}"
+for conf_file in $NGINX_CONF_DIR/*.conf; do
+    if [ -f "$conf_file" ]; then
+        sudo sed -i "s/\${NETWORK_NAME}/$NETWORK_NAME/g" "$conf_file"
+    fi
+done
 
 # Test Nginx configuration
 echo -e "${YELLOW}Testing Nginx configuration...${NC}"
