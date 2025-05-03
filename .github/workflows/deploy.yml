@@ -352,20 +352,24 @@ jobs:
               # Enable Node.js debugging and profiling
               echo "Enabling Node.js debugging and profiling..."
               docker exec latest-api sh -c 'kill -SIGUSR1 $(pgrep -f "node.*main")'
-              docker exec latest-api sh -c 'node --inspect-brk=0.0.0.0:9229 --prof --trace-warnings --trace-sync-io dist/main > /tmp/node-debug.log 2>&1 &'
+              docker exec latest-api sh -c 'node --inspect-brk=0.0.0.0:9229 --prof --trace-warnings --trace-sync-io --trace-event-categories node,node.async_hooks dist/main > /tmp/node-debug.log 2>&1 &'
               
               # Check for memory leaks
               echo "Checking for memory leaks..."
-              docker exec latest-api sh -c 'node --heapsnapshot --trace-warnings dist/main > /tmp/node-heap.log 2>&1 &'
+              docker exec latest-api sh -c 'node --heapsnapshot --trace-warnings --trace-event-categories node,node.async_hooks dist/main > /tmp/node-heap.log 2>&1 &'
               
               # Check application code
               echo "Checking application code..."
-              docker exec latest-api sh -c 'node --check dist/main > /tmp/node-check.log 2>&1'
-              docker exec latest-api sh -c 'node --trace-deprecation dist/main > /tmp/node-deprecation.log 2>&1'
+              docker exec latest-api sh -c 'node --check --trace-warnings --trace-event-categories node,node.async_hooks dist/main > /tmp/node-check.log 2>&1'
+              docker exec latest-api sh -c 'node --trace-deprecation --trace-event-categories node,node.async_hooks dist/main > /tmp/node-deprecation.log 2>&1'
+              
+              # Check event loop
+              echo "Checking event loop..."
+              docker exec latest-api sh -c 'node --trace-event-categories node,node.async_hooks --trace-warnings --trace-sync-io dist/main > /tmp/node-eventloop.log 2>&1 &'
               
               # Check for infinite loops
               echo "Checking for infinite loops..."
-              docker exec latest-api sh -c 'node --trace-warnings --trace-sync-io dist/main > /tmp/node-trace.log 2>&1 &'
+              docker exec latest-api sh -c 'node --trace-warnings --trace-sync-io --trace-event-categories node,node.async_hooks dist/main > /tmp/node-trace.log 2>&1 &'
               
               # Check if port is listening
               echo "Checking if port 8088 is listening..."
@@ -393,6 +397,7 @@ jobs:
                   docker exec latest-api cat /tmp/node-trace.log
                   docker exec latest-api cat /tmp/node-check.log
                   docker exec latest-api cat /tmp/node-deprecation.log
+                  docker exec latest-api cat /tmp/node-eventloop.log
                   sleep 20
                   attempt=$((attempt + 1))
                   continue
@@ -432,6 +437,7 @@ jobs:
                 docker exec latest-api cat /tmp/node-trace.log
                 docker exec latest-api cat /tmp/node-check.log
                 docker exec latest-api cat /tmp/node-deprecation.log
+                docker exec latest-api cat /tmp/node-eventloop.log
                 
                 exit 1
               fi
@@ -490,6 +496,7 @@ jobs:
                   docker exec latest-api cat /tmp/node-trace.log
                   docker exec latest-api cat /tmp/node-check.log
                   docker exec latest-api cat /tmp/node-deprecation.log
+                  docker exec latest-api cat /tmp/node-eventloop.log
                 fi
               else
                 echo "API is not healthy from within container"
@@ -523,6 +530,7 @@ jobs:
                 docker exec latest-api cat /tmp/node-trace.log
                 docker exec latest-api cat /tmp/node-check.log
                 docker exec latest-api cat /tmp/node-deprecation.log
+                docker exec latest-api cat /tmp/node-eventloop.log
               fi
               
               sleep 10
@@ -565,6 +573,7 @@ jobs:
               docker exec latest-api cat /tmp/node-trace.log
               docker exec latest-api cat /tmp/node-check.log
               docker exec latest-api cat /tmp/node-deprecation.log
+              docker exec latest-api cat /tmp/node-eventloop.log
               
               exit 1
             fi
