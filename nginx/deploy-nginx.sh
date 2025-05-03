@@ -13,6 +13,7 @@ API_DOMAIN="api.ishswami.in"
 NGINX_CONF_DIR="/etc/nginx/conf.d"
 DEPLOY_PATH="/var/www/healthcare"
 SSL_DIR="/etc/nginx/ssl"
+NETWORK_NAME=${NETWORK_NAME:-app-network}
 
 # Function to check API health
 check_api_health() {
@@ -40,7 +41,40 @@ check_api_health() {
     return 1
 }
 
+# Function to wait for container readiness
+wait_for_container() {
+    local container_name=$1
+    local max_attempts=30
+    local attempt=1
+    local wait_time=10
+
+    echo -e "${YELLOW}Waiting for container $container_name to be ready...${NC}"
+    
+    while [ $attempt -le $max_attempts ]; do
+        if docker ps --filter "name=$container_name" --format "{{.Status}}" | grep -q "healthy"; then
+            echo -e "${GREEN}Container $container_name is healthy${NC}"
+            return 0
+        fi
+        echo -e "${YELLOW}Attempt $attempt/$max_attempts: Container $container_name not ready yet...${NC}"
+        sleep $wait_time
+        attempt=$((attempt + 1))
+    done
+
+    echo -e "${RED}Container $container_name failed to become healthy${NC}"
+    return 1
+}
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
+
+# Verify Docker network exists
+echo -e "${YELLOW}Verifying Docker network...${NC}"
+if ! docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Creating Docker network ${NETWORK_NAME}...${NC}"
+    docker network create "${NETWORK_NAME}" || {
+        echo -e "${RED}Failed to create Docker network${NC}"
+        exit 1
+    }
+fi
 
 # Create deployment directories if they don't exist
 echo -e "${YELLOW}Creating deployment directories...${NC}"
@@ -80,6 +114,16 @@ sudo chmod -R 755 $DEPLOY_PATH
 sudo chown -R root:root $SSL_DIR
 sudo chmod 755 $SSL_DIR
 
+# Update network name in configuration files
+echo -e "${YELLOW}Updating network name in configuration files...${NC}"
+for file in conf.d/*.conf; do
+    if [ -f "$file" ]; then
+        echo "Updating network name in $file"
+        sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
+        sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
+    fi
+done
+
 # Copy Nginx configurations
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
 sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
@@ -111,6 +155,12 @@ else
     exit 1
 fi
 
+# Wait for containers to be ready
+echo -e "${YELLOW}Waiting for containers to be ready...${NC}"
+wait_for_container "latest-postgres" || exit 1
+wait_for_container "latest-redis" || exit 1
+wait_for_container "latest-api" || exit 1
+
 # Check API health from different perspectives
 echo -e "${YELLOW}Performing comprehensive API health checks...${NC}"
 
@@ -139,9 +189,15 @@ if ! curl -k -s -o /dev/null -w "%{http_code}" https://api.ishswami.in/socket.io
     echo -e "${YELLOW}Warning: WebSocket endpoint might not be accessible${NC}"
 fi
 
-# 5. Print container status
-echo -e "${YELLOW}Current container status:${NC}"
-docker ps
+# Print detailed container information
+echo -e "${YELLOW}Container Details:${NC}"
+echo "1. API Container:"
+docker inspect latest-api --format "ID: {{.Id}}\nNetwork: {{range \$k, \$v := .NetworkSettings.Networks}}{{printf \"%s: %s\\n\" \$k \$v.IPAddress}}{{end}}Status: {{.State.Status}}\nHealth: {{.State.Health.Status}}"
+
+echo "2. Network Information:"
+docker network inspect "${NETWORK_NAME}"
+
+echo "3. Container Logs:"
 docker logs latest-api --tail 50
 
 echo -e "${GREEN}Deployment completed successfully!${NC}"
