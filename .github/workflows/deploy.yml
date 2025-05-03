@@ -310,7 +310,7 @@ jobs:
               
               # Install necessary tools in the container
               echo "Installing necessary tools..."
-              docker exec latest-api apk add --no-cache curl net-tools
+              docker exec latest-api apk add --no-cache curl net-tools lsof
               
               # Check if API process is running
               echo "Checking API process..."
@@ -322,6 +322,11 @@ jobs:
                 docker logs latest-api
                 exit 1
               fi
+              
+              # Get detailed process information
+              echo "Getting detailed process information..."
+              docker exec latest-api ps aux | grep "node.*main"
+              docker exec latest-api lsof -i :8088
               
               # Check if port is listening
               echo "Checking if port 8088 is listening..."
@@ -337,6 +342,10 @@ jobs:
                   echo "API might still be starting up, waiting..."
                   echo "Current API logs:"
                   docker logs latest-api
+                  echo "Checking API process state:"
+                  docker exec latest-api ps aux | grep "node.*main"
+                  echo "Checking open files:"
+                  docker exec latest-api lsof -p $(docker exec latest-api pgrep -f "node.*main")
                   sleep 20
                   attempt=$((attempt + 1))
                   continue
@@ -362,12 +371,17 @@ jobs:
                 echo "API startup logs:"
                 docker exec latest-api cat /app/logs/startup.log 2>/dev/null || echo "No startup logs found"
                 
+                # Check API process state
+                echo "API process state:"
+                docker exec latest-api ps aux | grep "node.*main"
+                docker exec latest-api lsof -p $(docker exec latest-api pgrep -f "node.*main")
+                
                 exit 1
               fi
               
-              # Check API health using curl with verbose output
+              # Check API health using curl with verbose output and timeout
               echo "Checking API health..."
-              container_response=$(docker exec latest-api curl -v http://localhost:8088/health 2>&1)
+              container_response=$(docker exec latest-api curl -v --connect-timeout 5 --max-time 10 http://localhost:8088/health 2>&1)
               container_status=$?
               
               if [ $container_status -eq 0 ] && echo "$container_response" | grep -q "ok"; then
@@ -376,7 +390,7 @@ jobs:
                 
                 # Now try external access
                 echo "Testing external access..."
-                external_response=$(curl -v http://0.0.0.0:8088/health 2>&1)
+                external_response=$(curl -v --connect-timeout 5 --max-time 10 http://0.0.0.0:8088/health 2>&1)
                 external_status=$?
                 
                 if [ $external_status -eq 0 ] && echo "$external_response" | grep -q "ok"; then
@@ -390,7 +404,7 @@ jobs:
                   
                   # Check network configuration
                   echo "Checking network configuration..."
-                  docker network inspect a1932f7b85a89286f858b5cfc661de229e108911_app-network
+                  docker network inspect 16a5b06b85a89286f858b5cfc661de229e108911_app-network
                   docker inspect latest-api
                   
                   # Check container network settings
@@ -450,7 +464,7 @@ jobs:
               docker logs latest-api
               
               echo "Network configuration:"
-              docker network inspect a1932f7b85a89286f858b5cfc661de229e108911_app-network
+              docker network inspect 16a5b06b85a89286f858b5cfc661de229e108911_app-network
               
               echo "API container details:"
               docker inspect latest-api
