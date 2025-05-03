@@ -15,7 +15,7 @@ env:
   FRONTEND_DOMAIN: ishswami.in
 
 jobs:
-  deploy:
+  build-check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -23,14 +23,118 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Check Docker Build
+        run: |
+          echo "Running Docker build with progress output..."
+          docker buildx build \
+            --progress=plain \
+            --load \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:test \
+            .
+
+          echo "Verifying image..."
+          if ! docker image inspect ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:test >/dev/null 2>&1; then
+            echo "Failed to build Docker image"
+            exit 1
+          fi
+
+  pre-deploy-check:
+    needs: build-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Domain DNS
+        run: |
+          echo "Checking DNS for ${{ env.DOMAIN }}..."
+          if ! nslookup ${{ env.DOMAIN }} > /dev/null 2>&1; then
+            echo "Warning: Domain ${{ env.DOMAIN }} DNS resolution failed"
+            exit 1
+          fi
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
+
+          # Test SSH connection
+          if ! ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ env.SERVER_IP }} "echo 'SSH connection successful'"; then
+            echo "SSH connection failed"
+            exit 1
+          fi
+
+      - name: Verify Server Connectivity
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Check system resources
+            echo "Checking system resources..."
+            df -h
+            free -m
+            docker system df
+
+            # Verify Docker status
+            if ! docker info > /dev/null 2>&1; then
+              echo "Docker is not running!"
+              exit 1
+            fi
+
+            # Check required ports
+            echo "Checking required ports..."
+            for port in 80 443 8088 5432 6379; do
+              if netstat -tuln | grep -q ":$port "; then
+                echo "Port $port is in use"
+              fi
+            done
+
+            # Verify SSL directory
+            echo "Checking SSL configuration..."
+            if [ ! -d "/etc/nginx/ssl" ]; then
+              mkdir -p /etc/nginx/ssl
+              chmod 755 /etc/nginx/ssl
+            fi
+
+            # Check Nginx installation
+            if ! command -v nginx > /dev/null 2>&1; then
+              echo "Nginx not installed. Installing..."
+              apt-get update && apt-get install -y nginx
+            fi
+
+  deploy:
+    needs: [build-check, pre-deploy-check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup SSH for Git
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker images
         uses: docker/build-push-action@v4
@@ -49,7 +153,6 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script_stop: true
           envs: GITHUB_SHA
           script: |
             set -e
@@ -64,16 +167,29 @@ jobs:
             mkdir -p $RELEASE_DIR
             cd $RELEASE_DIR
 
-            # Clone repository
-            git clone git@github.com:${{ github.repository }}.git .
+            # Copy repository files directly
+            echo "Copying repository files..."
+            rsync -av --delete /tmp/repo/ ./
 
-            # Copy SSL certificates
+            # Setup SSL certificates
+            echo "Setting up SSL certificates..."
+            mkdir -p ssl
             cp /etc/nginx/ssl/${{ env.DOMAIN }}.* ssl/
+            chmod 644 ssl/${{ env.DOMAIN }}.crt
+            chmod 600 ssl/${{ env.DOMAIN }}.key
 
             # Set deployment SHA in environment
             export DEPLOY_SHA=$GITHUB_SHA
 
+            # Stop any existing containers
+            if [ -d "../current" ]; then
+              cd ../current
+              docker compose -f docker-compose.prod.yml down || true
+              cd ../$RELEASE_DIR
+            fi
+
             # Pull and start containers using .env.production
+            echo "Starting containers..."
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 
@@ -94,10 +210,6 @@ jobs:
               exit 1
             fi
 
-            # Deploy Nginx configuration
-            cd nginx
-            bash deploy-nginx.sh
-
             # Update current symlink
             cd ${{ env.DEPLOY_PATH }}
             ln -sfn $RELEASE_DIR current
@@ -117,17 +229,54 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script_stop: true
           script: |
-            # Verify Nginx configuration
-            nginx -t
+            echo "Running comprehensive deployment verification..."
 
-            # Check application health
-            curl -k -s https://${{ env.DOMAIN }}/health
+            # Verify Nginx configuration and service
+            echo "Checking Nginx..."
+            nginx -t
+            systemctl is-active --quiet nginx || (echo "Nginx is not running" && exit 1)
 
             # Check SSL certificates
-            openssl x509 -noout -dates -in /etc/nginx/ssl/${{ env.DOMAIN }}.crt
+            echo "Checking SSL certificates..."
+            if ! openssl x509 -noout -dates -in /etc/nginx/ssl/${{ env.DOMAIN }}.crt; then
+              echo "SSL certificate verification failed"
+              exit 1
+            fi
 
-            # Check container status
-            docker ps | grep ${{ github.sha }}
+            # Verify domain resolution
+            echo "Verifying domain resolution..."
+            if ! curl -k -I https://${{ env.DOMAIN }} 2>/dev/null | grep -q "HTTP/"; then
+              echo "Domain is not accessible"
+              exit 1
+            fi
+
+            # Check API health endpoint
+            echo "Checking API health..."
+            if ! curl -k -s https://${{ env.DOMAIN }}/health | grep -q "ok"; then
+              echo "API health check failed"
+              exit 1
+            fi
+
+            # Verify all containers are running
+            echo "Verifying containers..."
+            CONTAINERS="api postgres redis"
+            for container in $CONTAINERS; do
+              if ! docker ps | grep -q "${DEPLOY_SHA:-latest}-$container"; then
+                echo "Container $container is not running"
+                exit 1
+              fi
+            done
+
+            # Check container logs for errors
+            echo "Checking container logs..."
+            for container in $CONTAINERS; do
+              if docker logs ${DEPLOY_SHA:-latest}-$container 2>&1 | grep -i "error"; then
+                echo "Found errors in $container logs"
+                docker logs ${DEPLOY_SHA:-latest}-$container
+              fi
+            done
+
+            echo "All verification checks passed successfully!"
 
   rollback:
     needs: deploy
