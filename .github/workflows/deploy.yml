@@ -319,33 +319,59 @@ jobs:
             # Deploy Nginx configuration
             echo "Deploying Nginx configuration..."
             cd nginx
-            chmod +x deploy-nginx.sh
 
-            # Update Nginx configuration to use correct container name
-            echo "Updating Nginx configuration..."
-            sed -i 's/upstream api {.*}/upstream api {\n    server latest-api:8088;\n}/' /etc/nginx/conf.d/api.conf
-            sed -i 's/upstream redis-commander {.*}/upstream redis-commander {\n    server latest-redis-commander:8082;\n}/' /etc/nginx/conf.d/redis-commander.conf
-
-            # Add Docker DNS resolution
-            echo "Adding Docker DNS resolution..."
-            if ! grep -q "resolver 127.0.0.11" /etc/nginx/nginx.conf; then
-                sed -i '/http {/a \    resolver 127.0.0.11 valid=30s;' /etc/nginx/nginx.conf
+            # Get the current Docker network name
+            NETWORK_NAME=$(docker network ls --filter name=app-network --format '{{.Name}}')
+            if [ -z "$NETWORK_NAME" ]; then
+              echo "Error: Could not find app-network"
+              exit 1
             fi
 
+            # Update Nginx configuration with correct network name
+            sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" deploy-nginx.sh
+            sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" nginx.conf
+            sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" conf.d/api.conf
+
+            chmod +x deploy-nginx.sh
             ./deploy-nginx.sh
 
-            # Test Nginx configuration
-            echo "Testing Nginx configuration..."
+            # Verify Nginx configuration
+            echo "Verifying Nginx configuration..."
             if ! nginx -t; then
-                echo "Error: Nginx configuration test failed"
-                cat /etc/nginx/conf.d/api.conf
-                cat /etc/nginx/nginx.conf
-                exit 1
+              echo "Error: Nginx configuration test failed"
+              echo "Nginx error log:"
+              cat /var/log/nginx/error.log
+              exit 1
+            fi
+
+            # Verify Docker network connectivity
+            echo "Verifying Docker network connectivity..."
+            if ! docker network inspect $NETWORK_NAME > /dev/null 2>&1; then
+              echo "Error: Docker network $NETWORK_NAME not found"
+              exit 1
+            fi
+
+            # Check if API container is in the network
+            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
+              echo "Error: API container not found in network $NETWORK_NAME"
+              exit 1
             fi
 
             # Restart Nginx
             echo "Restarting Nginx..."
             systemctl restart nginx
+
+            # Wait for Nginx to start
+            echo "Waiting for Nginx to start..."
+            sleep 5
+            if ! systemctl is-active --quiet nginx; then
+              echo "Error: Nginx failed to start"
+              echo "Nginx status:"
+              systemctl status nginx
+              echo "Nginx error log:"
+              cat /var/log/nginx/error.log
+              exit 1
+            fi
 
             # Test SSL connection
             echo "Testing SSL connection..."
