@@ -7,6 +7,7 @@ services:
       target: production
       args:
         - BUILDKIT_INLINE_CACHE=1
+        - NPM_VERSION=11.3.0
       cache_from:
         - type=registry,ref=node:20-alpine
     container_name: ${DEPLOY_SHA:-latest}-api
@@ -31,6 +32,7 @@ services:
       SOCKET_PORT: 8088
       SSL_KEY_PATH: /app/ssl/api.ishswami.in.key
       SSL_CERT_PATH: /app/ssl/api.ishswami.in.crt
+      NPM_CONFIG_LOGLEVEL: error
     expose:
       - "8088"
       - "5555"
@@ -42,8 +44,10 @@ services:
       - ./logs:/app/logs
       - /app/ssl:/app/ssl:ro
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: [
