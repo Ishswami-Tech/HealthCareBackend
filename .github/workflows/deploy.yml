@@ -308,9 +308,14 @@ jobs:
                 exit 1
               fi
               
-              # Check API health from within the container using wget
-              echo "Checking API health from within container..."
-              container_response=$(docker exec latest-api wget -qO- --no-check-certificate http://localhost:8088/health)
+              # Check network connectivity
+              echo "Checking network connectivity..."
+              docker exec latest-api ping -c 1 8.8.8.8
+              docker exec latest-api nc -zv localhost 8088
+              
+              # Check API health using netcat
+              echo "Checking API health using netcat..."
+              container_response=$(docker exec latest-api sh -c 'echo -e "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n" | nc localhost 8088')
               container_status=$?
               
               if [ $container_status -eq 0 ] && echo "$container_response" | grep -q "ok"; then
@@ -319,7 +324,7 @@ jobs:
                 
                 # Now try external access
                 echo "Testing external access..."
-                external_response=$(wget -qO- --no-check-certificate --timeout=5 --tries=3 https://0.0.0.0:8088/health)
+                external_response=$(echo -e "GET /health HTTP/1.1\r\nHost: 0.0.0.0\r\n\r\n" | nc 0.0.0.0 8088)
                 external_status=$?
                 
                 if [ $external_status -eq 0 ] && echo "$external_response" | grep -q "ok"; then
@@ -335,6 +340,11 @@ jobs:
                   echo "Checking network configuration..."
                   docker network inspect 5bf108d4e0b2e7a7048ad6a6b3b7eeb65935e8a6_app-network
                   docker inspect latest-api
+                  
+                  # Check container network settings
+                  echo "Checking container network settings..."
+                  docker exec latest-api ip addr
+                  docker exec latest-api netstat -tuln
                   
                   # Check container processes
                   echo "Checking container processes..."
@@ -352,6 +362,11 @@ jobs:
                 # Get API container logs
                 echo "API container logs:"
                 docker compose -f docker-compose.prod.yml logs api
+                
+                # Check container network settings
+                echo "Checking container network settings..."
+                docker exec latest-api ip addr
+                docker exec latest-api netstat -tuln
                 
                 # Check container processes
                 echo "Checking container processes..."
@@ -381,6 +396,10 @@ jobs:
               
               echo "API container details:"
               docker inspect latest-api
+              
+              echo "Container network settings:"
+              docker exec latest-api ip addr
+              docker exec latest-api netstat -tuln
               
               echo "Container processes:"
               docker exec latest-api ps aux
