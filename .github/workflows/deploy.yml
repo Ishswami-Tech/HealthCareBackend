@@ -300,8 +300,20 @@ jobs:
             max_attempts=30
             while [ $attempt -le $max_attempts ]; do
               echo "Attempt $attempt/$max_attempts: Checking API health..."
-              response=$(curl -k -s https://0.0.0.0:8088/health)
-              status_code=$(curl -k -s -o /dev/null -w "%{http_code}" https://0.0.0.0:8088/health)
+              
+              # Add connection timeout and retry for curl
+              response=$(curl -k -s --connect-timeout 5 --retry 3 --retry-delay 2 https://0.0.0.0:8088/health)
+              curl_exit_code=$?
+              
+              if [ $curl_exit_code -ne 0 ]; then
+                echo "Curl failed with exit code $curl_exit_code"
+                echo "Waiting for API to become available..."
+                sleep 10
+                attempt=$((attempt + 1))
+                continue
+              fi
+              
+              status_code=$(curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --retry 3 --retry-delay 2 https://0.0.0.0:8088/health)
               
               if [ "$status_code" = "200" ] && echo "$response" | grep -q "ok"; then
                 echo "API service is healthy"
@@ -319,7 +331,20 @@ jobs:
               echo "Error: API service failed to become healthy"
               echo "Last response: $response"
               echo "Last status code: $status_code"
+              echo "Last curl exit code: $curl_exit_code"
+              
+              # Check container status
+              echo "Checking container status..."
+              docker ps -a
+              
+              # Get API container logs
+              echo "API container logs:"
               docker compose -f docker-compose.prod.yml logs api
+              
+              # Check network connectivity
+              echo "Checking network connectivity..."
+              docker exec latest-api curl -k -v https://0.0.0.0:8088/health
+              
               exit 1
             fi
 
