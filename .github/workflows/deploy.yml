@@ -158,8 +158,14 @@ jobs:
             mkdir -p /var/www/healthcare/backend/releases/${{ github.sha }}
             cd /var/www/healthcare/backend/releases/${{ github.sha }}
 
-            # Clone repository
-            git clone https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git .
+            # Set up SSH for GitHub
+            mkdir -p ~/.ssh
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+
+            # Clone repository using SSH
+            git clone git@github.com:${{ github.repository }}.git .
 
             # Copy SSL certificates
             mkdir -p ssl
@@ -181,11 +187,11 @@ jobs:
 
             # Verify container-to-container communication
             echo "Verifying container-to-container communication..."
-            if ! docker exec latest-api ping -c 1 latest-postgres &>/dev/null; then
+            if ! docker exec ${DEPLOY_SHA:-latest}-api ping -c 1 ${DEPLOY_SHA:-latest}-postgres &>/dev/null; then
               echo "Error: API container cannot reach Postgres container"
               exit 1
             fi
-            if ! docker exec latest-api ping -c 1 latest-redis &>/dev/null; then
+            if ! docker exec ${DEPLOY_SHA:-latest}-api ping -c 1 ${DEPLOY_SHA:-latest}-redis &>/dev/null; then
               echo "Error: API container cannot reach Redis container"
               exit 1
             fi
