@@ -338,18 +338,18 @@ jobs:
             cd nginx
 
             # Escape network name for sed
-            ESCAPED_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/[\/&]/\\&/g' | sed 's/\./\\./g')
+            ESCAPED_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/[\/&]/\\&/g' | sed 's/\./\\./g' | sed 's/-/\\-/g')
 
             # Update configuration files with proper escaping
             for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
               if [ -f "$file" ]; then
                 echo "Updating $file with network name: $NETWORK_NAME"
-                sed -i "s/\${NETWORK_NAME}/$ESCAPED_NETWORK_NAME/g" "$file" || {
+                if ! sed -i "s/\${NETWORK_NAME}/$ESCAPED_NETWORK_NAME/g" "$file"; then
                   echo "Error: Failed to update $file"
                   echo "File contents:"
                   cat "$file"
                   exit 1
-                }
+                fi
               else
                 echo "Warning: File $file not found"
               fi
