@@ -43,7 +43,8 @@ services:
           - api
     volumes:
       - ./logs:/app/logs
-      - ./ssl:/app/ssl:ro
+      - ./nginx/ssl:/app/ssl:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       postgres:
         condition: service_healthy

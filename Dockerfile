@@ -37,8 +37,9 @@ RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ w
 
 WORKDIR /app
 
-# Create SSL directory with proper permissions
-RUN mkdir -p /app/ssl && chmod 755 /app/ssl
+# Create SSL directories with proper permissions
+RUN mkdir -p /app/ssl /etc/nginx/ssl && \
+    chmod 755 /app/ssl /etc/nginx/ssl
 
 # Install npm@11.3.0 globally
 RUN npm install -g npm@11.3.0
@@ -65,9 +66,9 @@ ENV PORT=8088
 EXPOSE 8088
 EXPOSE 5555
 
-# Health check
+# Health check (using HTTP since SSL termination is handled by Nginx)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD wget --no-check-certificate -q --spider https://localhost:8088/health || exit 1
+    CMD wget -q --spider http://localhost:8088/health || exit 1
 
 # Start the application
 CMD ["node", "dist/main"]
