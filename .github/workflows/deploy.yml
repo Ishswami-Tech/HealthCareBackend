@@ -310,7 +310,7 @@ jobs:
               
               # Install necessary tools in the container
               echo "Installing necessary tools..."
-              docker exec latest-api apk add --no-cache curl net-tools lsof
+              docker exec latest-api apk add --no-cache curl net-tools lsof procps
               
               # Check if API process is running
               echo "Checking API process..."
@@ -327,6 +327,22 @@ jobs:
               echo "Getting detailed process information..."
               docker exec latest-api ps aux | grep "node.*main"
               docker exec latest-api lsof -i :8088
+              
+              # Check Node.js process state
+              echo "Checking Node.js process state..."
+              docker exec latest-api sh -c 'ps -o pid,ppid,pgid,sid,comm,state,etime,cmd -p $(pgrep -f "node.*main")'
+              
+              # Check Node.js process memory
+              echo "Checking Node.js process memory..."
+              docker exec latest-api sh -c 'pmap -x $(pgrep -f "node.*main")'
+              
+              # Check Node.js process environment
+              echo "Checking Node.js process environment..."
+              docker exec latest-api sh -c 'cat /proc/$(pgrep -f "node.*main")/environ | tr "\0" "\n"'
+              
+              # Check Node.js process limits
+              echo "Checking Node.js process limits..."
+              docker exec latest-api sh -c 'cat /proc/$(pgrep -f "node.*main")/limits'
               
               # Check if port is listening
               echo "Checking if port 8088 is listening..."
@@ -346,6 +362,8 @@ jobs:
                   docker exec latest-api ps aux | grep "node.*main"
                   echo "Checking open files:"
                   docker exec latest-api lsof -p $(docker exec latest-api pgrep -f "node.*main")
+                  echo "Checking Node.js process output:"
+                  docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
                   sleep 20
                   attempt=$((attempt + 1))
                   continue
@@ -375,6 +393,10 @@ jobs:
                 echo "API process state:"
                 docker exec latest-api ps aux | grep "node.*main"
                 docker exec latest-api lsof -p $(docker exec latest-api pgrep -f "node.*main")
+                
+                # Check Node.js process output
+                echo "Node.js process output:"
+                docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
                 
                 exit 1
               fi
@@ -446,6 +468,10 @@ jobs:
                 # Check container environment
                 echo "Checking container environment..."
                 docker exec latest-api env
+                
+                # Check Node.js process output
+                echo "Node.js process output:"
+                docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
               fi
               
               sleep 10
@@ -478,6 +504,10 @@ jobs:
               
               echo "Container environment:"
               docker exec latest-api env
+              
+              # Check Node.js process output
+              echo "Node.js process output:"
+              docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
               
               exit 1
             fi
