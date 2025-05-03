@@ -336,9 +336,56 @@ jobs:
             # Update Nginx configuration with correct network name
             echo "Updating Nginx configuration..."
             cd nginx
-            sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" deploy-nginx.sh
-            sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" nginx.conf
-            sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" conf.d/api.conf
+
+            # Escape network name for sed
+            ESCAPED_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/[\/&]/\\&/g')
+
+            # Update configuration files with proper escaping
+            for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
+              if [ -f "$file" ]; then
+                echo "Updating $file with network name: $NETWORK_NAME"
+                if ! sed -i "s/\${NETWORK_NAME}/$ESCAPED_NETWORK_NAME/g" "$file"; then
+                  echo "Error: Failed to update $file"
+                  echo "File contents:"
+                  cat "$file"
+                  exit 1
+                fi
+              else
+                echo "Warning: File $file not found"
+              fi
+            done
+
+            # Verify the changes
+            echo "Verifying configuration updates..."
+            for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
+              if [ -f "$file" ]; then
+                if ! grep -q "$NETWORK_NAME" "$file"; then
+                  echo "Error: Network name not properly updated in $file"
+                  echo "File contents:"
+                  cat "$file"
+                  exit 1
+                fi
+              fi
+            done
+
+            # Verify SSL configuration
+            echo "Verifying SSL configuration..."
+            for file in /etc/nginx/ssl/api.ishswami.in.crt /etc/nginx/ssl/api.ishswami.in.key; do
+              if [ ! -f "$file" ]; then
+                echo "Error: SSL file $file not found"
+                exit 1
+              fi
+              
+              # Check permissions
+              perms=$(stat -c "%a" $file)
+              if [[ $file == *.key && $perms != "600" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              elif [[ $file == *.crt && $perms != "644" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              fi
+            done
 
             # Verify Nginx configuration
             echo "Verifying Nginx configuration..."
