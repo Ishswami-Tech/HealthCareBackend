@@ -294,46 +294,51 @@ jobs:
             echo "Starting containers..."
             DEPLOY_SHA=$DEPLOY_SHA docker compose -f docker-compose.prod.yml up -d
 
-            # Remove obsolete version attribute from docker-compose.prod.yml
-            echo "Removing obsolete version attribute from docker-compose.prod.yml..."
-            sed -i '/^version:/d' docker-compose.prod.yml
+            # Wait for containers to be healthy
+            echo "Waiting for containers to be healthy..."
+            attempt=1
+            max_attempts=30
+            while [ $attempt -le $max_attempts ]; do
+              if docker ps --filter "name=latest-api" --format "{{.Status}}" | grep -q "healthy" && \
+                 docker ps --filter "name=latest-postgres" --format "{{.Status}}" | grep -q "healthy" && \
+                 docker ps --filter "name=latest-redis" --format "{{.Status}}" | grep -q "healthy"; then
+                echo "All containers are healthy"
+                break
+              fi
+              echo "Attempt $attempt/$max_attempts: Waiting for containers to be healthy..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
 
-            # Verify SSL configuration
-            echo "Verifying SSL configuration..."
-            echo "Checking SSL certificate files..."
-            ls -l /etc/nginx/ssl/
-            ls -l /app/ssl/
-
-            echo "Testing SSL certificate..."
-            openssl x509 -in /etc/nginx/ssl/api.ishswami.in.crt -noout -text
-            openssl rsa -in /etc/nginx/ssl/api.ishswami.in.key -noout -text
-
-            echo "Checking certificate and key match..."
-            cert_mod=$(openssl x509 -noout -modulus -in /etc/nginx/ssl/api.ishswami.in.crt | openssl md5)
-            key_mod=$(openssl rsa -noout -modulus -in /etc/nginx/ssl/api.ishswami.in.key | openssl md5)
-            if [ "$cert_mod" != "$key_mod" ]; then
-              echo "Error: Certificate and private key do not match"
+            if [ $attempt -gt $max_attempts ]; then
+              echo "Error: Containers failed to become healthy"
+              docker ps -a
+              docker logs latest-api
               exit 1
             fi
-
-            # Deploy Nginx configuration
-            echo "Deploying Nginx configuration..."
-            cd nginx
 
             # Get the current Docker network name
             NETWORK_NAME=$(docker network ls --filter name=app-network --format '{{.Name}}')
             if [ -z "$NETWORK_NAME" ]; then
               echo "Error: Could not find app-network"
+              docker network ls
+              exit 1
+            fi
+
+            # Verify network connectivity
+            echo "Verifying network connectivity..."
+            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
+              echo "Error: API container not found in network $NETWORK_NAME"
+              docker network inspect $NETWORK_NAME
               exit 1
             fi
 
             # Update Nginx configuration with correct network name
+            echo "Updating Nginx configuration..."
+            cd nginx
             sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" deploy-nginx.sh
             sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" nginx.conf
             sed -i "s/upstream api:8088/upstream $NETWORK_NAME-api:8088/" conf.d/api.conf
-
-            chmod +x deploy-nginx.sh
-            ./deploy-nginx.sh
 
             # Verify Nginx configuration
             echo "Verifying Nginx configuration..."
@@ -341,21 +346,17 @@ jobs:
               echo "Error: Nginx configuration test failed"
               echo "Nginx error log:"
               cat /var/log/nginx/error.log
+              echo "Current network configuration:"
+              docker network inspect $NETWORK_NAME
+              echo "Container status:"
+              docker ps -a
               exit 1
             fi
 
-            # Verify Docker network connectivity
-            echo "Verifying Docker network connectivity..."
-            if ! docker network inspect $NETWORK_NAME > /dev/null 2>&1; then
-              echo "Error: Docker network $NETWORK_NAME not found"
-              exit 1
-            fi
-
-            # Check if API container is in the network
-            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
-              echo "Error: API container not found in network $NETWORK_NAME"
-              exit 1
-            fi
+            # Deploy Nginx configuration
+            echo "Deploying Nginx configuration..."
+            chmod +x deploy-nginx.sh
+            ./deploy-nginx.sh
 
             # Restart Nginx
             echo "Restarting Nginx..."
