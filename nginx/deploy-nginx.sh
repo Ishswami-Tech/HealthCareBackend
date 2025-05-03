@@ -13,13 +13,8 @@ API_DOMAIN="api.ishswami.in"
 NGINX_CONF_DIR="/etc/nginx/conf.d"
 DEPLOY_PATH="/var/www/healthcare"
 SSL_DIR="/etc/nginx/ssl"
-NETWORK_NAME="${NETWORK_NAME:-app-network}"
-
-# Extract the base network name (remove any hash prefix)
-BASE_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/^[^_]*_//')
 
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
-echo -e "${YELLOW}Using network name: $BASE_NETWORK_NAME${NC}"
 
 # Create deployment directories if they don't exist
 echo -e "${YELLOW}Creating deployment directories...${NC}"
@@ -63,18 +58,6 @@ sudo chmod 755 $SSL_DIR
 # Copy Nginx configurations
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
 sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
-
-# Update network name in Nginx configuration
-echo -e "${YELLOW}Updating network configuration...${NC}"
-if [ -f "$NGINX_CONF_DIR/api.conf" ]; then
-    # Use awk to safely replace the network name
-    sudo awk -v network="$BASE_NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network)}1' "$NGINX_CONF_DIR/api.conf" > /tmp/api.conf.tmp
-    sudo mv /tmp/api.conf.tmp "$NGINX_CONF_DIR/api.conf"
-    echo -e "${GREEN}Updated API configuration with network name: $BASE_NETWORK_NAME${NC}"
-else
-    echo -e "${RED}Error: API configuration file not found${NC}"
-    exit 1
-fi
 
 # Test Nginx configuration
 echo -e "${YELLOW}Testing Nginx configuration...${NC}"
