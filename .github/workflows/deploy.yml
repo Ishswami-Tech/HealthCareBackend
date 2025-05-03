@@ -327,6 +327,31 @@ jobs:
                 docker exec latest-api netstat -tuln
                 echo "Container logs:"
                 docker logs latest-api
+                
+                # Check if API is still starting up
+                if [ $attempt -lt 10 ]; then
+                  echo "API might still be starting up, waiting..."
+                  sleep 20
+                  attempt=$((attempt + 1))
+                  continue
+                fi
+                
+                # Check container environment
+                echo "Container environment:"
+                docker exec latest-api env
+                
+                # Check container network settings
+                echo "Container network settings:"
+                docker exec latest-api ip addr
+                
+                # Check container configuration
+                echo "Container configuration:"
+                docker inspect latest-api
+                
+                # Check container logs with timestamps
+                echo "Container logs with timestamps:"
+                docker logs --timestamps latest-api
+                
                 exit 1
               fi
               
@@ -355,7 +380,7 @@ jobs:
                   
                   # Check network configuration
                   echo "Checking network configuration..."
-                  docker network inspect 2cb4da44bab4f87208ac9eb37ecbbc5d0281f2da_app-network
+                  docker network inspect 64bdef1b85a89286f858b5cfc661de229e108911_app-network
                   docker inspect latest-api
                   
                   # Check container network settings
@@ -415,7 +440,7 @@ jobs:
               docker logs latest-api
               
               echo "Network configuration:"
-              docker network inspect 2cb4da44bab4f87208ac9eb37ecbbc5d0281f2da_app-network
+              docker network inspect 64bdef1b85a89286f858b5cfc661de229e108911_app-network
               
               echo "API container details:"
               docker inspect latest-api
