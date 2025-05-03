@@ -334,11 +334,21 @@ jobs:
             # Wait a bit for network connections to be established
             sleep 10
 
+            # Get the actual network name from the API container
+            ACTUAL_NETWORK=$(docker inspect latest-api --format '{{range $net, $config := .NetworkSettings.Networks}}{{if $config}}{{printf "%s" $net}}{{end}}{{end}}')
+            if [ -z "$ACTUAL_NETWORK" ]; then
+              echo "Error: Could not determine network name from API container"
+              docker inspect latest-api
+              exit 1
+            fi
+
+            echo "Using network: $ACTUAL_NETWORK"
+
             # Check if containers are in the network
-            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
-              echo "Error: API container not found in network $NETWORK_NAME"
+            if ! docker network inspect $ACTUAL_NETWORK | grep -q "latest-api"; then
+              echo "Error: API container not found in network $ACTUAL_NETWORK"
               echo "Network details:"
-              docker network inspect $NETWORK_NAME
+              docker network inspect $ACTUAL_NETWORK
               echo "Container details:"
               docker ps -a
               echo "Container network details:"
@@ -363,8 +373,8 @@ jobs:
 
             # Only update the API configuration file
             if [ -f "conf.d/api.conf" ]; then
-                echo "Updating API configuration with network name: $NETWORK_NAME"
-                awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "conf.d/api.conf" > "conf.d/api.conf.tmp" && mv "conf.d/api.conf.tmp" "conf.d/api.conf"
+                echo "Updating API configuration with network name: $ACTUAL_NETWORK"
+                awk -v network="$ACTUAL_NETWORK" '{gsub(/\${NETWORK_NAME}/, network); print}' "conf.d/api.conf" > "conf.d/api.conf.tmp" && mv "conf.d/api.conf.tmp" "conf.d/api.conf"
                 if [ $? -ne 0 ]; then
                     echo "Error: Failed to update API configuration"
                     echo "File contents:"
@@ -377,7 +387,7 @@ jobs:
             fi
 
             # Verify the update
-            if ! grep -q "$NETWORK_NAME" "conf.d/api.conf"; then
+            if ! grep -q "$ACTUAL_NETWORK" "conf.d/api.conf"; then
                 echo "Error: Network name not properly updated in API configuration"
                 echo "File contents:"
                 cat "conf.d/api.conf"
@@ -410,7 +420,7 @@ jobs:
               echo "Nginx error log:"
               cat /var/log/nginx/error.log
               echo "Current network configuration:"
-              docker network inspect $NETWORK_NAME
+              docker network inspect $ACTUAL_NETWORK
               echo "Container status:"
               docker ps -a
               exit 1
