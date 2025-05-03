@@ -24,7 +24,6 @@ env:
   SSL_EMAIL: aadeshbhujbal99@gmail.com
   NODE_ENV: production
   NETWORK_NAME: app-network
-  GIT_SSH_COMMAND: "ssh -i ~/.ssh/github-actions-key -o StrictHostKeyChecking=no"
 
 jobs:
   pre-deployment-check:
@@ -55,7 +54,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key_path: /root/.ssh/github-actions-key
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             echo "Checking system resources..."
             df -h
@@ -120,6 +119,7 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -146,7 +146,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key_path: /root/.ssh/github-actions-key
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             # Set up environment
             export DEPLOY_SHA=${{ github.sha }}
@@ -155,10 +155,10 @@ jobs:
             export REDIS_COMMANDER_PASSWORD=${{ secrets.REDIS_COMMANDER_PASSWORD }}
 
             # Create deployment directory
-            mkdir -p /var/www/healthcare/backend/releases/${{ github.sha }}
-            cd /var/www/healthcare/backend/releases/${{ github.sha }}
+            mkdir -p ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
-            # Use existing GitHub Actions SSH key
+            # Use the existing github-actions-key for git operations
             export GIT_SSH_COMMAND="ssh -i /root/.ssh/github-actions-key -o StrictHostKeyChecking=no"
 
             # Clone repository using SSH
@@ -199,10 +199,10 @@ jobs:
             ./deploy-nginx.sh
 
             # Update current deployment symlink
-            ln -sfn /var/www/healthcare/backend/releases/${{ github.sha }} /var/www/healthcare/backend/current
+            ln -sfn ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }} ${{ env.DEPLOY_PATH }}/current
 
             # Clean up old deployments (keep last 5)
-            cd /var/www/healthcare/backend/releases
+            cd ${{ env.DEPLOY_PATH }}/releases
             ls -1t | tail -n +6 | xargs -r rm -rf
 
   post-deployment-verification:
@@ -242,7 +242,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key_path: /root/.ssh/github-actions-key
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
 
@@ -295,7 +295,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key_path: /root/.ssh/github-actions-key
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
 
@@ -349,7 +349,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key_path: /root/.ssh/github-actions-key
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
