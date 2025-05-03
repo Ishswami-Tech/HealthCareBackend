@@ -14,6 +14,32 @@ NGINX_CONF_DIR="/etc/nginx/conf.d"
 DEPLOY_PATH="/var/www/healthcare"
 SSL_DIR="/etc/nginx/ssl"
 
+# Function to check API health
+check_api_health() {
+    local endpoint=$1
+    local max_retries=5
+    local retry_count=0
+    local wait_time=10
+
+    echo -e "${YELLOW}Checking API health at: $endpoint${NC}"
+    
+    while [ $retry_count -lt $max_retries ]; do
+        if curl -k -s -o /dev/null -w "%{http_code}" "$endpoint" | grep -q "200"; then
+            echo -e "${GREEN}API is healthy at $endpoint${NC}"
+            return 0
+        else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                echo -e "${YELLOW}Attempt $retry_count failed. Waiting $wait_time seconds before retry...${NC}"
+                sleep $wait_time
+            fi
+        fi
+    done
+    
+    echo -e "${RED}API health check failed after $max_retries attempts at $endpoint${NC}"
+    return 1
+}
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
 # Create deployment directories if they don't exist
@@ -32,7 +58,7 @@ sudo cp -r $NGINX_CONF_DIR/*.conf "$BACKUP_DIR/" 2>/dev/null || true
 # Install required packages
 echo -e "${YELLOW}Installing required packages...${NC}"
 sudo apt-get update
-sudo apt-get install -y nginx openssl
+sudo apt-get install -y nginx openssl curl
 
 # Copy SSL certificates
 echo -e "${YELLOW}Copying SSL certificates...${NC}"
@@ -52,7 +78,6 @@ echo -e "${YELLOW}Setting permissions...${NC}"
 sudo chown -R www-data:www-data $DEPLOY_PATH
 sudo chmod -R 755 $DEPLOY_PATH
 sudo chown -R root:root $SSL_DIR
-sudo chmod -R 600 $SSL_DIR
 sudo chmod 755 $SSL_DIR
 
 # Copy Nginx configurations
@@ -86,6 +111,39 @@ else
     exit 1
 fi
 
+# Check API health from different perspectives
+echo -e "${YELLOW}Performing comprehensive API health checks...${NC}"
+
+# 1. Check direct container access
+echo -e "${YELLOW}Checking direct container access...${NC}"
+if ! docker exec latest-api wget -q --spider --no-check-certificate https://localhost:8088/health; then
+    echo -e "${RED}Failed to access API inside container${NC}"
+    docker logs latest-api
+    exit 1
+fi
+
+# 2. Check internal network access
+echo -e "${YELLOW}Checking internal network access...${NC}"
+if ! curl -k -s -o /dev/null -w "%{http_code}" http://localhost:8088/health | grep -q "200"; then
+    echo -e "${RED}Failed to access API through localhost${NC}"
+    exit 1
+fi
+
+# 3. Check external HTTPS access
+echo -e "${YELLOW}Checking external HTTPS access...${NC}"
+check_api_health "https://api.ishswami.in/health"
+
+# 4. Check WebSocket availability
+echo -e "${YELLOW}Checking WebSocket endpoint...${NC}"
+if ! curl -k -s -o /dev/null -w "%{http_code}" https://api.ishswami.in/socket.io/ | grep -q "200"; then
+    echo -e "${YELLOW}Warning: WebSocket endpoint might not be accessible${NC}"
+fi
+
+# 5. Print container status
+echo -e "${YELLOW}Current container status:${NC}"
+docker ps
+docker logs latest-api --tail 50
+
 echo -e "${GREEN}Deployment completed successfully!${NC}"
 echo -e "${YELLOW}Important: Please follow these steps to complete the setup:${NC}"
 echo "1. Log in to your Cloudflare dashboard"
@@ -105,4 +163,15 @@ echo ""
 echo "Cloudflare SSL/TLS Settings:"
 echo "1. Set SSL/TLS encryption mode to 'Full (strict)'"
 echo "2. Enable 'Always Use HTTPS'"
-echo "3. Set minimum TLS version to 1.2" 
+echo "3. Set minimum TLS version to 1.2"
+
+# Final API Status Summary
+echo -e "\n${YELLOW}Final API Status Summary:${NC}"
+echo "1. Container Status:"
+docker inspect latest-api --format='{{.State.Status}} - {{.State.Health.Status}}'
+echo "2. Internal Health Check:"
+curl -k -s http://localhost:8088/health
+echo "3. External Health Check:"
+curl -k -s https://api.ishswami.in/health
+echo "4. Container Logs (last 5 lines):"
+docker logs latest-api --tail 5 

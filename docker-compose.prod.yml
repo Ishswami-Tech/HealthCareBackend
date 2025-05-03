@@ -50,11 +50,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8088/health"]
+      test: ["CMD", "wget", "--no-check-certificate", "-q", "--spider", "https://localhost:8088/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 40s
+      retries: 5
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -147,12 +147,14 @@ services:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=${REDIS_COMMANDER_USER:-admin}
       - HTTP_PASSWORD=${REDIS_COMMANDER_PASSWORD:-admin}
+      - TRUST_PROXY=true
+      - HTTPS_ENABLED=true
     depends_on:
       - redis
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/"]
       interval: 10s
       timeout: 5s
       retries: 5
