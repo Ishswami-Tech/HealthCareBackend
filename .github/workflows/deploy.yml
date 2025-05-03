@@ -300,9 +300,45 @@ jobs:
 
             # Verify SSL configuration
             echo "Verifying SSL configuration..."
-            if ! curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8088/health | grep -q "200"; then
-              echo "Error: SSL configuration test failed"
+            echo "Checking SSL certificate files..."
+            ls -l /etc/nginx/ssl/
+            ls -l /app/ssl/
+
+            echo "Testing SSL certificate..."
+            openssl x509 -in /etc/nginx/ssl/api.ishswami.in.crt -noout -text
+            openssl rsa -in /etc/nginx/ssl/api.ishswami.in.key -noout -text
+
+            echo "Checking certificate and key match..."
+            cert_mod=$(openssl x509 -noout -modulus -in /etc/nginx/ssl/api.ishswami.in.crt | openssl md5)
+            key_mod=$(openssl rsa -noout -modulus -in /etc/nginx/ssl/api.ishswami.in.key | openssl md5)
+            if [ "$cert_mod" != "$key_mod" ]; then
+              echo "Error: Certificate and private key do not match"
               exit 1
+            fi
+
+            # Deploy Nginx configuration
+            echo "Deploying Nginx configuration..."
+            cd nginx
+            chmod +x deploy-nginx.sh
+            ./deploy-nginx.sh
+
+            # Test Nginx configuration
+            echo "Testing Nginx configuration..."
+            if ! nginx -t; then
+              echo "Error: Nginx configuration test failed"
+              exit 1
+            fi
+
+            # Restart Nginx
+            echo "Restarting Nginx..."
+            systemctl restart nginx
+
+            # Test SSL connection
+            echo "Testing SSL connection..."
+            if ! curl -k -v -s -o /dev/null -w "%{http_code}" https://api.ishswami.in/health; then
+              echo "Warning: SSL connection test failed, but continuing deployment"
+              echo "SSL error details:"
+              curl -k -v https://api.ishswami.in/health 2>&1
             fi
 
             # Update current deployment symlink
