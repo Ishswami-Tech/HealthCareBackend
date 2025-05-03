@@ -195,8 +195,8 @@ jobs:
           # Create SSL directories
           mkdir -p ssl_temp
           # Copy and rename certificates
-          cp nginx/ssl/ishswami.com.pem ssl_temp/api.ishswami.in.crt
-          cp nginx/ssl/ishswami.com.key ssl_temp/api.ishswami.in.key
+          cp nginx/ssl/api.ishswami.in.crt ssl_temp/
+          cp nginx/ssl/api.ishswami.in.key ssl_temp/
 
           # Verify SSL certificate
           echo "Verifying SSL certificate..."
