@@ -67,9 +67,9 @@ sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 echo -e "${YELLOW}Updating network configuration...${NC}"
 for conf_file in $NGINX_CONF_DIR/*.conf; do
     if [ -f "$conf_file" ]; then
-        # Escape network name for sed (including underscore)
-        ESCAPED_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/[\/&]/\\&/g' | sed 's/\./\\./g' | sed 's/-/\\-/g' | sed 's/_/\\_/g')
-        if ! sudo sed -i "s/\${NETWORK_NAME}/$ESCAPED_NETWORK_NAME/g" "$conf_file"; then
+        # Use awk for network name replacement
+        awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "$conf_file" > "$conf_file.tmp" && sudo mv "$conf_file.tmp" "$conf_file"
+        if [ $? -ne 0 ]; then
             echo -e "${RED}Error: Failed to update $conf_file${NC}"
             exit 1
         fi
