@@ -39,20 +39,17 @@ echo -e "${YELLOW}Installing required packages...${NC}"
 sudo apt-get update
 sudo apt-get install -y nginx openssl
 
-# Generate self-signed certificates (temporary, will be replaced by Cloudflare Origin Certificates)
-echo -e "${YELLOW}Generating temporary SSL certificates...${NC}"
-if [ ! -f "$SSL_DIR/$DOMAIN.crt" ]; then
-    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$SSL_DIR/$DOMAIN.key" \
-        -out "$SSL_DIR/$DOMAIN.crt" \
-        -subj "/CN=$DOMAIN/O=Healthcare App/C=IN"
-fi
-
-if [ ! -f "$SSL_DIR/$API_DOMAIN.crt" ]; then
-    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$SSL_DIR/$API_DOMAIN.key" \
-        -out "$SSL_DIR/$API_DOMAIN.crt" \
-        -subj "/CN=$API_DOMAIN/O=Healthcare App/C=IN"
+# Copy SSL certificates
+echo -e "${YELLOW}Copying SSL certificates...${NC}"
+if [ -f "ssl/api.ishswami.in.crt" ] && [ -f "ssl/api.ishswami.in.key" ]; then
+    sudo cp -f ssl/api.ishswami.in.crt $SSL_DIR/
+    sudo cp -f ssl/api.ishswami.in.key $SSL_DIR/
+    sudo chown root:root $SSL_DIR/api.ishswami.in.*
+    sudo chmod 600 $SSL_DIR/api.ishswami.in.key
+    sudo chmod 644 $SSL_DIR/api.ishswami.in.crt
+else
+    echo -e "${RED}Error: SSL certificates not found${NC}"
+    exit 1
 fi
 
 # Set proper permissions
