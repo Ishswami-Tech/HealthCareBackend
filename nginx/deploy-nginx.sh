@@ -114,13 +114,17 @@ sudo chmod -R 755 $DEPLOY_PATH
 sudo chown -R root:root $SSL_DIR
 sudo chmod 755 $SSL_DIR
 
-# Update network name in configuration files
-echo -e "${YELLOW}Updating network name in configuration files...${NC}"
-
 # Function to safely update network name in a file
 update_network_name() {
     local file=$1
     local backup_file="${file}.bak"
+    local filename=$(basename "$file")
+    
+    # Skip nginx.conf and files that don't need network updates
+    if [[ "$filename" == "nginx.conf" || "$filename" == "cloudflare.conf" || "$filename" == "common.conf" ]]; then
+        echo "Skipping $filename as it doesn't need network updates"
+        return 0
+    }
     
     echo "Processing file: $file"
     
@@ -150,12 +154,19 @@ update_network_name() {
 }
 
 # Update specific configuration files
-for config_file in "api.conf" "frontend.conf" "default.conf"; do
-    if [ -f "conf.d/$config_file" ]; then
-        update_network_name "conf.d/$config_file" || {
+echo -e "${YELLOW}Updating network name in configuration files...${NC}"
+declare -a config_files=("api.conf" "frontend.conf" "default.conf")
+
+for config_file in "${config_files[@]}"; do
+    config_path="conf.d/$config_file"
+    if [ -f "$config_path" ]; then
+        echo "Processing $config_file..."
+        update_network_name "$config_path" || {
             echo -e "${RED}Failed to update $config_file${NC}"
             exit 1
         }
+    else
+        echo -e "${YELLOW}Warning: $config_file not found${NC}"
     fi
 done
 
@@ -165,11 +176,12 @@ sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 
 # Verify configurations after copy
 echo -e "${YELLOW}Verifying configuration files...${NC}"
-for config_file in "api.conf" "frontend.conf" "default.conf"; do
+for config_file in "${config_files[@]}"; do
     target_file="$NGINX_CONF_DIR/$config_file"
     if [ -f "$target_file" ]; then
         if grep -q "\${NETWORK_NAME}" "$target_file" || grep -q "\${network_name}" "$target_file"; then
             echo -e "${RED}Error: Network name variables still present in $target_file${NC}"
+            cat "$target_file"
             exit 1
         fi
     fi
