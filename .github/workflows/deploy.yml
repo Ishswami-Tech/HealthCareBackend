@@ -308,14 +308,25 @@ jobs:
                 exit 1
               fi
               
-              # Check network connectivity
-              echo "Checking network connectivity..."
-              docker exec latest-api ping -c 1 8.8.8.8
-              docker exec latest-api nc -zv localhost 8088
+              # Check if API process is running
+              echo "Checking API process..."
+              if ! docker exec latest-api ps aux | grep -q "node.*dist/main.js"; then
+                echo "API process is not running"
+                docker exec latest-api ps aux
+                exit 1
+              fi
               
-              # Check API health using netcat
-              echo "Checking API health using netcat..."
-              container_response=$(docker exec latest-api sh -c 'echo -e "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n" | nc localhost 8088')
+              # Check if port is listening
+              echo "Checking if port 8088 is listening..."
+              if ! docker exec latest-api netstat -tuln | grep -q ":8088"; then
+                echo "Port 8088 is not listening"
+                docker exec latest-api netstat -tuln
+                exit 1
+              fi
+              
+              # Check API health using curl with verbose output
+              echo "Checking API health..."
+              container_response=$(docker exec latest-api curl -v http://localhost:8088/health 2>&1)
               container_status=$?
               
               if [ $container_status -eq 0 ] && echo "$container_response" | grep -q "ok"; then
@@ -324,7 +335,7 @@ jobs:
                 
                 # Now try external access
                 echo "Testing external access..."
-                external_response=$(echo -e "GET /health HTTP/1.1\r\nHost: 0.0.0.0\r\n\r\n" | nc 0.0.0.0 8088)
+                external_response=$(curl -v http://0.0.0.0:8088/health 2>&1)
                 external_status=$?
                 
                 if [ $external_status -eq 0 ] && echo "$external_response" | grep -q "ok"; then
@@ -338,7 +349,7 @@ jobs:
                   
                   # Check network configuration
                   echo "Checking network configuration..."
-                  docker network inspect 5bf108d4e0b2e7a7048ad6a6b3b7eeb65935e8a6_app-network
+                  docker network inspect eb24176c8158695e640a0c7a592f7f9d916d67fc_app-network
                   docker inspect latest-api
                   
                   # Check container network settings
@@ -392,7 +403,7 @@ jobs:
               docker compose -f docker-compose.prod.yml logs api
               
               echo "Network configuration:"
-              docker network inspect 5bf108d4e0b2e7a7048ad6a6b3b7eeb65935e8a6_app-network
+              docker network inspect eb24176c8158695e640a0c7a592f7f9d916d67fc_app-network
               
               echo "API container details:"
               docker inspect latest-api
