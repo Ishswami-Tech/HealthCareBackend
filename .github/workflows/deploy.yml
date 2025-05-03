@@ -142,24 +142,26 @@ jobs:
             mkdir -p backups/$timestamp
 
             # Stop and backup current deployment if it exists
-            if [ -d "current" ]; then
+            if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
               echo "Stopping current deployment..."
               cd current
               docker compose -f docker-compose.prod.yml down --remove-orphans || true
               cd ..
 
               echo "Creating backup..."
-              cp -r current/* backups/$timestamp/
+              cp -r current/* backups/$timestamp/ 2>/dev/null || true
               echo $timestamp > backups/latest_backup
               
               # Backup SSL certificates
               if [ -d "current/nginx/ssl" ]; then
                 mkdir -p backups/$timestamp/ssl
-                cp -r current/nginx/ssl/* backups/$timestamp/ssl/
+                cp -r current/nginx/ssl/* backups/$timestamp/ssl/ 2>/dev/null || true
               fi
 
               # Clean up old backups (keep last 5)
               ls -1t backups | tail -n +6 | xargs -r rm -rf
+            else
+              echo "No current deployment found, proceeding with fresh deployment..."
             fi
 
             # Clean up Docker resources
@@ -175,6 +177,11 @@ jobs:
                 docker rm -f $container || true
               fi
             done
+
+            # Create necessary directories if they don't exist
+            mkdir -p current
+            mkdir -p releases
+            mkdir -p backups
 
       - name: Prepare SSL files
         run: |
