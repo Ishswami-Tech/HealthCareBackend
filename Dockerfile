@@ -1,17 +1,27 @@
 # Build stage
 FROM node:20-alpine AS builder
 
+# Install necessary build tools
+RUN apk add --no-cache python3 make g++ git
+
 WORKDIR /app
 
-# Copy package files and use npm ci for faster, reliable installs
+# Copy package files
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps --no-audit --no-progress
 
-# Copy only necessary files for build
-COPY tsconfig*.json ./
-COPY src ./src
+# Install npm@11.3.0 globally
+RUN npm install -g npm@11.3.0
 
-# Generate Prisma Client for both schemas
+# Clear npm cache and remove existing node_modules
+RUN npm cache clean --force && rm -rf node_modules
+
+# Install dependencies with exact versions
+RUN npm install --legacy-peer-deps --no-audit --no-progress
+
+# Copy source code
+COPY . .
+
+# Generate Prisma client
 RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma && \
     npx prisma generate --schema=src/shared/database/prisma/tenant.schema.prisma
 
@@ -30,49 +40,37 @@ WORKDIR /app
 # Create SSL directory with proper permissions
 RUN mkdir -p /app/ssl && chmod 755 /app/ssl
 
-# Copy package files and install production dependencies
+# Install npm@11.3.0 globally
+RUN npm install -g npm@11.3.0
+
+# Copy package files
 COPY package*.json ./
-RUN npm ci --only=production --legacy-peer-deps --no-audit --no-progress && \
-    npm cache clean --force
+
+# Install production dependencies with exact versions
+RUN npm cache clean --force && \
+    npm install --only=production --legacy-peer-deps --no-audit --no-progress
 
 # Copy only necessary files from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY src/shared/database/prisma ./src/shared/database/prisma
-# Copy views directory for dashboard template
-COPY src/views ./dist/src/views
 
 # Set environment variables
-ENV NODE_ENV=production \
-    PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
-    DATABASE_URL="postgresql://postgres:postgres@postgres:5432/userdb?schema=public" \
-    HOST=0.0.0.0
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=8088
 
 # Expose ports
-EXPOSE 8088 5555
+EXPOSE 8088
+EXPOSE 5555
 
-# Add healthcheck with wget instead of curl
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD wget --no-check-certificate -q --spider https://127.0.0.1:8088/health || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD wget --no-check-certificate -q --spider https://localhost:8088/health || exit 1
 
-# Create a health check script
-COPY <<EOF /app/healthcheck.sh
-#!/bin/sh
-wget --no-check-certificate -q --spider https://127.0.0.1:8088/health || exit 1
-EOF
-
-RUN chmod +x /app/healthcheck.sh
-
-# Start script with optimized waiting and error handling
-CMD ["sh", "-c", "\
-    echo 'Starting application...' && \
-    timeout 60s sh -c 'until nc -z postgres 5432; do echo \"Waiting for PostgreSQL...\"; sleep 2; done' && \
-    timeout 30s sh -c 'until nc -z redis 6379; do echo \"Waiting for Redis...\"; sleep 2; done' && \
-    echo 'Running database migrations...' && \
-    npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && \
-    echo 'Starting Node.js application...' && \
-    node dist/main || { echo 'Application crashed. Check logs for details.'; exit 1; }"]
+# Start the application
+CMD ["node", "dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
