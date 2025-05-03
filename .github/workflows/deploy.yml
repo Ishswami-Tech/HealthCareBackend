@@ -310,7 +310,7 @@ jobs:
               
               # Install necessary tools in the container
               echo "Installing necessary tools..."
-              docker exec latest-api apk add --no-cache curl net-tools lsof procps
+              docker exec latest-api apk add --no-cache curl net-tools lsof procps strace
               
               # Check if API process is running
               echo "Checking API process..."
@@ -344,6 +344,11 @@ jobs:
               echo "Checking Node.js process limits..."
               docker exec latest-api sh -c 'cat /proc/$(pgrep -f "node.*main")/limits'
               
+              # Monitor Node.js process in background
+              echo "Starting Node.js process monitoring..."
+              docker exec latest-api sh -c 'strace -f -p $(pgrep -f "node.*main") 2>&1 > /tmp/node-strace.log &'
+              docker exec latest-api sh -c 'top -b -n 1 -p $(pgrep -f "node.*main") > /tmp/node-top.log &'
+              
               # Check if port is listening
               echo "Checking if port 8088 is listening..."
               if ! docker exec latest-api netstat -tuln | grep -q ":8088"; then
@@ -363,7 +368,8 @@ jobs:
                   echo "Checking open files:"
                   docker exec latest-api lsof -p $(docker exec latest-api pgrep -f "node.*main")
                   echo "Checking Node.js process output:"
-                  docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
+                  docker exec latest-api cat /tmp/node-strace.log
+                  docker exec latest-api cat /tmp/node-top.log
                   sleep 20
                   attempt=$((attempt + 1))
                   continue
@@ -396,7 +402,8 @@ jobs:
                 
                 # Check Node.js process output
                 echo "Node.js process output:"
-                docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
+                docker exec latest-api cat /tmp/node-strace.log
+                docker exec latest-api cat /tmp/node-top.log
                 
                 exit 1
               fi
@@ -445,6 +452,11 @@ jobs:
                   # Check container logs
                   echo "Container logs:"
                   docker logs latest-api
+                  
+                  # Check Node.js process output
+                  echo "Node.js process output:"
+                  docker exec latest-api cat /tmp/node-strace.log
+                  docker exec latest-api cat /tmp/node-top.log
                 fi
               else
                 echo "API is not healthy from within container"
@@ -471,7 +483,8 @@ jobs:
                 
                 # Check Node.js process output
                 echo "Node.js process output:"
-                docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
+                docker exec latest-api cat /tmp/node-strace.log
+                docker exec latest-api cat /tmp/node-top.log
               fi
               
               sleep 10
@@ -507,7 +520,8 @@ jobs:
               
               # Check Node.js process output
               echo "Node.js process output:"
-              docker exec latest-api sh -c 'strace -p $(pgrep -f "node.*main") 2>&1 | head -n 50'
+              docker exec latest-api cat /tmp/node-strace.log
+              docker exec latest-api cat /tmp/node-top.log
               
               exit 1
             fi
