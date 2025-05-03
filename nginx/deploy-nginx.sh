@@ -15,25 +15,29 @@ DEPLOY_PATH="/var/www/healthcare"
 SSL_DIR="/etc/nginx/ssl"
 NETWORK_NAME="${NETWORK_NAME:-app-network}"
 
+# Extract the base network name (remove any hash prefix)
+BASE_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/^[^_]*_//')
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
+echo -e "${YELLOW}Using network name: $BASE_NETWORK_NAME${NC}"
 
 # Create deployment directories if they don't exist
 echo -e "${YELLOW}Creating deployment directories...${NC}"
 sudo mkdir -p $DEPLOY_PATH/{frontend,backend}/current
 sudo mkdir -p $SSL_DIR
+sudo mkdir -p /var/log/nginx
 
 # Backup existing Nginx configurations
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 echo -e "${YELLOW}Backing up existing Nginx configurations...${NC}"
-sudo mkdir -p $NGINX_CONF_DIR/backup_$TIMESTAMP
-sudo cp $NGINX_CONF_DIR/*.conf $NGINX_CONF_DIR/backup_$TIMESTAMP/ 2>/dev/null || true
+BACKUP_DIR="/etc/nginx/conf.d/backup_$TIMESTAMP"
+sudo mkdir -p "$BACKUP_DIR"
+sudo cp -r $NGINX_CONF_DIR/*.conf "$BACKUP_DIR/" 2>/dev/null || true
 
 # Install required packages
 echo -e "${YELLOW}Installing required packages...${NC}"
-if ! command -v openssl &> /dev/null; then
-    sudo apt-get update
-    sudo apt-get install -y openssl
-fi
+sudo apt-get update
+sudo apt-get install -y nginx openssl
 
 # Generate self-signed certificates (temporary, will be replaced by Cloudflare Origin Certificates)
 echo -e "${YELLOW}Generating temporary SSL certificates...${NC}"
@@ -66,12 +70,10 @@ sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 # Update network name in Nginx configuration
 echo -e "${YELLOW}Updating network configuration...${NC}"
 if [ -f "$NGINX_CONF_DIR/api.conf" ]; then
-    # Use awk for network name replacement
-    awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "$NGINX_CONF_DIR/api.conf" > "$NGINX_CONF_DIR/api.conf.tmp" && sudo mv "$NGINX_CONF_DIR/api.conf.tmp" "$NGINX_CONF_DIR/api.conf"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Error: Failed to update API configuration${NC}"
-        exit 1
-    fi
+    # Use awk to safely replace the network name
+    sudo awk -v network="$BASE_NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network)}1' "$NGINX_CONF_DIR/api.conf" > /tmp/api.conf.tmp
+    sudo mv /tmp/api.conf.tmp "$NGINX_CONF_DIR/api.conf"
+    echo -e "${GREEN}Updated API configuration with network name: $BASE_NETWORK_NAME${NC}"
 else
     echo -e "${RED}Error: API configuration file not found${NC}"
     exit 1
@@ -79,16 +81,15 @@ fi
 
 # Test Nginx configuration
 echo -e "${YELLOW}Testing Nginx configuration...${NC}"
-if sudo nginx -t; then
-    echo -e "${GREEN}Nginx configuration is valid. Starting Nginx...${NC}"
-    sudo systemctl start nginx
-    sudo systemctl enable nginx
-else
+if ! sudo nginx -t; then
     echo -e "${RED}Nginx configuration test failed. Rolling back...${NC}"
-    sudo cp $NGINX_CONF_DIR/backup_$TIMESTAMP/*.conf $NGINX_CONF_DIR/
-    sudo systemctl start nginx
+    sudo cp "$BACKUP_DIR"/*.conf $NGINX_CONF_DIR/ 2>/dev/null || true
     exit 1
 fi
+
+# Restart Nginx
+echo -e "${YELLOW}Restarting Nginx...${NC}"
+sudo systemctl restart nginx
 
 # Verify Nginx is running
 if sudo systemctl is-active --quiet nginx; then
