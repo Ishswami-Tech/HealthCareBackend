@@ -301,49 +301,70 @@ jobs:
             while [ $attempt -le $max_attempts ]; do
               echo "Attempt $attempt/$max_attempts: Checking API health..."
               
-              # Add connection timeout and retry for curl
-              response=$(curl -k -s --connect-timeout 5 --retry 3 --retry-delay 2 https://0.0.0.0:8088/health)
-              curl_exit_code=$?
-              
-              if [ $curl_exit_code -ne 0 ]; then
-                echo "Curl failed with exit code $curl_exit_code"
-                echo "Waiting for API to become available..."
-                sleep 10
-                attempt=$((attempt + 1))
-                continue
+              # First check if container is running
+              if ! docker ps | grep -q latest-api; then
+                echo "API container is not running"
+                docker ps -a
+                exit 1
               fi
               
-              status_code=$(curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --retry 3 --retry-delay 2 https://0.0.0.0:8088/health)
+              # Check API health from within the container
+              echo "Checking API health from within container..."
+              container_response=$(docker exec latest-api curl -k -s http://localhost:8088/health)
+              container_status=$?
               
-              if [ "$status_code" = "200" ] && echo "$response" | grep -q "ok"; then
-                echo "API service is healthy"
-                echo "Response: $response"
-                break
+              if [ $container_status -eq 0 ] && echo "$container_response" | grep -q "ok"; then
+                echo "API is healthy from within container"
+                echo "Response: $container_response"
+                
+                # Now try external access
+                echo "Testing external access..."
+                external_response=$(curl -k -s --connect-timeout 5 --retry 3 --retry-delay 2 https://0.0.0.0:8088/health)
+                external_status=$?
+                
+                if [ $external_status -eq 0 ] && echo "$external_response" | grep -q "ok"; then
+                  echo "API is healthy from external access"
+                  echo "Response: $external_response"
+                  break
+                else
+                  echo "API is healthy internally but external access failed"
+                  echo "External response: $external_response"
+                  echo "External status: $external_status"
+                  
+                  # Check network configuration
+                  echo "Checking network configuration..."
+                  docker network inspect 5bf108d4e0b2e7a7048ad6a6b3b7eeb65935e8a6_app-network
+                  docker inspect latest-api
+                fi
+              else
+                echo "API is not healthy from within container"
+                echo "Container response: $container_response"
+                echo "Container status: $container_status"
+                
+                # Get API container logs
+                echo "API container logs:"
+                docker compose -f docker-compose.prod.yml logs api
               fi
               
-              echo "API not healthy yet. Status code: $status_code"
-              echo "Response: $response"
               sleep 10
               attempt=$((attempt + 1))
             done
 
             if [ $attempt -gt $max_attempts ]; then
               echo "Error: API service failed to become healthy"
-              echo "Last response: $response"
-              echo "Last status code: $status_code"
-              echo "Last curl exit code: $curl_exit_code"
               
-              # Check container status
-              echo "Checking container status..."
+              # Get detailed container information
+              echo "Container status:"
               docker ps -a
               
-              # Get API container logs
               echo "API container logs:"
               docker compose -f docker-compose.prod.yml logs api
               
-              # Check network connectivity
-              echo "Checking network connectivity..."
-              docker exec latest-api curl -k -v https://0.0.0.0:8088/health
+              echo "Network configuration:"
+              docker network inspect 5bf108d4e0b2e7a7048ad6a6b3b7eeb65935e8a6_app-network
+              
+              echo "API container details:"
+              docker inspect latest-api
               
               exit 1
             fi
