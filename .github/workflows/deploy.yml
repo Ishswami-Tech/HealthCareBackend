@@ -299,12 +299,12 @@ jobs:
             # Export network name for docker-compose
             export NETWORK_NAME
 
-            # Start Docker services with network name
-            echo "Starting Docker services with network: $NETWORK_NAME"
+            # Start Docker services
+            echo "Starting Docker services..."
             DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml build --no-cache --parallel
 
             echo "Starting containers..."
-            DEPLOY_SHA=$DEPLOY_SHA NETWORK_NAME=$NETWORK_NAME docker compose -f docker-compose.prod.yml up -d
+            DEPLOY_SHA=$DEPLOY_SHA docker compose -f docker-compose.prod.yml up -d
 
             # Wait for containers to be healthy
             echo "Waiting for containers to be healthy..."
