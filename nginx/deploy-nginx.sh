@@ -59,6 +59,13 @@ sudo chmod 755 $SSL_DIR
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
 sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 
+# Verify API configuration
+echo -e "${YELLOW}Verifying API configuration...${NC}"
+if ! grep -q "server latest-api:8088" "$NGINX_CONF_DIR/api.conf"; then
+    echo -e "${RED}Error: API configuration is not properly set up${NC}"
+    exit 1
+fi
+
 # Test Nginx configuration
 echo -e "${YELLOW}Testing Nginx configuration...${NC}"
 if ! sudo nginx -t; then
