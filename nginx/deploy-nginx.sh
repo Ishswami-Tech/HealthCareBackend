@@ -120,11 +120,11 @@ update_network_name() {
     local backup_file="${file}.bak"
     local filename=$(basename "$file")
     
-    # Skip nginx.conf and files that don't need network updates
-    if [[ "$filename" == "nginx.conf" || "$filename" == "cloudflare.conf" || "$filename" == "common.conf" ]]; then
+    # Skip files that don't need network updates
+    if [[ "$filename" == "nginx.conf" ]] || [[ "$filename" == "cloudflare.conf" ]] || [[ "$filename" == "common.conf" ]]; then
         echo "Skipping $filename as it doesn't need network updates"
         return 0
-    }
+    fi
     
     echo "Processing file: $file"
     
@@ -134,22 +134,21 @@ update_network_name() {
     # Only update files that actually contain the network variable
     if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
         echo "Updating network name in $file"
-        sed -i.bak "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
-        sed -i.bak "s/\${network_name}/${NETWORK_NAME}/g" "$file"
+        sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
+        sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
         
         # Verify the update
         if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
             echo -e "${RED}Failed to update network name in $file${NC}"
-            cp "$backup_file" "$file"
-            rm -f "$backup_file"
+            mv "$backup_file" "$file"
             return 1
         fi
     else
         echo "No network name variables found in $file, skipping..."
     fi
     
-    # Clean up backup
-    rm -f "$backup_file"
+    # Clean up backup if it exists
+    [ -f "$backup_file" ] && rm -f "$backup_file"
     return 0
 }
 
@@ -161,10 +160,10 @@ for config_file in "${config_files[@]}"; do
     config_path="conf.d/$config_file"
     if [ -f "$config_path" ]; then
         echo "Processing $config_file..."
-        update_network_name "$config_path" || {
+        if ! update_network_name "$config_path"; then
             echo -e "${RED}Failed to update $config_file${NC}"
             exit 1
-        }
+        fi
     else
         echo -e "${YELLOW}Warning: $config_file not found${NC}"
     fi
