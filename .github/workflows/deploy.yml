@@ -337,14 +337,12 @@ jobs:
             echo "Updating Nginx configuration..."
             cd nginx
 
-            # Escape network name for sed (including underscore)
-            ESCAPED_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/[\/&]/\\&/g' | sed 's/\./\\./g' | sed 's/-/\\-/g' | sed 's/_/\\_/g')
-
-            # Update configuration files with proper escaping
+            # Create a temporary file for network name replacement
             for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
               if [ -f "$file" ]; then
                 echo "Updating $file with network name: $NETWORK_NAME"
-                if ! sed -i "s/\${NETWORK_NAME}/$ESCAPED_NETWORK_NAME/g" "$file"; then
+                awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+                if [ $? -ne 0 ]; then
                   echo "Error: Failed to update $file"
                   echo "File contents:"
                   cat "$file"
