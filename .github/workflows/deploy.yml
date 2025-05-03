@@ -337,34 +337,28 @@ jobs:
             echo "Updating Nginx configuration..."
             cd nginx
 
-            # Create a temporary file for network name replacement
-            for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
-              if [ -f "$file" ]; then
-                echo "Updating $file with network name: $NETWORK_NAME"
-                awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+            # Only update the API configuration file
+            if [ -f "conf.d/api.conf" ]; then
+                echo "Updating API configuration with network name: $NETWORK_NAME"
+                awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "conf.d/api.conf" > "conf.d/api.conf.tmp" && mv "conf.d/api.conf.tmp" "conf.d/api.conf"
                 if [ $? -ne 0 ]; then
-                  echo "Error: Failed to update $file"
-                  echo "File contents:"
-                  cat "$file"
-                  exit 1
+                    echo "Error: Failed to update API configuration"
+                    echo "File contents:"
+                    cat "conf.d/api.conf"
+                    exit 1
                 fi
-              else
-                echo "Warning: File $file not found"
-              fi
-            done
+            else
+                echo "Error: API configuration file not found"
+                exit 1
+            fi
 
-            # Verify the changes
-            echo "Verifying configuration updates..."
-            for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
-              if [ -f "$file" ]; then
-                if ! grep -q "$NETWORK_NAME" "$file"; then
-                  echo "Error: Network name not properly updated in $file"
-                  echo "File contents:"
-                  cat "$file"
-                  exit 1
-                fi
-              fi
-            done
+            # Verify the update
+            if ! grep -q "$NETWORK_NAME" "conf.d/api.conf"; then
+                echo "Error: Network name not properly updated in API configuration"
+                echo "File contents:"
+                cat "conf.d/api.conf"
+                exit 1
+            fi
 
             # Verify SSL configuration
             echo "Verifying SSL configuration..."

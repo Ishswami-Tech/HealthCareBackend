@@ -65,16 +65,17 @@ sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 
 # Update network name in Nginx configuration
 echo -e "${YELLOW}Updating network configuration...${NC}"
-for conf_file in $NGINX_CONF_DIR/*.conf; do
-    if [ -f "$conf_file" ]; then
-        # Use awk for network name replacement
-        awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "$conf_file" > "$conf_file.tmp" && sudo mv "$conf_file.tmp" "$conf_file"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}Error: Failed to update $conf_file${NC}"
-            exit 1
-        fi
+if [ -f "$NGINX_CONF_DIR/api.conf" ]; then
+    # Use awk for network name replacement
+    awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "$NGINX_CONF_DIR/api.conf" > "$NGINX_CONF_DIR/api.conf.tmp" && sudo mv "$NGINX_CONF_DIR/api.conf.tmp" "$NGINX_CONF_DIR/api.conf"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Error: Failed to update API configuration${NC}"
+        exit 1
     fi
-done
+else
+    echo -e "${RED}Error: API configuration file not found${NC}"
+    exit 1
+fi
 
 # Test Nginx configuration
 echo -e "${YELLOW}Testing Nginx configuration...${NC}"
