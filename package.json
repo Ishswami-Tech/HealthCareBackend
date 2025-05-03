@@ -91,7 +91,9 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.7.2",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "gauge": "^5.0.1",
+    "rimraf": "^5.0.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -145,6 +147,12 @@
     "seed": "ts-node src/shared/database/prisma/seed.ts"
   },
   "overrides": {
-    "glob": "^11.0.1"
+    "glob": "^11.0.1",
+    "gauge": "^5.0.1",
+    "npmlog": "^7.0.1",
+    "are-we-there-yet": "^4.0.0"
+  },
+  "engines": {
+    "npm": ">=11.3.0"
   }
 }

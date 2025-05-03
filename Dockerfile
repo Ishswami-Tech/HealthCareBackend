@@ -22,12 +22,12 @@ RUN npm run build
 FROM node:20-alpine AS production
 
 # Install necessary tools in a single layer
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ curl openssl ca-certificates && \
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ wget openssl ca-certificates && \
     rm -rf /var/cache/apk/*
 
 WORKDIR /app
 
-# Create SSL directory
+# Create SSL directory with proper permissions
 RUN mkdir -p /app/ssl && chmod 755 /app/ssl
 
 # Copy package files and install production dependencies
@@ -52,9 +52,17 @@ ENV NODE_ENV=production \
 # Expose ports
 EXPOSE 8088 5555
 
-# Add healthcheck with increased timeout and start period
-HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=5 \
-    CMD curl -k --fail --max-time 30 --retry 3 --retry-delay 5 https://localhost:8088/health || exit 1
+# Add healthcheck with wget instead of curl
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD wget --no-check-certificate -q --spider https://127.0.0.1:8088/health || exit 1
+
+# Create a health check script
+COPY <<EOF /app/healthcheck.sh
+#!/bin/sh
+wget --no-check-certificate -q --spider https://127.0.0.1:8088/health || exit 1
+EOF
+
+RUN chmod +x /app/healthcheck.sh
 
 # Start script with optimized waiting and error handling
 CMD ["sh", "-c", "\
