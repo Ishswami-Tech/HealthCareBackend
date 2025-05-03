@@ -37,7 +37,7 @@ services:
       - "8088"
       - "5555"
     networks:
-      app-network:
+      ${NETWORK_NAME:-app-network}:
         aliases:
           - api
     volumes:
@@ -80,7 +80,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      app-network:
+      ${NETWORK_NAME:-app-network}:
         aliases:
           - postgres
     healthcheck:
@@ -116,7 +116,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      app-network:
+      ${NETWORK_NAME:-app-network}:
         aliases:
           - redis
     healthcheck:
@@ -154,7 +154,7 @@ services:
     depends_on:
       - redis
     networks:
-      app-network:
+      ${NETWORK_NAME:-app-network}:
         aliases:
           - redis-commander
     healthcheck:
@@ -178,5 +178,5 @@ volumes:
   redis_data:
 
 networks:
-  app-network:
+  ${NETWORK_NAME:-app-network}:
     driver: bridge 
