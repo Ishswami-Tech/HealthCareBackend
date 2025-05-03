@@ -16,8 +16,7 @@ permissions:
 env:
   DOCKER_COMPOSE_VERSION: v2.20.2
   SERVER_HOST: api.ishswami.in
-  SERVER_USER: ${{ secrets.SERVER_USER }}
-  SERVER_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+  SERVER_USER: root
   DEPLOY_PATH: /var/www/healthcare/backend
   SERVER_IP: 82.208.20.16
   DOMAIN: api.ishswami.in
@@ -25,6 +24,7 @@ env:
   SSL_EMAIL: aadeshbhujbal99@gmail.com
   NODE_ENV: production
   NETWORK_NAME: app-network
+  GIT_SSH_COMMAND: "ssh -i ~/.ssh/github-actions-key -o StrictHostKeyChecking=no"
 
 jobs:
   pre-deployment-check:
@@ -55,7 +55,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
+          key_path: /root/.ssh/github-actions-key
           script: |
             echo "Checking system resources..."
             df -h
@@ -146,7 +146,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
+          key_path: /root/.ssh/github-actions-key
           script: |
             # Set up environment
             export DEPLOY_SHA=${{ github.sha }}
@@ -158,11 +158,8 @@ jobs:
             mkdir -p /var/www/healthcare/backend/releases/${{ github.sha }}
             cd /var/www/healthcare/backend/releases/${{ github.sha }}
 
-            # Set up SSH for GitHub
-            mkdir -p ~/.ssh
-            ssh-keyscan github.com >> ~/.ssh/known_hosts
-            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-            chmod 600 ~/.ssh/id_rsa
+            # Use existing GitHub Actions SSH key
+            export GIT_SSH_COMMAND="ssh -i /root/.ssh/github-actions-key -o StrictHostKeyChecking=no"
 
             # Clone repository using SSH
             git clone git@github.com:${{ github.repository }}.git .
@@ -245,7 +242,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
+          key_path: /root/.ssh/github-actions-key
           script: |
             set -e
 
@@ -298,7 +295,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
+          key_path: /root/.ssh/github-actions-key
           script: |
             set -e
 
@@ -352,7 +349,7 @@ jobs:
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
+          key_path: /root/.ssh/github-actions-key
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
