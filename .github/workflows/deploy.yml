@@ -127,25 +127,54 @@ jobs:
           git config --global user.name "GitHub Actions"
           git commit -m "chore: Make deploy-nginx.sh executable" || true
 
-      - name: Create backup
+      - name: Create backup and cleanup
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
           script: |
+            set -e
             cd ${{ env.DEPLOY_PATH }}
+
+            # Create backup directory with timestamp
             timestamp=$(date +%Y%m%d_%H%M%S)
             mkdir -p backups/$timestamp
+
+            # Stop and backup current deployment if it exists
             if [ -d "current" ]; then
+              echo "Stopping current deployment..."
+              cd current
+              docker compose -f docker-compose.prod.yml down --remove-orphans || true
+              cd ..
+
+              echo "Creating backup..."
               cp -r current/* backups/$timestamp/
               echo $timestamp > backups/latest_backup
               
               # Backup SSL certificates
               if [ -d "current/nginx/ssl" ]; then
+                mkdir -p backups/$timestamp/ssl
                 cp -r current/nginx/ssl/* backups/$timestamp/ssl/
               fi
+
+              # Clean up old backups (keep last 5)
+              ls -1t backups | tail -n +6 | xargs -r rm -rf
             fi
+
+            # Clean up Docker resources
+            echo "Cleaning up Docker resources..."
+            docker system prune -f
+            docker volume prune -f
+            docker network prune -f
+
+            # Remove any existing containers with conflicting names
+            for container in latest-redis latest-postgres latest-api; do
+              if docker ps -a --format '{{.Names}}' | grep -q "^$container$"; then
+                echo "Removing existing container: $container"
+                docker rm -f $container || true
+              fi
+            done
 
       - name: Prepare SSL files
         run: |
@@ -278,11 +307,151 @@ jobs:
               exit 1
             fi
 
+            # Update current deployment symlink
+            cd ${{ env.DEPLOY_PATH }}
+            rm -f current
+            ln -sfn releases/${{ github.sha }} current
+            echo ${{ github.sha }} > current_deployment
+
             echo "Deployment completed successfully"
 
+  post-deployment-verification:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify domain and SSL
+        run: |
+          echo "Verifying domain and SSL configuration..."
+
+          # Check DNS resolution
+          if ! nslookup ${{ env.DOMAIN }} > /dev/null 2>&1; then
+            echo "Error: Domain ${{ env.DOMAIN }} is not resolving"
+            exit 1
+          fi
+
+          # Check SSL certificate
+          echo "Checking SSL certificate..."
+          if ! openssl s_client -connect ${{ env.DOMAIN }}:443 -servername ${{ env.DOMAIN }} < /dev/null 2>&1 | grep -q "Verify return code: 0"; then
+            echo "Error: SSL certificate verification failed"
+            exit 1
+          fi
+
+          # Check SSL certificate expiry
+          expiry=$(echo | openssl s_client -servername ${{ env.DOMAIN }} -connect ${{ env.DOMAIN }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+          if [ ! -z "$expiry" ]; then
+            expiry_sec=$(date -d "$expiry" +%s)
+            now_sec=$(date +%s)
+            days_left=$(( ($expiry_sec - $now_sec) / 86400 ))
+            if [ $days_left -lt 30 ]; then
+              echo "Warning: SSL certificate will expire in $days_left days"
+            fi
+          fi
+
+      - name: Verify Nginx configuration
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "Verifying Nginx configuration..."
+
+            # Check Nginx configuration syntax
+            if ! sudo nginx -t; then
+              echo "Error: Nginx configuration test failed"
+              exit 1
+            fi
+
+            # Check Nginx is running
+            if ! systemctl is-active --quiet nginx; then
+              echo "Error: Nginx is not running"
+              exit 1
+            fi
+
+            # Check SSL certificate paths and permissions
+            for file in /etc/nginx/ssl/api.ishswami.in.key /etc/nginx/ssl/api.ishswami.in.crt; do
+              if [ ! -f "$file" ]; then
+                echo "Error: SSL file $file not found"
+                exit 1
+              fi
+              
+              perms=$(stat -c "%a" $file)
+              if [[ $file == *.key && $perms != "600" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              elif [[ $file == *.crt && $perms != "644" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              fi
+            done
+
+            # Check Nginx virtual host configuration
+            if [ ! -f "/etc/nginx/conf.d/api.ishswami.in.conf" ]; then
+              echo "Error: Nginx virtual host configuration not found"
+              exit 1
+            fi
+
+            # Check SSL configuration in Nginx
+            if ! grep -q "ssl_certificate" /etc/nginx/conf.d/api.ishswami.in.conf || \
+               ! grep -q "ssl_certificate_key" /etc/nginx/conf.d/api.ishswami.in.conf; then
+              echo "Error: SSL configuration missing in Nginx"
+              exit 1
+            fi
+
+      - name: Verify application health
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "Verifying application health..."
+
+            # Check API health endpoint
+            if ! curl -k -s https://${{ env.DOMAIN }}/health | grep -q "ok"; then
+              echo "Error: API health check failed"
+              exit 1
+            fi
+
+            # Check Redis Commander
+            if ! curl -k -s https://${{ env.DOMAIN }}:8082 | grep -q "Redis Commander"; then
+              echo "Error: Redis Commander health check failed"
+              exit 1
+            fi
+
+            # Check database connection
+            if ! docker exec ${{ env.DEPLOY_PATH }}/current/postgres pg_isready -U postgres; then
+              echo "Error: Database health check failed"
+              exit 1
+            fi
+
+            # Check Redis connection
+            if ! docker exec ${{ env.DEPLOY_PATH }}/current/redis redis-cli ping | grep -q "PONG"; then
+              echo "Error: Redis health check failed"
+              exit 1
+            fi
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: status,
+              environment: 'production'
+            });
+
   rollback:
-    if: failure() && needs.deploy.result == 'failure'
-    needs: [deploy, create-deployment]
+    if: failure() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
+    needs: [deploy, post-deployment-verification, create-deployment]
     runs-on: ubuntu-latest
     steps:
       - name: Rollback deployment
@@ -300,17 +469,45 @@ jobs:
               echo "Rolling back to backup from $timestamp"
 
               # Stop current services
-              cd current
-              docker compose -f docker-compose.prod.yml down --remove-orphans || true
+              if [ -d "current" ]; then
+                cd current
+                docker compose -f docker-compose.prod.yml down --remove-orphans || true
+                cd ..
+              fi
+
+              # Clean up Docker resources
+              echo "Cleaning up Docker resources..."
+              docker system prune -f
+              docker volume prune -f
+              docker network prune -f
 
               # Restore from backup
-              cd ${{ env.DEPLOY_PATH }}
               rm -rf current
               cp -r backups/$timestamp current/
 
               # Start services from backup
               cd current
               docker compose -f docker-compose.prod.yml up -d
+
+              # Wait for services to be healthy
+              echo "Waiting for services to be healthy..."
+              attempt=1
+              max_attempts=30
+              while [ $attempt -le $max_attempts ]; do
+                if curl -k -s https://localhost:8088/health | grep -q "ok"; then
+                  echo "API service is healthy"
+                  break
+                fi
+                echo "Attempt $attempt/$max_attempts: Waiting for API service..."
+                sleep 10
+                attempt=$((attempt + 1))
+              done
+
+              if [ $attempt -gt $max_attempts ]; then
+                echo "Error: API service failed to become healthy after rollback"
+                docker compose -f docker-compose.prod.yml logs api
+                exit 1
+              fi
 
               echo "Rollback completed successfully"
             else
