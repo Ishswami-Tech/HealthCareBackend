@@ -23,6 +23,7 @@ env:
   FRONTEND_DOMAIN: ishswami.in
   SSL_EMAIL: aadeshbhujbal99@gmail.com
   NODE_ENV: production
+  NETWORK_NAME: app-network
 
 jobs:
   pre-deployment-check:
@@ -287,12 +288,31 @@ jobs:
               fi
             done
 
-            # Start Docker services
-            echo "Starting Docker services..."
+            # Get the current Docker network name
+            NETWORK_NAME=$(docker network ls --filter name=app-network --format '{{.Name}}')
+            if [ -z "$NETWORK_NAME" ]; then
+              echo "Creating new network: app-network"
+              docker network create app-network
+              NETWORK_NAME=app-network
+            fi
+
+            # Verify network connectivity
+            echo "Verifying network connectivity..."
+            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
+              echo "Error: API container not found in network $NETWORK_NAME"
+              docker network inspect $NETWORK_NAME
+              exit 1
+            fi
+
+            # Export network name for docker-compose
+            export NETWORK_NAME
+
+            # Start Docker services with network name
+            echo "Starting Docker services with network: $NETWORK_NAME"
             DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml build --no-cache --parallel
 
             echo "Starting containers..."
-            DEPLOY_SHA=$DEPLOY_SHA docker compose -f docker-compose.prod.yml up -d
+            DEPLOY_SHA=$DEPLOY_SHA NETWORK_NAME=$NETWORK_NAME docker compose -f docker-compose.prod.yml up -d
 
             # Wait for containers to be healthy
             echo "Waiting for containers to be healthy..."
@@ -314,22 +334,6 @@ jobs:
               echo "Error: Containers failed to become healthy"
               docker ps -a
               docker logs latest-api
-              exit 1
-            fi
-
-            # Get the current Docker network name
-            NETWORK_NAME=$(docker network ls --filter name=app-network --format '{{.Name}}')
-            if [ -z "$NETWORK_NAME" ]; then
-              echo "Error: Could not find app-network"
-              docker network ls
-              exit 1
-            fi
-
-            # Verify network connectivity
-            echo "Verifying network connectivity..."
-            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
-              echo "Error: API container not found in network $NETWORK_NAME"
-              docker network inspect $NETWORK_NAME
               exit 1
             fi
 
