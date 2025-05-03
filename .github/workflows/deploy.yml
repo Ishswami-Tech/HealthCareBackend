@@ -349,10 +349,18 @@ jobs:
               docker exec latest-api sh -c 'strace -f -p $(pgrep -f "node.*main") 2>&1 > /tmp/node-strace.log &'
               docker exec latest-api sh -c 'top -b -n 1 -p $(pgrep -f "node.*main") > /tmp/node-top.log &'
               
-              # Enable Node.js debugging
-              echo "Enabling Node.js debugging..."
+              # Enable Node.js debugging and profiling
+              echo "Enabling Node.js debugging and profiling..."
               docker exec latest-api sh -c 'kill -SIGUSR1 $(pgrep -f "node.*main")'
-              docker exec latest-api sh -c 'node --inspect-brk=0.0.0.0:9229 dist/main > /tmp/node-debug.log 2>&1 &'
+              docker exec latest-api sh -c 'node --inspect-brk=0.0.0.0:9229 --prof dist/main > /tmp/node-debug.log 2>&1 &'
+              
+              # Check for memory leaks
+              echo "Checking for memory leaks..."
+              docker exec latest-api sh -c 'node --heapsnapshot dist/main > /tmp/node-heap.log 2>&1 &'
+              
+              # Check for infinite loops
+              echo "Checking for infinite loops..."
+              docker exec latest-api sh -c 'node --trace-warnings dist/main > /tmp/node-trace.log 2>&1 &'
               
               # Check if port is listening
               echo "Checking if port 8088 is listening..."
@@ -376,6 +384,8 @@ jobs:
                   docker exec latest-api cat /tmp/node-strace.log
                   docker exec latest-api cat /tmp/node-top.log
                   docker exec latest-api cat /tmp/node-debug.log
+                  docker exec latest-api cat /tmp/node-heap.log
+                  docker exec latest-api cat /tmp/node-trace.log
                   sleep 20
                   attempt=$((attempt + 1))
                   continue
@@ -411,6 +421,8 @@ jobs:
                 docker exec latest-api cat /tmp/node-strace.log
                 docker exec latest-api cat /tmp/node-top.log
                 docker exec latest-api cat /tmp/node-debug.log
+                docker exec latest-api cat /tmp/node-heap.log
+                docker exec latest-api cat /tmp/node-trace.log
                 
                 exit 1
               fi
@@ -440,7 +452,7 @@ jobs:
                   
                   # Check network configuration
                   echo "Checking network configuration..."
-                  docker network inspect 16a5b06b85a89286f858b5cfc661de229e108911_app-network
+                  docker network inspect 10eee31c667acd19865ed49e8dac8737d2f83aca_app-network
                   docker inspect latest-api
                   
                   # Check container network settings
@@ -465,6 +477,8 @@ jobs:
                   docker exec latest-api cat /tmp/node-strace.log
                   docker exec latest-api cat /tmp/node-top.log
                   docker exec latest-api cat /tmp/node-debug.log
+                  docker exec latest-api cat /tmp/node-heap.log
+                  docker exec latest-api cat /tmp/node-trace.log
                 fi
               else
                 echo "API is not healthy from within container"
@@ -494,6 +508,8 @@ jobs:
                 docker exec latest-api cat /tmp/node-strace.log
                 docker exec latest-api cat /tmp/node-top.log
                 docker exec latest-api cat /tmp/node-debug.log
+                docker exec latest-api cat /tmp/node-heap.log
+                docker exec latest-api cat /tmp/node-trace.log
               fi
               
               sleep 10
@@ -512,7 +528,7 @@ jobs:
               docker logs latest-api
               
               echo "Network configuration:"
-              docker network inspect 16a5b06b85a89286f858b5cfc661de229e108911_app-network
+              docker network inspect 10eee31c667acd19865ed49e8dac8737d2f83aca_app-network
               
               echo "API container details:"
               docker inspect latest-api
@@ -532,6 +548,8 @@ jobs:
               docker exec latest-api cat /tmp/node-strace.log
               docker exec latest-api cat /tmp/node-top.log
               docker exec latest-api cat /tmp/node-debug.log
+              docker exec latest-api cat /tmp/node-heap.log
+              docker exec latest-api cat /tmp/node-trace.log
               
               exit 1
             fi
