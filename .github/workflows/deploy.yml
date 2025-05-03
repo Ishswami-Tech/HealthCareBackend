@@ -5,291 +5,648 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  actions: read
+  deployments: write
 
 env:
   DOCKER_COMPOSE_VERSION: v2.20.2
+  SERVER_HOST: api.ishswami.in
+  SERVER_USER: ${{ secrets.SERVER_USER }}
+  SERVER_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
   DEPLOY_PATH: /var/www/healthcare/backend
   SERVER_IP: 82.208.20.16
   DOMAIN: api.ishswami.in
   FRONTEND_DOMAIN: ishswami.in
+  SSL_EMAIL: aadeshbhujbal99@gmail.com
+  NODE_ENV: production
 
 jobs:
-  build-check:
+  pre-deployment-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Check Docker Build
-        run: |
-          echo "Running Docker build with progress output..."
-          docker buildx build \
-            --progress=plain \
-            --load \
-            -t ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:test \
-            .
-
-          echo "Verifying image..."
-          if ! docker image inspect ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:test >/dev/null 2>&1; then
-            echo "Failed to build Docker image"
-            exit 1
-          fi
-
-  pre-deploy-check:
-    needs: build-check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check Domain DNS
+      - name: Check domain DNS and SSL
         run: |
           echo "Checking DNS for ${{ env.DOMAIN }}..."
           if ! nslookup ${{ env.DOMAIN }} > /dev/null 2>&1; then
             echo "Warning: Domain ${{ env.DOMAIN }} DNS resolution failed"
+            echo "Please ensure domain is properly configured"
             exit 1
           fi
 
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
-
-          # Test SSH connection
-          if ! ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ env.SERVER_IP }} "echo 'SSH connection successful'"; then
-            echo "SSH connection failed"
-            exit 1
+          echo "Checking SSL certificate expiry..."
+          expiry=$(echo | openssl s_client -servername ${{ env.DOMAIN }} -connect ${{ env.DOMAIN }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+          if [ ! -z "$expiry" ]; then
+            expiry_sec=$(date -d "$expiry" +%s)
+            now_sec=$(date +%s)
+            days_left=$(( ($expiry_sec - $now_sec) / 86400 ))
+            if [ $days_left -lt 30 ]; then
+              echo "Warning: SSL certificate will expire in $days_left days"
+            fi
           fi
 
-      - name: Verify Server Connectivity
+      - name: Check server connectivity and resources
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
           script: |
-            # Check system resources
             echo "Checking system resources..."
             df -h
             free -m
             docker system df
 
-            # Verify Docker status
+            echo "Checking Docker status..."
             if ! docker info > /dev/null 2>&1; then
               echo "Docker is not running!"
               exit 1
             fi
 
-            # Check required ports
             echo "Checking required ports..."
-            for port in 80 443 8088 5432 6379; do
+            for port in 8088 5432 6379 8082; do
               if netstat -tuln | grep -q ":$port "; then
-                echo "Port $port is in use"
+                echo "Warning: Port $port is already in use"
+                netstat -tuln | grep ":$port "
               fi
             done
 
-            # Verify SSL directory
-            echo "Checking SSL configuration..."
-            if [ ! -d "/etc/nginx/ssl" ]; then
-              mkdir -p /etc/nginx/ssl
-              chmod 755 /etc/nginx/ssl
+            echo "Checking disk space..."
+            DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+            if [ "$DISK_USAGE" -gt 85 ]; then
+              echo "Warning: Disk usage is above 85%"
+              df -h /
             fi
 
-            # Check Nginx installation
-            if ! command -v nginx > /dev/null 2>&1; then
-              echo "Nginx not installed. Installing..."
-              apt-get update && apt-get install -y nginx
-            fi
+            echo "Checking SSL certificate paths..."
+            for dir in "/etc/nginx/ssl" "/app/ssl"; do
+              if [ ! -d "$dir" ]; then
+                echo "Creating $dir directory..."
+                sudo mkdir -p $dir
+                sudo chmod 755 $dir
+              fi
+            done
+
+  create-deployment:
+    needs: [pre-deployment-check]
+    runs-on: ubuntu-latest
+    outputs:
+      deployment_id: ${{ steps.create_deployment.outputs.deployment_id }}
+    steps:
+      - name: Create GitHub deployment
+        id: create_deployment
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { data: deployment } = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'production',
+              auto_merge: false,
+              required_contexts: []
+            });
+            return deployment.id;
 
   deploy:
-    needs: [build-check, pre-deploy-check]
+    needs: create-deployment
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Setup SSH for Git
+      - name: Fix file permissions
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-          git config --global user.email "actions@github.com"
+          chmod +x nginx/deploy-nginx.sh
+          git add nginx/deploy-nginx.sh
+          git config --global user.email "github-actions@github.com"
           git config --global user.name "GitHub Actions"
+          git commit -m "chore: Make deploy-nginx.sh executable" || true
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push Docker images
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:latest
-          cache-to: type=inline
-
-      - name: Deploy to Server
+      - name: Create backup and cleanup
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: GITHUB_SHA
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
           script: |
             set -e
-            echo "Starting deployment process..."
-
-            # Create required directories
-            mkdir -p ${{ env.DEPLOY_PATH }}/{releases,ssl,logs}
             cd ${{ env.DEPLOY_PATH }}
 
-            # Create new release directory
-            RELEASE_DIR="releases/$GITHUB_SHA"
-            mkdir -p $RELEASE_DIR
-            cd $RELEASE_DIR
+            # Create backup directory with timestamp
+            timestamp=$(date +%Y%m%d_%H%M%S)
+            mkdir -p backups/$timestamp
 
-            # Copy repository files directly
-            echo "Copying repository files..."
-            rsync -av --delete /tmp/repo/ ./
+            # Stop and backup current deployment if it exists
+            if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
+              echo "Stopping current deployment..."
+              cd current
+              docker compose -f docker-compose.prod.yml down --remove-orphans || true
+              cd ..
 
-            # Setup SSL certificates
-            echo "Setting up SSL certificates..."
-            mkdir -p ssl
-            cp /etc/nginx/ssl/${{ env.DOMAIN }}.* ssl/
-            chmod 644 ssl/${{ env.DOMAIN }}.crt
-            chmod 600 ssl/${{ env.DOMAIN }}.key
+              echo "Creating backup..."
+              cp -r current/* backups/$timestamp/ 2>/dev/null || true
+              echo $timestamp > backups/latest_backup
+              
+              # Backup SSL certificates
+              if [ -d "current/nginx/ssl" ]; then
+                mkdir -p backups/$timestamp/ssl
+                cp -r current/nginx/ssl/* backups/$timestamp/ssl/ 2>/dev/null || true
+              fi
 
-            # Set deployment SHA in environment
-            export DEPLOY_SHA=$GITHUB_SHA
-
-            # Stop any existing containers
-            if [ -d "../current" ]; then
-              cd ../current
-              docker compose -f docker-compose.prod.yml down || true
-              cd ../$RELEASE_DIR
+              # Clean up old backups (keep last 5)
+              ls -1t backups | tail -n +6 | xargs -r rm -rf
+            else
+              echo "No current deployment found, proceeding with fresh deployment..."
             fi
 
-            # Pull and start containers using .env.production
-            echo "Starting containers..."
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+            # Clean up Docker resources
+            echo "Cleaning up Docker resources..."
+            docker system prune -f
+            docker volume prune -f
+            docker network prune -f
 
-            # Wait for containers to be healthy
-            echo "Waiting for containers to be healthy..."
-            for i in {1..30}; do
-              if docker compose -f docker-compose.prod.yml ps | grep -q "health: healthy"; then
-                HEALTHY=true
-                break
+            # Remove any existing containers with conflicting names
+            for container in latest-redis latest-postgres latest-api latest-redis-commander; do
+              if docker ps -a --format '{{.Names}}' | grep -q "^$container$"; then
+                echo "Removing existing container: $container"
+                docker rm -f $container || true
               fi
-              echo "Attempt $i/30: Waiting for containers to be healthy..."
-              sleep 10
             done
 
-            if [ "$HEALTHY" != "true" ]; then
-              echo "Health check failed. Running rollback..."
-              bash rollback.sh
-              exit 1
-            fi
+            # Additional cleanup for any containers with the same name pattern
+            echo "Cleaning up any remaining containers with similar names..."
+            docker ps -a --format '{{.Names}}' | grep -E '^(latest|.*-redis-commander)$' | while read container; do
+              echo "Removing container: $container"
+              docker rm -f $container || true
+            done
 
-            # Update current symlink
-            cd ${{ env.DEPLOY_PATH }}
-            ln -sfn $RELEASE_DIR current
+            # Create necessary directories if they don't exist
+            mkdir -p current
+            mkdir -p releases
+            mkdir -p backups
 
-            # Cleanup old releases (keep last 5)
-            cd releases
-            ls -1t | tail -n +6 | xargs -r rm -rf
+      - name: Prepare SSL files
+        run: |
+          # Create SSL directories
+          mkdir -p ssl_temp
+          # Copy and rename certificates
+          cp nginx/ssl/ishswami.com.pem ssl_temp/api.ishswami.in.crt
+          cp nginx/ssl/ishswami.com.key ssl_temp/api.ishswami.in.key
 
-            echo "Deployment completed successfully!"
+          # Verify SSL certificate
+          echo "Verifying SSL certificate..."
+          if ! openssl x509 -in ssl_temp/api.ishswami.in.crt -noout -text > /dev/null; then
+            echo "Error: Invalid SSL certificate"
+            exit 1
+          fi
 
-      - name: Verify Deployment
-        if: success()
+          # Check certificate matches private key
+          echo "Checking certificate and key match..."
+          cert_mod=$(openssl x509 -noout -modulus -in ssl_temp/api.ishswami.in.crt | openssl md5)
+          key_mod=$(openssl rsa -noout -modulus -in ssl_temp/api.ishswami.in.key | openssl md5)
+          if [ "$cert_mod" != "$key_mod" ]; then
+            echo "Error: Certificate and private key do not match"
+            exit 1
+          fi
+
+      - name: Copy SSL certificates
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          source: "ssl_temp/*"
+          target: "/tmp/ssl-temp"
+          strip_components: 1
+
+      - name: Copy deployment files
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          source: "."
+          target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
+          strip_components: 0
+          overwrite: true
+          rm: false
+
+      - name: Deploy to server
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script_stop: true
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          command_timeout: "30m"
           script: |
-            echo "Running comprehensive deployment verification..."
+            set -e
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
-            # Verify Nginx configuration and service
-            echo "Checking Nginx..."
-            nginx -t
-            systemctl is-active --quiet nginx || (echo "Nginx is not running" && exit 1)
+            # Setup SSL directories with proper permissions
+            echo "Setting up SSL directories..."
+            sudo mkdir -p /etc/nginx/ssl
+            sudo mkdir -p /app/ssl
+            sudo chown -R root:root /etc/nginx/ssl /app/ssl
+            sudo chmod 755 /etc/nginx/ssl /app/ssl
 
-            # Check SSL certificates
-            echo "Checking SSL certificates..."
-            if ! openssl x509 -noout -dates -in /etc/nginx/ssl/${{ env.DOMAIN }}.crt; then
-              echo "SSL certificate verification failed"
+            # Copy and secure SSL certificates
+            if [ -d "/tmp/ssl-temp" ]; then
+              echo "Copying SSL certificates..."
+              sudo cp -f /tmp/ssl-temp/* /etc/nginx/ssl/
+              sudo cp -f /tmp/ssl-temp/* /app/ssl/
+              sudo chown root:root /etc/nginx/ssl/* /app/ssl/*
+              sudo chmod 600 /etc/nginx/ssl/*.key /app/ssl/*.key
+              sudo chmod 644 /etc/nginx/ssl/*.crt /app/ssl/*.crt
+              rm -rf /tmp/ssl-temp
+            else
+              echo "No SSL files found in temp directory"
               exit 1
             fi
 
-            # Verify domain resolution
-            echo "Verifying domain resolution..."
-            if ! curl -k -I https://${{ env.DOMAIN }} 2>/dev/null | grep -q "HTTP/"; then
-              echo "Domain is not accessible"
-              exit 1
-            fi
-
-            # Check API health endpoint
-            echo "Checking API health..."
-            if ! curl -k -s https://${{ env.DOMAIN }}/health | grep -q "ok"; then
-              echo "API health check failed"
-              exit 1
-            fi
-
-            # Verify all containers are running
-            echo "Verifying containers..."
-            CONTAINERS="api postgres redis"
-            for container in $CONTAINERS; do
-              if ! docker ps | grep -q "${DEPLOY_SHA:-latest}-$container"; then
-                echo "Container $container is not running"
+            # Verify SSL files and permissions
+            echo "Verifying SSL files..."
+            for file in /app/ssl/api.ishswami.in.key /app/ssl/api.ishswami.in.crt; do
+              if [ ! -f "$file" ]; then
+                echo "Error: SSL file $file not found"
+                exit 1
+              fi
+              
+              # Check permissions
+              perms=$(stat -c "%a" $file)
+              if [[ $file == *.key && $perms != "600" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              elif [[ $file == *.crt && $perms != "644" ]]; then
+                echo "Error: Incorrect permissions on $file"
                 exit 1
               fi
             done
 
-            # Check container logs for errors
-            echo "Checking container logs..."
-            for container in $CONTAINERS; do
-              if docker logs ${DEPLOY_SHA:-latest}-$container 2>&1 | grep -i "error"; then
-                echo "Found errors in $container logs"
-                docker logs ${DEPLOY_SHA:-latest}-$container
+            # Start Docker services
+            echo "Starting Docker services..."
+            DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml build --no-cache --parallel
+
+            echo "Starting containers..."
+            DEPLOY_SHA=$DEPLOY_SHA docker compose -f docker-compose.prod.yml up -d
+
+            # Wait for containers to be healthy
+            echo "Waiting for containers to be healthy..."
+            attempt=1
+            max_attempts=30
+            while [ $attempt -le $max_attempts ]; do
+              if docker ps --filter "name=latest-api" --format "{{.Status}}" | grep -q "healthy" && \
+                 docker ps --filter "name=latest-postgres" --format "{{.Status}}" | grep -q "healthy" && \
+                 docker ps --filter "name=latest-redis" --format "{{.Status}}" | grep -q "healthy"; then
+                echo "All containers are healthy"
+                break
+              fi
+              echo "Attempt $attempt/$max_attempts: Waiting for containers to be healthy..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+
+            if [ $attempt -gt $max_attempts ]; then
+              echo "Error: Containers failed to become healthy"
+              docker ps -a
+              docker logs latest-api
+              exit 1
+            fi
+
+            # Get the current Docker network name
+            NETWORK_NAME=$(docker network ls --filter name=app-network --format '{{.Name}}')
+            if [ -z "$NETWORK_NAME" ]; then
+              echo "Error: Could not find app-network"
+              docker network ls
+              exit 1
+            fi
+
+            # Verify network connectivity
+            echo "Verifying network connectivity..."
+            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
+              echo "Error: API container not found in network $NETWORK_NAME"
+              docker network inspect $NETWORK_NAME
+              exit 1
+            fi
+
+            # Update Nginx configuration with correct network name
+            echo "Updating Nginx configuration..."
+            cd nginx
+
+            # Escape network name for sed
+            ESCAPED_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/[\/&]/\\&/g' | sed 's/\./\\./g')
+
+            # Update configuration files with proper escaping
+            for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
+              if [ -f "$file" ]; then
+                echo "Updating $file with network name: $NETWORK_NAME"
+                sed -i "s/\${NETWORK_NAME}/$ESCAPED_NETWORK_NAME/g" "$file" || {
+                  echo "Error: Failed to update $file"
+                  echo "File contents:"
+                  cat "$file"
+                  exit 1
+                }
+              else
+                echo "Warning: File $file not found"
               fi
             done
 
-            echo "All verification checks passed successfully!"
+            # Verify the changes
+            echo "Verifying configuration updates..."
+            for file in deploy-nginx.sh nginx.conf conf.d/api.conf; do
+              if [ -f "$file" ]; then
+                if ! grep -q "$NETWORK_NAME" "$file"; then
+                  echo "Error: Network name not properly updated in $file"
+                  echo "File contents:"
+                  cat "$file"
+                  exit 1
+                fi
+              fi
+            done
 
-  rollback:
+            # Verify SSL configuration
+            echo "Verifying SSL configuration..."
+            for file in /etc/nginx/ssl/api.ishswami.in.crt /etc/nginx/ssl/api.ishswami.in.key; do
+              if [ ! -f "$file" ]; then
+                echo "Error: SSL file $file not found"
+                exit 1
+              fi
+              
+              # Check permissions
+              perms=$(stat -c "%a" $file)
+              if [[ $file == *.key && $perms != "600" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              elif [[ $file == *.crt && $perms != "644" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              fi
+            done
+
+            # Verify Nginx configuration
+            echo "Verifying Nginx configuration..."
+            if ! nginx -t; then
+              echo "Error: Nginx configuration test failed"
+              echo "Nginx error log:"
+              cat /var/log/nginx/error.log
+              echo "Current network configuration:"
+              docker network inspect $NETWORK_NAME
+              echo "Container status:"
+              docker ps -a
+              exit 1
+            fi
+
+            # Deploy Nginx configuration
+            echo "Deploying Nginx configuration..."
+            chmod +x deploy-nginx.sh
+            ./deploy-nginx.sh
+
+            # Restart Nginx
+            echo "Restarting Nginx..."
+            systemctl restart nginx
+
+            # Wait for Nginx to start
+            echo "Waiting for Nginx to start..."
+            sleep 5
+            if ! systemctl is-active --quiet nginx; then
+              echo "Error: Nginx failed to start"
+              echo "Nginx status:"
+              systemctl status nginx
+              echo "Nginx error log:"
+              cat /var/log/nginx/error.log
+              exit 1
+            fi
+
+            # Test SSL connection
+            echo "Testing SSL connection..."
+            if ! curl -k -v -s -o /dev/null -w "%{http_code}" https://api.ishswami.in/health; then
+              echo "Warning: SSL connection test failed, but continuing deployment"
+              echo "SSL error details:"
+              curl -k -v https://api.ishswami.in/health 2>&1
+            fi
+
+            # Update current deployment symlink
+            cd ${{ env.DEPLOY_PATH }}
+            rm -f current
+            ln -sfn releases/${{ github.sha }} current
+            echo ${{ github.sha }} > current_deployment
+
+            echo "Deployment completed successfully"
+
+  post-deployment-verification:
     needs: deploy
-    if: failure()
     runs-on: ubuntu-latest
     steps:
-      - name: Execute Rollback
+      - name: Verify domain and SSL
+        run: |
+          echo "Verifying domain and SSL configuration..."
+
+          # Check DNS resolution
+          if ! nslookup ${{ env.DOMAIN }} > /dev/null 2>&1; then
+            echo "Error: Domain ${{ env.DOMAIN }} is not resolving"
+            exit 1
+          fi
+
+          # Check SSL certificate
+          echo "Checking SSL certificate..."
+          if ! openssl s_client -connect ${{ env.DOMAIN }}:443 -servername ${{ env.DOMAIN }} < /dev/null 2>&1 | grep -q "Verify return code: 0"; then
+            echo "Error: SSL certificate verification failed"
+            exit 1
+          fi
+
+          # Check SSL certificate expiry
+          expiry=$(echo | openssl s_client -servername ${{ env.DOMAIN }} -connect ${{ env.DOMAIN }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+          if [ ! -z "$expiry" ]; then
+            expiry_sec=$(date -d "$expiry" +%s)
+            now_sec=$(date +%s)
+            days_left=$(( ($expiry_sec - $now_sec) / 86400 ))
+            if [ $days_left -lt 30 ]; then
+              echo "Warning: SSL certificate will expire in $days_left days"
+            fi
+          fi
+
+      - name: Verify Nginx configuration
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script_stop: true
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
           script: |
+            set -e
+
+            echo "Verifying Nginx configuration..."
+
+            # Check Nginx configuration syntax
+            if ! sudo nginx -t; then
+              echo "Error: Nginx configuration test failed"
+              exit 1
+            fi
+
+            # Check Nginx is running
+            if ! systemctl is-active --quiet nginx; then
+              echo "Error: Nginx is not running"
+              exit 1
+            fi
+
+            # Check SSL certificate paths and permissions
+            for file in /etc/nginx/ssl/api.ishswami.in.key /etc/nginx/ssl/api.ishswami.in.crt; do
+              if [ ! -f "$file" ]; then
+                echo "Error: SSL file $file not found"
+                exit 1
+              fi
+              
+              perms=$(stat -c "%a" $file)
+              if [[ $file == *.key && $perms != "600" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              elif [[ $file == *.crt && $perms != "644" ]]; then
+                echo "Error: Incorrect permissions on $file"
+                exit 1
+              fi
+            done
+
+            # Check Nginx virtual host configuration
+            if [ ! -f "/etc/nginx/conf.d/api.ishswami.in.conf" ]; then
+              echo "Error: Nginx virtual host configuration not found"
+              exit 1
+            fi
+
+            # Check SSL configuration in Nginx
+            if ! grep -q "ssl_certificate" /etc/nginx/conf.d/api.ishswami.in.conf || \
+               ! grep -q "ssl_certificate_key" /etc/nginx/conf.d/api.ishswami.in.conf; then
+              echo "Error: SSL configuration missing in Nginx"
+              exit 1
+            fi
+
+      - name: Verify application health
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "Verifying application health..."
+
+            # Check API health endpoint
+            if ! curl -k -s https://${{ env.DOMAIN }}/health | grep -q "ok"; then
+              echo "Error: API health check failed"
+              exit 1
+            fi
+
+            # Check Redis Commander
+            if ! curl -k -s https://${{ env.DOMAIN }}:8082 | grep -q "Redis Commander"; then
+              echo "Error: Redis Commander health check failed"
+              exit 1
+            fi
+
+            # Check database connection
+            if ! docker exec ${{ env.DEPLOY_PATH }}/current/postgres pg_isready -U postgres; then
+              echo "Error: Database health check failed"
+              exit 1
+            fi
+
+            # Check Redis connection
+            if ! docker exec ${{ env.DEPLOY_PATH }}/current/redis redis-cli ping | grep -q "PONG"; then
+              echo "Error: Redis health check failed"
+              exit 1
+            fi
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: status,
+              environment: 'production'
+            });
+
+  rollback:
+    if: failure() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
+    needs: [deploy, post-deployment-verification, create-deployment]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rollback deployment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
             cd ${{ env.DEPLOY_PATH }}
-            bash rollback.sh
+
+            if [ -f backups/latest_backup ]; then
+              timestamp=$(cat backups/latest_backup)
+              echo "Rolling back to backup from $timestamp"
+
+              # Stop current services
+              if [ -d "current" ]; then
+                cd current
+                docker compose -f docker-compose.prod.yml down --remove-orphans || true
+                cd ..
+              fi
+
+              # Clean up Docker resources
+              echo "Cleaning up Docker resources..."
+              docker system prune -f
+              docker volume prune -f
+              docker network prune -f
+
+              # Restore from backup
+              rm -rf current
+              cp -r backups/$timestamp current/
+
+              # Start services from backup
+              cd current
+              docker compose -f docker-compose.prod.yml up -d
+
+              # Wait for services to be healthy
+              echo "Waiting for services to be healthy..."
+              attempt=1
+              max_attempts=30
+              while [ $attempt -le $max_attempts ]; do
+                if curl -k -s https://localhost:8088/health | grep -q "ok"; then
+                  echo "API service is healthy"
+                  break
+                fi
+                echo "Attempt $attempt/$max_attempts: Waiting for API service..."
+                sleep 10
+                attempt=$((attempt + 1))
+              done
+
+              if [ $attempt -gt $max_attempts ]; then
+                echo "Error: API service failed to become healthy after rollback"
+                docker compose -f docker-compose.prod.yml logs api
+                exit 1
+              fi
+
+              echo "Rollback completed successfully"
+            else
+              echo "No backup found for rollback"
+              exit 1
+            fi
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: status,
+              environment: 'production'
+            });
