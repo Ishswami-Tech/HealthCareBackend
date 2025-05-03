@@ -308,9 +308,9 @@ jobs:
                 exit 1
               fi
               
-              # Check API health from within the container
+              # Check API health from within the container using wget
               echo "Checking API health from within container..."
-              container_response=$(docker exec latest-api curl -k -s http://localhost:8088/health)
+              container_response=$(docker exec latest-api wget -qO- --no-check-certificate http://localhost:8088/health)
               container_status=$?
               
               if [ $container_status -eq 0 ] && echo "$container_response" | grep -q "ok"; then
@@ -319,7 +319,7 @@ jobs:
                 
                 # Now try external access
                 echo "Testing external access..."
-                external_response=$(curl -k -s --connect-timeout 5 --retry 3 --retry-delay 2 https://0.0.0.0:8088/health)
+                external_response=$(wget -qO- --no-check-certificate --timeout=5 --tries=3 https://0.0.0.0:8088/health)
                 external_status=$?
                 
                 if [ $external_status -eq 0 ] && echo "$external_response" | grep -q "ok"; then
@@ -335,6 +335,14 @@ jobs:
                   echo "Checking network configuration..."
                   docker network inspect 5bf108d4e0b2e7a7048ad6a6b3b7eeb65935e8a6_app-network
                   docker inspect latest-api
+                  
+                  # Check container processes
+                  echo "Checking container processes..."
+                  docker exec latest-api ps aux
+                  
+                  # Check container environment
+                  echo "Checking container environment..."
+                  docker exec latest-api env
                 fi
               else
                 echo "API is not healthy from within container"
@@ -344,6 +352,14 @@ jobs:
                 # Get API container logs
                 echo "API container logs:"
                 docker compose -f docker-compose.prod.yml logs api
+                
+                # Check container processes
+                echo "Checking container processes..."
+                docker exec latest-api ps aux
+                
+                # Check container environment
+                echo "Checking container environment..."
+                docker exec latest-api env
               fi
               
               sleep 10
@@ -365,6 +381,12 @@ jobs:
               
               echo "API container details:"
               docker inspect latest-api
+              
+              echo "Container processes:"
+              docker exec latest-api ps aux
+              
+              echo "Container environment:"
+              docker exec latest-api env
               
               exit 1
             fi
