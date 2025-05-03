@@ -310,9 +310,12 @@ jobs:
               
               # Check if API process is running
               echo "Checking API process..."
-              if ! docker exec latest-api ps aux | grep -q "node.*dist/main.js"; then
+              if ! docker exec latest-api ps aux | grep -q "node.*main"; then
                 echo "API process is not running"
+                echo "Current processes:"
                 docker exec latest-api ps aux
+                echo "Container logs:"
+                docker logs latest-api
                 exit 1
               fi
               
@@ -320,7 +323,10 @@ jobs:
               echo "Checking if port 8088 is listening..."
               if ! docker exec latest-api netstat -tuln | grep -q ":8088"; then
                 echo "Port 8088 is not listening"
+                echo "Current listening ports:"
                 docker exec latest-api netstat -tuln
+                echo "Container logs:"
+                docker logs latest-api
                 exit 1
               fi
               
@@ -349,7 +355,7 @@ jobs:
                   
                   # Check network configuration
                   echo "Checking network configuration..."
-                  docker network inspect eb24176c8158695e640a0c7a592f7f9d916d67fc_app-network
+                  docker network inspect 2cb4da44bab4f87208ac9eb37ecbbc5d0281f2da_app-network
                   docker inspect latest-api
                   
                   # Check container network settings
@@ -364,6 +370,10 @@ jobs:
                   # Check container environment
                   echo "Checking container environment..."
                   docker exec latest-api env
+                  
+                  # Check container logs
+                  echo "Container logs:"
+                  docker logs latest-api
                 fi
               else
                 echo "API is not healthy from within container"
@@ -373,6 +383,7 @@ jobs:
                 # Get API container logs
                 echo "API container logs:"
                 docker compose -f docker-compose.prod.yml logs api
+                docker logs latest-api
                 
                 # Check container network settings
                 echo "Checking container network settings..."
@@ -401,9 +412,10 @@ jobs:
               
               echo "API container logs:"
               docker compose -f docker-compose.prod.yml logs api
+              docker logs latest-api
               
               echo "Network configuration:"
-              docker network inspect eb24176c8158695e640a0c7a592f7f9d916d67fc_app-network
+              docker network inspect 2cb4da44bab4f87208ac9eb37ecbbc5d0281f2da_app-network
               
               echo "API container details:"
               docker inspect latest-api
