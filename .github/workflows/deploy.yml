@@ -320,13 +320,27 @@ jobs:
             echo "Deploying Nginx configuration..."
             cd nginx
             chmod +x deploy-nginx.sh
+
+            # Update Nginx configuration to use correct container name
+            echo "Updating Nginx configuration..."
+            sed -i 's/upstream api {.*}/upstream api {\n    server latest-api:8088;\n}/' /etc/nginx/conf.d/api.conf
+            sed -i 's/upstream redis-commander {.*}/upstream redis-commander {\n    server latest-redis-commander:8082;\n}/' /etc/nginx/conf.d/redis-commander.conf
+
+            # Add Docker DNS resolution
+            echo "Adding Docker DNS resolution..."
+            if ! grep -q "resolver 127.0.0.11" /etc/nginx/nginx.conf; then
+                sed -i '/http {/a \    resolver 127.0.0.11 valid=30s;' /etc/nginx/nginx.conf
+            fi
+
             ./deploy-nginx.sh
 
             # Test Nginx configuration
             echo "Testing Nginx configuration..."
             if ! nginx -t; then
-              echo "Error: Nginx configuration test failed"
-              exit 1
+                echo "Error: Nginx configuration test failed"
+                cat /etc/nginx/conf.d/api.conf
+                cat /etc/nginx/nginx.conf
+                exit 1
             fi
 
             # Restart Nginx
