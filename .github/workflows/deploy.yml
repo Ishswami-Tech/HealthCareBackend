@@ -116,6 +116,15 @@ jobs:
     needs: create-deployment
     runs-on: ubuntu-latest
     steps:
+      - name: Debug SSH Key
+        run: |
+          if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "SSH key is set"
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" | wc -l
+          else
+            echo "SSH key is not set"
+          fi
+
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
@@ -141,12 +150,20 @@ jobs:
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:latest
           cache-to: type=inline
 
+      - name: Setup SSH Keys and known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
+
       - name: Deploy to production
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          debug: true
           script: |
             # Set up environment
             export DEPLOY_SHA=${{ github.sha }}
