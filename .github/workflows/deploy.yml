@@ -299,7 +299,7 @@ jobs:
             attempt=1
             max_attempts=30
             while [ $attempt -le $max_attempts ]; do
-              if curl -k -s https://localhost:8088/health | grep -q "ok"; then
+              if curl -k -s https://0.0.0.0:8088/health | grep -q "ok"; then
                 echo "API service is healthy"
                 break
               fi
@@ -313,6 +313,10 @@ jobs:
               docker compose -f docker-compose.prod.yml logs api
               exit 1
             fi
+
+            # Remove obsolete version attribute from docker-compose.prod.yml
+            echo "Removing obsolete version attribute from docker-compose.prod.yml..."
+            sed -i '/^version:/d' docker-compose.prod.yml
 
             # Verify SSL configuration
             echo "Verifying SSL configuration..."
