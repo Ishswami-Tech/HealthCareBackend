@@ -11,6 +11,7 @@ services:
       cache_from:
         - type=registry,ref=node:20-alpine
     container_name: ${DEPLOY_SHA:-latest}-api
+    hostname: api
     ports:
       - "8088:8088"
       - "5555:5555"
@@ -67,6 +68,7 @@ services:
   postgres:
     image: postgres:latest
     container_name: ${DEPLOY_SHA:-latest}-postgres
+    hostname: postgres
     ports:
       - "5432:5432"
     environment:
@@ -100,6 +102,7 @@ services:
   redis:
     image: redis:latest
     container_name: ${DEPLOY_SHA:-latest}-redis
+    hostname: redis
     command: >
       redis-server 
       --appendonly yes 
@@ -142,6 +145,7 @@ services:
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: ${DEPLOY_SHA:-latest}-redis-commander
+    hostname: redis-commander
     ports:
       - "8082:8081"
     environment:
@@ -155,7 +159,11 @@ services:
         aliases:
           - redis-commander
     healthcheck:
+<<<<<<< HEAD
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081"]
+=======
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081"]
+>>>>>>> 37eb952743022c23239977837eaf86e22c208c67
       interval: 10s
       timeout: 5s
       retries: 5

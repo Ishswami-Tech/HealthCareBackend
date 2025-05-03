@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,6 +24,7 @@ env:
   FRONTEND_DOMAIN: ishswami.in
   SSL_EMAIL: aadeshbhujbal99@gmail.com
   NODE_ENV: production
+  NETWORK_NAME: app-network
 
 jobs:
   pre-deployment-check:
@@ -119,315 +121,86 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fix file permissions
-        run: |
-          chmod +x nginx/deploy-nginx.sh
-          git add nginx/deploy-nginx.sh
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "GitHub Actions"
-          git commit -m "chore: Make deploy-nginx.sh executable" || true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-      - name: Create backup and cleanup
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/healthcare-api:latest
+          cache-to: type=inline
+
+      - name: Deploy to production
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
           script: |
-            set -e
-            cd ${{ env.DEPLOY_PATH }}
+            # Set up environment
+            export DEPLOY_SHA=${{ github.sha }}
+            export POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            export REDIS_COMMANDER_USER=${{ secrets.REDIS_COMMANDER_USER }}
+            export REDIS_COMMANDER_PASSWORD=${{ secrets.REDIS_COMMANDER_PASSWORD }}
 
-            # Create backup directory with timestamp
-            timestamp=$(date +%Y%m%d_%H%M%S)
-            mkdir -p backups/$timestamp
+            # Create deployment directory
+            mkdir -p /var/www/healthcare/backend/releases/${{ github.sha }}
+            cd /var/www/healthcare/backend/releases/${{ github.sha }}
 
-            # Stop and backup current deployment if it exists
-            if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
-              echo "Stopping current deployment..."
-              cd current
-              docker compose -f docker-compose.prod.yml down --remove-orphans || true
-              cd ..
+            # Clone repository
+            git clone https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git .
 
-              echo "Creating backup..."
-              cp -r current/* backups/$timestamp/ 2>/dev/null || true
-              echo $timestamp > backups/latest_backup
-              
-              # Backup SSL certificates
-              if [ -d "current/nginx/ssl" ]; then
-                mkdir -p backups/$timestamp/ssl
-                cp -r current/nginx/ssl/* backups/$timestamp/ssl/ 2>/dev/null || true
-              fi
-
-              # Clean up old backups (keep last 5)
-              ls -1t backups | tail -n +6 | xargs -r rm -rf
-            else
-              echo "No current deployment found, proceeding with fresh deployment..."
-            fi
-
-            # Clean up Docker resources
-            echo "Cleaning up Docker resources..."
-            docker system prune -f
-            docker volume prune -f
-            docker network prune -f
-
-            # Remove any existing containers with conflicting names
-            for container in latest-redis latest-postgres latest-api latest-redis-commander; do
-              if docker ps -a --format '{{.Names}}' | grep -q "^$container$"; then
-                echo "Removing existing container: $container"
-                docker rm -f $container || true
-              fi
-            done
-
-            # Additional cleanup for any containers with the same name pattern
-            echo "Cleaning up any remaining containers with similar names..."
-            docker ps -a --format '{{.Names}}' | grep -E '^(latest|.*-redis-commander)$' | while read container; do
-              echo "Removing container: $container"
-              docker rm -f $container || true
-            done
-
-            # Create necessary directories if they don't exist
-            mkdir -p current
-            mkdir -p releases
-            mkdir -p backups
-
-      - name: Prepare SSL files
-        run: |
-          # Create SSL directories
-          mkdir -p ssl_temp
-          # Copy and rename certificates
-          cp nginx/ssl/ishswami.com.pem ssl_temp/api.ishswami.in.crt
-          cp nginx/ssl/ishswami.com.key ssl_temp/api.ishswami.in.key
-
-          # Verify SSL certificate
-          echo "Verifying SSL certificate..."
-          if ! openssl x509 -in ssl_temp/api.ishswami.in.crt -noout -text > /dev/null; then
-            echo "Error: Invalid SSL certificate"
-            exit 1
-          fi
-
-          # Check certificate matches private key
-          echo "Checking certificate and key match..."
-          cert_mod=$(openssl x509 -noout -modulus -in ssl_temp/api.ishswami.in.crt | openssl md5)
-          key_mod=$(openssl rsa -noout -modulus -in ssl_temp/api.ishswami.in.key | openssl md5)
-          if [ "$cert_mod" != "$key_mod" ]; then
-            echo "Error: Certificate and private key do not match"
-            exit 1
-          fi
-
-      - name: Copy SSL certificates
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
-          source: "ssl_temp/*"
-          target: "/tmp/ssl-temp"
-          strip_components: 1
-
-      - name: Copy deployment files
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
-          source: "."
-          target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
-          strip_components: 0
-          overwrite: true
-          rm: false
-
-      - name: Deploy to server
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
-          command_timeout: "30m"
-          script: |
-            set -e
-            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
-
-            # Setup SSL directories with proper permissions
-            echo "Setting up SSL directories..."
-            sudo mkdir -p /etc/nginx/ssl
-            sudo mkdir -p /app/ssl
-            sudo chown -R root:root /etc/nginx/ssl /app/ssl
-            sudo chmod 755 /etc/nginx/ssl /app/ssl
-
-            # Copy and secure SSL certificates
-            if [ -d "/tmp/ssl-temp" ]; then
-              echo "Copying SSL certificates..."
-              sudo cp -f /tmp/ssl-temp/* /etc/nginx/ssl/
-              sudo cp -f /tmp/ssl-temp/* /app/ssl/
-              sudo chown root:root /etc/nginx/ssl/* /app/ssl/*
-              sudo chmod 600 /etc/nginx/ssl/*.key /app/ssl/*.key
-              sudo chmod 644 /etc/nginx/ssl/*.crt /app/ssl/*.crt
-              rm -rf /tmp/ssl-temp
-            else
-              echo "No SSL files found in temp directory"
-              exit 1
-            fi
-
-            # Verify SSL files and permissions
-            echo "Verifying SSL files..."
-            for file in /app/ssl/api.ishswami.in.key /app/ssl/api.ishswami.in.crt; do
-              if [ ! -f "$file" ]; then
-                echo "Error: SSL file $file not found"
-                exit 1
-              fi
-              
-              # Check permissions
-              perms=$(stat -c "%a" $file)
-              if [[ $file == *.key && $perms != "600" ]]; then
-                echo "Error: Incorrect permissions on $file"
-                exit 1
-              elif [[ $file == *.crt && $perms != "644" ]]; then
-                echo "Error: Incorrect permissions on $file"
-                exit 1
-              fi
-            done
+            # Copy SSL certificates
+            mkdir -p ssl
+            cp /etc/nginx/ssl/api.ishswami.in.* ssl/
 
             # Start Docker services
-            echo "Starting Docker services..."
-            DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml build --no-cache --parallel
-
-            echo "Starting containers..."
-            DEPLOY_SHA=$DEPLOY_SHA docker compose -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.prod.yml up -d
 
             # Wait for containers to be healthy
             echo "Waiting for containers to be healthy..."
-            attempt=1
-            max_attempts=30
-            while [ $attempt -le $max_attempts ]; do
-              if docker ps --filter "name=latest-api" --format "{{.Status}}" | grep -q "healthy" && \
-                 docker ps --filter "name=latest-postgres" --format "{{.Status}}" | grep -q "healthy" && \
-                 docker ps --filter "name=latest-redis" --format "{{.Status}}" | grep -q "healthy"; then
+            for i in {1..30}; do
+              if docker compose -f docker-compose.prod.yml ps | grep -q "health: healthy"; then
                 echo "All containers are healthy"
                 break
               fi
-              echo "Attempt $attempt/$max_attempts: Waiting for containers to be healthy..."
+              echo "Attempt $i/30: Waiting for containers to be healthy..."
               sleep 10
-              attempt=$((attempt + 1))
             done
 
-            if [ $attempt -gt $max_attempts ]; then
-              echo "Error: Containers failed to become healthy"
-              docker ps -a
-              docker logs latest-api
+            # Verify container-to-container communication
+            echo "Verifying container-to-container communication..."
+            if ! docker exec latest-api ping -c 1 latest-postgres &>/dev/null; then
+              echo "Error: API container cannot reach Postgres container"
+              exit 1
+            fi
+            if ! docker exec latest-api ping -c 1 latest-redis &>/dev/null; then
+              echo "Error: API container cannot reach Redis container"
               exit 1
             fi
 
-            # Get the current Docker network name
-            NETWORK_NAME=$(docker network ls --filter name=app-network --format '{{.Name}}')
-            if [ -z "$NETWORK_NAME" ]; then
-              echo "Error: Could not find app-network"
-              docker network ls
-              exit 1
-            fi
-
-            # Verify network connectivity
-            echo "Verifying network connectivity..."
-            if ! docker network inspect $NETWORK_NAME | grep -q "latest-api"; then
-              echo "Error: API container not found in network $NETWORK_NAME"
-              docker network inspect $NETWORK_NAME
-              exit 1
-            fi
-
-            # Update Nginx configuration with correct network name
+            # Update Nginx configuration
             echo "Updating Nginx configuration..."
             cd nginx
-
-            # Only update the API configuration file
-            if [ -f "conf.d/api.conf" ]; then
-                echo "Updating API configuration with network name: $NETWORK_NAME"
-                awk -v network="$NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network); print}' "conf.d/api.conf" > "conf.d/api.conf.tmp" && mv "conf.d/api.conf.tmp" "conf.d/api.conf"
-                if [ $? -ne 0 ]; then
-                    echo "Error: Failed to update API configuration"
-                    echo "File contents:"
-                    cat "conf.d/api.conf"
-                    exit 1
-                fi
-            else
-                echo "Error: API configuration file not found"
-                exit 1
-            fi
-
-            # Verify the update
-            if ! grep -q "$NETWORK_NAME" "conf.d/api.conf"; then
-                echo "Error: Network name not properly updated in API configuration"
-                echo "File contents:"
-                cat "conf.d/api.conf"
-                exit 1
-            fi
-
-            # Verify SSL configuration
-            echo "Verifying SSL configuration..."
-            for file in /etc/nginx/ssl/api.ishswami.in.crt /etc/nginx/ssl/api.ishswami.in.key; do
-              if [ ! -f "$file" ]; then
-                echo "Error: SSL file $file not found"
-                exit 1
-              fi
-              
-              # Check permissions
-              perms=$(stat -c "%a" $file)
-              if [[ $file == *.key && $perms != "600" ]]; then
-                echo "Error: Incorrect permissions on $file"
-                exit 1
-              elif [[ $file == *.crt && $perms != "644" ]]; then
-                echo "Error: Incorrect permissions on $file"
-                exit 1
-              fi
-            done
-
-            # Verify Nginx configuration
-            echo "Verifying Nginx configuration..."
-            if ! nginx -t; then
-              echo "Error: Nginx configuration test failed"
-              echo "Nginx error log:"
-              cat /var/log/nginx/error.log
-              echo "Current network configuration:"
-              docker network inspect $NETWORK_NAME
-              echo "Container status:"
-              docker ps -a
-              exit 1
-            fi
-
-            # Deploy Nginx configuration
-            echo "Deploying Nginx configuration..."
-            chmod +x deploy-nginx.sh
             ./deploy-nginx.sh
 
-            # Restart Nginx
-            echo "Restarting Nginx..."
-            systemctl restart nginx
-
-            # Wait for Nginx to start
-            echo "Waiting for Nginx to start..."
-            sleep 5
-            if ! systemctl is-active --quiet nginx; then
-              echo "Error: Nginx failed to start"
-              echo "Nginx status:"
-              systemctl status nginx
-              echo "Nginx error log:"
-              cat /var/log/nginx/error.log
-              exit 1
-            fi
-
-            # Test SSL connection
-            echo "Testing SSL connection..."
-            if ! curl -k -v -s -o /dev/null -w "%{http_code}" https://api.ishswami.in/health; then
-              echo "Warning: SSL connection test failed, but continuing deployment"
-              echo "SSL error details:"
-              curl -k -v https://api.ishswami.in/health 2>&1
-            fi
-
             # Update current deployment symlink
-            cd ${{ env.DEPLOY_PATH }}
-            rm -f current
-            ln -sfn releases/${{ github.sha }} current
-            echo ${{ github.sha }} > current_deployment
+            ln -sfn /var/www/healthcare/backend/releases/${{ github.sha }} /var/www/healthcare/backend/current
 
-            echo "Deployment completed successfully"
+            # Clean up old deployments (keep last 5)
+            cd /var/www/healthcare/backend/releases
+            ls -1t | tail -n +6 | xargs -r rm -rf
 
   post-deployment-verification:
     needs: deploy

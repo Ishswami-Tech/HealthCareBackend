@@ -13,13 +13,8 @@ API_DOMAIN="api.ishswami.in"
 NGINX_CONF_DIR="/etc/nginx/conf.d"
 DEPLOY_PATH="/var/www/healthcare"
 SSL_DIR="/etc/nginx/ssl"
-NETWORK_NAME="${NETWORK_NAME:-app-network}"
-
-# Extract the base network name (remove any hash prefix)
-BASE_NETWORK_NAME=$(echo "$NETWORK_NAME" | sed 's/^[^_]*_//')
 
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
-echo -e "${YELLOW}Using network name: $BASE_NETWORK_NAME${NC}"
 
 # Create deployment directories if they don't exist
 echo -e "${YELLOW}Creating deployment directories...${NC}"
@@ -39,20 +34,17 @@ echo -e "${YELLOW}Installing required packages...${NC}"
 sudo apt-get update
 sudo apt-get install -y nginx openssl
 
-# Generate self-signed certificates (temporary, will be replaced by Cloudflare Origin Certificates)
-echo -e "${YELLOW}Generating temporary SSL certificates...${NC}"
-if [ ! -f "$SSL_DIR/$DOMAIN.crt" ]; then
-    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$SSL_DIR/$DOMAIN.key" \
-        -out "$SSL_DIR/$DOMAIN.crt" \
-        -subj "/CN=$DOMAIN/O=Healthcare App/C=IN"
-fi
-
-if [ ! -f "$SSL_DIR/$API_DOMAIN.crt" ]; then
-    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$SSL_DIR/$API_DOMAIN.key" \
-        -out "$SSL_DIR/$API_DOMAIN.crt" \
-        -subj "/CN=$API_DOMAIN/O=Healthcare App/C=IN"
+# Copy SSL certificates
+echo -e "${YELLOW}Copying SSL certificates...${NC}"
+if [ -f "ssl/api.ishswami.in.crt" ] && [ -f "ssl/api.ishswami.in.key" ]; then
+    sudo cp -f ssl/api.ishswami.in.crt $SSL_DIR/
+    sudo cp -f ssl/api.ishswami.in.key $SSL_DIR/
+    sudo chown root:root $SSL_DIR/api.ishswami.in.*
+    sudo chmod 600 $SSL_DIR/api.ishswami.in.key
+    sudo chmod 644 $SSL_DIR/api.ishswami.in.crt
+else
+    echo -e "${RED}Error: SSL certificates not found${NC}"
+    exit 1
 fi
 
 # Set proper permissions
@@ -67,15 +59,10 @@ sudo chmod 755 $SSL_DIR
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
 sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 
-# Update network name in Nginx configuration
-echo -e "${YELLOW}Updating network configuration...${NC}"
-if [ -f "$NGINX_CONF_DIR/api.conf" ]; then
-    # Use awk to safely replace the network name
-    sudo awk -v network="$BASE_NETWORK_NAME" '{gsub(/\${NETWORK_NAME}/, network)}1' "$NGINX_CONF_DIR/api.conf" > /tmp/api.conf.tmp
-    sudo mv /tmp/api.conf.tmp "$NGINX_CONF_DIR/api.conf"
-    echo -e "${GREEN}Updated API configuration with network name: $BASE_NETWORK_NAME${NC}"
-else
-    echo -e "${RED}Error: API configuration file not found${NC}"
+# Verify API configuration
+echo -e "${YELLOW}Verifying API configuration...${NC}"
+if ! grep -q "server latest-api:8088" "$NGINX_CONF_DIR/api.conf"; then
+    echo -e "${RED}Error: API configuration is not properly set up${NC}"
     exit 1
 fi
 

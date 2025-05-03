@@ -83,7 +83,7 @@ WORKDIR /app
 
 # Copy package files and install dependencies
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps --no-audit --no-progress && \
+RUN npm install --legacy-peer-deps --no-audit --no-progress && \
     npm install -g nodemon && \
     npm cache clean --force
 
