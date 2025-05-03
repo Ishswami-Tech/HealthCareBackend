@@ -299,17 +299,26 @@ jobs:
             attempt=1
             max_attempts=30
             while [ $attempt -le $max_attempts ]; do
-              if curl -k -s https://0.0.0.0:8088/health | grep -q "ok"; then
+              echo "Attempt $attempt/$max_attempts: Checking API health..."
+              response=$(curl -k -s https://0.0.0.0:8088/health)
+              status_code=$(curl -k -s -o /dev/null -w "%{http_code}" https://0.0.0.0:8088/health)
+              
+              if [ "$status_code" = "200" ] && echo "$response" | grep -q "ok"; then
                 echo "API service is healthy"
+                echo "Response: $response"
                 break
               fi
-              echo "Attempt $attempt/$max_attempts: Waiting for API service..."
+              
+              echo "API not healthy yet. Status code: $status_code"
+              echo "Response: $response"
               sleep 10
               attempt=$((attempt + 1))
             done
 
             if [ $attempt -gt $max_attempts ]; then
               echo "Error: API service failed to become healthy"
+              echo "Last response: $response"
+              echo "Last status code: $status_code"
               docker compose -f docker-compose.prod.yml logs api
               exit 1
             fi
