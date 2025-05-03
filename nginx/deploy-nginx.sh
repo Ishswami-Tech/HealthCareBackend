@@ -116,17 +116,64 @@ sudo chmod 755 $SSL_DIR
 
 # Update network name in configuration files
 echo -e "${YELLOW}Updating network name in configuration files...${NC}"
-for file in conf.d/*.conf; do
-    if [ -f "$file" ]; then
+
+# Function to safely update network name in a file
+update_network_name() {
+    local file=$1
+    local backup_file="${file}.bak"
+    
+    echo "Processing file: $file"
+    
+    # Create a backup
+    cp "$file" "$backup_file"
+    
+    # Only update files that actually contain the network variable
+    if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
         echo "Updating network name in $file"
-        sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
-        sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
+        sed -i.bak "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
+        sed -i.bak "s/\${network_name}/${NETWORK_NAME}/g" "$file"
+        
+        # Verify the update
+        if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
+            echo -e "${RED}Failed to update network name in $file${NC}"
+            cp "$backup_file" "$file"
+            rm -f "$backup_file"
+            return 1
+        fi
+    else
+        echo "No network name variables found in $file, skipping..."
+    fi
+    
+    # Clean up backup
+    rm -f "$backup_file"
+    return 0
+}
+
+# Update specific configuration files
+for config_file in "api.conf" "frontend.conf" "default.conf"; do
+    if [ -f "conf.d/$config_file" ]; then
+        update_network_name "conf.d/$config_file" || {
+            echo -e "${RED}Failed to update $config_file${NC}"
+            exit 1
+        }
     fi
 done
 
 # Copy Nginx configurations
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
 sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
+
+# Verify configurations after copy
+echo -e "${YELLOW}Verifying configuration files...${NC}"
+for config_file in "api.conf" "frontend.conf" "default.conf"; do
+    target_file="$NGINX_CONF_DIR/$config_file"
+    if [ -f "$target_file" ]; then
+        if grep -q "\${NETWORK_NAME}" "$target_file" || grep -q "\${network_name}" "$target_file"; then
+            echo -e "${RED}Error: Network name variables still present in $target_file${NC}"
+            exit 1
+        fi
+    fi
+done
 
 # Verify API configuration
 echo -e "${YELLOW}Verifying API configuration...${NC}"
