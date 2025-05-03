@@ -38,9 +38,7 @@ services:
       - "8088"
       - "5555"
     networks:
-      ${NETWORK_NAME:-app-network}:
-        aliases:
-          - api
+      - app-network
     volumes:
       - ./logs:/app/logs
       - ./nginx/ssl:/app/ssl:ro
@@ -80,9 +78,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      ${NETWORK_NAME:-app-network}:
-        aliases:
-          - postgres
+      - app-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -117,9 +113,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      ${NETWORK_NAME:-app-network}:
-        aliases:
-          - redis
+      - app-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -156,9 +150,7 @@ services:
     depends_on:
       - redis
     networks:
-      ${NETWORK_NAME:-app-network}:
-        aliases:
-          - redis-commander
+      - app-network
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081"]
       interval: 10s
@@ -180,5 +172,6 @@ volumes:
   redis_data:
 
 networks:
-  ${NETWORK_NAME:-app-network}:
+  app-network:
+    name: ${NETWORK_NAME:-app-network}
     driver: bridge 
