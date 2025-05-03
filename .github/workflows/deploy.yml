@@ -171,11 +171,18 @@ jobs:
             docker network prune -f
 
             # Remove any existing containers with conflicting names
-            for container in latest-redis latest-postgres latest-api; do
+            for container in latest-redis latest-postgres latest-api latest-redis-commander; do
               if docker ps -a --format '{{.Names}}' | grep -q "^$container$"; then
                 echo "Removing existing container: $container"
                 docker rm -f $container || true
               fi
+            done
+
+            # Additional cleanup for any containers with the same name pattern
+            echo "Cleaning up any remaining containers with similar names..."
+            docker ps -a --format '{{.Names}}' | grep -E '^(latest|.*-redis-commander)$' | while read container; do
+              echo "Removing container: $container"
+              docker rm -f $container || true
             done
 
             # Create necessary directories if they don't exist
