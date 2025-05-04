@@ -10,39 +10,39 @@ services:
         - NPM_VERSION=11.3.0
       cache_from:
         - type=registry,ref=node:20-alpine
-    container_name: ${DEPLOY_SHA:-latest}-api
+    container_name: ${DEPLOY_SHA:-${API_CONTAINER}}
     hostname: api
     ports:
-      - "8088:8088"
+      - "${API_PORT}:${API_PORT}"
       - "5555:5555"
     env_file:
       - .env.production
     environment:
       NODE_ENV: production
       CORS_ORIGIN: "*"
-      FRONTEND_URL: https://ishswami.in
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/userdb?schema=public
+      FRONTEND_URL: https://${FRONTEND_DOMAIN}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:${POSTGRES_PORT}/userdb?schema=public
       REDIS_HOST: redis
-      REDIS_PORT: 6379
+      REDIS_PORT: ${REDIS_PORT}
       TRUST_PROXY: 1
       PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
       HOST: 0.0.0.0
-      PORT: 8088
+      PORT: ${API_PORT}
       BIND_ADDRESS: 0.0.0.0
       SOCKET_HOST: 0.0.0.0
-      SOCKET_PORT: 8088
-      SSL_KEY_PATH: /app/ssl/api.ishswami.in.key
-      SSL_CERT_PATH: /app/ssl/api.ishswami.in.crt
+      SOCKET_PORT: ${API_PORT}
+      SSL_KEY_PATH: ${APP_SSL_DIR}/${API_KEY}
+      SSL_CERT_PATH: ${APP_SSL_DIR}/${API_CERT}
       NPM_CONFIG_LOGLEVEL: error
     expose:
-      - "8088"
+      - "${API_PORT}"
       - "5555"
     networks:
       - app-network
     volumes:
       - ./logs:/app/logs
-      - ./nginx/ssl:/app/ssl:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/ssl:${APP_SSL_DIR}:ro
+      - ./nginx/ssl:${SSL_DIR}:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,10 +50,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-check-certificate", "-q", "--spider", "https://localhost:8088/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      test: ["CMD", "wget", "--no-check-certificate", "-q", "--spider", "https://localhost:${API_PORT}/${HEALTH_CHECK_ENDPOINT}"]
+      interval: ${HEALTH_CHECK_INTERVAL}
+      timeout: ${HEALTH_CHECK_TIMEOUT}
+      retries: ${HEALTH_CHECK_RETRIES}
       start_period: 60s
     deploy:
       resources:
@@ -66,10 +66,10 @@ services:
 
   postgres:
     image: postgres:latest
-    container_name: ${DEPLOY_SHA:-latest}-postgres
+    container_name: ${DEPLOY_SHA:-${POSTGRES_CONTAINER}}
     hostname: postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -98,7 +98,7 @@ services:
 
   redis:
     image: redis:latest
-    container_name: ${DEPLOY_SHA:-latest}-redis
+    container_name: ${DEPLOY_SHA:-${REDIS_CONTAINER}}
     hostname: redis
     command: >
       redis-server 
@@ -109,7 +109,7 @@ services:
       --save 300 10 
       --save 60 10000
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT}:${REDIS_PORT}"
     volumes:
       - redis_data:/data
     networks:
@@ -139,10 +139,10 @@ services:
 
   redis-commander:
     image: rediscommander/redis-commander:latest
-    container_name: ${DEPLOY_SHA:-latest}-redis-commander
+    container_name: ${DEPLOY_SHA:-${REDIS_COMMANDER_CONTAINER}}
     hostname: redis-commander
     ports:
-      - "8082:8081"
+      - "${REDIS_COMMANDER_PORT}:8081"
     environment:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=${REDIS_COMMANDER_USER:-admin}
@@ -175,5 +175,5 @@ volumes:
 
 networks:
   app-network:
-    name: ${NETWORK_NAME:-app-network}
+    name: ${NETWORK_NAME}
     driver: bridge 

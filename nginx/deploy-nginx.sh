@@ -7,6 +7,14 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Load environment variables
+if [ -f "../.env.production" ]; then
+    source "../.env.production"
+else
+    echo -e "${RED}Error: .env.production file not found${NC}"
+    exit 1
+fi
+
 # Variables
 DOMAIN="ishswami.in"
 API_DOMAIN="api.ishswami.in"
@@ -18,7 +26,7 @@ NETWORK_NAME=${NETWORK_NAME:-app-network}
 # Function to check API health
 check_api_health() {
     local endpoint=$1
-    local max_retries=5
+    local max_retries=${HEALTH_CHECK_RETRIES}
     local retry_count=0
     local wait_time=10
 
@@ -78,8 +86,8 @@ fi
 
 # Create deployment directories if they don't exist
 echo -e "${YELLOW}Creating deployment directories...${NC}"
-sudo mkdir -p $DEPLOY_PATH/{frontend,backend}/current
-sudo mkdir -p $SSL_DIR
+sudo mkdir -p ${DEPLOY_PATH}/{frontend,backend}/current
+sudo mkdir -p ${SSL_DIR}
 sudo mkdir -p /var/log/nginx
 
 # Backup existing Nginx configurations
@@ -96,12 +104,12 @@ sudo apt-get install -y nginx openssl curl
 
 # Copy SSL certificates
 echo -e "${YELLOW}Copying SSL certificates...${NC}"
-if [ -f "ssl/api.ishswami.in.crt" ] && [ -f "ssl/api.ishswami.in.key" ]; then
-    sudo cp -f ssl/api.ishswami.in.crt $SSL_DIR/
-    sudo cp -f ssl/api.ishswami.in.key $SSL_DIR/
-    sudo chown root:root $SSL_DIR/api.ishswami.in.*
-    sudo chmod 600 $SSL_DIR/api.ishswami.in.key
-    sudo chmod 644 $SSL_DIR/api.ishswami.in.crt
+if [ -f "ssl/${API_CERT}" ] && [ -f "ssl/${API_KEY}" ]; then
+    sudo cp -f ssl/${API_CERT} ${SSL_DIR}/
+    sudo cp -f ssl/${API_KEY} ${SSL_DIR}/
+    sudo chown root:root ${SSL_DIR}/${API_CERT} ${SSL_DIR}/${API_KEY}
+    sudo chmod 600 ${SSL_DIR}/${API_KEY}
+    sudo chmod 644 ${SSL_DIR}/${API_CERT}
 else
     echo -e "${RED}Error: SSL certificates not found${NC}"
     exit 1
@@ -109,114 +117,85 @@ fi
 
 # Set proper permissions
 echo -e "${YELLOW}Setting permissions...${NC}"
-sudo chown -R www-data:www-data $DEPLOY_PATH
-sudo chmod -R 755 $DEPLOY_PATH
-sudo chown -R root:root $SSL_DIR
-sudo chmod 755 $SSL_DIR
+sudo chown -R www-data:www-data ${DEPLOY_PATH}
+sudo chmod -R 755 ${DEPLOY_PATH}
+sudo chown -R root:root ${SSL_DIR}
+sudo chmod 755 ${SSL_DIR}
 
-# Function to safely update network name in a file
-update_network_name() {
+# Function to safely update configuration files
+update_nginx_conf() {
     local file=$1
     local backup_file="${file}.bak"
     local filename=$(basename "$file")
     
-    # List of files that should be skipped
-    local skip_files=("nginx.conf" "cloudflare.conf" "common.conf")
-    
-    # Check if file should be skipped
-    for skip_file in "${skip_files[@]}"; do
-        if [[ "$filename" == "$skip_file" ]]; then
-            echo -e "${YELLOW}Skipping $filename as it doesn't need network updates${NC}"
-            return 0
-        fi
-    done
-    
-    echo -e "${YELLOW}Processing file: $file${NC}"
+    echo -e "${YELLOW}Processing $filename...${NC}"
     
     # Create a backup
     cp "$file" "$backup_file"
     
-    # For api.conf, preserve the upstream block
     if [[ "$filename" == "api.conf" ]]; then
-        echo -e "${YELLOW}Preserving static IP configuration in api.conf${NC}"
         # Extract and save the upstream block
         upstream_block=$(sed -n '/^upstream api_backend {/,/^}/p' "$file")
-        # Process the rest of the file
-        sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
-        sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
-        # Restore the upstream block
-        sed -i "/^upstream api_backend {/,/^}/c\\$upstream_block" "$file"
+        
+        # Verify the upstream block contains the static IP
+        if ! echo "$upstream_block" | grep -q "172.18.0.5:8088"; then
+            echo -e "${RED}Error: Static IP configuration not found in upstream block${NC}"
+            mv "$backup_file" "$file"
+            return 1
+        fi
+        
+        # Create a temporary file
+        tmp_file=$(mktemp)
+        
+        # Process the file in parts
+        # 1. Copy everything before upstream block
+        sed -n '1,/^upstream api_backend {/p' "$file" > "$tmp_file"
+        
+        # 2. Add the preserved upstream block
+        echo "$upstream_block" >> "$tmp_file"
+        
+        # 3. Process the rest of the file with environment variables
+        sed -n '/^}/,$p' "$file" | \
+        sed '1d' | \
+        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' >> "$tmp_file"
+        
+        # Move the processed file back
+        sudo mv "$tmp_file" "$file"
     else
-        # Process other files normally
-        sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
-        sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
+        # For other files, process normally
+        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${NETWORK_NAME}' < "$file" > "$backup_file"
+        sudo mv "$backup_file" "$file"
     fi
-
-    # Verify the update
-    if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
-        echo -e "${RED}Failed to update network name in $file${NC}"
+    
+    # Verify no container names or SHA values in the file
+    if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
+        echo -e "${RED}Error: Found container name or SHA in $filename${NC}"
         mv "$backup_file" "$file"
         return 1
     fi
-    echo -e "${GREEN}Successfully updated network name in $file${NC}"
     
-    # Clean up backup if it exists
-    [ -f "$backup_file" ] && rm -f "$backup_file"
+    echo -e "${GREEN}Successfully processed $filename${NC}"
     return 0
 }
 
-# Update specific configuration files
-echo -e "${YELLOW}Starting Nginx configuration update...${NC}"
-
-# Define files that need network name updates
-declare -a config_files=("api.conf" "frontend.conf")
-
-# Process only specific configuration files
-echo -e "${YELLOW}Processing configuration files for network updates...${NC}"
-for config_file in "${config_files[@]}"; do
-    config_path="conf.d/$config_file"
-    if [ -f "$config_path" ]; then
-        echo -e "${YELLOW}Processing $config_file...${NC}"
-        if ! update_network_name "$config_path"; then
-            echo -e "${RED}Failed to update $config_file${NC}"
+# Process configuration files
+echo -e "${YELLOW}Processing configuration files...${NC}"
+for conf_file in ${NGINX_CONF_DIR}/*.conf; do
+    if [ -f "$conf_file" ]; then
+        if ! update_nginx_conf "$conf_file"; then
+            echo -e "${RED}Failed to process $conf_file${NC}"
             exit 1
         fi
-    else
-        echo -e "${YELLOW}Warning: $config_file not found${NC}"
     fi
 done
 
-# Verify configuration updates only for relevant files
-echo -e "${YELLOW}Verifying configuration updates...${NC}"
-verification_failed=0
-for config_file in "${config_files[@]}"; do
-    config_path="conf.d/$config_file"
-    if [ -f "$config_path" ]; then
-        echo -e "${YELLOW}Verifying $config_file...${NC}"
-        if grep -q "\${NETWORK_NAME}" "$config_path" || grep -q "\${network_name}" "$config_path"; then
-            echo -e "${RED}Error: Network name variables still present in $config_path${NC}"
-            verification_failed=1
-        else
-            echo -e "${GREEN}Verification successful for $config_path${NC}"
-        fi
-    fi
-done
-
-if [ $verification_failed -eq 1 ]; then
-    echo -e "${RED}Configuration verification failed${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}All configuration files verified successfully${NC}"
-
-# Copy Nginx configurations
-echo -e "${YELLOW}Copying Nginx configurations...${NC}"
-sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
-
-# Test Nginx configuration
-echo -e "${YELLOW}Testing Nginx configuration...${NC}"
+# Verify nginx configuration
+echo -e "${YELLOW}Verifying nginx configuration...${NC}"
 if ! sudo nginx -t; then
     echo -e "${RED}Nginx configuration test failed${NC}"
+    # Show the current api.conf content
+    echo -e "${YELLOW}Current api.conf content:${NC}"
+    cat ${NGINX_CONF_DIR}/api.conf
     exit 1
 fi
 
@@ -234,48 +213,24 @@ fi
 
 # Wait for containers to be ready
 echo -e "${YELLOW}Waiting for containers to be ready...${NC}"
-wait_for_container "latest-postgres" || exit 1
-wait_for_container "latest-redis" || exit 1
-wait_for_container "latest-api" || exit 1
+wait_for_container "${POSTGRES_CONTAINER}" || exit 1
+wait_for_container "${REDIS_CONTAINER}" || exit 1
+wait_for_container "${API_CONTAINER}" || exit 1
 
-# Check API health from different perspectives
-echo -e "${YELLOW}Performing comprehensive API health checks...${NC}"
-
-# 1. Check direct container access
-echo -e "${YELLOW}Checking direct container access...${NC}"
-if ! docker exec latest-api wget -q --spider --no-check-certificate https://localhost:8088/health; then
-    echo -e "${RED}Failed to access API inside container${NC}"
-    docker logs latest-api
-    exit 1
-fi
-
-# 2. Check internal network access
-echo -e "${YELLOW}Checking internal network access...${NC}"
-if ! curl -k -s -o /dev/null -w "%{http_code}" http://localhost:8088/health | grep -q "200"; then
-    echo -e "${RED}Failed to access API through localhost${NC}"
-    exit 1
-fi
-
-# 3. Check external HTTPS access
-echo -e "${YELLOW}Checking external HTTPS access...${NC}"
-check_api_health "https://api.ishswami.in/health"
-
-# 4. Check WebSocket availability
-echo -e "${YELLOW}Checking WebSocket endpoint...${NC}"
-if ! curl -k -s -o /dev/null -w "%{http_code}" https://api.ishswami.in/socket.io/ | grep -q "200"; then
-    echo -e "${YELLOW}Warning: WebSocket endpoint might not be accessible${NC}"
-fi
+# Check API health
+echo -e "${YELLOW}Checking API health...${NC}"
+check_api_health "https://${API_DOMAIN}/${HEALTH_CHECK_ENDPOINT}"
 
 # Print detailed container information
 echo -e "${YELLOW}Container Details:${NC}"
 echo "1. API Container:"
-docker inspect latest-api --format "ID: {{.Id}}\nNetwork: {{range \$k, \$v := .NetworkSettings.Networks}}{{printf \"%s: %s\\n\" \$k \$v.IPAddress}}{{end}}Status: {{.State.Status}}\nHealth: {{.State.Health.Status}}"
+docker inspect "${API_CONTAINER}" --format "ID: {{.Id}}\nNetwork: {{range \$k, \$v := .NetworkSettings.Networks}}{{printf \"%s: %s\\n\" \$k \$v.IPAddress}}{{end}}Status: {{.State.Status}}\nHealth: {{.State.Health.Status}}"
 
 echo "2. Network Information:"
 docker network inspect "${NETWORK_NAME}"
 
 echo "3. Container Logs:"
-docker logs latest-api --tail 50
+docker logs "${API_CONTAINER}" --tail 50
 
 echo -e "${GREEN}Deployment completed successfully!${NC}"
 echo -e "${YELLOW}Important: Please follow these steps to complete the setup:${NC}"
@@ -301,10 +256,10 @@ echo "3. Set minimum TLS version to 1.2"
 # Final API Status Summary
 echo -e "\n${YELLOW}Final API Status Summary:${NC}"
 echo "1. Container Status:"
-docker inspect latest-api --format='{{.State.Status}} - {{.State.Health.Status}}'
+docker inspect "${API_CONTAINER}" --format='{{.State.Status}} - {{.State.Health.Status}}'
 echo "2. Internal Health Check:"
 curl -k -s http://localhost:8088/health
 echo "3. External Health Check:"
 curl -k -s https://api.ishswami.in/health
 echo "4. Container Logs (last 5 lines):"
-docker logs latest-api --tail 5 
+docker logs "${API_CONTAINER}" --tail 5 
