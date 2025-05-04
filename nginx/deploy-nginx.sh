@@ -25,7 +25,7 @@ NETWORK_NAME=${NETWORK_NAME:-app-network}
 TEMPLATE_DIR="./conf.d"
 API_CONF="api.conf"
 FRONTEND_CONF="frontend.conf"
-API_CONTAINER=${API_CONTAINER:-latest-api}
+API_IP="172.18.0.5"  # Static IP for API container
 
 # Function to check API health
 check_api_health() {
@@ -90,7 +90,7 @@ apply_template() {
     cp "${template}.original" "${template}"
     
     # Apply environment variables
-    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${API_CONTAINER}' < "${template}" > "${target}"
+    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${API_IP}' < "${template}" > "${target}"
     
     # Set immutable flag to prevent modifications
     chattr +i "${target}" || true
@@ -99,8 +99,8 @@ apply_template() {
 # Function to verify configuration
 verify_config() {
     local conf_file="$1"
-    if ! grep -q "${API_CONTAINER}:8088" "${conf_file}"; then
-        echo -e "${RED}Error: Container name configuration not found in ${conf_file}${NC}"
+    if ! grep -q "172.18.0.5:8088" "${conf_file}"; then
+        echo -e "${RED}Error: Static IP configuration not found in ${conf_file}${NC}"
         exit 1
     fi
 }
@@ -158,9 +158,9 @@ sudo chmod 755 ${SSL_DIR}
 # Create and protect upstream configuration
 echo -e "${YELLOW}Setting up upstream configuration...${NC}"
 cat > "${NGINX_CONF_DIR}/upstream.conf" << EOL
-# Backend configuration with container name
+# Backend configuration with static IP
 upstream api_backend {
-    server ${API_CONTAINER}:8088 resolve=no;  # Use container name
+    server ${API_IP}:8088;  # Static IP for API container
     keepalive 32;
 }
 EOL
@@ -171,8 +171,8 @@ sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
 sudo chattr +i "${NGINX_CONF_DIR}/upstream.conf"
 
 # Verify upstream configuration is correct
-if ! grep -q "${API_CONTAINER}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
-    echo -e "${RED}Error: Container name configuration not found in upstream.conf${NC}"
+if ! grep -q "${API_IP}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
+    echo -e "${RED}Error: Static IP configuration not found in upstream.conf${NC}"
     exit 1
 fi
 
@@ -213,7 +213,6 @@ fi
 echo -e "${YELLOW}Waiting for containers to be ready...${NC}"
 wait_for_container "${POSTGRES_CONTAINER}" || exit 1
 wait_for_container "${REDIS_CONTAINER}" || exit 1
-wait_for_container "${API_CONTAINER}" || exit 1
 
 # Check API health
 echo -e "${YELLOW}Checking API health...${NC}"
