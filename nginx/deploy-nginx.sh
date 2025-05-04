@@ -141,6 +141,35 @@ copy_ssl_certs() {
     fi
 }
 
+# Function to create and protect upstream configuration
+create_upstream_config() {
+    echo -e "${YELLOW}Setting up upstream configuration...${NC}"
+    
+    # Create a temporary file
+    local temp_file=$(mktemp)
+    cat > "$temp_file" << EOL
+# Backend configuration with static IP
+upstream api_backend {
+    server ${API_IP}:8088;  # Static IP for API container
+    keepalive 32;
+}
+EOL
+
+    # Copy the temporary file to the target location with sudo
+    sudo cp -f "$temp_file" "${NGINX_CONF_DIR}/upstream.conf"
+    sudo chown root:root "${NGINX_CONF_DIR}/upstream.conf"
+    sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
+    
+    # Clean up the temporary file
+    rm -f "$temp_file"
+    
+    # Verify the configuration
+    if ! sudo grep -q "${API_IP}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
+        echo -e "${RED}Error: Static IP configuration not found in upstream.conf${NC}"
+        exit 1
+    fi
+}
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
 # Verify Docker network exists
@@ -191,33 +220,15 @@ sudo chmod -R 755 ${DEPLOY_PATH}
 sudo chown -R root:root ${SSL_DIR}
 sudo chmod 755 ${SSL_DIR}
 
-# Create and protect upstream configuration
-echo -e "${YELLOW}Setting up upstream configuration...${NC}"
-cat > "${NGINX_CONF_DIR}/upstream.conf" << EOL
-# Backend configuration with static IP
-upstream api_backend {
-    server ${API_IP}:8088;  # Static IP for API container
-    keepalive 32;
-}
-EOL
-
-# Set proper permissions and make upstream.conf immutable
-sudo chown root:root "${NGINX_CONF_DIR}/upstream.conf"
-sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
-sudo chattr +i "${NGINX_CONF_DIR}/upstream.conf"
-
-# Verify upstream configuration is correct
-if ! grep -q "${API_IP}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
-    echo -e "${RED}Error: Static IP configuration not found in upstream.conf${NC}"
-    exit 1
-fi
+# Create upstream configuration
+create_upstream_config
 
 # Main deployment process
 echo "Deploying Nginx configuration..."
 
 # Remove immutable flag if exists
-chattr -i "${NGINX_CONF_DIR}/${API_CONF}" 2>/dev/null || true
-chattr -i "${NGINX_CONF_DIR}/${FRONTEND_CONF}" 2>/dev/null || true
+sudo chattr -i "${NGINX_CONF_DIR}/${API_CONF}" 2>/dev/null || true
+sudo chattr -i "${NGINX_CONF_DIR}/${FRONTEND_CONF}" 2>/dev/null || true
 
 # Apply templates
 apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_CONF}"
