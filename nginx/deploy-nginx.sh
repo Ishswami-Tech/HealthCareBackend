@@ -134,36 +134,31 @@ update_nginx_conf() {
     cp "$file" "$backup_file"
     
     if [[ "$filename" == "api.conf" ]]; then
-        # Extract and save the upstream block
-        upstream_block=$(sed -n '/^upstream api_backend {/,/^}/p' "$file")
-        
         # Verify the upstream block contains the static IP
-        if ! echo "$upstream_block" | grep -q "172.18.0.5:8088"; then
+        if ! grep -q "172.18.0.5:8088" "$file"; then
             echo -e "${RED}Error: Static IP configuration not found in upstream block${NC}"
-            mv "$backup_file" "$file"
-            return 1
+            echo -e "${YELLOW}Adding static IP configuration...${NC}"
+            # Create temporary file with correct upstream block
+            cat > "$backup_file" << 'EOL'
+# Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)
+upstream api_backend {
+    # Static IP configuration - Required for container communication
+    server 172.18.0.5:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE
+    keepalive 32;
+}
+EOL
+            # Append the rest of the file after the upstream block
+            sed '1,/^}/d' "$file" | envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' >> "$backup_file"
+            sudo mv "$backup_file" "$file"
+        else
+            # Process the file while preserving the upstream block
+            sed -i.bak -e '/upstream api_backend/,/^}/!b' -e '/172.18.0.5:8088/!b' -e 's/^.*server.*$/    server 172.18.0.5:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE/' "$file"
+            envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "$file" > "$backup_file"
+            sudo mv "$backup_file" "$file"
         fi
-        
-        # Create a temporary file
-        tmp_file=$(mktemp)
-        
-        # Process the file in parts
-        # 1. Copy everything before upstream block
-        sed -n '1,/^upstream api_backend {/p' "$file" > "$tmp_file"
-        
-        # 2. Add the preserved upstream block
-        echo "$upstream_block" >> "$tmp_file"
-        
-        # 3. Process the rest of the file with environment variables
-        sed -n '/^}/,$p' "$file" | \
-        sed '1d' | \
-        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' >> "$tmp_file"
-        
-        # Move the processed file back
-        sudo mv "$tmp_file" "$file"
     else
         # For other files, process normally
-        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${NETWORK_NAME}' < "$file" > "$backup_file"
+        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "$file" > "$backup_file"
         sudo mv "$backup_file" "$file"
     fi
     

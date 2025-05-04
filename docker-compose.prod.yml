@@ -38,7 +38,8 @@ services:
       - "${API_PORT:-8088}"
       - "5555"
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.18.0.5
     volumes:
       - ./logs:/app/logs
       - ./nginx/ssl:${APP_SSL_DIR:-/app/ssl}:ro
@@ -176,4 +177,8 @@ volumes:
 networks:
   app-network:
     name: ${NETWORK_NAME:-app-network}
-    driver: bridge 
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1 
