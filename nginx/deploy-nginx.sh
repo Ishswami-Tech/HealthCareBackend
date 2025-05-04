@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -22,6 +22,9 @@ NGINX_CONF_DIR="/etc/nginx/conf.d"
 DEPLOY_PATH="/var/www/healthcare"
 SSL_DIR="/etc/nginx/ssl"
 NETWORK_NAME=${NETWORK_NAME:-app-network}
+TEMPLATE_DIR="./conf.d"
+API_CONF="api.conf"
+FRONTEND_CONF="frontend.conf"
 
 # Function to check API health
 check_api_health() {
@@ -72,36 +75,33 @@ wait_for_container() {
     return 1
 }
 
-# Function to verify Nginx configuration before deployment
-verify_nginx_conf() {
-    local file=$1
-    echo -e "${YELLOW}Pre-deployment verification of $file...${NC}"
+# Function to apply template
+apply_template() {
+    local template="$1"
+    local target="$2"
     
-    if [[ -f "$file" ]]; then
-        # Check for any dynamic container names or SHA values
-        if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
-            echo -e "${RED}Error: Found dynamic container name or SHA in $file${NC}"
-            return 1
-        fi
-        
-        # For api.conf, verify the upstream block
-        if [[ "$file" == *"api.conf" ]]; then
-            if ! grep -q "172.18.0.5:8088" "$file"; then
-                echo -e "${RED}Error: Static IP configuration not found in $file${NC}"
-                return 1
-            fi
-            
-            if grep -q "upstream.*{" "$file" | grep -v "172.18.0.5:8088"; then
-                echo -e "${RED}Error: Found invalid upstream configuration in $file${NC}"
-                return 1
-            fi
-        fi
-    else
-        echo -e "${RED}Error: File $file not found${NC}"
-        return 1
+    # Create backup of template if it doesn't exist
+    if [ ! -f "${template}.original" ]; then
+        cp "${template}" "${template}.original"
     fi
     
-    return 0
+    # Restore from original template
+    cp "${template}.original" "${template}"
+    
+    # Apply environment variables
+    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "${template}" > "${target}"
+    
+    # Set immutable flag to prevent modifications
+    chattr +i "${target}" || true
+}
+
+# Function to verify configuration
+verify_config() {
+    local conf_file="$1"
+    if grep -q "app-network" "${conf_file}"; then
+        echo "Error: Found dynamic network name in ${conf_file}"
+        exit 1
+    fi
 }
 
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
@@ -176,99 +176,24 @@ if ! grep -q "172.18.0.5:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
     exit 1
 fi
 
-# Function to safely update configuration files
-update_nginx_conf() {
-    local file=$1
-    local backup_file="${file}.bak"
-    local filename=$(basename "$file")
-    
-    echo -e "${YELLOW}Processing $filename...${NC}"
-    
-    # Create a backup
-    cp "$file" "$backup_file"
-    
-    # For api.conf, ensure the upstream block is protected
-    if [[ "$filename" == "api.conf" ]]; then
-        # Verify upstream block exists and is correct
-        if ! grep -q "upstream api_backend {" "$file" || ! grep -q "172.18.0.5:8088" "$file"; then
-            echo -e "${RED}Error: Missing or incorrect upstream configuration in $filename${NC}"
-            return 1
-        fi
-        
-        # Protect the upstream block from modification
-        sed -i '/upstream api_backend {/,/}/c\# Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)\nupstream api_backend {\n    server 172.18.0.5:8088;\n    keepalive 32;\n}' "$file"
-        
-        # Verify the protection worked
-        if ! grep -q "172.18.0.5:8088" "$file"; then
-            echo -e "${RED}Error: Failed to protect upstream configuration in $filename${NC}"
-            return 1
-        fi
-    fi
-    
-    # Process environment variables, excluding the upstream block
-    awk '
-        /upstream api_backend/,/^}/ { print; next }
-        { print }
-    ' "$file" | envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' > "$backup_file"
-    
-    sudo mv "$backup_file" "$file"
-    
-    # Verify no container names or SHA values in the file
-    if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
-        echo -e "${RED}Error: Found dynamic container name in $filename${NC}"
-        cp "$backup_file" "$file"
-        return 1
-    fi
-    
-    # Make the upstream block in api.conf immutable
-    if [[ "$filename" == "api.conf" ]]; then
-        # Use chattr to make the first few lines immutable
-        sudo chattr +i "$file"
-        echo -e "${GREEN}Protected upstream configuration in $filename${NC}"
-    fi
-    
-    echo -e "${GREEN}Successfully processed $filename${NC}"
-    return 0
-}
+# Main deployment process
+echo "Deploying Nginx configuration..."
 
-# Add pre-deployment checks
-echo -e "${YELLOW}Running pre-deployment checks...${NC}"
-for conf_file in ${NGINX_CONF_DIR}/*.conf; do
-    if ! verify_nginx_conf "$conf_file"; then
-        echo -e "${RED}Pre-deployment checks failed${NC}"
-        exit 1
-    fi
-done
+# Remove immutable flag if exists
+chattr -i "${NGINX_CONF_DIR}/${API_CONF}" 2>/dev/null || true
+chattr -i "${NGINX_CONF_DIR}/${FRONTEND_CONF}" 2>/dev/null || true
 
-# Remove any existing immutable attributes
-echo -e "${YELLOW}Removing existing immutable attributes...${NC}"
-sudo chattr -i ${NGINX_CONF_DIR}/api.conf 2>/dev/null || true
+# Apply templates
+apply_template "${TEMPLATE_DIR}/${API_CONF}.template" "${NGINX_CONF_DIR}/${API_CONF}"
+apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}.template" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
 
-# Process configuration files
-echo -e "${YELLOW}Processing configuration files...${NC}"
-for conf_file in ${NGINX_CONF_DIR}/*.conf; do
-    if [ -f "$conf_file" ]; then
-        if ! update_nginx_conf "$conf_file"; then
-            echo -e "${RED}Failed to process $conf_file${NC}"
-            exit 1
-        fi
-    fi
-done
+# Verify configurations
+verify_config "${NGINX_CONF_DIR}/${API_CONF}"
+verify_config "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
 
-# Additional verification step
-echo -e "${YELLOW}Verifying final configuration...${NC}"
-if grep -q "f9f0e5d257" ${NGINX_CONF_DIR}/api.conf || grep -q "_app-network-api" ${NGINX_CONF_DIR}/api.conf; then
-    echo -e "${RED}Error: Found dynamic container name in final configuration${NC}"
-    exit 1
-fi
-
-# Verify nginx configuration
-echo -e "${YELLOW}Verifying nginx configuration...${NC}"
+# Test Nginx configuration
 if ! sudo nginx -t; then
     echo -e "${RED}Nginx configuration test failed${NC}"
-    # Show the current api.conf content
-    echo -e "${YELLOW}Current api.conf content:${NC}"
-    cat ${NGINX_CONF_DIR}/api.conf
     exit 1
 fi
 
