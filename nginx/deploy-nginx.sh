@@ -25,6 +25,7 @@ NETWORK_NAME=${NETWORK_NAME:-app-network}
 TEMPLATE_DIR="./conf.d"
 API_CONF="api.conf"
 FRONTEND_CONF="frontend.conf"
+API_STATIC_IP=${API_STATIC_IP:-172.18.0.5}
 
 # Function to check API health
 check_api_health() {
@@ -89,7 +90,7 @@ apply_template() {
     cp "${template}.original" "${template}"
     
     # Apply environment variables
-    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "${template}" > "${target}"
+    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${API_STATIC_IP}' < "${template}" > "${target}"
     
     # Set immutable flag to prevent modifications
     chattr +i "${target}" || true
@@ -98,8 +99,8 @@ apply_template() {
 # Function to verify configuration
 verify_config() {
     local conf_file="$1"
-    if grep -q "app-network" "${conf_file}"; then
-        echo "Error: Found dynamic network name in ${conf_file}"
+    if ! grep -q "${API_STATIC_IP}:8088" "${conf_file}"; then
+        echo -e "${RED}Error: Static IP configuration not found in ${conf_file}${NC}"
         exit 1
     fi
 }
@@ -156,11 +157,11 @@ sudo chmod 755 ${SSL_DIR}
 
 # Create and protect upstream configuration
 echo -e "${YELLOW}Setting up upstream configuration...${NC}"
-cat > "${NGINX_CONF_DIR}/upstream.conf" << 'EOL'
+cat > "${NGINX_CONF_DIR}/upstream.conf" << EOL
 # Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)
 upstream api_backend {
     # Static IP configuration - Required for container communication
-    server 172.18.0.5:8088;
+    server ${API_STATIC_IP}:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE
     keepalive 32;
 }
 EOL
@@ -171,7 +172,7 @@ sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
 sudo chattr +i "${NGINX_CONF_DIR}/upstream.conf"
 
 # Verify upstream configuration is correct
-if ! grep -q "172.18.0.5:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
+if ! grep -q "${API_STATIC_IP}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
     echo -e "${RED}Error: Static IP configuration not found in upstream.conf${NC}"
     exit 1
 fi
