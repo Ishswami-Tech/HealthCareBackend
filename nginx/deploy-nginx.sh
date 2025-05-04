@@ -111,10 +111,7 @@ echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 echo -e "${YELLOW}Verifying Docker network...${NC}"
 if ! docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
     echo -e "${YELLOW}Creating Docker network ${NETWORK_NAME}...${NC}"
-    docker network create "${NETWORK_NAME}" || {
-        echo -e "${RED}Failed to create Docker network${NC}"
-        exit 1
-    }
+    docker network create "${NETWORK_NAME}" --subnet=172.18.0.0/16
 fi
 
 # Create deployment directories if they don't exist
@@ -129,6 +126,7 @@ echo -e "${YELLOW}Backing up existing Nginx configurations...${NC}"
 BACKUP_DIR="/etc/nginx/conf.d/backup_$TIMESTAMP"
 sudo mkdir -p "$BACKUP_DIR"
 sudo cp -r $NGINX_CONF_DIR/*.conf "$BACKUP_DIR/" 2>/dev/null || true
+sudo cp -r $SSL_DIR/* "$BACKUP_DIR/" 2>/dev/null || true
 
 # Install required packages
 echo -e "${YELLOW}Installing required packages...${NC}"
@@ -137,16 +135,13 @@ sudo apt-get install -y nginx openssl curl
 
 # Copy SSL certificates
 echo -e "${YELLOW}Copying SSL certificates...${NC}"
-if [ -f "ssl/${API_CERT}" ] && [ -f "ssl/${API_KEY}" ]; then
-    sudo cp -f ssl/${API_CERT} ${SSL_DIR}/
-    sudo cp -f ssl/${API_KEY} ${SSL_DIR}/
-    sudo chown root:root ${SSL_DIR}/${API_CERT} ${SSL_DIR}/${API_KEY}
-    sudo chmod 600 ${SSL_DIR}/${API_KEY}
-    sudo chmod 644 ${SSL_DIR}/${API_CERT}
-else
-    echo -e "${RED}Error: SSL certificates not found${NC}"
-    exit 1
-fi
+sudo cp -f ssl/${API_CERT} ${SSL_DIR}/
+sudo cp -f ssl/${API_KEY} ${SSL_DIR}/
+sudo cp -f ssl/${DOMAIN}.crt ${SSL_DIR}/
+sudo cp -f ssl/${DOMAIN}.key ${SSL_DIR}/
+sudo chown root:root ${SSL_DIR}/${API_CERT} ${SSL_DIR}/${API_KEY} ${SSL_DIR}/${DOMAIN}.crt ${SSL_DIR}/${DOMAIN}.key
+sudo chmod 600 ${SSL_DIR}/${API_KEY}
+sudo chmod 644 ${SSL_DIR}/${API_CERT} ${SSL_DIR}/${DOMAIN}.crt ${SSL_DIR}/${DOMAIN}.key
 
 # Set proper permissions
 echo -e "${YELLOW}Setting permissions...${NC}"
