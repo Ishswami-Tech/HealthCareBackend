@@ -136,22 +136,29 @@ update_network_name() {
     # Create a backup
     cp "$file" "$backup_file"
     
-    # Only update files that actually contain the network variable
-    if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
-        echo -e "${YELLOW}Updating network name in $file${NC}"
+    # For api.conf, preserve the upstream block
+    if [[ "$filename" == "api.conf" ]]; then
+        echo -e "${YELLOW}Preserving static IP configuration in api.conf${NC}"
+        # Extract and save the upstream block
+        upstream_block=$(sed -n '/^upstream api_backend {/,/^}/p' "$file")
+        # Process the rest of the file
         sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
         sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
-        
-        # Verify the update
-        if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
-            echo -e "${RED}Failed to update network name in $file${NC}"
-            mv "$backup_file" "$file"
-            return 1
-        fi
-        echo -e "${GREEN}Successfully updated network name in $file${NC}"
+        # Restore the upstream block
+        sed -i "/^upstream api_backend {/,/^}/c\\$upstream_block" "$file"
     else
-        echo -e "${YELLOW}No network name variables found in $file${NC}"
+        # Process other files normally
+        sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
+        sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
     fi
+
+    # Verify the update
+    if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
+        echo -e "${RED}Failed to update network name in $file${NC}"
+        mv "$backup_file" "$file"
+        return 1
+    fi
+    echo -e "${GREEN}Successfully updated network name in $file${NC}"
     
     # Clean up backup if it exists
     [ -f "$backup_file" ] && rm -f "$backup_file"
