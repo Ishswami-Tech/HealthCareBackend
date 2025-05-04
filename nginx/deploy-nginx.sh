@@ -25,7 +25,7 @@ NETWORK_NAME=${NETWORK_NAME:-app-network}
 TEMPLATE_DIR="./conf.d"
 API_CONF="api.conf"
 FRONTEND_CONF="frontend.conf"
-API_STATIC_IP=${API_STATIC_IP:-172.18.0.5}
+API_CONTAINER=${API_CONTAINER:-latest-api}
 
 # Function to check API health
 check_api_health() {
@@ -90,7 +90,7 @@ apply_template() {
     cp "${template}.original" "${template}"
     
     # Apply environment variables
-    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${API_STATIC_IP}' < "${template}" > "${target}"
+    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${API_CONTAINER}' < "${template}" > "${target}"
     
     # Set immutable flag to prevent modifications
     chattr +i "${target}" || true
@@ -99,8 +99,8 @@ apply_template() {
 # Function to verify configuration
 verify_config() {
     local conf_file="$1"
-    if ! grep -q "${API_STATIC_IP}:8088" "${conf_file}"; then
-        echo -e "${RED}Error: Static IP configuration not found in ${conf_file}${NC}"
+    if ! grep -q "${API_CONTAINER}:8088" "${conf_file}"; then
+        echo -e "${RED}Error: Container name configuration not found in ${conf_file}${NC}"
         exit 1
     fi
 }
@@ -158,10 +158,9 @@ sudo chmod 755 ${SSL_DIR}
 # Create and protect upstream configuration
 echo -e "${YELLOW}Setting up upstream configuration...${NC}"
 cat > "${NGINX_CONF_DIR}/upstream.conf" << EOL
-# Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)
+# Backend configuration with container name
 upstream api_backend {
-    # Static IP configuration - Required for container communication
-    server ${API_STATIC_IP}:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE
+    server ${API_CONTAINER}:8088 resolve=no;  # Use container name
     keepalive 32;
 }
 EOL
@@ -172,8 +171,8 @@ sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
 sudo chattr +i "${NGINX_CONF_DIR}/upstream.conf"
 
 # Verify upstream configuration is correct
-if ! grep -q "${API_STATIC_IP}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
-    echo -e "${RED}Error: Static IP configuration not found in upstream.conf${NC}"
+if ! grep -q "${API_CONTAINER}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
+    echo -e "${RED}Error: Container name configuration not found in upstream.conf${NC}"
     exit 1
 fi
 
@@ -185,8 +184,8 @@ chattr -i "${NGINX_CONF_DIR}/${API_CONF}" 2>/dev/null || true
 chattr -i "${NGINX_CONF_DIR}/${FRONTEND_CONF}" 2>/dev/null || true
 
 # Apply templates
-apply_template "${TEMPLATE_DIR}/${API_CONF}.template" "${NGINX_CONF_DIR}/${API_CONF}"
-apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}.template" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
+apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_CONF}"
+apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
 
 # Verify configurations
 verify_config "${NGINX_CONF_DIR}/${API_CONF}"
