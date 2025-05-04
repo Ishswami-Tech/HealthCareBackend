@@ -120,11 +120,16 @@ update_network_name() {
     local backup_file="${file}.bak"
     local filename=$(basename "$file")
     
-    # Skip files that don't need network updates
-    if [[ "$filename" == "nginx.conf" ]] || [[ "$filename" == "cloudflare.conf" ]] || [[ "$filename" == "common.conf" ]]; then
-        echo "Skipping $filename as it doesn't need network updates"
-        return 0
-    fi
+    # List of files that should be skipped
+    local skip_files=("nginx.conf" "cloudflare.conf" "common.conf")
+    
+    # Check if file should be skipped
+    for skip_file in "${skip_files[@]}"; do
+        if [[ "$filename" == "$skip_file" ]]; then
+            echo "Skipping $filename as it doesn't need network updates"
+            return 0
+        fi
+    done
     
     echo "Processing file: $file"
     
@@ -143,8 +148,9 @@ update_network_name() {
             mv "$backup_file" "$file"
             return 1
         fi
+        echo -e "${GREEN}Successfully updated network name in $file${NC}"
     else
-        echo "No network name variables found in $file, skipping..."
+        echo "No network name variables found in $file"
     fi
     
     # Clean up backup if it exists
@@ -154,7 +160,7 @@ update_network_name() {
 
 # Update specific configuration files
 echo -e "${YELLOW}Updating network name in configuration files...${NC}"
-declare -a config_files=("api.conf" "frontend.conf" "default.conf")
+declare -a config_files=("api.conf" "frontend.conf")
 
 for config_file in "${config_files[@]}"; do
     config_path="conf.d/$config_file"
@@ -166,6 +172,18 @@ for config_file in "${config_files[@]}"; do
         fi
     else
         echo -e "${YELLOW}Warning: $config_file not found${NC}"
+    fi
+done
+
+# Verify configuration updates
+echo -e "${YELLOW}Verifying configuration updates...${NC}"
+for config_file in "${config_files[@]}"; do
+    config_path="conf.d/$config_file"
+    if [ -f "$config_path" ]; then
+        if grep -q "\${NETWORK_NAME}" "$config_path" || grep -q "\${network_name}" "$config_path"; then
+            echo -e "${RED}Error: Network name variables still present in $config_path${NC}"
+            exit 1
+        fi
     fi
 done
 
