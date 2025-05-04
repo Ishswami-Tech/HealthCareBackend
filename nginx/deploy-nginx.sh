@@ -155,9 +155,22 @@ upstream api_backend {
 }
 EOL
 
-    # Copy the temporary file to the target location with sudo
-    sudo cp -f "$temp_file" "${NGINX_CONF_DIR}/upstream.conf"
+    # Remove existing upstream.conf if it exists
+    if [ -f "${NGINX_CONF_DIR}/upstream.conf" ]; then
+        echo -e "${YELLOW}Removing existing upstream configuration...${NC}"
+        sudo rm -f "${NGINX_CONF_DIR}/upstream.conf"
+    fi
+
+    # Create new upstream.conf
+    echo -e "${YELLOW}Creating new upstream configuration...${NC}"
+    sudo touch "${NGINX_CONF_DIR}/upstream.conf"
     sudo chown root:root "${NGINX_CONF_DIR}/upstream.conf"
+    sudo chmod 644 "${NGINX_CONF_DIR}/upstream.conf"
+    
+    # Copy the content
+    sudo cat "$temp_file" > "${NGINX_CONF_DIR}/upstream.conf"
+    
+    # Set final permissions
     sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
     
     # Clean up the temporary file
