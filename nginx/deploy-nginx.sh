@@ -184,17 +184,33 @@ update_nginx_conf() {
     
     echo -e "${YELLOW}Processing $filename...${NC}"
     
-    # Skip upstream.conf as it should never be modified
-    if [[ "$filename" == "upstream.conf" ]]; then
-        echo -e "${YELLOW}Skipping $filename (immutable configuration)${NC}"
-        return 0
-    fi
-    
     # Create a backup
     cp "$file" "$backup_file"
     
-    # Process environment variables
-    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "$file" > "$backup_file"
+    # For api.conf, ensure the upstream block is protected
+    if [[ "$filename" == "api.conf" ]]; then
+        # Verify upstream block exists and is correct
+        if ! grep -q "upstream api_backend {" "$file" || ! grep -q "172.18.0.5:8088" "$file"; then
+            echo -e "${RED}Error: Missing or incorrect upstream configuration in $filename${NC}"
+            return 1
+        fi
+        
+        # Protect the upstream block from modification
+        sed -i '/upstream api_backend {/,/}/c\# Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)\nupstream api_backend {\n    server 172.18.0.5:8088;\n    keepalive 32;\n}' "$file"
+        
+        # Verify the protection worked
+        if ! grep -q "172.18.0.5:8088" "$file"; then
+            echo -e "${RED}Error: Failed to protect upstream configuration in $filename${NC}"
+            return 1
+        fi
+    fi
+    
+    # Process environment variables, excluding the upstream block
+    awk '
+        /upstream api_backend/,/^}/ { print; next }
+        { print }
+    ' "$file" | envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' > "$backup_file"
+    
     sudo mv "$backup_file" "$file"
     
     # Verify no container names or SHA values in the file
@@ -204,11 +220,15 @@ update_nginx_conf() {
         return 1
     fi
     
-    # Verify upstream configuration is included in api.conf
-    if [[ "$filename" == "api.conf" ]] && ! grep -q "include.*upstream.conf" "$file"; then
-        echo -e "${RED}Error: upstream.conf inclusion not found in api.conf${NC}"
-        return 1
+    # Make the upstream block in api.conf immutable
+    if [[ "$filename" == "api.conf" ]]; then
+        # Use chattr to make the first few lines immutable
+        sudo chattr +i "$file"
+        echo -e "${GREEN}Protected upstream configuration in $filename${NC}"
     fi
+    
+    echo -e "${GREEN}Successfully processed $filename${NC}"
+    return 0
 }
 
 # Add pre-deployment checks
@@ -220,6 +240,10 @@ for conf_file in ${NGINX_CONF_DIR}/*.conf; do
     fi
 done
 
+# Remove any existing immutable attributes
+echo -e "${YELLOW}Removing existing immutable attributes...${NC}"
+sudo chattr -i ${NGINX_CONF_DIR}/api.conf 2>/dev/null || true
+
 # Process configuration files
 echo -e "${YELLOW}Processing configuration files...${NC}"
 for conf_file in ${NGINX_CONF_DIR}/*.conf; do
@@ -230,6 +254,13 @@ for conf_file in ${NGINX_CONF_DIR}/*.conf; do
         fi
     fi
 done
+
+# Additional verification step
+echo -e "${YELLOW}Verifying final configuration...${NC}"
+if grep -q "f9f0e5d257" ${NGINX_CONF_DIR}/api.conf || grep -q "_app-network-api" ${NGINX_CONF_DIR}/api.conf; then
+    echo -e "${RED}Error: Found dynamic container name in final configuration${NC}"
+    exit 1
+fi
 
 # Verify nginx configuration
 echo -e "${YELLOW}Verifying nginx configuration...${NC}"
