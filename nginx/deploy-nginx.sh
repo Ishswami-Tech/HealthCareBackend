@@ -154,6 +154,22 @@ sudo chmod -R 755 ${DEPLOY_PATH}
 sudo chown -R root:root ${SSL_DIR}
 sudo chmod 755 ${SSL_DIR}
 
+# Create and protect upstream configuration
+echo -e "${YELLOW}Setting up upstream configuration...${NC}"
+cat > "${NGINX_CONF_DIR}/upstream.conf" << 'EOL'
+# Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)
+upstream api_backend {
+    # Static IP configuration - Required for container communication
+    server 172.18.0.5:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE
+    keepalive 32;
+}
+EOL
+
+# Set proper permissions and make upstream.conf immutable
+sudo chown root:root "${NGINX_CONF_DIR}/upstream.conf"
+sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
+sudo chattr +i "${NGINX_CONF_DIR}/upstream.conf"
+
 # Function to safely update configuration files
 update_nginx_conf() {
     local file=$1
@@ -162,44 +178,24 @@ update_nginx_conf() {
     
     echo -e "${YELLOW}Processing $filename...${NC}"
     
+    # Skip upstream.conf as it should never be modified
+    if [[ "$filename" == "upstream.conf" ]]; then
+        echo -e "${YELLOW}Skipping $filename (immutable configuration)${NC}"
+        return 0
+    fi
+    
     # Create a backup
     cp "$file" "$backup_file"
     
-    if [[ "$filename" == "api.conf" ]]; then
-        # Split the file into parts
-        csplit "$file" '/^upstream api_backend/+1' '/^}/-1' > /dev/null
-        
-        # Verify the upstream block is correct
-        if ! grep -q "172.18.0.5:8088" xx01; then
-            echo -e "${RED}Error: Static IP configuration not found or incorrect${NC}"
-            cat > xx01 << 'EOL'
-upstream api_backend {
-    # Static IP configuration - Required for container communication
-    server 172.18.0.5:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE
-    keepalive 32;
-}
-EOL
-        fi
-        
-        # Process the rest of the file with environment variables
-        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < xx02 > xx02.tmp
-        
-        # Combine the files
-        cat xx00 xx01 xx02.tmp > "$file"
-        
-        # Clean up temporary files
-        rm -f xx* 2>/dev/null
-        
-        # Double-check the result
-        if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
-            echo -e "${RED}Error: Found container name or SHA in $filename${NC}"
-            cp "$backup_file" "$file"
-            return 1
-        fi
-    else
-        # For other files, process normally
-        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "$file" > "$backup_file"
-        mv "$backup_file" "$file"
+    # Process environment variables
+    envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "$file" > "$backup_file"
+    sudo mv "$backup_file" "$file"
+    
+    # Verify no container names or SHA values in the file
+    if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
+        echo -e "${RED}Error: Found container name or SHA in $filename${NC}"
+        cp "$backup_file" "$file"
+        return 1
     fi
     
     echo -e "${GREEN}Successfully processed $filename${NC}"
@@ -215,12 +211,6 @@ for conf_file in ${NGINX_CONF_DIR}/*.conf; do
     fi
 done
 
-# Make api.conf immutable during deployment
-if [ -f "${NGINX_CONF_DIR}/api.conf" ]; then
-    echo -e "${YELLOW}Making api.conf immutable...${NC}"
-    sudo chattr +i "${NGINX_CONF_DIR}/api.conf"
-fi
-
 # Process configuration files
 echo -e "${YELLOW}Processing configuration files...${NC}"
 for conf_file in ${NGINX_CONF_DIR}/*.conf; do
@@ -231,12 +221,6 @@ for conf_file in ${NGINX_CONF_DIR}/*.conf; do
         fi
     fi
 done
-
-# Make api.conf mutable again
-if [ -f "${NGINX_CONF_DIR}/api.conf" ]; then
-    echo -e "${YELLOW}Making api.conf mutable again...${NC}"
-    sudo chattr -i "${NGINX_CONF_DIR}/api.conf"
-fi
 
 # Verify nginx configuration
 echo -e "${YELLOW}Verifying nginx configuration...${NC}"
