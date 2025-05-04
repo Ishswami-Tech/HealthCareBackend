@@ -160,7 +160,7 @@ cat > "${NGINX_CONF_DIR}/upstream.conf" << 'EOL'
 # Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)
 upstream api_backend {
     # Static IP configuration - Required for container communication
-    server 172.18.0.5:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE
+    server 172.18.0.5:8088;
     keepalive 32;
 }
 EOL
@@ -169,6 +169,12 @@ EOL
 sudo chown root:root "${NGINX_CONF_DIR}/upstream.conf"
 sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
 sudo chattr +i "${NGINX_CONF_DIR}/upstream.conf"
+
+# Verify upstream configuration is correct
+if ! grep -q "172.18.0.5:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
+    echo -e "${RED}Error: Static IP configuration not found in upstream.conf${NC}"
+    exit 1
+fi
 
 # Function to safely update configuration files
 update_nginx_conf() {
@@ -193,13 +199,16 @@ update_nginx_conf() {
     
     # Verify no container names or SHA values in the file
     if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
-        echo -e "${RED}Error: Found container name or SHA in $filename${NC}"
+        echo -e "${RED}Error: Found dynamic container name in $filename${NC}"
         cp "$backup_file" "$file"
         return 1
     fi
     
-    echo -e "${GREEN}Successfully processed $filename${NC}"
-    return 0
+    # Verify upstream configuration is included in api.conf
+    if [[ "$filename" == "api.conf" ]] && ! grep -q "include.*upstream.conf" "$file"; then
+        echo -e "${RED}Error: upstream.conf inclusion not found in api.conf${NC}"
+        return 1
+    fi
 }
 
 # Add pre-deployment checks
