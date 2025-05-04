@@ -10,7 +10,7 @@ services:
         - NPM_VERSION=11.3.0
       cache_from:
         - type=registry,ref=node:20-alpine
-    container_name: ${API_CONTAINER:-latest-api}
+    container_name: latest-api
     hostname: api
     ports:
       - "${API_PORT:-8088}:${API_PORT:-8088}"
@@ -74,7 +74,7 @@ services:
 
   postgres:
     image: postgres:latest
-    container_name: ${POSTGRES_CONTAINER:-latest-postgres}
+    container_name: latest-postgres
     hostname: postgres
     ports:
       - "${POSTGRES_PORT:-5432}:${POSTGRES_PORT:-5432}"
@@ -107,7 +107,7 @@ services:
 
   redis:
     image: redis:latest
-    container_name: ${REDIS_CONTAINER:-latest-redis}
+    container_name: latest-redis
     hostname: redis
     command: >
       redis-server 
@@ -149,7 +149,7 @@ services:
 
   redis-commander:
     image: rediscommander/redis-commander:latest
-    container_name: ${REDIS_COMMANDER_CONTAINER:-latest-redis-commander}
+    container_name: latest-redis-commander
     hostname: redis-commander
     ports:
       - "${REDIS_COMMANDER_PORT:-8082}:8081"
@@ -186,7 +186,7 @@ volumes:
 
 networks:
   app-network:
-    name: ${NETWORK_NAME:-app-network}
+    name: app-network
     driver: bridge
     ipam:
       config:
