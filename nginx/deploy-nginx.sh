@@ -105,6 +105,42 @@ verify_config() {
     fi
 }
 
+# Function to check if SSL certificate exists
+check_ssl_cert() {
+    local domain=$1
+    local cert_file="ssl/${domain}.crt"
+    local key_file="ssl/${domain}.key"
+    
+    if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ]; then
+        echo -e "${YELLOW}Warning: SSL certificates for ${domain} not found in ssl directory${NC}"
+        echo -e "${YELLOW}Please ensure the following files exist:${NC}"
+        echo -e "  - ${cert_file}"
+        echo -e "  - ${key_file}"
+        echo -e "${YELLOW}You can obtain these certificates from:${NC}"
+        echo -e "  1. Cloudflare Dashboard > SSL/TLS > Origin Server"
+        echo -e "  2. Generate a new Origin Certificate for ${domain}"
+        echo -e "  3. Save the certificate and private key in the ssl directory"
+        return 1
+    fi
+    return 0
+}
+
+# Function to copy SSL certificates
+copy_ssl_certs() {
+    local domain=$1
+    local cert_file="ssl/${domain}.crt"
+    local key_file="ssl/${domain}.key"
+    
+    if [ -f "$cert_file" ] && [ -f "$key_file" ]; then
+        echo -e "${YELLOW}Copying SSL certificates for ${domain}...${NC}"
+        sudo cp -f "$cert_file" "${SSL_DIR}/"
+        sudo cp -f "$key_file" "${SSL_DIR}/"
+        sudo chown root:root "${SSL_DIR}/${domain}.crt" "${SSL_DIR}/${domain}.key"
+        sudo chmod 644 "${SSL_DIR}/${domain}.crt"
+        sudo chmod 600 "${SSL_DIR}/${domain}.key"
+    fi
+}
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
 # Verify Docker network exists
@@ -133,15 +169,20 @@ echo -e "${YELLOW}Installing required packages...${NC}"
 sudo apt-get update
 sudo apt-get install -y nginx openssl curl
 
-# Copy SSL certificates
-echo -e "${YELLOW}Copying SSL certificates...${NC}"
-sudo cp -f ssl/${API_CERT} ${SSL_DIR}/
-sudo cp -f ssl/${API_KEY} ${SSL_DIR}/
-sudo cp -f ssl/${DOMAIN}.crt ${SSL_DIR}/
-sudo cp -f ssl/${DOMAIN}.key ${SSL_DIR}/
-sudo chown root:root ${SSL_DIR}/${API_CERT} ${SSL_DIR}/${API_KEY} ${SSL_DIR}/${DOMAIN}.crt ${SSL_DIR}/${DOMAIN}.key
-sudo chmod 600 ${SSL_DIR}/${API_KEY}
-sudo chmod 644 ${SSL_DIR}/${API_CERT} ${SSL_DIR}/${DOMAIN}.crt ${SSL_DIR}/${DOMAIN}.key
+# Check and copy SSL certificates
+echo -e "${YELLOW}Checking SSL certificates...${NC}"
+check_ssl_cert "$API_DOMAIN" || {
+    echo -e "${RED}Error: API SSL certificates are required${NC}"
+    exit 1
+}
+
+check_ssl_cert "$DOMAIN" || {
+    echo -e "${YELLOW}Warning: Frontend SSL certificates are missing, but continuing with API deployment${NC}"
+}
+
+# Copy available SSL certificates
+copy_ssl_certs "$API_DOMAIN"
+copy_ssl_certs "$DOMAIN"
 
 # Set proper permissions
 echo -e "${YELLOW}Setting permissions...${NC}"
