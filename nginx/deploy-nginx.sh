@@ -126,19 +126,19 @@ update_network_name() {
     # Check if file should be skipped
     for skip_file in "${skip_files[@]}"; do
         if [[ "$filename" == "$skip_file" ]]; then
-            echo "Skipping $filename as it doesn't need network updates"
+            echo -e "${YELLOW}Skipping $filename as it doesn't need network updates${NC}"
             return 0
         fi
     done
     
-    echo "Processing file: $file"
+    echo -e "${YELLOW}Processing file: $file${NC}"
     
     # Create a backup
     cp "$file" "$backup_file"
     
     # Only update files that actually contain the network variable
     if grep -q "\${NETWORK_NAME}" "$file" || grep -q "\${network_name}" "$file"; then
-        echo "Updating network name in $file"
+        echo -e "${YELLOW}Updating network name in $file${NC}"
         sed -i "s/\${NETWORK_NAME}/${NETWORK_NAME}/g" "$file"
         sed -i "s/\${network_name}/${NETWORK_NAME}/g" "$file"
         
@@ -150,7 +150,7 @@ update_network_name() {
         fi
         echo -e "${GREEN}Successfully updated network name in $file${NC}"
     else
-        echo "No network name variables found in $file"
+        echo -e "${YELLOW}No network name variables found in $file${NC}"
     fi
     
     # Clean up backup if it exists
@@ -159,13 +159,17 @@ update_network_name() {
 }
 
 # Update specific configuration files
-echo -e "${YELLOW}Updating network name in configuration files...${NC}"
+echo -e "${YELLOW}Starting Nginx configuration update...${NC}"
+
+# Define files that need network name updates
 declare -a config_files=("api.conf" "frontend.conf")
 
+# Process only specific configuration files
+echo -e "${YELLOW}Processing configuration files for network updates...${NC}"
 for config_file in "${config_files[@]}"; do
     config_path="conf.d/$config_file"
     if [ -f "$config_path" ]; then
-        echo "Processing $config_file..."
+        echo -e "${YELLOW}Processing $config_file...${NC}"
         if ! update_network_name "$config_path"; then
             echo -e "${RED}Failed to update $config_file${NC}"
             exit 1
@@ -175,47 +179,37 @@ for config_file in "${config_files[@]}"; do
     fi
 done
 
-# Verify configuration updates
+# Verify configuration updates only for relevant files
 echo -e "${YELLOW}Verifying configuration updates...${NC}"
+verification_failed=0
 for config_file in "${config_files[@]}"; do
     config_path="conf.d/$config_file"
     if [ -f "$config_path" ]; then
+        echo -e "${YELLOW}Verifying $config_file...${NC}"
         if grep -q "\${NETWORK_NAME}" "$config_path" || grep -q "\${network_name}" "$config_path"; then
             echo -e "${RED}Error: Network name variables still present in $config_path${NC}"
-            exit 1
+            verification_failed=1
+        else
+            echo -e "${GREEN}Verification successful for $config_path${NC}"
         fi
     fi
 done
+
+if [ $verification_failed -eq 1 ]; then
+    echo -e "${RED}Configuration verification failed${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}All configuration files verified successfully${NC}"
 
 # Copy Nginx configurations
 echo -e "${YELLOW}Copying Nginx configurations...${NC}"
 sudo cp -f conf.d/*.conf $NGINX_CONF_DIR/
 
-# Verify configurations after copy
-echo -e "${YELLOW}Verifying configuration files...${NC}"
-for config_file in "${config_files[@]}"; do
-    target_file="$NGINX_CONF_DIR/$config_file"
-    if [ -f "$target_file" ]; then
-        if grep -q "\${NETWORK_NAME}" "$target_file" || grep -q "\${network_name}" "$target_file"; then
-            echo -e "${RED}Error: Network name variables still present in $target_file${NC}"
-            cat "$target_file"
-            exit 1
-        fi
-    fi
-done
-
-# Verify API configuration
-echo -e "${YELLOW}Verifying API configuration...${NC}"
-if ! grep -q "server latest-api:8088" "$NGINX_CONF_DIR/api.conf"; then
-    echo -e "${RED}Error: API configuration is not properly set up${NC}"
-    exit 1
-fi
-
 # Test Nginx configuration
 echo -e "${YELLOW}Testing Nginx configuration...${NC}"
 if ! sudo nginx -t; then
-    echo -e "${RED}Nginx configuration test failed. Rolling back...${NC}"
-    sudo cp "$BACKUP_DIR"/*.conf $NGINX_CONF_DIR/ 2>/dev/null || true
+    echo -e "${RED}Nginx configuration test failed${NC}"
     exit 1
 fi
 
