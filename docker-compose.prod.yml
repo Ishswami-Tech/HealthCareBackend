@@ -40,6 +40,11 @@ services:
     networks:
       app-network:
         ipv4_address: 172.18.0.5
+        aliases: []
+    extra_hosts:
+      - "api:172.18.0.5"
+    dns_opt:
+      - use-vc
     volumes:
       - ./logs:/app/logs
       - ./nginx/ssl:${APP_SSL_DIR:-/app/ssl}:ro
@@ -181,4 +186,8 @@ networks:
     ipam:
       config:
         - subnet: 172.18.0.0/16
-          gateway: 172.18.0.1 
+          gateway: 172.18.0.1
+    options:
+      com.docker.network.bridge.enable_dns: "false"
+      com.docker.network.bridge.host_binding_ipv4: "0.0.0.0"
+      com.docker.network.bridge.enable_ip_masquerade: "false" 
