@@ -72,6 +72,38 @@ wait_for_container() {
     return 1
 }
 
+# Function to verify Nginx configuration before deployment
+verify_nginx_conf() {
+    local file=$1
+    echo -e "${YELLOW}Pre-deployment verification of $file...${NC}"
+    
+    if [[ -f "$file" ]]; then
+        # Check for any dynamic container names or SHA values
+        if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
+            echo -e "${RED}Error: Found dynamic container name or SHA in $file${NC}"
+            return 1
+        fi
+        
+        # For api.conf, verify the upstream block
+        if [[ "$file" == *"api.conf" ]]; then
+            if ! grep -q "172.18.0.5:8088" "$file"; then
+                echo -e "${RED}Error: Static IP configuration not found in $file${NC}"
+                return 1
+            fi
+            
+            if grep -q "upstream.*{" "$file" | grep -v "172.18.0.5:8088"; then
+                echo -e "${RED}Error: Found invalid upstream configuration in $file${NC}"
+                return 1
+            fi
+        fi
+    else
+        echo -e "${RED}Error: File $file not found${NC}"
+        return 1
+    fi
+    
+    return 0
+}
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
 # Verify Docker network exists
@@ -134,44 +166,60 @@ update_nginx_conf() {
     cp "$file" "$backup_file"
     
     if [[ "$filename" == "api.conf" ]]; then
-        # Verify the upstream block contains the static IP
-        if ! grep -q "172.18.0.5:8088" "$file"; then
-            echo -e "${RED}Error: Static IP configuration not found in upstream block${NC}"
-            echo -e "${YELLOW}Adding static IP configuration...${NC}"
-            # Create temporary file with correct upstream block
-            cat > "$backup_file" << 'EOL'
-# Direct backend configuration with static IP (DO NOT MODIFY THIS BLOCK)
+        # Split the file into parts
+        csplit "$file" '/^upstream api_backend/+1' '/^}/-1' > /dev/null
+        
+        # Verify the upstream block is correct
+        if ! grep -q "172.18.0.5:8088" xx01; then
+            echo -e "${RED}Error: Static IP configuration not found or incorrect${NC}"
+            cat > xx01 << 'EOL'
 upstream api_backend {
     # Static IP configuration - Required for container communication
     server 172.18.0.5:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE
     keepalive 32;
 }
 EOL
-            # Append the rest of the file after the upstream block
-            sed '1,/^}/d' "$file" | envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' >> "$backup_file"
-            sudo mv "$backup_file" "$file"
-        else
-            # Process the file while preserving the upstream block
-            sed -i.bak -e '/upstream api_backend/,/^}/!b' -e '/172.18.0.5:8088/!b' -e 's/^.*server.*$/    server 172.18.0.5:8088 max_fails=3 fail_timeout=30s; # STATIC IP - DO NOT REPLACE/' "$file"
-            envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "$file" > "$backup_file"
-            sudo mv "$backup_file" "$file"
+        fi
+        
+        # Process the rest of the file with environment variables
+        envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < xx02 > xx02.tmp
+        
+        # Combine the files
+        cat xx00 xx01 xx02.tmp > "$file"
+        
+        # Clean up temporary files
+        rm -f xx* 2>/dev/null
+        
+        # Double-check the result
+        if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
+            echo -e "${RED}Error: Found container name or SHA in $filename${NC}"
+            cp "$backup_file" "$file"
+            return 1
         fi
     else
         # For other files, process normally
         envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY}' < "$file" > "$backup_file"
-        sudo mv "$backup_file" "$file"
-    fi
-    
-    # Verify no container names or SHA values in the file
-    if grep -q "f9f0e5d257" "$file" || grep -q "_app-network-api" "$file"; then
-        echo -e "${RED}Error: Found container name or SHA in $filename${NC}"
         mv "$backup_file" "$file"
-        return 1
     fi
     
     echo -e "${GREEN}Successfully processed $filename${NC}"
     return 0
 }
+
+# Add pre-deployment checks
+echo -e "${YELLOW}Running pre-deployment checks...${NC}"
+for conf_file in ${NGINX_CONF_DIR}/*.conf; do
+    if ! verify_nginx_conf "$conf_file"; then
+        echo -e "${RED}Pre-deployment checks failed${NC}"
+        exit 1
+    fi
+done
+
+# Make api.conf immutable during deployment
+if [ -f "${NGINX_CONF_DIR}/api.conf" ]; then
+    echo -e "${YELLOW}Making api.conf immutable...${NC}"
+    sudo chattr +i "${NGINX_CONF_DIR}/api.conf"
+fi
 
 # Process configuration files
 echo -e "${YELLOW}Processing configuration files...${NC}"
@@ -183,6 +231,12 @@ for conf_file in ${NGINX_CONF_DIR}/*.conf; do
         fi
     fi
 done
+
+# Make api.conf mutable again
+if [ -f "${NGINX_CONF_DIR}/api.conf" ]; then
+    echo -e "${YELLOW}Making api.conf mutable again...${NC}"
+    sudo chattr -i "${NGINX_CONF_DIR}/api.conf"
+fi
 
 # Verify nginx configuration
 echo -e "${YELLOW}Verifying nginx configuration...${NC}"
