@@ -244,95 +244,71 @@ install_required_packages() {
     fi
 }
 
+# Function to deploy Nginx configuration
+deploy_nginx_config() {
+    echo -e "${YELLOW}Deploying Nginx configuration...${NC}"
+    
+    # Create backup of existing configurations
+    local backup_dir="/etc/nginx/conf.d/backup_$(date +%Y%m%d_%H%M%S)"
+    sudo mkdir -p "$backup_dir"
+    sudo cp -f /etc/nginx/conf.d/*.conf "$backup_dir/" 2>/dev/null || true
+    
+    # Deploy common configuration first
+    echo -e "${YELLOW}Deploying common configuration...${NC}"
+    sudo cp -f "${TEMPLATE_DIR}/common.conf" "${NGINX_CONF_DIR}/common.conf"
+    sudo chown root:root "${NGINX_CONF_DIR}/common.conf"
+    sudo chmod 644 "${NGINX_CONF_DIR}/common.conf"
+    
+    # Deploy API configuration
+    echo -e "${YELLOW}Deploying API configuration...${NC}"
+    apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_CONF}"
+    verify_config "${NGINX_CONF_DIR}/${API_CONF}"
+    
+    # Deploy frontend configuration
+    echo -e "${YELLOW}Deploying frontend configuration...${NC}"
+    apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
+    verify_config "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
+    
+    # Test Nginx configuration
+    if ! sudo nginx -t; then
+        echo -e "${RED}Nginx configuration test failed${NC}"
+        # Restore from backup
+        sudo cp -f "$backup_dir"/*.conf "${NGINX_CONF_DIR}/" 2>/dev/null || true
+        exit 1
+    fi
+    
+    # Reload Nginx if configuration test passes
+    sudo systemctl reload nginx
+    echo -e "${GREEN}Nginx configuration deployed successfully${NC}"
+}
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
 # Verify Docker network exists
 echo -e "${YELLOW}Verifying Docker network...${NC}"
-if ! docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
-    echo -e "${YELLOW}Creating Docker network ${NETWORK_NAME}...${NC}"
-    docker network create "${NETWORK_NAME}" --subnet=172.18.0.0/16
+if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+    echo -e "${RED}Error: Docker network $NETWORK_NAME not found${NC}"
+    exit 1
 fi
 
-# Create deployment directories if they don't exist
+# Create deployment directories
 echo -e "${YELLOW}Creating deployment directories...${NC}"
-sudo mkdir -p ${DEPLOY_PATH}/{frontend,backend}/current
-sudo mkdir -p ${SSL_DIR}
-sudo mkdir -p /var/log/nginx
-
-# Backup existing Nginx configurations
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-echo -e "${YELLOW}Backing up existing Nginx configurations...${NC}"
-BACKUP_DIR="/etc/nginx/conf.d/backup_$TIMESTAMP"
-sudo mkdir -p "$BACKUP_DIR"
-sudo cp -r $NGINX_CONF_DIR/*.conf "$BACKUP_DIR/" 2>/dev/null || true
-sudo cp -r $SSL_DIR/* "$BACKUP_DIR/" 2>/dev/null || true
+sudo mkdir -p "$NGINX_CONF_DIR" "$SSL_DIR"
 
 # Install required packages
-echo -e "${YELLOW}Installing required packages...${NC}"
 install_required_packages
 
 # Check and copy SSL certificates
-echo -e "${YELLOW}Checking SSL certificates...${NC}"
-check_ssl_cert "$API_DOMAIN" || {
-    echo -e "${RED}Error: API SSL certificates are required${NC}"
-    exit 1
-}
+check_ssl_cert "$DOMAIN" || echo -e "${YELLOW}Warning: Frontend SSL certificates are missing, but continuing with API deployment${NC}"
+check_ssl_cert "$API_DOMAIN" && copy_ssl_certs "$API_DOMAIN"
 
-check_ssl_cert "$DOMAIN" || {
-    echo -e "${YELLOW}Warning: Frontend SSL certificates are missing, but continuing with API deployment${NC}"
-}
-
-# Copy available SSL certificates
-copy_ssl_certs "$API_DOMAIN"
-copy_ssl_certs "$DOMAIN"
-
-# Set proper permissions
-echo -e "${YELLOW}Setting permissions...${NC}"
-sudo chown -R www-data:www-data ${DEPLOY_PATH}
-sudo chmod -R 755 ${DEPLOY_PATH}
-sudo chown -R root:root ${SSL_DIR}
-sudo chmod 755 ${SSL_DIR}
-
-# Create upstream configuration
+# Set up upstream configuration
 create_upstream_config
 
-# Main deployment process
-echo "Deploying Nginx configuration..."
+# Deploy Nginx configuration
+deploy_nginx_config
 
-# Remove immutable flag if exists
-sudo chattr -i "${NGINX_CONF_DIR}/${API_CONF}" 2>/dev/null || true
-sudo chattr -i "${NGINX_CONF_DIR}/${FRONTEND_CONF}" 2>/dev/null || true
-
-# Deploy API configuration
-echo -e "${YELLOW}Deploying API configuration...${NC}"
-apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_CONF}"
-verify_config "${NGINX_CONF_DIR}/${API_CONF}"
-
-# Deploy frontend configuration
-echo -e "${YELLOW}Deploying frontend configuration...${NC}"
-apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
-if ! grep -q "server_name ishswami.in" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"; then
-    echo -e "${RED}Error: Frontend domain configuration not found in ${FRONTEND_CONF}${NC}"
-    exit 1
-fi
-
-# Test Nginx configuration
-if ! sudo nginx -t; then
-    echo -e "${RED}Nginx configuration test failed${NC}"
-    exit 1
-fi
-
-# Restart Nginx
-echo -e "${YELLOW}Restarting Nginx...${NC}"
-sudo systemctl restart nginx
-
-# Verify Nginx is running
-if sudo systemctl is-active --quiet nginx; then
-    echo -e "${GREEN}Nginx is running successfully!${NC}"
-else
-    echo -e "${RED}Failed to start Nginx${NC}"
-    exit 1
-fi
+echo -e "${GREEN}Nginx deployment completed successfully${NC}"
 
 # Wait for containers to be ready
 echo -e "${YELLOW}Waiting for containers to be ready...${NC}"
