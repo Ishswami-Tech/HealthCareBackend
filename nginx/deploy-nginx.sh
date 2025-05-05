@@ -277,9 +277,22 @@ deploy_nginx_config() {
         exit 1
     fi
     
-    # Reload Nginx if configuration test passes
-    sudo systemctl reload nginx
-    echo -e "${GREEN}Nginx configuration deployed successfully${NC}"
+    # Check if Nginx is running
+    if ! sudo systemctl is-active --quiet nginx; then
+        echo -e "${YELLOW}Nginx is not running. Starting Nginx...${NC}"
+        sudo systemctl start nginx
+    else
+        echo -e "${YELLOW}Reloading Nginx...${NC}"
+        sudo systemctl reload nginx
+    fi
+    
+    # Verify Nginx is running
+    if sudo systemctl is-active --quiet nginx; then
+        echo -e "${GREEN}Nginx is running successfully${NC}"
+    else
+        echo -e "${RED}Failed to start Nginx${NC}"
+        exit 1
+    fi
 }
 
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
