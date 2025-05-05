@@ -41,10 +41,10 @@ check_api_health() {
         
         # Try internal health check first
         echo -e "${YELLOW}Testing internal health check (localhost)...${NC}"
-        curl -v -k http://localhost:8088/health
+        curl -v -k https://localhost:8088/health
         
         echo -e "${YELLOW}Testing internal health check (container IP)...${NC}"
-        curl -v -k http://172.18.0.5:8088/health
+        curl -v -k https://172.18.0.5:8088/health
         
         echo -e "${YELLOW}Testing external health check...${NC}"
         local response=$(curl -v -k -m 10 "$endpoint" 2>&1)
