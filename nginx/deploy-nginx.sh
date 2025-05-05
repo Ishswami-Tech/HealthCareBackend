@@ -138,6 +138,33 @@ check_ssl_cert() {
     return 0
 }
 
+# Function to download and create certificate chain
+create_certificate_chain() {
+    local domain=$1
+    local cert_file="${SSL_DIR}/${domain}.crt"
+    local chain_file="${SSL_DIR}/${domain}.chain.crt"
+    local root_cert="${SSL_DIR}/origin_ca_root.pem"
+    
+    echo -e "${YELLOW}Creating certificate chain for ${domain}...${NC}"
+    
+    # Download CloudFlare root certificate if not exists
+    if [ ! -f "$root_cert" ]; then
+        echo -e "${YELLOW}Downloading CloudFlare root certificate...${NC}"
+        curl -s -o "$root_cert" https://developers.cloudflare.com/ssl/static/origin_ca_rsa_root.pem
+        sudo chmod 644 "$root_cert"
+    fi
+    
+    # Create certificate chain
+    if [ -f "$cert_file" ] && [ -f "$root_cert" ]; then
+        echo -e "${YELLOW}Creating certificate chain for ${domain}...${NC}"
+        cat "$cert_file" "$root_cert" > "$chain_file"
+        sudo chmod 644 "$chain_file"
+    else
+        echo -e "${RED}Error: Required certificates not found for ${domain}${NC}"
+        return 1
+    fi
+}
+
 # Function to copy SSL certificates
 copy_ssl_certs() {
     local domain=$1
@@ -151,6 +178,9 @@ copy_ssl_certs() {
         sudo chown root:root "${SSL_DIR}/${domain}.crt" "${SSL_DIR}/${domain}.key"
         sudo chmod 644 "${SSL_DIR}/${domain}.crt"
         sudo chmod 600 "${SSL_DIR}/${domain}.key"
+        
+        # Create certificate chain
+        create_certificate_chain "$domain"
     fi
 }
 
