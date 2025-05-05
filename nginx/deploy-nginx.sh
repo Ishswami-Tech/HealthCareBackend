@@ -37,19 +37,49 @@ check_api_health() {
     echo -e "${YELLOW}Checking API health at: $endpoint${NC}"
     
     while [ $retry_count -lt $max_retries ]; do
-        if curl -k -s -o /dev/null -w "%{http_code}" "$endpoint" | grep -q "200"; then
+        echo -e "${YELLOW}Attempt $((retry_count + 1)): Checking with curl verbose output...${NC}"
+        
+        # Try internal health check first
+        echo -e "${YELLOW}Testing internal health check (localhost)...${NC}"
+        curl -v -k http://localhost:8088/health
+        
+        echo -e "${YELLOW}Testing internal health check (container IP)...${NC}"
+        curl -v -k http://172.18.0.5:8088/health
+        
+        echo -e "${YELLOW}Testing external health check...${NC}"
+        local response=$(curl -v -k -m 10 "$endpoint" 2>&1)
+        local status=$?
+        
+        echo -e "${YELLOW}Curl exit code: $status${NC}"
+        echo -e "${YELLOW}Response:${NC}"
+        echo "$response"
+        
+        if echo "$response" | grep -q "200 OK"; then
             echo -e "${GREEN}API is healthy at $endpoint${NC}"
             return 0
         else
             retry_count=$((retry_count + 1))
             if [ $retry_count -lt $max_retries ]; then
                 echo -e "${YELLOW}Attempt $retry_count failed. Waiting $wait_time seconds before retry...${NC}"
+                echo -e "${YELLOW}Checking Nginx status...${NC}"
+                sudo systemctl status nginx
+                echo -e "${YELLOW}Checking API container logs...${NC}"
+                docker logs --tail 20 latest-api
                 sleep $wait_time
             fi
         fi
     done
     
     echo -e "${RED}API health check failed after $max_retries attempts at $endpoint${NC}"
+    echo -e "${RED}Final diagnostics:${NC}"
+    echo -e "${YELLOW}1. Nginx configuration test:${NC}"
+    sudo nginx -t
+    echo -e "${YELLOW}2. Nginx error log:${NC}"
+    sudo tail -n 50 /var/log/nginx/error.log
+    echo -e "${YELLOW}3. API container status:${NC}"
+    docker inspect latest-api --format '{{.State.Status}} - {{.State.Health.Status}}'
+    echo -e "${YELLOW}4. Network connectivity test:${NC}"
+    nc -zv 172.18.0.5 8088
     return 1
 }
 
