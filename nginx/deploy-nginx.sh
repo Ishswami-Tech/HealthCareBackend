@@ -161,14 +161,6 @@ create_upstream_config() {
     # Create a temporary file
     local temp_file=$(mktemp)
     
-    # Check if upstream.conf exists and contains the correct configuration
-    if [ -f "${NGINX_CONF_DIR}/upstream.conf" ]; then
-        if grep -q "server ${API_IP}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
-            echo -e "${YELLOW}Upstream configuration already exists and is correct${NC}"
-            return 0
-        fi
-    fi
-    
     # Create new upstream configuration
     cat > "$temp_file" << EOL
 # Backend configuration with static IP
@@ -257,11 +249,9 @@ deploy_nginx_config() {
     sudo mkdir -p "$backup_dir"
     sudo cp -f /etc/nginx/conf.d/*.conf "$backup_dir/" 2>/dev/null || true
     
-    # Remove default.conf if it exists to prevent conflicts
-    if [ -f "${NGINX_CONF_DIR}/default.conf" ]; then
-        echo -e "${YELLOW}Removing default.conf to prevent conflicts...${NC}"
-        sudo rm -f "${NGINX_CONF_DIR}/default.conf"
-    fi
+    # Remove all existing configuration files
+    echo -e "${YELLOW}Removing existing configuration files...${NC}"
+    sudo rm -f "${NGINX_CONF_DIR}"/*.conf
     
     # Deploy common configuration first
     echo -e "${YELLOW}Deploying common configuration...${NC}"
