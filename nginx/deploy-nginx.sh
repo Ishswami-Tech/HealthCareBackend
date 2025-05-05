@@ -91,9 +91,6 @@ apply_template() {
     
     # Apply environment variables
     envsubst '${API_DOMAIN} ${FRONTEND_DOMAIN} ${SSL_DIR} ${API_CERT} ${API_KEY} ${API_IP}' < "${template}" > "${target}"
-    
-    # Set immutable flag to prevent modifications
-    chattr +i "${target}" || true
 }
 
 # Function to verify configuration
@@ -154,6 +151,9 @@ upstream api_backend {
     keepalive 32;
 }
 EOL
+
+    # Remove immutable flag if exists
+    sudo chattr -i "${NGINX_CONF_DIR}/upstream.conf" 2>/dev/null || true
 
     # Remove existing upstream.conf if it exists
     if [ -f "${NGINX_CONF_DIR}/upstream.conf" ]; then
