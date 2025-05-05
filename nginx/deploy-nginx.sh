@@ -96,9 +96,25 @@ apply_template() {
 # Function to verify configuration
 verify_config() {
     local conf_file="$1"
-    if ! grep -q "172.18.0.5:8088" "${conf_file}"; then
-        echo -e "${RED}Error: Static IP configuration not found in ${conf_file}${NC}"
-        exit 1
+    local is_api=false
+    
+    # Check if this is the API configuration
+    if [[ "$conf_file" == *"api.conf" ]]; then
+        is_api=true
+    fi
+    
+    if [ "$is_api" = true ]; then
+        # Verify API configuration
+        if ! grep -q "172.18.0.5:8088" "${conf_file}"; then
+            echo -e "${RED}Error: Static IP configuration not found in ${conf_file}${NC}"
+            exit 1
+        fi
+    else
+        # Verify frontend configuration
+        if ! grep -q "server_name ishswami.in" "${conf_file}"; then
+            echo -e "${RED}Error: Frontend domain configuration not found in ${conf_file}${NC}"
+            exit 1
+        fi
     fi
 }
 
@@ -287,13 +303,18 @@ echo "Deploying Nginx configuration..."
 sudo chattr -i "${NGINX_CONF_DIR}/${API_CONF}" 2>/dev/null || true
 sudo chattr -i "${NGINX_CONF_DIR}/${FRONTEND_CONF}" 2>/dev/null || true
 
-# Apply templates
+# Deploy API configuration
+echo -e "${YELLOW}Deploying API configuration...${NC}"
 apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_CONF}"
-apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
-
-# Verify configurations
 verify_config "${NGINX_CONF_DIR}/${API_CONF}"
-verify_config "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
+
+# Deploy frontend configuration
+echo -e "${YELLOW}Deploying frontend configuration...${NC}"
+apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
+if ! grep -q "server_name ishswami.in" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"; then
+    echo -e "${RED}Error: Frontend domain configuration not found in ${FRONTEND_CONF}${NC}"
+    exit 1
+fi
 
 # Test Nginx configuration
 if ! sudo nginx -t; then
