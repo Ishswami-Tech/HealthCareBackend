@@ -253,6 +253,12 @@ deploy_nginx_config() {
     sudo mkdir -p "$backup_dir"
     sudo cp -f /etc/nginx/conf.d/*.conf "$backup_dir/" 2>/dev/null || true
     
+    # Remove default.conf if it exists to prevent conflicts
+    if [ -f "${NGINX_CONF_DIR}/default.conf" ]; then
+        echo -e "${YELLOW}Removing default.conf to prevent conflicts...${NC}"
+        sudo rm -f "${NGINX_CONF_DIR}/default.conf"
+    fi
+    
     # Deploy common configuration first
     echo -e "${YELLOW}Deploying common configuration...${NC}"
     sudo cp -f "${TEMPLATE_DIR}/common.conf" "${NGINX_CONF_DIR}/common.conf"
