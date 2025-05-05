@@ -160,6 +160,16 @@ create_upstream_config() {
     
     # Create a temporary file
     local temp_file=$(mktemp)
+    
+    # Check if upstream.conf exists and contains the correct configuration
+    if [ -f "${NGINX_CONF_DIR}/upstream.conf" ]; then
+        if grep -q "server ${API_IP}:8088" "${NGINX_CONF_DIR}/upstream.conf"; then
+            echo -e "${YELLOW}Upstream configuration already exists and is correct${NC}"
+            return 0
+        fi
+    fi
+    
+    # Create new upstream configuration
     cat > "$temp_file" << EOL
 # Backend configuration with static IP
 upstream api_backend {
@@ -179,15 +189,9 @@ EOL
 
     # Create new upstream.conf
     echo -e "${YELLOW}Creating new upstream configuration...${NC}"
-    sudo touch "${NGINX_CONF_DIR}/upstream.conf"
+    sudo cp "$temp_file" "${NGINX_CONF_DIR}/upstream.conf"
     sudo chown root:root "${NGINX_CONF_DIR}/upstream.conf"
     sudo chmod 644 "${NGINX_CONF_DIR}/upstream.conf"
-    
-    # Copy the content
-    sudo cat "$temp_file" > "${NGINX_CONF_DIR}/upstream.conf"
-    
-    # Set final permissions
-    sudo chmod 444 "${NGINX_CONF_DIR}/upstream.conf"
     
     # Clean up the temporary file
     rm -f "$temp_file"
