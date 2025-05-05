@@ -183,6 +183,51 @@ EOL
     fi
 }
 
+# Function to install required packages with retry logic
+install_required_packages() {
+    echo "Installing required packages..."
+    
+    # Function to wait for apt lock
+    wait_for_apt_lock() {
+        while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+            echo "Waiting for other package manager to finish..."
+            sleep 1
+        done
+    }
+
+    # Function to try installing packages
+    try_install_packages() {
+        wait_for_apt_lock
+        sudo apt-get update
+        sudo apt-get install -y curl nginx openssl
+    }
+
+    # Try installation with retries
+    local max_attempts=3
+    local attempt=1
+    local success=false
+
+    while [ $attempt -le $max_attempts ] && [ "$success" = false ]; do
+        echo "Attempt $attempt of $max_attempts to install packages..."
+        if try_install_packages; then
+            success=true
+            echo "Successfully installed required packages"
+        else
+            echo "Failed to install packages on attempt $attempt"
+            if [ $attempt -lt $max_attempts ]; then
+                echo "Waiting before retrying..."
+                sleep 5
+            fi
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    if [ "$success" = false ]; then
+        echo "Failed to install required packages after $max_attempts attempts"
+        return 1
+    fi
+}
+
 echo -e "${YELLOW}Starting Nginx deployment...${NC}"
 
 # Verify Docker network exists
@@ -208,8 +253,7 @@ sudo cp -r $SSL_DIR/* "$BACKUP_DIR/" 2>/dev/null || true
 
 # Install required packages
 echo -e "${YELLOW}Installing required packages...${NC}"
-sudo apt-get update
-sudo apt-get install -y nginx openssl curl
+install_required_packages
 
 # Check and copy SSL certificates
 echo -e "${YELLOW}Checking SSL certificates...${NC}"
