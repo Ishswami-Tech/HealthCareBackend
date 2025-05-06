@@ -37,6 +37,7 @@ services:
     expose:
       - "${API_PORT:-8088}"
       - "5555"
+    networks:
       app-network:
         ipv4_address: 172.18.0.5
         aliases: []
@@ -84,6 +85,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
       app-network:
         ipv4_address: 172.18.0.2
     healthcheck:
@@ -119,6 +121,7 @@ services:
       - "${REDIS_PORT:-6379}:${REDIS_PORT:-6379}"
     volumes:
       - redis_data:/data
+    networks:
       app-network:
         ipv4_address: 172.18.0.3
     healthcheck:
@@ -158,6 +161,7 @@ services:
       - HTTPS_ENABLED=true
     depends_on:
       - redis
+    networks:
       app-network:
         ipv4_address: 172.18.0.4
     healthcheck:
@@ -180,11 +184,8 @@ volumes:
   postgres_data:
   redis_data:
 
+networks:
   app-network:
     name: app-network
     external: true
     
-networks:  
-  app-network:  
-    name: app-network  
-    external: true 
