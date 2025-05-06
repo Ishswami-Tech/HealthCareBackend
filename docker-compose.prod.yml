@@ -13,7 +13,7 @@ services:
     container_name: latest-api
     hostname: api
     ports:
-      - "80:${API_PORT:-8088}"  # Expose directly on port 80
+      - "8088:${API_PORT:-8088}"  # Changed from port 80 to 8088 to avoid conflicts
     env_file:
       - .env.production
     environment:
