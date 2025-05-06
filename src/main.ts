@@ -12,9 +12,6 @@ import fastifyHelmet from '@fastify/helmet';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
-import * as fs from 'fs';
-import * as path from 'path';
-import { join } from 'path';
 import { LoggingService } from './shared/logging/logging.service';
 import { LogType } from './shared/logging/types/logging.types';
 import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
@@ -301,12 +298,6 @@ async function bootstrap() {
 
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('docs', app, document);
-
-    // Configure views directory
-    await app.register(require('@fastify/static'), {
-      root: join(__dirname, '..', 'src', 'views'),
-      prefix: '/views/',
-    });
 
     // Start the server
     const host = '0.0.0.0';
