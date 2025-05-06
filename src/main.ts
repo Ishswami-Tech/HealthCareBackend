@@ -3,7 +3,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
-import { SwaggerModule } from "@nestjs/swagger";
+import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { ValidationPipe, Logger, LogLevel } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
@@ -14,9 +14,14 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
 import * as fs from 'fs';
 import * as path from 'path';
+import { join } from 'path';
+import { LoggingService } from './shared/logging/logging.service';
+import { LogType } from './shared/logging/types/logging.types';
+import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  let loggingService: LoggingService;
   
   try {
     await initDatabase();
@@ -62,6 +67,18 @@ async function bootstrap() {
       }
     );
 
+    // Get LoggingService instance
+    loggingService = app.get(LoggingService);
+
+    // Log application startup
+    await loggingService.log(
+      LogType.SYSTEM,
+      AppLogLevel.INFO,
+      'Application bootstrap started',
+      'Bootstrap',
+      { timestamp: new Date() }
+    );
+
     app.useGlobalPipes(new ValidationPipe({
       transform: true,
       whitelist: true,
@@ -105,14 +122,26 @@ async function bootstrap() {
       const pubClient = createClient(redisConfig);
       const subClient = pubClient.duplicate();
 
-      // Enhanced Redis connection event handling
-      const handleRedisError = (client: string, err: Error) => {
-        logger.error(`Redis ${client} Client Error:`, err);
+      // Enhanced Redis connection event handling with LoggingService
+      const handleRedisError = async (client: string, err: Error) => {
+        await loggingService.log(
+          LogType.ERROR,
+          AppLogLevel.ERROR,
+          `Redis ${client} Client Error: ${err.message}`,
+          'Redis',
+          { client, error: err.message, stack: err.stack }
+        );
         eventEmitter.emit('redisError', { client, error: err.message });
       };
 
-      const handleRedisConnect = (client: string) => {
-        logger.log(`Redis ${client} Client Connected`);
+      const handleRedisConnect = async (client: string) => {
+        await loggingService.log(
+          LogType.SYSTEM,
+          AppLogLevel.INFO,
+          `Redis ${client} Client Connected`,
+          'Redis',
+          { client }
+        );
         eventEmitter.emit('redisConnect', { client });
       };
 
@@ -128,11 +157,15 @@ async function bootstrap() {
           super(app);
         }
         
-        createIOServer(port: number, options?: any) {
-          // Allow all origins temporarily for testing
+        async createIOServer(port: number, options?: any) {
           const corsOrigins = '*';
 
-          logger.log('WebSocket CORS configuration: Allow all origins (temporary)');
+          await loggingService.log(
+            LogType.SYSTEM,
+            AppLogLevel.INFO,
+            'WebSocket CORS configuration: Allow all origins (temporary)',
+            'WebSocket'
+          );
 
           const server = super.createIOServer(port, {
             cors: {
@@ -163,38 +196,79 @@ async function bootstrap() {
             path: '/socket.io/'
           });
 
-          // Add global error handler
-          server.on('error', (error: Error) => {
-            logger.error('Socket.IO server error:', error?.message || 'Unknown error');
+          // Add global error handler with enhanced logging
+          server.on('error', async (error: Error) => {
+            await loggingService.log(
+              LogType.ERROR,
+              AppLogLevel.ERROR,
+              'Socket.IO server error',
+              'WebSocket',
+              { error: error?.message || 'Unknown error', stack: error?.stack }
+            );
           });
 
-          // Add connection error handler
-          server.on('connection_error', (error: Error) => {
-            logger.error('Socket.IO connection error:', error?.message || 'Unknown error');
+          // Add connection error handler with enhanced logging
+          server.on('connection_error', async (error: Error) => {
+            await loggingService.log(
+              LogType.ERROR,
+              AppLogLevel.ERROR,
+              'Socket.IO connection error',
+              'WebSocket',
+              { error: error?.message || 'Unknown error', stack: error?.stack }
+            );
           });
 
-          // Log namespace creation
-          server.of('/appointments').on('connection', (socket) => {
-            logger.log(`Client connected to appointments namespace: ${socket.id}`);
+          // Log namespace creation with enhanced logging
+          server.of('/appointments').on('connection', async (socket) => {
+            await loggingService.log(
+              LogType.SYSTEM,
+              AppLogLevel.INFO,
+              `Client connected to appointments namespace: ${socket.id}`,
+              'WebSocket',
+              { socketId: socket.id }
+            );
             
-            socket.on('error', (error: Error) => {
-              logger.error(`Socket error in appointments namespace for client ${socket.id}:`, error?.message || 'Unknown error');
+            socket.on('error', async (error: Error) => {
+              await loggingService.log(
+                LogType.ERROR,
+                AppLogLevel.ERROR,
+                `Socket error in appointments namespace for client ${socket.id}`,
+                'WebSocket',
+                { socketId: socket.id, error: error?.message || 'Unknown error', stack: error?.stack }
+              );
             });
           });
 
-          logger.log('WebSocket server initialized with namespaces:', 
-            Object.keys(server._nsps).join(', '));
+          await loggingService.log(
+            LogType.SYSTEM,
+            AppLogLevel.INFO,
+            'WebSocket server initialized with namespaces',
+            'WebSocket',
+            { namespaces: Object.keys(server._nsps) }
+          );
+          
           return server;
         }
       }
 
       const customAdapter = new CustomIoAdapter(app);
       app.useWebSocketAdapter(customAdapter);
-      logger.log('WebSocket adapter configured successfully');
+      
+      await loggingService.log(
+        LogType.SYSTEM,
+        AppLogLevel.INFO,
+        'WebSocket adapter configured successfully',
+        'WebSocket'
+      );
 
     } catch (error) {
-      logger.warn(`WebSocket adapter could not be initialized: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      logger.error(error instanceof Error ? error.stack : 'No stack trace available');
+      await loggingService.log(
+        LogType.ERROR,
+        AppLogLevel.ERROR,
+        `WebSocket adapter initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WebSocket',
+        { error: error instanceof Error ? error.stack : 'No stack trace available' }
+      );
     }
 
     // Security headers
@@ -212,39 +286,65 @@ async function bootstrap() {
       }
     });
 
-    // Initialize Swagger documentation
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('docs', app, document, {
-      ...swaggerCustomOptions,
-      explorer: true,
-      customSiteTitle: 'Healthcare API Documentation',
-      swaggerOptions: {
-        persistAuthorization: true,
-        docExpansion: 'none',
-        filter: true,
-        displayRequestDuration: true,
-        tryItOutEnabled: true
-      }
+    // Configure Swagger
+    const apiUrl = configService.get('API_URL');
+    const port = configService.get('VIRTUAL_PORT') || 8088;
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+
+    const config = new DocumentBuilder()
+      .setTitle('Healthcare API')
+      .setDescription('The Healthcare API description')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .addServer(apiUrl || `http://localhost:${port}`)
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('docs', app, document);
+
+    // Configure views directory
+    await app.register(require('@fastify/static'), {
+      root: join(__dirname, '..', 'src', 'views'),
+      prefix: '/views/',
     });
 
     // Start the server
-    const port = configService.get<number>('PORT', 8088);
     const host = '0.0.0.0';
+    await app.listen(port, host);
     
-    try {
-      await app.listen(port, host, () => {
-        logger.log(`Server is running on: http://${host}:${port}`);
-        logger.log(`Swagger documentation is available at: http://${host}:${port}/docs`);
-        logger.log(`Bull Board is available at: http://${host}:${port}/queue-dashboard`);
-        logger.log(`WebSocket server is available at: ws://${host}:${port}/socket.io`);
-        logger.log(`Environment: ${process.env.NODE_ENV}`);
-      });
-    } catch (error) {
-      logger.error('Failed to start server:', error);
-      process.exit(1);
-    }
+    // Log application startup information
+    const startupInfo = {
+      apiUrl: apiUrl || `http://${host}:${port}`,
+      swaggerUrl: `${apiUrl}/docs || http://${host}:${port}/docs`,
+      bullBoardUrl: `${apiUrl}/queue-dashboard || http://${host}:${port}/queue-dashboard`,
+      websocketUrl: `ws://${host}:${port}/socket.io`,
+      environment: process.env.NODE_ENV || 'development'
+    };
+
+    await loggingService.log(
+      LogType.SYSTEM,
+      AppLogLevel.INFO,
+      'Application started successfully',
+      'Bootstrap',
+      startupInfo
+    );
   } catch (error) {
-    logger.error('Failed to start application:', error);
+    if (loggingService) {
+      // Log startup error
+      await loggingService.log(
+        LogType.ERROR,
+        AppLogLevel.ERROR,
+        'Failed to start application',
+        'Bootstrap',
+        { 
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : 'No stack trace available'
+        }
+      );
+    } else {
+      // Fallback to basic logger if LoggingService is not available
+      logger.error('Failed to start application:', error);
+    }
     process.exit(1);
   }
 }
