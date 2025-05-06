@@ -18,13 +18,16 @@ import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  let app: NestFastifyApplication;
   let loggingService: LoggingService;
   
   try {
+    // Initialize database first
     await initDatabase();
+    logger.log('Database initialized successfully');
 
-    // Disable SSL configuration for HTTP-only mode
-    const app = await NestFactory.create<NestFastifyApplication>(
+    // Create the NestJS application
+    app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
       new FastifyAdapter({
         logger: {
@@ -64,8 +67,17 @@ async function bootstrap() {
       }
     );
 
-    // Get LoggingService instance
+    // Initialize core services
+    const configService = app.get(ConfigService);
     loggingService = app.get(LoggingService);
+    const eventEmitter = new EventEmitter2();
+
+    // Apply global pipes and filters
+    app.useGlobalPipes(new ValidationPipe({
+      transform: true,
+      whitelist: true,
+    }));
+    app.useGlobalFilters(new HttpExceptionFilter());
 
     // Log application startup
     await loggingService.log(
@@ -75,15 +87,6 @@ async function bootstrap() {
       'Bootstrap',
       { timestamp: new Date() }
     );
-
-    app.useGlobalPipes(new ValidationPipe({
-      transform: true,
-      whitelist: true,
-    }));
-    app.useGlobalFilters(new HttpExceptionFilter());
-    
-    const configService = app.get(ConfigService);
-    const eventEmitter = new EventEmitter2();
 
     // Set up WebSocket adapter with Redis
     try {
@@ -119,9 +122,9 @@ async function bootstrap() {
       const pubClient = createClient(redisConfig);
       const subClient = pubClient.duplicate();
 
-      // Enhanced Redis connection event handling with LoggingService
+      // Enhanced Redis connection event handling
       const handleRedisError = async (client: string, err: Error) => {
-        await loggingService.log(
+        await loggingService?.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
           `Redis ${client} Client Error: ${err.message}`,
@@ -132,7 +135,7 @@ async function bootstrap() {
       };
 
       const handleRedisConnect = async (client: string) => {
-        await loggingService.log(
+        await loggingService?.log(
           LogType.SYSTEM,
           AppLogLevel.INFO,
           `Redis ${client} Client Connected`,
@@ -157,7 +160,7 @@ async function bootstrap() {
         async createIOServer(port: number, options?: any) {
           const corsOrigins = '*';
 
-          await loggingService.log(
+          await loggingService?.log(
             LogType.SYSTEM,
             AppLogLevel.INFO,
             'WebSocket CORS configuration: Allow all origins (temporary)',
@@ -193,9 +196,8 @@ async function bootstrap() {
             path: '/socket.io/'
           });
 
-          // Add global error handler with enhanced logging
           server.on('error', async (error: Error) => {
-            await loggingService.log(
+            await loggingService?.log(
               LogType.ERROR,
               AppLogLevel.ERROR,
               'Socket.IO server error',
@@ -204,9 +206,8 @@ async function bootstrap() {
             );
           });
 
-          // Add connection error handler with enhanced logging
           server.on('connection_error', async (error: Error) => {
-            await loggingService.log(
+            await loggingService?.log(
               LogType.ERROR,
               AppLogLevel.ERROR,
               'Socket.IO connection error',
@@ -215,9 +216,8 @@ async function bootstrap() {
             );
           });
 
-          // Log namespace creation with enhanced logging
           server.of('/appointments').on('connection', async (socket) => {
-            await loggingService.log(
+            await loggingService?.log(
               LogType.SYSTEM,
               AppLogLevel.INFO,
               `Client connected to appointments namespace: ${socket.id}`,
@@ -226,7 +226,7 @@ async function bootstrap() {
             );
             
             socket.on('error', async (error: Error) => {
-              await loggingService.log(
+              await loggingService?.log(
                 LogType.ERROR,
                 AppLogLevel.ERROR,
                 `Socket error in appointments namespace for client ${socket.id}`,
@@ -236,7 +236,7 @@ async function bootstrap() {
             });
           });
 
-          await loggingService.log(
+          await loggingService?.log(
             LogType.SYSTEM,
             AppLogLevel.INFO,
             'WebSocket server initialized with namespaces',
@@ -251,7 +251,7 @@ async function bootstrap() {
       const customAdapter = new CustomIoAdapter(app);
       app.useWebSocketAdapter(customAdapter);
       
-      await loggingService.log(
+      await loggingService?.log(
         LogType.SYSTEM,
         AppLogLevel.INFO,
         'WebSocket adapter configured successfully',
@@ -259,7 +259,8 @@ async function bootstrap() {
       );
 
     } catch (error) {
-      await loggingService.log(
+      logger.error('WebSocket initialization failed:', error);
+      await loggingService?.log(
         LogType.ERROR,
         AppLogLevel.ERROR,
         `WebSocket adapter initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -270,10 +271,10 @@ async function bootstrap() {
 
     // Security headers
     await app.register(fastifyHelmet, {
-      contentSecurityPolicy: false  // Disable CSP for development/HTTP
+      contentSecurityPolicy: false
     });
 
-    // Configure route handling to prevent Bull Board from intercepting other routes
+    // Configure route handling
     const fastifyInstance = app.getHttpAdapter().getInstance();
     fastifyInstance.addHook('onRequest', (request, reply, done) => {
       if (!request.url.startsWith('/queue-dashboard')) {
@@ -286,7 +287,6 @@ async function bootstrap() {
     // Configure Swagger
     const apiUrl = configService.get('API_URL');
     const port = configService.get('VIRTUAL_PORT') || 8088;
-    const isDevelopment = process.env.NODE_ENV !== 'production';
 
     const config = new DocumentBuilder()
       .setTitle('Healthcare API')
@@ -312,32 +312,49 @@ async function bootstrap() {
       environment: process.env.NODE_ENV || 'development'
     };
 
-    await loggingService.log(
+    await loggingService?.log(
       LogType.SYSTEM,
       AppLogLevel.INFO,
       'Application started successfully',
       'Bootstrap',
       startupInfo
     );
+
   } catch (error) {
+    // Log the error using both the logger and logging service if available
+    logger.error('Failed to start application:', error);
+    
     if (loggingService) {
-      // Log startup error
-      await loggingService.log(
-        LogType.ERROR,
-        AppLogLevel.ERROR,
-        'Failed to start application',
-        'Bootstrap',
-        { 
-          error: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : 'No stack trace available'
-        }
-      );
-    } else {
-      // Fallback to basic logger if LoggingService is not available
-      logger.error('Failed to start application:', error);
+      try {
+        await loggingService.log(
+          LogType.ERROR,
+          AppLogLevel.ERROR,
+          'Failed to start application',
+          'Bootstrap',
+          { 
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : 'No stack trace available'
+          }
+        );
+      } catch (logError) {
+        logger.error('Failed to log error through LoggingService:', logError);
+      }
     }
+
+    // Attempt to close the application gracefully
+    try {
+      if (app) {
+        await app.close();
+      }
+    } catch (closeError) {
+      logger.error('Failed to close application:', closeError);
+    }
+
     process.exit(1);
   }
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  console.error('Fatal error during bootstrap:', error);
+  process.exit(1);
+});
