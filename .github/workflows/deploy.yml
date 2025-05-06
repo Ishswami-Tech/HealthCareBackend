@@ -94,22 +94,16 @@ jobs:
         id: create_deployment
         uses: actions/github-script@v6
         with:
-          result-encoding: string
           script: |
-            try {
-              const response = await github.rest.repos.createDeployment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: context.sha,
-                environment: 'production',
-                auto_merge: false,
-                required_contexts: []
-              });
-              return response.data.id;
-            } catch (error) {
-              console.log(`Error creating deployment: ${error.message}`);
-              return "";
-            }
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: "production",
+              auto_merge: false,
+              required_contexts: []
+            })
+            return deployment.data.id
 
   deploy:
     needs: create-deployment
@@ -333,20 +327,14 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            try {
-              const deploymentId = ${{ needs.create-deployment.outputs.deployment_id }};
-              const state = "${{ job.status }}" === "success" ? "success" : "failure";
-              
-              github.rest.repos.createDeploymentStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                deployment_id: deploymentId,
-                state: state,
-                environment: "production"
-              });
-            } catch (error) {
-              console.log(`Error: ${error.message}`);
-            }
+            console.log("Updating deployment status");
+            github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: "${{ job.status }}" === "success" ? "success" : "failure",
+              environment: "production"
+            })
 
   rollback:
     if: failure() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
@@ -433,17 +421,11 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            try {
-              const deploymentId = ${{ needs.create-deployment.outputs.deployment_id }};
-              const state = "${{ job.status }}" === "success" ? "success" : "failure";
-              
-              github.rest.repos.createDeploymentStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                deployment_id: deploymentId,
-                state: state,
-                environment: "production"
-              });
-            } catch (error) {
-              console.log(`Error: ${error.message}`);
-            }
+            console.log("Updating deployment status");
+            github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: "${{ job.status }}" === "success" ? "success" : "failure",
+              environment: "production"
+            })
