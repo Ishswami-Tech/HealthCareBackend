@@ -88,22 +88,10 @@ jobs:
     needs: [pre-deployment-check]
     runs-on: ubuntu-latest
     outputs:
-      deployment_id: ${{ steps.create_deployment.outputs.result }}
+      deployment_id: ${{ github.run_id }}
     steps:
-      - name: Create GitHub deployment
-        id: create_deployment
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const deployment = await github.rest.repos.createDeployment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: context.sha,
-              environment: "production",
-              auto_merge: false,
-              required_contexts: []
-            })
-            return deployment.data.id
+      - name: Create deployment marker
+        run: echo "Creating deployment with ID ${{ github.run_id }}"
 
   deploy:
     needs: create-deployment
@@ -333,33 +321,15 @@ jobs:
 
             echo "All services are healthy!"
 
-      - name: Update deployment status
+      - name: Update deployment status success
         if: success()
-        uses: actions/github-script@v6
-        with:
-          script: |
-            console.log("Updating deployment status to success");
-            github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: "success",
-              environment: "production"
-            })
-            
+        run: |
+          echo "Deployment successful"
+          
       - name: Update deployment status failure
         if: failure()
-        uses: actions/github-script@v6
-        with:
-          script: |
-            console.log("Updating deployment status to failure");
-            github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: "failure",
-              environment: "production"
-            })
+        run: |
+          echo "Deployment failed"
 
   rollback:
     if: failure() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
@@ -441,30 +411,12 @@ jobs:
               exit 0
             fi
 
-      - name: Update deployment status
+      - name: Update deployment status success
         if: success()
-        uses: actions/github-script@v6
-        with:
-          script: |
-            console.log("Updating deployment status to success");
-            github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: "success",
-              environment: "production"
-            })
-            
+        run: |
+          echo "Rollback successful"
+          
       - name: Update deployment status failure
         if: failure()
-        uses: actions/github-script@v6
-        with:
-          script: |
-            console.log("Updating deployment status to failure");
-            github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: "failure",
-              environment: "production"
-            })
+        run: |
+          echo "Rollback failed"
