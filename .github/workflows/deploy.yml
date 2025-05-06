@@ -250,9 +250,9 @@ jobs:
               done
             done
 
-            # Configure firewall to allow traffic on port 80
+            # Configure firewall to allow traffic on port 8088
             echo "Configuring firewall..."
-            sudo ufw allow 80/tcp
+            sudo ufw allow 8088/tcp
             sudo ufw allow 8082/tcp
 
             # Update current deployment symlink
@@ -260,12 +260,12 @@ jobs:
             ln -sfn releases/${{ github.sha }} current
 
             echo "Deployment completed successfully!"
-            echo "API should be accessible at http://api.ishswami.in"
+            echo "API should be accessible at http://api.ishswami.in:8088"
             echo "Redis Commander should be accessible at http://api.ishswami.in:8082"
 
             # Test API health
             echo "Testing API health..."
-            curl -v http://api.ishswami.in/health
+            curl -v http://api.ishswami.in:8088/health
 
   post-deployment-verification:
     needs: deploy
@@ -293,7 +293,7 @@ jobs:
             echo "Verifying application health..."
 
             # Check API health endpoint
-            if ! curl -s http://api.ishswami.in/health | grep -q "ok"; then
+            if ! curl -s http://api.ishswami.in:8088/health | grep -q "ok"; then
               echo "Error: API health check failed"
               docker logs latest-api --tail 50
               exit 1
@@ -378,7 +378,7 @@ jobs:
               attempt=1
               max_attempts=30
               while [ $attempt -le $max_attempts ]; do
-                if curl -s http://api.ishswami.in/health | grep -q "ok"; then
+                if curl -s http://api.ishswami.in:8088/health | grep -q "ok"; then
                   echo "API service is healthy after rollback"
                   break
                 fi
