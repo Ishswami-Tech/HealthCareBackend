@@ -128,12 +128,16 @@ verify_config() {
     local is_api=false
     
     # Check if this is the API configuration
-    if [[ "$conf_file" == *"api.conf" ]]; then
+    if [[ "$conf_file" == *"api.ishswami.in.conf" ]]; then
         is_api=true
     fi
     
     if [ "$is_api" = true ]; then
         # Verify API configuration
+        if ! grep -q "server_name api.ishswami.in" "${conf_file}"; then
+            echo -e "${RED}Error: API domain configuration not found in ${conf_file}${NC}"
+            exit 1
+        fi
         if ! grep -q "172.18.0.5:8088" "${conf_file}"; then
             echo -e "${RED}Error: Static IP configuration not found in ${conf_file}${NC}"
             exit 1
@@ -220,8 +224,7 @@ echo -e "${GREEN}Deployment completed successfully!${NC}"
 echo -e "${YELLOW}Important: Please follow these steps to complete the setup:${NC}"
 echo "1. Log in to your Cloudflare dashboard"
 echo "2. Go to SSL/TLS > Overview"
-echo "3. Set SSL/TLS encryption mode to 'Flexible'"
-echo "4. Enable 'Always Use HTTPS'"
+echo "3. Set SSL/TLS encryption mode to 'Off'"
 echo ""
 echo "DNS Settings (already configured in Cloudflare):"
 echo "- A record for $DOMAIN -> 84.32.84.16"
