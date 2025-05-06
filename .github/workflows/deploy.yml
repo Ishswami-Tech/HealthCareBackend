@@ -250,11 +250,38 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          source: "."
+          source: "HealthCareBackend/,docker-compose.prod.yml"
           target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
           strip_components: 0
           overwrite: true
           rm: false
+
+      - name: Verify copied files
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+
+            echo "Verifying deployment files..."
+            if [ ! -f "HealthCareBackend/scripts/set-permissions.sh" ]; then
+              echo "Error: set-permissions.sh not found"
+              echo "Current directory structure:"
+              find . -type f -name "*.sh"
+              exit 1
+            fi
+
+            if [ ! -f "HealthCareBackend/nginx/deploy-nginx.sh" ]; then
+              echo "Error: deploy-nginx.sh not found"
+              echo "Current directory structure:"
+              find . -type f -name "*.sh"
+              exit 1
+            fi
+
+            echo "All required files found"
 
       - name: Set file permissions
         uses: appleboy/ssh-action@master
@@ -332,31 +359,45 @@ jobs:
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
             echo "Current directory: $(pwd)"
-            echo "Listing files in scripts directory:"
-            ls -la HealthCareBackend/scripts/
+            echo "Listing directory structure:"
+            find . -type f -name "*.sh" -exec ls -la {} \;
 
-            # Make scripts executable
-            if [ -f "HealthCareBackend/scripts/set-permissions.sh" ]; then
-              echo "Making set-permissions.sh executable..."
-              chmod +x HealthCareBackend/scripts/set-permissions.sh
-            else
-              echo "Error: set-permissions.sh not found in expected location"
-              echo "Searching for the script..."
-              find . -name "set-permissions.sh"
-              exit 1
+            # Ensure correct directory structure
+            if [ ! -d "HealthCareBackend" ]; then
+              echo "HealthCareBackend directory not found, checking current directory structure..."
+              if [ -f "scripts/set-permissions.sh" ]; then
+                echo "Found scripts in root directory, creating correct structure..."
+                mkdir -p HealthCareBackend
+                mv scripts nginx docker-compose* HealthCareBackend/
+              else
+                echo "Error: Required directory structure not found"
+                pwd
+                ls -la
+                exit 1
+              fi
             fi
 
-            if [ -f "HealthCareBackend/nginx/deploy-nginx.sh" ]; then
-              echo "Making deploy-nginx.sh executable..."
-              chmod +x HealthCareBackend/nginx/deploy-nginx.sh
-            else
-              echo "Error: deploy-nginx.sh not found"
-              exit 1
-            fi
+            # Verify and set script permissions
+            for script_path in \
+              "HealthCareBackend/scripts/set-permissions.sh" \
+              "HealthCareBackend/nginx/deploy-nginx.sh"
+            do
+              if [ -f "$script_path" ]; then
+                echo "Making $script_path executable..."
+                chmod +x "$script_path"
+                ls -la "$script_path"
+              else
+                echo "Error: Script not found: $script_path"
+                echo "Current directory structure:"
+                find . -type f -name "*.sh"
+                exit 1
+              fi
+            done
 
             # Set proper permissions for all files
             echo "Running set-permissions.sh..."
-            ./HealthCareBackend/scripts/set-permissions.sh
+            cd HealthCareBackend
+            ./scripts/set-permissions.sh
 
             # Create or update network
             if ! docker network inspect ${{ env.NETWORK_NAME }} >/dev/null 2>&1; then
