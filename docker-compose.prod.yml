@@ -54,11 +54,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${API_PORT:-8088}/${HEALTH_CHECK_ENDPOINT:-health}"]
-      interval: ${HEALTH_CHECK_INTERVAL:-30s}
-      timeout: ${HEALTH_CHECK_TIMEOUT:-10s}
-      retries: ${HEALTH_CHECK_RETRIES:-5}
-      start_period: 60s
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${API_PORT:-8088}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     deploy:
       resources:
         limits:
@@ -69,15 +69,15 @@ services:
           memory: 512M
 
   postgres:
-    image: postgres:latest
+    image: postgres:16
     container_name: latest-postgres
     hostname: postgres
     ports:
-      - "${POSTGRES_PORT:-5432}:${POSTGRES_PORT:-5432}"
+      - "5432:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: userdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -89,7 +89,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
     deploy:
       resources:
         limits:
@@ -102,19 +101,11 @@ services:
     shm_size: 128mb
 
   redis:
-    image: redis:latest
+    image: redis:7
     container_name: latest-redis
-    hostname: redis
-    command: >
-      redis-server 
-      --appendonly yes 
-      --maxmemory 512mb 
-      --maxmemory-policy allkeys-lru 
-      --save 900 1 
-      --save 300 10 
-      --save 60 10000
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     ports:
-      - "${REDIS_PORT:-6379}:${REDIS_PORT:-6379}"
+      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -125,7 +116,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
     deploy:
       resources:
         limits:
@@ -150,11 +140,7 @@ services:
     ports:
       - "8082:8081"
     environment:
-      - REDIS_HOSTS=172.18.0.3:6379
-      - HTTP_USER=${REDIS_COMMANDER_USER:-admin}
-      - HTTP_PASSWORD=${REDIS_COMMANDER_PASSWORD:-admin}
-      - TRUST_PROXY=true
-      - HTTPS_ENABLED=false
+      REDIS_HOSTS: local:redis:6379:0:${REDIS_PASSWORD}
     depends_on:
       - redis
     networks:
@@ -174,7 +160,7 @@ services:
         reservations:
           cpus: '0.1'
           memory: 64M
-    restart: unless-stopped
+    restart: always
 
 volumes:
   postgres_data:
