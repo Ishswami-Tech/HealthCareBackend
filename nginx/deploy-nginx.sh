@@ -163,9 +163,11 @@ verify_config() {
 set_permissions() {
     echo -e "${YELLOW}Setting proper permissions for all files and directories...${NC}"
     
-    # Set permissions for Nginx configuration files
-    sudo chmod 644 ${NGINX_CONF_DIR}/*.conf
-    sudo chown root:root ${NGINX_CONF_DIR}/*.conf
+    # Set permissions for Nginx configuration files if they exist
+    if ls ${NGINX_CONF_DIR}/*.conf 1> /dev/null 2>&1; then
+        sudo chmod 644 ${NGINX_CONF_DIR}/*.conf
+        sudo chown root:root ${NGINX_CONF_DIR}/*.conf
+    fi
     
     # Set directory permissions
     sudo chmod 755 ${NGINX_CONF_DIR}
@@ -182,13 +184,26 @@ main() {
     # Clean up existing configurations
     cleanup_configs
     
-    # Set initial permissions
-    set_permissions
-    
     # Apply templates and verify configuration
+    echo -e "${YELLOW}Applying configuration templates...${NC}"
     apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_DOMAIN}.conf"
     apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${DOMAIN}.conf"
     
+    # Copy common configurations
+    echo -e "${YELLOW}Copying common configurations...${NC}"
+    if [ -f "${TEMPLATE_DIR}/common.conf" ]; then
+        cp "${TEMPLATE_DIR}/common.conf" "${NGINX_CONF_DIR}/common.conf"
+    fi
+    
+    if [ -f "${TEMPLATE_DIR}/cloudflare.conf" ]; then
+        cp "${TEMPLATE_DIR}/cloudflare.conf" "${NGINX_CONF_DIR}/cloudflare.conf"
+    fi
+    
+    if [ -f "${TEMPLATE_DIR}/upstream.conf" ]; then
+        cp "${TEMPLATE_DIR}/upstream.conf" "${NGINX_CONF_DIR}/upstream.conf"
+    fi
+    
+    # Verify configuration
     verify_config "${NGINX_CONF_DIR}/${API_DOMAIN}.conf"
     verify_config "${NGINX_CONF_DIR}/${DOMAIN}.conf"
     
