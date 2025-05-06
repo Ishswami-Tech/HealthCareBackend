@@ -88,23 +88,28 @@ jobs:
     needs: [pre-deployment-check]
     runs-on: ubuntu-latest
     outputs:
-      deployment_id: ${{ steps.create_deployment.outputs.deployment_id }}
+      deployment_id: ${{ steps.create_deployment.outputs.result }}
     steps:
       - name: Create GitHub deployment
         id: create_deployment
         uses: actions/github-script@v6
         with:
+          result-encoding: string
           script: |
-            const { data: deployment } = await github.rest.repos.createDeployment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: context.sha,
-              environment: 'production',
-              auto_merge: false,
-              required_contexts: []
-            });
-            
-            return deployment.id;
+            try {
+              const response = await github.rest.repos.createDeployment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: context.sha,
+                environment: 'production',
+                auto_merge: false,
+                required_contexts: []
+              });
+              return response.data.id;
+            } catch (error) {
+              console.log(`Error creating deployment: ${error.message}`);
+              return "";
+            }
 
   deploy:
     needs: create-deployment
@@ -328,14 +333,20 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const status = '${{ job.status }}' === 'success' ? 'success' : 'failure';
-            github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: status,
-              environment: 'production'
-            })
+            try {
+              const deploymentId = ${{ needs.create-deployment.outputs.deployment_id }};
+              const state = "${{ job.status }}" === "success" ? "success" : "failure";
+              
+              github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deploymentId,
+                state: state,
+                environment: "production"
+              });
+            } catch (error) {
+              console.log(`Error: ${error.message}`);
+            }
 
   rollback:
     if: failure() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
@@ -422,11 +433,17 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const status = '${{ job.status }}' === 'success' ? 'success' : 'failure';
-            github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: status,
-              environment: 'production'
-            })
+            try {
+              const deploymentId = ${{ needs.create-deployment.outputs.deployment_id }};
+              const state = "${{ job.status }}" === "success" ? "success" : "failure";
+              
+              github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deploymentId,
+                state: state,
+                environment: "production"
+              });
+            } catch (error) {
+              console.log(`Error: ${error.message}`);
+            }
