@@ -5,12 +5,14 @@ import { LogType, LogLevel } from './types/logging.types';
 
 @Injectable()
 export class LoggingService {
-  private readonly logger = new Logger(LoggingService.name);
+  private readonly logger: Logger;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-  ) {}
+  ) {
+    this.logger = new Logger(LoggingService.name);
+  }
 
   async log(
     type: LogType,
@@ -42,21 +44,35 @@ export class LoggingService {
     const contextColor = '\x1b[36m'; // Cyan
     const resetColor = '\x1b[0m';
     
-    this.logger.log(
-      `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`,
-    );
+    // Use console.log for colored output since NestJS Logger doesn't support colors directly
+    console.log(`${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`);
+    
+    // Use NestJS Logger for standard logging
+    switch (level) {
+      case LogLevel.ERROR:
+        this.logger.error(message, context);
+        break;
+      case LogLevel.WARN:
+        this.logger.warn(message, context);
+        break;
+      case LogLevel.DEBUG:
+        this.logger.debug(message, context);
+        break;
+      default:
+        this.logger.log(message, context);
+    }
     
     if (Object.keys(metadata).length > 0) {
       this.logger.debug('Metadata:', metadata);
     }
 
-    // Store in Redis for real-time access
-    await this.redis.rPush('logs', JSON.stringify(logEntry));
-    // Keep only last 1000 logs
-    await this.redis.lTrim('logs', -1000, -1);
-
-    // Store in database for persistence
     try {
+      // Store in Redis for real-time access
+      await this.redis.rPush('logs', JSON.stringify(logEntry));
+      // Keep only last 1000 logs
+      await this.redis.lTrim('logs', -1000, -1);
+
+      // Store in database for persistence
       await this.prisma.log.create({
         data: {
           id,
@@ -69,7 +85,7 @@ export class LoggingService {
         },
       });
     } catch (error) {
-      this.logger.error('Failed to store log in database:', error);
+      this.logger.error('Failed to store log:', error);
     }
   }
 
@@ -140,7 +156,7 @@ export class LoggingService {
       await this.redis.del('logs');
       return { success: true, message: 'Logs cleared successfully' };
     } catch (error) {
-      console.error('Error clearing logs:', error);
+      this.logger.error('Error clearing logs:', error);
       throw new Error('Failed to clear logs');
     }
   }
@@ -177,7 +193,7 @@ export class LoggingService {
       await this.redis.del('events');
       return { success: true, message: 'Events cleared successfully' };
     } catch (error) {
-      console.error('Error clearing events:', error);
+      this.logger.error('Error clearing events:', error);
       throw new Error('Failed to clear events');
     }
   }
