@@ -427,11 +427,22 @@ jobs:
             echo "Running set-permissions.sh..."
             ./scripts/set-permissions.sh
 
-            # Create or update network
-            if ! docker network inspect ${{ env.NETWORK_NAME }} >/dev/null 2>&1; then
-              echo "Creating Docker network ${{ env.NETWORK_NAME }}..."
-              docker network create ${{ env.NETWORK_NAME }} --subnet=172.18.0.0/16
+            # Handle Docker network
+            echo "Setting up Docker network..."
+            if docker network inspect ${{ env.NETWORK_NAME }} >/dev/null 2>&1; then
+              echo "Removing existing network ${{ env.NETWORK_NAME }}..."
+              # Remove any containers using the network
+              for container in $(docker ps -a --filter network=${{ env.NETWORK_NAME }} -q); do
+                docker network disconnect -f ${{ env.NETWORK_NAME }} $container || true
+              done
+              docker network rm ${{ env.NETWORK_NAME }} || true
             fi
+
+            echo "Creating Docker network ${{ env.NETWORK_NAME }}..."
+            docker network create ${{ env.NETWORK_NAME }} --subnet=172.18.0.0/16
+
+            # Update docker-compose.prod.yml to mark network as external
+            sed -i 's/name: app-network$/name: app-network\n    external: true/' docker-compose.prod.yml
 
             # Start services with fixed container names
             echo "Starting services..."
