@@ -244,15 +244,37 @@ jobs:
           target: "/tmp/ssl-temp"
           strip_components: 1
 
+      - name: Prepare deployment files
+        run: |
+          echo "Preparing files for deployment..."
+          # Ensure we're in the correct directory
+          cd ${{ github.workspace }}
+
+          # Create a temporary deployment directory
+          mkdir -p deploy_temp
+          cp -r HealthCareBackend/* deploy_temp/
+          cp docker-compose.prod.yml deploy_temp/
+
+          # Verify files exist
+          if [ ! -f "deploy_temp/scripts/set-permissions.sh" ]; then
+            echo "Error: set-permissions.sh not found in prepared files"
+            ls -la deploy_temp/scripts/
+            exit 1
+          fi
+
+          # Make scripts executable before copying
+          chmod +x deploy_temp/scripts/set-permissions.sh
+          chmod +x deploy_temp/nginx/deploy-nginx.sh
+
       - name: Copy deployment files
         uses: appleboy/scp-action@master
         with:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
-          source: "HealthCareBackend/,docker-compose.prod.yml"
+          source: "deploy_temp/*"
           target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
-          strip_components: 0
+          strip_components: 1
           overwrite: true
           rm: false
 
@@ -267,21 +289,28 @@ jobs:
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
             echo "Verifying deployment files..."
-            if [ ! -f "HealthCareBackend/scripts/set-permissions.sh" ]; then
+            echo "Current directory structure:"
+            find . -type f -name "*.sh" -exec ls -la {} \;
+
+            if [ ! -f "scripts/set-permissions.sh" ]; then
               echo "Error: set-permissions.sh not found"
-              echo "Current directory structure:"
-              find . -type f -name "*.sh"
+              echo "Directory contents:"
+              ls -la
+              echo "Scripts directory contents:"
+              ls -la scripts/ || echo "scripts directory not found"
               exit 1
             fi
 
-            if [ ! -f "HealthCareBackend/nginx/deploy-nginx.sh" ]; then
+            if [ ! -f "nginx/deploy-nginx.sh" ]; then
               echo "Error: deploy-nginx.sh not found"
-              echo "Current directory structure:"
-              find . -type f -name "*.sh"
               exit 1
             fi
 
-            echo "All required files found"
+            # Make scripts executable again (in case permissions were lost during transfer)
+            chmod +x scripts/set-permissions.sh
+            chmod +x nginx/deploy-nginx.sh
+
+            echo "All required files found and verified"
 
       - name: Set file permissions
         uses: appleboy/ssh-action@master
@@ -362,25 +391,10 @@ jobs:
             echo "Listing directory structure:"
             find . -type f -name "*.sh" -exec ls -la {} \;
 
-            # Ensure correct directory structure
-            if [ ! -d "HealthCareBackend" ]; then
-              echo "HealthCareBackend directory not found, checking current directory structure..."
-              if [ -f "scripts/set-permissions.sh" ]; then
-                echo "Found scripts in root directory, creating correct structure..."
-                mkdir -p HealthCareBackend
-                mv scripts nginx docker-compose* HealthCareBackend/
-              else
-                echo "Error: Required directory structure not found"
-                pwd
-                ls -la
-                exit 1
-              fi
-            fi
-
             # Verify and set script permissions
             for script_path in \
-              "HealthCareBackend/scripts/set-permissions.sh" \
-              "HealthCareBackend/nginx/deploy-nginx.sh"
+              "scripts/set-permissions.sh" \
+              "nginx/deploy-nginx.sh"
             do
               if [ -f "$script_path" ]; then
                 echo "Making $script_path executable..."
@@ -396,7 +410,6 @@ jobs:
 
             # Set proper permissions for all files
             echo "Running set-permissions.sh..."
-            cd HealthCareBackend
             ./scripts/set-permissions.sh
 
             # Create or update network
