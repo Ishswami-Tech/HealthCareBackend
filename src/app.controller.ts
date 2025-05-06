@@ -5,8 +5,6 @@ import { Public } from './libs/decorators/public.decorator';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from './shared/database/prisma/prisma.service';
 import { FastifyReply } from 'fastify';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { ConfigService } from '@nestjs/config';
 import { HealthController } from './services/health/health.controller';
 
@@ -85,48 +83,85 @@ export class AppController {
         }
       ];
 
-      // Try multiple possible paths for the template
-      const possiblePaths = [
-        join(__dirname, '..', 'src', 'views', 'dashboard.html'),
-        join(__dirname, 'views', 'dashboard.html'),
-        join(process.cwd(), 'src', 'views', 'dashboard.html'),
-        join(process.cwd(), 'dist', 'views', 'dashboard.html')
-      ];
+      // Generate HTML content
+      const html = this.generateDashboardHtml('Healthcare API Dashboard', services);
 
-      let template = null;
-      let usedPath = null;
-
-      for (const path of possiblePaths) {
-        try {
-          template = readFileSync(path, 'utf8');
-          usedPath = path;
-          break;
-        } catch (err) {
-          continue;
-        }
-      }
-
-      if (!template) {
-        throw new Error('Dashboard template not found in any of the expected locations');
-      }
-
-      // Replace template variables
-      template = template.replace('{{title}}', 'Healthcare API Dashboard');
-      template = template.replace('{{{services}}}', JSON.stringify(services));
-      
       res.header('Content-Type', 'text/html');
-      return res.send(template);
+      return res.send(html);
     } catch (error) {
       console.error('Error serving dashboard:', error);
-      console.log('Current directory:', process.cwd());
-      console.log('__dirname:', __dirname);
-      console.log('Tried paths:', [
-        join(__dirname, '..', 'src', 'views', 'dashboard.html'),
-        join(__dirname, 'views', 'dashboard.html'),
-        join(process.cwd(), 'src', 'views', 'dashboard.html'),
-        join(process.cwd(), 'dist', 'views', 'dashboard.html')
-      ]);
       return res.send('Error loading dashboard. Please check server logs.');
     }
+  }
+
+  private generateDashboardHtml(title: string, services: any[]): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .service-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .service-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-800 mb-4">${title}</h1>
+            <p class="text-gray-600">System Status and Service Management</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            ${services.map(service => `
+                <div class="service-card bg-white rounded-lg shadow-md p-6 hover:shadow-lg">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold text-gray-800">${service.name}</h2>
+                        <span class="px-3 py-1 rounded-full text-sm ${
+                            service.active 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-red-100 text-red-800'
+                        }">
+                            ${service.active ? 'Active' : 'Inactive'}
+                        </span>
+                    </div>
+                    <p class="text-gray-600 mb-4">${service.description}</p>
+                    <div class="space-y-2">
+                        <a href="${service.url}" 
+                           target="_blank" 
+                           class="inline-block w-full text-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                            Access Service
+                        </a>
+                        ${service.credentials ? `
+                            <div class="text-sm text-gray-500 mt-2">
+                                <span class="font-medium">Credentials:</span> ${service.credentials}
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+
+        <footer class="mt-12 text-center text-gray-600">
+            <p>Environment: ${process.env.NODE_ENV || 'development'}</p>
+            <p class="mt-2">© ${new Date().getFullYear()} Healthcare API. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <script>
+        // Refresh status every 30 seconds
+        setInterval(() => {
+            window.location.reload();
+        }, 30000);
+    </script>
+</body>
+</html>`;
   }
 }
