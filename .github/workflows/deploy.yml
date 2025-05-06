@@ -338,28 +338,28 @@ jobs:
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
             # Make scripts executable
-            chmod +x HealthCareBackend/scripts/set-permissions.sh
-            chmod +x HealthCareBackend/nginx/deploy-nginx.sh
+            chmod +x scripts/set-permissions.sh
+            chmod +x nginx/deploy-nginx.sh
 
             # Set proper permissions for all files
-            ./HealthCareBackend/scripts/set-permissions.sh
+            ./scripts/set-permissions.sh
 
             # Set proper permissions for Nginx configuration files
-            chmod 644 HealthCareBackend/nginx/conf.d/*.conf
-            chmod 644 HealthCareBackend/nginx/nginx.conf
+            chmod 644 nginx/conf.d/*.conf
+            chmod 644 nginx/nginx.conf
 
             # Set proper permissions for SSL files
-            chmod 600 HealthCareBackend/nginx/ssl/*.key
-            chmod 644 HealthCareBackend/nginx/ssl/*.crt
-            chmod 644 HealthCareBackend/nginx/ssl/*.pem
-            chmod 644 HealthCareBackend/nginx/ssl/*.chain.crt
-            chmod 644 HealthCareBackend/nginx/ssl/README.md
+            chmod 600 nginx/ssl/*.key
+            chmod 644 nginx/ssl/*.crt
+            chmod 644 nginx/ssl/*.pem
+            chmod 644 nginx/ssl/*.chain.crt
+            chmod 644 nginx/ssl/README.md || true
 
             # Set directory permissions
-            chmod 755 HealthCareBackend/nginx/conf.d
-            chmod 700 HealthCareBackend/nginx/ssl
-            chmod 755 HealthCareBackend/nginx
-            chmod 755 HealthCareBackend/scripts
+            chmod 755 nginx/conf.d
+            chmod 700 nginx/ssl
+            chmod 755 nginx
+            chmod 755 scripts
 
             echo "All permissions set successfully"
 
