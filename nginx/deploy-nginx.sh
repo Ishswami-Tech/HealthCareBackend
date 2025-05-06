@@ -18,11 +18,9 @@ fi
 # Variables
 API_DOMAIN="api.ishswami.in"
 NGINX_CONF_DIR="/etc/nginx/conf.d"
-DEPLOY_PATH="/var/www/healthcare"
-NETWORK_NAME=${NETWORK_NAME:-app-network}
+API_IP="172.18.0.5"  # Static IP for API container
 TEMPLATE_DIR="./conf.d"
 API_CONF="api.conf"
-API_IP="172.18.0.5"  # Static IP for API container
 
 # Function to clean up existing configurations
 cleanup_configs() {
@@ -53,10 +51,6 @@ check_api_health() {
         local response=$(curl -v -m 10 "$endpoint" 2>&1)
         local status=$?
         
-        echo -e "${YELLOW}Curl exit code: $status${NC}"
-        echo -e "${YELLOW}Response:${NC}"
-        echo "$response"
-        
         if echo "$response" | grep -q "200 OK"; then
             echo -e "${GREEN}API is healthy at $endpoint${NC}"
             return 0
@@ -70,15 +64,6 @@ check_api_health() {
     done
     
     echo -e "${RED}API health check failed after $max_retries attempts at $endpoint${NC}"
-    echo -e "${RED}Final diagnostics:${NC}"
-    echo -e "${YELLOW}1. Nginx configuration test:${NC}"
-    sudo nginx -t
-    echo -e "${YELLOW}2. Nginx error log:${NC}"
-    sudo tail -n 50 /var/log/nginx/error.log
-    echo -e "${YELLOW}3. API container status:${NC}"
-    docker inspect latest-api --format '{{.State.Status}} - {{.State.Health.Status}}'
-    echo -e "${YELLOW}4. Container logs:${NC}"
-    docker logs --tail 20 latest-api
     return 1
 }
 
@@ -105,61 +90,8 @@ wait_for_container() {
     return 1
 }
 
-# Function to apply template
-apply_template() {
-    local template="$1"
-    local target="$2"
-    
-    # Create backup of template if it doesn't exist
-    if [ ! -f "${template}.original" ]; then
-        cp "${template}" "${template}.original"
-    fi
-    
-    # Restore from original template
-    cp "${template}.original" "${template}"
-    
-    # Apply environment variables
-    envsubst '${API_DOMAIN} ${API_IP}' < "${template}" > "${target}"
-    
-    echo -e "${GREEN}Applied template ${template} to ${target}${NC}"
-}
-
-# Function to verify configuration
-verify_config() {
-    local conf_file="$1"
-    
-    if ! grep -q "server_name api.ishswami.in" "${conf_file}"; then
-        echo -e "${RED}Error: API domain configuration not found in ${conf_file}${NC}"
-        exit 1
-    fi
-    
-    if ! grep -q "172.18.0.5:8088" "${conf_file}"; then
-        echo -e "${RED}Error: Static IP configuration not found in ${conf_file}${NC}"
-        exit 1
-    fi
-    
-    echo -e "${GREEN}Configuration verification passed for ${conf_file}${NC}"
-}
-
-# Function to set proper permissions
-set_permissions() {
-    echo -e "${YELLOW}Setting proper permissions for all files and directories...${NC}"
-    
-    # Set permissions for Nginx configuration files if they exist
-    if ls ${NGINX_CONF_DIR}/*.conf 1> /dev/null 2>&1; then
-        sudo chmod 644 ${NGINX_CONF_DIR}/*.conf
-        sudo chown root:root ${NGINX_CONF_DIR}/*.conf
-    fi
-    
-    # Set directory permissions
-    sudo chmod 755 ${NGINX_CONF_DIR}
-    sudo chown -R root:root ${NGINX_CONF_DIR}
-    
-    echo -e "${GREEN}Permissions set successfully${NC}"
-}
-
-# Main script execution
-main() {
+# Function to configure and deploy Nginx
+deploy_nginx() {
     echo -e "${YELLOW}Starting API HTTP-only deployment...${NC}"
     
     # Create required directories
@@ -168,21 +100,119 @@ main() {
     # Clean up existing configurations
     cleanup_configs
     
-    # Apply templates and verify configuration
-    echo -e "${YELLOW}Applying API configuration template...${NC}"
-    apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_DOMAIN}.conf"
+    # Copy and configure API conf file
+    echo -e "${YELLOW}Configuring API...${NC}"
     
-    # Copy common configurations
-    echo -e "${YELLOW}Copying common configurations...${NC}"
-    if [ -f "${TEMPLATE_DIR}/cloudflare.conf" ]; then
-        cp "${TEMPLATE_DIR}/cloudflare.conf" "${NGINX_CONF_DIR}/cloudflare.conf"
-    fi
+    # Create a customized configuration file
+    cat > /tmp/api.conf << EOF
+# HTTP server for API
+server {
+    listen 80;
+    server_name ${API_DOMAIN};
+
+    # Buffer size settings
+    client_max_body_size 50M;
+    client_body_buffer_size 128k;
+    proxy_buffer_size 4k;
+    proxy_buffers 4 32k;
+    proxy_busy_buffers_size 64k;
+
+    # Rate limiting configuration - Global settings
+    limit_req_zone \$binary_remote_addr zone=api_limit:10m rate=10r/s;
+    limit_req_log_level warn;
+
+    # WebSocket configuration
+    map \$http_upgrade \$connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self' http:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http: ws:;" always;
+
+    # Main API proxy
+    location / {
+        proxy_pass http://${API_IP}:8088;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port \$server_port;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
+    # WebSocket endpoint
+    location /socket.io/ {
+        proxy_pass http://${API_IP}:8088;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering off;
+        
+        add_header 'Access-Control-Allow-Origin' 'http://ishswami.in' always;
+        add_header 'Access-Control-Allow-Credentials' 'true' always;
+    }
+
+    # Swagger documentation
+    location /docs {
+        proxy_pass http://${API_IP}:8088;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_buffering off;
+    }
+
+    # Health check endpoint
+    location /health {
+        proxy_pass http://${API_IP}:8088/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        access_log off;
+    }
+
+    # Deny access to . files
+    location ~ /\\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Error pages
+    error_page 404 /404.html;
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+}
+EOF
+
+    # Copy config to Nginx
+    sudo cp /tmp/api.conf ${NGINX_CONF_DIR}/${API_DOMAIN}.conf
+    echo -e "${GREEN}API configuration created at ${NGINX_CONF_DIR}/${API_DOMAIN}.conf${NC}"
     
-    # Verify configuration
-    verify_config "${NGINX_CONF_DIR}/${API_DOMAIN}.conf"
-    
-    # Set final permissions
-    set_permissions
+    # Set permissions
+    echo -e "${YELLOW}Setting permissions...${NC}"
+    sudo chmod 644 ${NGINX_CONF_DIR}/${API_DOMAIN}.conf
+    sudo chown root:root ${NGINX_CONF_DIR}/${API_DOMAIN}.conf
     
     # Test and reload Nginx
     echo -e "${YELLOW}Testing Nginx configuration...${NC}"
@@ -196,19 +226,20 @@ main() {
     fi
 }
 
-# Execute main function
-main
-
-echo -e "${GREEN}Nginx deployment completed successfully${NC}"
+# Main execution
+echo -e "${YELLOW}Starting deployment...${NC}"
 
 # Wait for containers to be ready
 echo -e "${YELLOW}Waiting for containers to be ready...${NC}"
 wait_for_container "latest-redis" || exit 1
 wait_for_container "latest-api" || exit 1
 
+# Deploy Nginx
+deploy_nginx
+
 # Check API health
 echo -e "${YELLOW}Checking API health...${NC}"
-check_api_health "http://${API_DOMAIN}/${HEALTH_CHECK_ENDPOINT:-health}"
+check_api_health "http://${API_DOMAIN}/health"
 
 echo -e "${GREEN}Deployment completed successfully!${NC}"
 echo -e "${YELLOW}Important: Please follow these steps to complete the setup:${NC}"
