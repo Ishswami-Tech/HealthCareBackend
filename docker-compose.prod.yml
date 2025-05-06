@@ -20,7 +20,7 @@ services:
       NODE_ENV: production
       CORS_ORIGIN: "*"
       FRONTEND_URL: http://ishswami.in
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=20&pool_timeout=30
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TRUST_PROXY: 1
@@ -76,6 +76,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
+      POSTGRES_MAX_CONNECTIONS: 100
+      POSTGRES_SHARED_BUFFERS: 256MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -97,6 +99,24 @@ services:
           memory: 256M
     restart: unless-stopped
     shm_size: 128mb
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=4MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c max_worker_processes=4
+      -c max_parallel_workers_per_gather=2
+      -c max_parallel_workers=4
+      -c max_parallel_maintenance_workers=2
 
   redis:
     image: redis:7

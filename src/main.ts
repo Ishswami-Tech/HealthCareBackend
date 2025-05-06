@@ -112,9 +112,9 @@ async function bootstrap() {
         logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],
         bufferLogs: true,
         cors: {
-          origin: '*', // Allow all origins temporarily
+          origin: ['http://localhost:8088', 'http://82.208.20.16:8088', 'http://ishswami.in', 'http://api.ishswami.in'],
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'authorization'],
+          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
           credentials: true,
           preflightContinue: false,
           optionsSuccessStatus: 204
@@ -259,20 +259,7 @@ async function bootstrap() {
 
     // Security headers
     await app.register(fastifyHelmet, {
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: [`'self'`],
-          styleSrc: [`'self'`, `'unsafe-inline'`],
-          imgSrc: [`'self'`, 'data:', 'validator.swagger.io'],
-          scriptSrc: [`'self'`, `'unsafe-inline'`, `'unsafe-eval'`],
-          connectSrc: [`'self'`, 'wss://admin.socket.io', 'https://admin.socket.io', 'ws://localhost:*', 'http://localhost:*', 'https://*.ishswami.in', 'wss://*.ishswami.in'],
-          fontSrc: [`'self'`, 'data:'],
-          objectSrc: [`'none'`],
-          mediaSrc: [`'self'`],
-          frameSrc: [`'none'`],
-          frameAncestors: [`'none'`]
-        },
-      }
+      contentSecurityPolicy: false  // Disable CSP for development/HTTP
     });
 
     // Configure route handling to prevent Bull Board from intercepting other routes
@@ -285,20 +272,32 @@ async function bootstrap() {
       }
     });
 
+    // Initialize Swagger documentation
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document, {
+      ...swaggerCustomOptions,
+      explorer: true,
+      customSiteTitle: 'Healthcare API Documentation',
+      swaggerOptions: {
+        persistAuthorization: true,
+        docExpansion: 'none',
+        filter: true,
+        displayRequestDuration: true,
+        tryItOutEnabled: true
+      }
+    });
+
     // Start the server
     const port = configService.get<number>('PORT', 8088);
-    const host = '0.0.0.0'; // Force binding to all interfaces
+    const host = '0.0.0.0';
     
     try {
       await app.listen(port, host, () => {
-        const protocol = httpsOptions ? 'https' : 'http';
-        const wsProtocol = httpsOptions ? 'wss' : 'ws';
-        logger.log(`Server is running on: ${protocol}://${host}:${port}`);
-        logger.log(`Swagger documentation is available at: ${protocol}://${host}:${port}/docs`);
-        logger.log(`Bull Board is available at: ${protocol}://${host}:${port}/queue-dashboard`);
-        logger.log(`WebSocket server is available at: ${wsProtocol}://${host}:${port}/socket.io`);
+        logger.log(`Server is running on: http://${host}:${port}`);
+        logger.log(`Swagger documentation is available at: http://${host}:${port}/docs`);
+        logger.log(`Bull Board is available at: http://${host}:${port}/queue-dashboard`);
+        logger.log(`WebSocket server is available at: ws://${host}:${port}/socket.io`);
         logger.log(`Environment: ${process.env.NODE_ENV}`);
-        logger.log(`SSL Enabled: ${!!httpsOptions}`);
       });
     } catch (error) {
       logger.error('Failed to start server:', error);

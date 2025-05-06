@@ -261,7 +261,19 @@ export class ClinicDatabaseService {
     const host = this.configService.get('POSTGRES_HOST');
     const port = this.configService.get('POSTGRES_PORT');
 
-    return `postgresql://${user}:${password}@${host}:${port}/${databaseName}`;
+    // Add connection pool settings
+    const poolConfig = {
+      connection_limit: 5,  // Lower limit for tenant databases
+      pool_timeout: 30,
+      statement_timeout: 60000,  // 60 seconds
+      idle_in_transaction_session_timeout: 60000  // 60 seconds
+    };
+
+    const poolParams = Object.entries(poolConfig)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('&');
+
+    return `postgresql://${user}:${password}@${host}:${port}/${databaseName}?${poolParams}`;
   }
 
   /**
