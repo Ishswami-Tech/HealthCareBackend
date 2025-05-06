@@ -332,7 +332,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: "${{ job.status }}" === "success" ? "success" : "failure",
+              state: job.status == "success" ? "success" : "failure",
               environment: "production"
             })
 
@@ -426,6 +426,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: "${{ job.status }}" === "success" ? "success" : "failure",
+              state: job.status == "success" ? "success" : "failure",
               environment: "production"
             })
