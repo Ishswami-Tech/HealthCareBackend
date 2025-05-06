@@ -8,6 +8,18 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Check if Docker is running
+check_docker() {
+    if ! docker info > /dev/null 2>&1; then
+        echo -e "${RED}Error: Docker is not running${NC}"
+        echo -e "${YELLOW}Please start Docker Desktop and try again${NC}"
+        exit 1
+    fi
+}
+
+# Run the Docker check
+check_docker
+
 # Function to display usage
 show_usage() {
     echo "Usage: ./run.sh [dev|prod] [start|stop|logs|restart|rebuild]"
@@ -42,24 +54,26 @@ case $ENV in
         ENV_FILE=".env.production"
         ;;
     *)
-        echo "Invalid environment. Use 'dev' or 'prod'"
+        echo -e "${RED}Invalid environment. Use 'dev' or 'prod'${NC}"
         show_usage
         ;;
 esac
 
 # Check if required files exist
 if [ ! -f "$COMPOSE_FILE" ]; then
-    echo "Error: $COMPOSE_FILE not found!"
+    echo -e "${RED}Error: $COMPOSE_FILE not found!${NC}"
     exit 1
 fi
 
 if [ ! -f "$ENV_FILE" ]; then
-    echo "Error: $ENV_FILE not found!"
+    echo -e "${RED}Error: $ENV_FILE not found!${NC}"
     exit 1
 fi
 
 # Export environment variables
-export $(cat $ENV_FILE | grep -v '^#' | xargs)
+set -a
+source $ENV_FILE
+set +a
 
 # Function to display help
 show_help() {
@@ -93,14 +107,6 @@ show_help() {
   echo "  ./run.sh dev restore backup_file.sql"
   echo "  ./run.sh dev clean --volumes"
   echo "  ./run.sh dev studio"
-}
-
-# Check if Docker is running
-check_docker() {
-  if ! docker info > /dev/null 2>&1; then
-    echo -e "${RED}Error: Docker is not running. Please start Docker and try again.${NC}"
-    exit 1
-  fi
 }
 
 # Check if docker-compose is installed
@@ -180,33 +186,33 @@ start_prisma_studio() {
   fi
 }
 
-# Execute docker-compose commands based on action
+# Execute docker compose commands based on action
 case $ACTION in
     "up"|"start")
         echo -e "${YELLOW}Starting services in $ENV mode...${NC}"
-        docker-compose -f $COMPOSE_FILE up -d
+        docker compose -f $COMPOSE_FILE up -d
         echo -e "${GREEN}Services started successfully!${NC}"
         ;;
     "down"|"stop")
         echo -e "${YELLOW}Stopping services...${NC}"
-        docker-compose -f $COMPOSE_FILE down
+        docker compose -f $COMPOSE_FILE down
         echo -e "${GREEN}Services stopped successfully!${NC}"
         ;;
     "logs")
         echo -e "${YELLOW}Showing logs...${NC}"
-        docker-compose -f $COMPOSE_FILE logs -f
+        docker compose -f $COMPOSE_FILE logs -f
         ;;
     "restart")
         echo -e "${YELLOW}Restarting services...${NC}"
-        docker-compose -f $COMPOSE_FILE down
-        docker-compose -f $COMPOSE_FILE up -d
+        docker compose -f $COMPOSE_FILE down
+        docker compose -f $COMPOSE_FILE up -d
         echo -e "${GREEN}Services restarted successfully!${NC}"
         ;;
     "rebuild")
         echo -e "${YELLOW}Rebuilding services in $ENV mode...${NC}"
-        docker-compose -f $COMPOSE_FILE down
-        docker-compose -f $COMPOSE_FILE build --no-cache
-        docker-compose -f $COMPOSE_FILE up -d
+        docker compose -f $COMPOSE_FILE down
+        docker compose -f $COMPOSE_FILE build --no-cache
+        docker compose -f $COMPOSE_FILE up -d
         echo -e "${GREEN}Services rebuilt and started successfully!${NC}"
         ;;
     *)
@@ -218,5 +224,5 @@ esac
 # Show running containers after start, restart, or rebuild
 if [ "$ACTION" = "up" ] || [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "rebuild" ]; then
     echo -e "\n${BLUE}Running containers:${NC}"
-    docker-compose -f $COMPOSE_FILE ps
+    docker compose -f $COMPOSE_FILE ps
 fi

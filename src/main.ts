@@ -21,68 +21,7 @@ async function bootstrap() {
   try {
     await initDatabase();
 
-    // SSL configuration
-    let httpsOptions = undefined;
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    // Get SSL paths from environment variables or use defaults
-    const sslKeyPath = process.env.SSL_KEY_PATH || '/app/ssl/api.ishswami.in.key';
-    const sslCertPath = process.env.SSL_CERT_PATH || '/app/ssl/api.ishswami.in.crt';
-
-    logger.log('SSL Configuration:');
-    logger.log(`Environment: ${isProduction ? 'Production' : 'Development'}`);
-    logger.log(`SSL Key Path: ${sslKeyPath}`);
-    logger.log(`SSL Cert Path: ${sslCertPath}`);
-
-    // Check if files exist
-    const keyExists = fs.existsSync(sslKeyPath);
-    const certExists = fs.existsSync(sslCertPath);
-    
-    logger.log(`SSL Key exists: ${keyExists}`);
-    logger.log(`SSL Cert exists: ${certExists}`);
-
-    if (keyExists && certExists) {
-      try {
-        const key = fs.readFileSync(sslKeyPath);
-        const cert = fs.readFileSync(sslCertPath);
-        
-        httpsOptions = { key, cert };
-        logger.log('SSL certificates loaded successfully, enabling HTTPS');
-        
-        // Log certificate details
-        logger.log(`Key file size: ${key.length} bytes`);
-        logger.log(`Cert file size: ${cert.length} bytes`);
-      } catch (error) {
-        logger.error(`Error reading SSL certificates: ${error.message}`);
-        logger.error(error.stack);
-        logger.warn('Falling back to HTTP mode due to SSL read error');
-        
-        // Additional error details
-        if (error.code === 'EACCES') {
-          logger.error('Permission denied. Check file permissions and ownership.');
-        } else if (error.code === 'ENOENT') {
-          logger.error('File not found. Check if SSL files are properly mounted.');
-        }
-      }
-    } else {
-      logger.warn('SSL certificates not found, running in HTTP mode');
-      if (!keyExists) logger.warn(`Key file not found: ${sslKeyPath}`);
-      if (!certExists) logger.warn(`Cert file not found: ${sslCertPath}`);
-      
-      // Log mounted volumes for debugging
-      try {
-        const sslDir = path.dirname(sslKeyPath);
-        if (fs.existsSync(sslDir)) {
-          const files = fs.readdirSync(sslDir);
-          logger.log(`Contents of ${sslDir}:`, files);
-        } else {
-          logger.warn(`SSL directory ${sslDir} does not exist`);
-        }
-      } catch (error) {
-        logger.error(`Error checking SSL directory: ${error.message}`);
-      }
-    }
-
+    // Disable SSL configuration for HTTP-only mode
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
       new FastifyAdapter({
@@ -105,14 +44,15 @@ async function bootstrap() {
         trustProxy: true,
         bodyLimit: 10 * 1024 * 1024, // 10MB
         ignoreTrailingSlash: true,
-        disableRequestLogging: false,
-        https: httpsOptions
+        disableRequestLogging: false
       }),
       {
         logger: ['log', 'error', 'warn', 'debug', 'verbose'] as LogLevel[],
         bufferLogs: true,
         cors: {
-          origin: ['http://localhost:8088', 'http://82.208.20.16:8088', 'http://ishswami.in', 'http://api.ishswami.in'],
+          origin: process.env.NODE_ENV === 'production' 
+            ? ['http://82.208.20.16:8088', 'http://ishswami.in', 'http://api.ishswami.in']
+            : ['http://localhost:8088'],
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
           credentials: true,
