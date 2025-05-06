@@ -26,6 +26,14 @@ API_CONF="api.conf"
 FRONTEND_CONF="frontend.conf"
 API_IP="172.18.0.5"  # Static IP for API container
 
+# Function to clean up existing configurations
+cleanup_configs() {
+    echo -e "${YELLOW}Cleaning up existing Nginx configurations...${NC}"
+    sudo rm -f ${NGINX_CONF_DIR}/*.conf
+    sudo rm -f ${NGINX_CONF_DIR}/.conf.*
+    echo -e "${GREEN}Cleanup completed${NC}"
+}
+
 # Function to check API health
 check_api_health() {
     local endpoint=$1
@@ -170,6 +178,9 @@ set_permissions() {
 main() {
     # Create required directories
     sudo mkdir -p ${NGINX_CONF_DIR}
+    
+    # Clean up existing configurations
+    cleanup_configs
     
     # Set initial permissions
     set_permissions
