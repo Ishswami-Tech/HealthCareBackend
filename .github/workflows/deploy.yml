@@ -126,11 +126,23 @@ jobs:
 
       - name: Fix file permissions
         run: |
-          chmod +x nginx/deploy-nginx.sh
-          git add nginx/deploy-nginx.sh
+          # Make scripts executable and verify their existence
+          echo "Checking and setting permissions for deployment scripts..."
+          for script in nginx/deploy-nginx.sh scripts/set-permissions.sh; do
+            if [ -f "$script" ]; then
+              echo "Making $script executable..."
+              chmod +x "$script"
+              git add "$script"
+            else
+              echo "Error: $script not found!"
+              ls -la $(dirname "$script")
+              exit 1
+            fi
+          done
+
           git config --global user.email "github-actions@github.com"
           git config --global user.name "GitHub Actions"
-          git commit -m "chore: Make deploy-nginx.sh executable" || true
+          git commit -m "chore: Make deployment scripts executable" || true
 
       - name: Create backup and cleanup
         uses: appleboy/ssh-action@master
@@ -145,6 +157,9 @@ jobs:
             # Create backup directory with timestamp
             timestamp=$(date +%Y%m%d_%H%M%S)
             mkdir -p backups/$timestamp
+
+            # Ensure scripts directory exists
+            mkdir -p current/scripts
 
             # Stop and backup current deployment if it exists
             if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
@@ -276,6 +291,34 @@ jobs:
             chmod 755 HealthCareBackend/scripts
 
             echo "All permissions set successfully"
+
+      - name: Copy and verify deployment scripts
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ env.DEPLOY_PATH }}
+
+            echo "Verifying deployment scripts..."
+            for script in "nginx/deploy-nginx.sh" "scripts/set-permissions.sh"; do
+              script_path="current/$script"
+              script_dir=$(dirname "$script_path")
+              
+              # Ensure directory exists
+              mkdir -p "$script_dir"
+              
+              # Check if script exists and is executable
+              if [ -f "$script_path" ]; then
+                echo "Verifying permissions for $script_path"
+                chmod +x "$script_path"
+                ls -la "$script_path"
+              else
+                echo "Warning: $script_path not found"
+              fi
+            done
 
       - name: Deploy to server
         uses: appleboy/ssh-action@master
