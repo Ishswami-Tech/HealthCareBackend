@@ -32,14 +32,10 @@ RUN npm run build
 FROM node:20-alpine AS production
 
 # Install necessary tools in a single layer
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ wget openssl ca-certificates && \
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ wget && \
     rm -rf /var/cache/apk/*
 
 WORKDIR /app
-
-# Create SSL directories with proper permissions
-RUN mkdir -p /app/ssl /etc/nginx/ssl && \
-    chmod 755 /app/ssl /etc/nginx/ssl
 
 # Install npm@11.3.0 globally
 RUN npm install -g npm@11.3.0
@@ -66,7 +62,7 @@ ENV PORT=8088
 EXPOSE 8088
 EXPOSE 5555
 
-# Health check (using HTTP since SSL termination is handled by Nginx)
+# Health check (using HTTP)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
