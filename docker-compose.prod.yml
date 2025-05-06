@@ -20,9 +20,9 @@ services:
       NODE_ENV: production
       CORS_ORIGIN: "*"
       FRONTEND_URL: http://ishswami.in
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@172.18.0.2:${POSTGRES_PORT:-5432}/userdb?schema=public
-      REDIS_HOST: 172.18.0.3
-      REDIS_PORT: ${REDIS_PORT:-6379}
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       TRUST_PROXY: 1
       PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
       HOST: 0.0.0.0
@@ -48,10 +48,8 @@ services:
     volumes:
       - ./logs:/app/logs
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - postgres
+      - redis
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:${API_PORT:-8088}/health"]
@@ -76,11 +74,10 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: userdb
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./src/shared/database/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       app-network:
         ipv4_address: 172.18.0.2
@@ -89,6 +86,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -103,7 +101,7 @@ services:
   redis:
     image: redis:7
     container_name: latest-redis
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
@@ -116,6 +114,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -140,7 +139,7 @@ services:
     ports:
       - "8082:8081"
     environment:
-      REDIS_HOSTS: local:redis:6379:0:${REDIS_PASSWORD}
+      REDIS_HOSTS: local:redis:6379
     depends_on:
       - redis
     networks:
@@ -151,7 +150,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     deploy:
       resources:
         limits:

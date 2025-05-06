@@ -249,12 +249,23 @@ jobs:
             ln -sfn releases/${{ github.sha }} current
 
             echo "Deployment completed successfully!"
-            echo "API should be accessible at http://api.ishswami.in:8088"
-            echo "Redis Commander should be accessible at http://api.ishswami.in:8082"
+            echo "API should be accessible at http://localhost:8088 or http://${{ env.SERVER_IP }}:8088"
+            echo "Redis Commander should be accessible at http://localhost:8082 or http://${{ env.SERVER_IP }}:8082"
 
             # Test API health
             echo "Testing API health..."
-            curl -v http://api.ishswami.in:8088/health
+            curl -v http://localhost:8088/health
+
+            echo "All services are healthy!"
+            
+            # Display access information
+            echo "============================================="
+            echo "ACCESS INFORMATION"
+            echo "============================================="
+            echo "API is accessible at: http://${{ env.SERVER_IP }}:8088"
+            echo "Redis Commander is accessible at: http://${{ env.SERVER_IP }}:8082"
+            echo "If using DNS, update your records to point to ${{ env.SERVER_IP }}"
+            echo "============================================="
 
   post-deployment-verification:
     needs: deploy
@@ -282,7 +293,7 @@ jobs:
             echo "Verifying application health..."
 
             # Check if API is responding at all
-            if ! curl -s http://api.ishswami.in:8088/health > /tmp/health_response; then
+            if ! curl -s http://localhost:8088/health > /tmp/health_response; then
               echo "Error: API health endpoint unreachable"
               docker logs latest-api --tail 50
               exit 1
@@ -303,7 +314,7 @@ jobs:
 
             # Check Redis Commander
             echo "Checking Redis Commander..."
-            if ! curl -s http://api.ishswami.in:8082 | grep -q "Redis Commander"; then
+            if ! curl -s http://localhost:8082 | grep -q "Redis Commander"; then
               echo "Error: Redis Commander health check failed"
               exit 1
             fi
@@ -323,16 +334,30 @@ jobs:
             echo "All services are healthy!"
 
       - name: Update deployment status
-        if: always()
+        if: success()
         uses: actions/github-script@v6
         with:
           script: |
-            console.log("Updating deployment status");
+            console.log("Updating deployment status to success");
             github.rest.repos.createDeploymentStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: job.status == "success" ? "success" : "failure",
+              state: "success",
+              environment: "production"
+            })
+            
+      - name: Update deployment status failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            console.log("Updating deployment status to failure");
+            github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: "failure",
               environment: "production"
             })
 
@@ -387,7 +412,7 @@ jobs:
                 attempt=1
                 max_attempts=30
                 while [ $attempt -le $max_attempts ]; do
-                  curl -s http://api.ishswami.in:8088/health > /tmp/health_response
+                  curl -s http://localhost:8088/health > /tmp/health_response
                   if grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\"" /tmp/health_response; then
                     echo "API service is healthy after rollback"
                     echo "Response: $(cat /tmp/health_response)"
@@ -417,15 +442,29 @@ jobs:
             fi
 
       - name: Update deployment status
-        if: always()
+        if: success()
         uses: actions/github-script@v6
         with:
           script: |
-            console.log("Updating deployment status");
+            console.log("Updating deployment status to success");
             github.rest.repos.createDeploymentStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
-              state: job.status == "success" ? "success" : "failure",
+              state: "success",
+              environment: "production"
+            })
+            
+      - name: Update deployment status failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            console.log("Updating deployment status to failure");
+            github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.create-deployment.outputs.deployment_id }},
+              state: "failure",
               environment: "production"
             })
