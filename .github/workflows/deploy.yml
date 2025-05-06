@@ -249,22 +249,15 @@ jobs:
           echo "Preparing files for deployment..."
           echo "Current directory: $PWD"
           echo "GitHub workspace: $GITHUB_WORKSPACE"
-          ls -la
 
           # Create a temporary deployment directory
+          rm -rf deploy_temp
           mkdir -p deploy_temp
 
-          # Check if we're in the repository root or HealthCareBackend directory
-          if [ -d "HealthCareBackend" ]; then
-            echo "Copying files from repository root..."
-            cp -r HealthCareBackend/* deploy_temp/
-            if [ -f "docker-compose.prod.yml" ]; then
-              cp docker-compose.prod.yml deploy_temp/
-            fi
-          else
-            echo "Copying files from current directory..."
-            cp -r * deploy_temp/
-          fi
+          # Copy required directories and files
+          echo "Copying deployment files..."
+          cp -r nginx scripts src deploy_temp/
+          cp docker-compose.prod.yml .env.production Dockerfile package*.json tsconfig*.json deploy_temp/
 
           # Verify the copied files
           echo "Verifying copied files:"
@@ -285,6 +278,8 @@ jobs:
           find deploy_temp -type f -name "*.sh" -exec chmod +x {} \;
 
           echo "Deployment files prepared successfully"
+          echo "Contents of deploy_temp/scripts:"
+          ls -la deploy_temp/scripts/
 
       - name: Copy deployment files
         uses: appleboy/scp-action@master
