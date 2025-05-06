@@ -13,14 +13,13 @@ services:
     container_name: latest-api
     hostname: api
     ports:
-      - "${API_PORT:-8088}:${API_PORT:-8088}"
-      - "5555:5555"
+      - "80:${API_PORT:-8088}"  # Expose directly on port 80
     env_file:
       - .env.production
     environment:
       NODE_ENV: production
       CORS_ORIGIN: "*"
-      FRONTEND_URL: http://${FRONTEND_DOMAIN}
+      FRONTEND_URL: http://ishswami.in
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@172.18.0.2:${POSTGRES_PORT:-5432}/userdb?schema=public
       REDIS_HOST: 172.18.0.3
       REDIS_PORT: ${REDIS_PORT:-6379}
@@ -38,7 +37,8 @@ services:
     networks:
       app-network:
         ipv4_address: 172.18.0.5
-        aliases: []
+        aliases:
+          - api.ishswami.in
     dns: []  # Disable DNS resolution
     extra_hosts:
       - "api:172.18.0.5"
@@ -148,7 +148,7 @@ services:
     container_name: latest-redis-commander
     hostname: redis-commander
     ports:
-      - "${REDIS_COMMANDER_PORT:-8082}:8081"
+      - "8082:8081"
     environment:
       - REDIS_HOSTS=172.18.0.3:6379
       - HTTP_USER=${REDIS_COMMANDER_USER:-admin}
@@ -183,3 +183,4 @@ volumes:
 networks:
   app-network:
     name: app-network
+    external: true
