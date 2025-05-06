@@ -148,11 +148,37 @@ verify_config() {
     fi
 }
 
+# Function to verify certificate expiry
+verify_cert_expiry() {
+    local cert_file=$1
+    local domain=$2
+    local expiry_date
+    local current_date
+    local days_remaining
+    
+    echo -e "${YELLOW}Checking certificate expiry for ${domain}...${NC}"
+    
+    expiry_date=$(openssl x509 -in "$cert_file" -noout -enddate | cut -d= -f2)
+    current_date=$(date +%s)
+    expiry_timestamp=$(date -d "$expiry_date" +%s)
+    days_remaining=$(( ($expiry_timestamp - $current_date) / 86400 ))
+    
+    if [ $days_remaining -lt 30 ]; then
+        echo -e "${RED}Warning: Certificate for ${domain} will expire in ${days_remaining} days${NC}"
+        echo -e "${YELLOW}Please renew your certificate at Cloudflare Dashboard > SSL/TLS > Origin Server${NC}"
+        return 1
+    else
+        echo -e "${GREEN}Certificate for ${domain} is valid for ${days_remaining} days${NC}"
+        return 0
+    fi
+}
+
 # Function to check if SSL certificate exists
 check_ssl_cert() {
     local domain=$1
     local cert_file="ssl/${domain}.crt"
     local key_file="ssl/${domain}.key"
+    local chain_file="ssl/${domain}.chain.crt"
     
     if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ]; then
         echo -e "${YELLOW}Warning: SSL certificates for ${domain} not found in ssl directory${NC}"
@@ -165,7 +191,15 @@ check_ssl_cert() {
         echo -e "  3. Save the certificate and private key in the ssl directory"
         return 1
     fi
-    return 0
+    
+    # Verify certificate format and expiry
+    if ! openssl x509 -in "$cert_file" -text -noout > /dev/null 2>&1; then
+        echo -e "${RED}Error: Invalid certificate format for ${domain}${NC}"
+        return 1
+    fi
+    
+    verify_cert_expiry "$cert_file" "$domain"
+    return $?
 }
 
 # Function to download and create certificate chain
@@ -174,21 +208,60 @@ create_certificate_chain() {
     local cert_file="${SSL_DIR}/${domain}.crt"
     local chain_file="${SSL_DIR}/${domain}.chain.crt"
     local root_cert="${SSL_DIR}/origin_ca_root.pem"
+    local root_cert_url="https://developers.cloudflare.com/ssl/static/origin_ca_rsa_root.pem"
+    local backup_root_cert_url="https://cacerts.digicert.com/CloudFlareIncRSACA.crt"
     
     echo -e "${YELLOW}Creating certificate chain for ${domain}...${NC}"
     
     # Download CloudFlare root certificate if not exists
     if [ ! -f "$root_cert" ]; then
         echo -e "${YELLOW}Downloading CloudFlare root certificate...${NC}"
-        curl -s -o "$root_cert" https://developers.cloudflare.com/ssl/static/origin_ca_rsa_root.pem
+        if ! curl -s -o "$root_cert" "$root_cert_url"; then
+            echo -e "${YELLOW}Primary download failed, trying backup URL...${NC}"
+            if ! curl -s -o "$root_cert" "$backup_root_cert_url"; then
+                echo -e "${RED}Error: Failed to download CloudFlare root certificate${NC}"
+                return 1
+            fi
+        fi
         sudo chmod 644 "$root_cert"
+    fi
+    
+    # Verify root certificate
+    if ! openssl x509 -in "$root_cert" -text -noout > /dev/null 2>&1; then
+        echo -e "${RED}Error: Invalid root certificate${NC}"
+        echo -e "${YELLOW}Attempting to re-download root certificate...${NC}"
+        rm -f "$root_cert"
+        if ! curl -s -o "$root_cert" "$root_cert_url"; then
+            curl -s -o "$root_cert" "$backup_root_cert_url"
+        fi
+        sudo chmod 644 "$root_cert"
+        
+        if ! openssl x509 -in "$root_cert" -text -noout > /dev/null 2>&1; then
+            echo -e "${RED}Error: Root certificate verification failed${NC}"
+            return 1
+        fi
     fi
     
     # Create certificate chain
     if [ -f "$cert_file" ] && [ -f "$root_cert" ]; then
         echo -e "${YELLOW}Creating certificate chain for ${domain}...${NC}"
+        # Create chain with proper order
         cat "$cert_file" "$root_cert" > "$chain_file"
         sudo chmod 644 "$chain_file"
+        
+        # Verify the chain
+        if openssl verify -CAfile "$root_cert" "$chain_file"; then
+            echo -e "${GREEN}Certificate chain verified successfully for ${domain}${NC}"
+            # Verify OCSP stapling will work
+            if openssl x509 -in "$chain_file" -text -noout | grep -q "OCSP"; then
+                echo -e "${GREEN}OCSP stapling is supported${NC}"
+            else
+                echo -e "${YELLOW}Warning: OCSP stapling may not be supported${NC}"
+            fi
+        else
+            echo -e "${RED}Error: Certificate chain verification failed for ${domain}${NC}"
+            return 1
+        fi
     else
         echo -e "${RED}Error: Required certificates not found for ${domain}${NC}"
         return 1
@@ -300,86 +373,66 @@ install_required_packages() {
     fi
 }
 
-# Function to deploy Nginx configuration
-deploy_nginx_config() {
-    echo -e "${YELLOW}Deploying Nginx configuration...${NC}"
+# Function to set proper permissions
+set_permissions() {
+    echo -e "${YELLOW}Setting proper permissions for all files and directories...${NC}"
     
-    # Create backup of existing configurations
-    local backup_dir="/etc/nginx/conf.d/backup_$(date +%Y%m%d_%H%M%S)"
-    sudo mkdir -p "$backup_dir"
-    sudo cp -f /etc/nginx/conf.d/*.conf "$backup_dir/" 2>/dev/null || true
+    # Set permissions for Nginx configuration files
+    sudo chmod 644 ${NGINX_CONF_DIR}/*.conf
+    sudo chown root:root ${NGINX_CONF_DIR}/*.conf
     
-    # Remove all existing configuration files
-    echo -e "${YELLOW}Removing existing configuration files...${NC}"
-    sudo rm -f "${NGINX_CONF_DIR}"/*.conf
+    # Set permissions for SSL files
+    sudo chmod 600 ${SSL_DIR}/*.key
+    sudo chmod 644 ${SSL_DIR}/*.crt
+    sudo chmod 644 ${SSL_DIR}/*.pem
+    sudo chmod 644 ${SSL_DIR}/*.chain.crt
     
-    # Deploy common configuration first
-    echo -e "${YELLOW}Deploying common configuration...${NC}"
-    sudo cp -f "${TEMPLATE_DIR}/common.conf" "${NGINX_CONF_DIR}/common.conf"
-    sudo chown root:root "${NGINX_CONF_DIR}/common.conf"
-    sudo chmod 644 "${NGINX_CONF_DIR}/common.conf"
+    # Set directory permissions
+    sudo chmod 755 ${NGINX_CONF_DIR}
+    sudo chmod 700 ${SSL_DIR}
+    sudo chown -R root:root ${SSL_DIR}
     
-    # Deploy API configuration
-    echo -e "${YELLOW}Deploying API configuration...${NC}"
-    apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_CONF}"
-    verify_config "${NGINX_CONF_DIR}/${API_CONF}"
+    echo -e "${GREEN}Permissions set successfully${NC}"
+}
+
+# Main script execution
+main() {
+    # Create required directories
+    sudo mkdir -p ${NGINX_CONF_DIR}
+    sudo mkdir -p ${SSL_DIR}
     
-    # Deploy frontend configuration
-    echo -e "${YELLOW}Deploying frontend configuration...${NC}"
-    apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
-    verify_config "${NGINX_CONF_DIR}/${FRONTEND_CONF}"
+    # Set initial permissions
+    set_permissions
     
-    # Test Nginx configuration
-    if ! sudo nginx -t; then
-        echo -e "${RED}Nginx configuration test failed${NC}"
-        # Restore from backup
-        sudo cp -f "$backup_dir"/*.conf "${NGINX_CONF_DIR}/" 2>/dev/null || true
-        exit 1
-    fi
+    # Continue with existing deployment steps...
+    for domain in "${DOMAIN}" "${API_DOMAIN}"; do
+        check_ssl_cert "$domain" || exit 1
+        create_certificate_chain "$domain" || exit 1
+    done
     
-    # Check if Nginx is running
-    if ! sudo systemctl is-active --quiet nginx; then
-        echo -e "${YELLOW}Nginx is not running. Starting Nginx...${NC}"
-        sudo systemctl start nginx
-    else
-        echo -e "${YELLOW}Reloading Nginx...${NC}"
+    # Apply templates and verify configuration
+    apply_template "${TEMPLATE_DIR}/${API_CONF}" "${NGINX_CONF_DIR}/${API_DOMAIN}.conf"
+    apply_template "${TEMPLATE_DIR}/${FRONTEND_CONF}" "${NGINX_CONF_DIR}/${DOMAIN}.conf"
+    
+    verify_config "${NGINX_CONF_DIR}/${API_DOMAIN}.conf"
+    verify_config "${NGINX_CONF_DIR}/${DOMAIN}.conf"
+    
+    # Set final permissions
+    set_permissions
+    
+    # Test and reload Nginx
+    if sudo nginx -t; then
+        echo -e "${GREEN}Nginx configuration test passed${NC}"
         sudo systemctl reload nginx
-    fi
-    
-    # Verify Nginx is running
-    if sudo systemctl is-active --quiet nginx; then
-        echo -e "${GREEN}Nginx is running successfully${NC}"
+        echo -e "${GREEN}Nginx reloaded successfully${NC}"
     else
-        echo -e "${RED}Failed to start Nginx${NC}"
+        echo -e "${RED}Nginx configuration test failed${NC}"
         exit 1
     fi
 }
 
-echo -e "${YELLOW}Starting Nginx deployment...${NC}"
-
-# Verify Docker network exists
-echo -e "${YELLOW}Verifying Docker network...${NC}"
-if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
-    echo -e "${RED}Error: Docker network $NETWORK_NAME not found${NC}"
-    exit 1
-fi
-
-# Create deployment directories
-echo -e "${YELLOW}Creating deployment directories...${NC}"
-sudo mkdir -p "$NGINX_CONF_DIR" "$SSL_DIR"
-
-# Install required packages
-install_required_packages
-
-# Check and copy SSL certificates
-check_ssl_cert "$DOMAIN" || echo -e "${YELLOW}Warning: Frontend SSL certificates are missing, but continuing with API deployment${NC}"
-check_ssl_cert "$API_DOMAIN" && copy_ssl_certs "$API_DOMAIN"
-
-# Set up upstream configuration
-create_upstream_config
-
-# Deploy Nginx configuration
-deploy_nginx_config
+# Execute main function
+main
 
 echo -e "${GREEN}Nginx deployment completed successfully${NC}"
 

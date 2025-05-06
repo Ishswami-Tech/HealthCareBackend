@@ -241,6 +241,42 @@ jobs:
           overwrite: true
           rm: false
 
+      - name: Set file permissions
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+
+            # Make scripts executable
+            chmod +x HealthCareBackend/scripts/set-permissions.sh
+            chmod +x HealthCareBackend/nginx/deploy-nginx.sh
+
+            # Set proper permissions for all files
+            ./HealthCareBackend/scripts/set-permissions.sh
+
+            # Set proper permissions for Nginx configuration files
+            chmod 644 HealthCareBackend/nginx/conf.d/*.conf
+            chmod 644 HealthCareBackend/nginx/nginx.conf
+
+            # Set proper permissions for SSL files
+            chmod 600 HealthCareBackend/nginx/ssl/*.key
+            chmod 644 HealthCareBackend/nginx/ssl/*.crt
+            chmod 644 HealthCareBackend/nginx/ssl/*.pem
+            chmod 644 HealthCareBackend/nginx/ssl/*.chain.crt
+            chmod 644 HealthCareBackend/nginx/ssl/README.md
+
+            # Set directory permissions
+            chmod 755 HealthCareBackend/nginx/conf.d
+            chmod 700 HealthCareBackend/nginx/ssl
+            chmod 755 HealthCareBackend/nginx
+            chmod 755 HealthCareBackend/scripts
+
+            echo "All permissions set successfully"
+
       - name: Deploy to server
         uses: appleboy/ssh-action@master
         with:
@@ -252,23 +288,12 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
-            # Setup SSL directories with proper permissions
-            sudo mkdir -p /etc/nginx/ssl
-            sudo cp -f /tmp/ssl-temp/* /etc/nginx/ssl/
-            sudo chown -R root:root /etc/nginx/ssl
-            sudo chmod 600 /etc/nginx/ssl/*.key
-            sudo chmod 644 /etc/nginx/ssl/*.crt
+            # Make scripts executable
+            chmod +x HealthCareBackend/scripts/set-permissions.sh
+            chmod +x HealthCareBackend/nginx/deploy-nginx.sh
 
-            # Create necessary directories
-            mkdir -p logs
-            mkdir -p nginx/ssl
-            cp -f /tmp/ssl-temp/* nginx/ssl/
-
-            # Set proper permissions
-            chmod -R 755 logs
-            chmod -R 755 nginx/ssl
-            chmod 600 nginx/ssl/*.key
-            chmod 644 nginx/ssl/*.crt
+            # Set proper permissions for all files
+            ./HealthCareBackend/scripts/set-permissions.sh
 
             # Create or update network
             if ! docker network inspect ${{ env.NETWORK_NAME }} >/dev/null 2>&1; then
