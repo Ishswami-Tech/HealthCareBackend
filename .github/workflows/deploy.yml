@@ -288,11 +288,31 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
+            echo "Current directory: $(pwd)"
+            echo "Listing files in scripts directory:"
+            ls -la HealthCareBackend/scripts/
+
             # Make scripts executable
-            chmod +x HealthCareBackend/scripts/set-permissions.sh
-            chmod +x HealthCareBackend/nginx/deploy-nginx.sh
+            if [ -f "HealthCareBackend/scripts/set-permissions.sh" ]; then
+              echo "Making set-permissions.sh executable..."
+              chmod +x HealthCareBackend/scripts/set-permissions.sh
+            else
+              echo "Error: set-permissions.sh not found in expected location"
+              echo "Searching for the script..."
+              find . -name "set-permissions.sh"
+              exit 1
+            fi
+
+            if [ -f "HealthCareBackend/nginx/deploy-nginx.sh" ]; then
+              echo "Making deploy-nginx.sh executable..."
+              chmod +x HealthCareBackend/nginx/deploy-nginx.sh
+            else
+              echo "Error: deploy-nginx.sh not found"
+              exit 1
+            fi
 
             # Set proper permissions for all files
+            echo "Running set-permissions.sh..."
             ./HealthCareBackend/scripts/set-permissions.sh
 
             # Create or update network
