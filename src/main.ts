@@ -286,7 +286,7 @@ async function bootstrap() {
 
     // Configure Swagger
     const apiUrl = configService.get('API_URL');
-    const port = configService.get('VIRTUAL_PORT') || 8088;
+    const port = configService.get('PORT') || configService.get('VIRTUAL_PORT') || 8088;
 
     const config = new DocumentBuilder()
       .setTitle('Healthcare API')
@@ -301,24 +301,30 @@ async function bootstrap() {
 
     // Start the server
     const host = '0.0.0.0';
-    await app.listen(port, host);
     
-    // Log application startup information
-    const startupInfo = {
-      apiUrl: apiUrl || `http://${host}:${port}`,
-      swaggerUrl: `${apiUrl}/docs || http://${host}:${port}/docs`,
-      bullBoardUrl: `${apiUrl}/queue-dashboard || http://${host}:${port}/queue-dashboard`,
-      websocketUrl: `ws://${host}:${port}/socket.io`,
-      environment: process.env.NODE_ENV || 'development'
-    };
+    try {
+      await app.listen(port, host);
+      
+      // Log application startup information
+      const startupInfo = {
+        apiUrl: apiUrl || `http://${host}:${port}`,
+        swaggerUrl: `${apiUrl}/docs || http://${host}:${port}/docs`,
+        bullBoardUrl: `${apiUrl}/queue-dashboard || http://${host}:${port}/queue-dashboard`,
+        websocketUrl: `ws://${host}:${port}/socket.io`,
+        environment: process.env.NODE_ENV || 'development'
+      };
 
-    await loggingService?.log(
-      LogType.SYSTEM,
-      AppLogLevel.INFO,
-      'Application started successfully',
-      'Bootstrap',
-      startupInfo
-    );
+      await loggingService?.log(
+        LogType.SYSTEM,
+        AppLogLevel.INFO,
+        'Application started successfully',
+        'Bootstrap',
+        startupInfo
+      );
+    } catch (listenError) {
+      logger.error(`Failed to start server on ${host}:${port}:`, listenError);
+      throw new Error(`Server startup failed: ${listenError.message}`);
+    }
 
   } catch (error) {
     // Log the error using both the logger and logging service if available
@@ -329,11 +335,12 @@ async function bootstrap() {
         await loggingService.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
-          'Failed to start application',
+          `Failed to start application: ${error.message}`,
           'Bootstrap',
           { 
             error: error instanceof Error ? error.message : 'Unknown error',
-            stack: error instanceof Error ? error.stack : 'No stack trace available'
+            stack: error instanceof Error ? error.stack : 'No stack trace available',
+            details: error
           }
         );
       } catch (logError) {
