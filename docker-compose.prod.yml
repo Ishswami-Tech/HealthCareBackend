@@ -13,7 +13,7 @@ services:
     container_name: latest-api
     hostname: api
     ports:
-      - "8088:${API_PORT:-8088}"  # Changed from port 80 to 8088 to avoid conflicts
+      - "${API_PORT:-8088}:${API_PORT:-8088}"  # Use environment variable with fallback
     env_file:
       - .env.production
     environment:
@@ -33,7 +33,6 @@ services:
       NPM_CONFIG_LOGLEVEL: error
     expose:
       - "${API_PORT:-8088}"
-      - "5555"
     networks:
       app-network:
         ipv4_address: 172.18.0.5
@@ -48,8 +47,10 @@ services:
     volumes:
       - ./logs:/app/logs
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:${API_PORT:-8088}/health"]
