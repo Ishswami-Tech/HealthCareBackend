@@ -85,12 +85,34 @@ export class AppController {
         }
       ];
 
-      const viewsPath = join(process.cwd(), 'src/views/dashboard.html');
-      let template = readFileSync(viewsPath, 'utf8');
-      
+      // Try multiple possible paths for the template
+      const possiblePaths = [
+        join(__dirname, '..', 'src', 'views', 'dashboard.html'),
+        join(__dirname, 'views', 'dashboard.html'),
+        join(process.cwd(), 'src', 'views', 'dashboard.html'),
+        join(process.cwd(), 'dist', 'views', 'dashboard.html')
+      ];
+
+      let template = null;
+      let usedPath = null;
+
+      for (const path of possiblePaths) {
+        try {
+          template = readFileSync(path, 'utf8');
+          usedPath = path;
+          break;
+        } catch (err) {
+          continue;
+        }
+      }
+
+      if (!template) {
+        throw new Error('Dashboard template not found in any of the expected locations');
+      }
+
       // Replace template variables
       template = template.replace('{{title}}', 'Healthcare API Dashboard');
-      template = template.replace('{{services}}', JSON.stringify(services));
+      template = template.replace('{{{services}}}', JSON.stringify(services));
       
       res.header('Content-Type', 'text/html');
       return res.send(template);
@@ -98,6 +120,12 @@ export class AppController {
       console.error('Error serving dashboard:', error);
       console.log('Current directory:', process.cwd());
       console.log('__dirname:', __dirname);
+      console.log('Tried paths:', [
+        join(__dirname, '..', 'src', 'views', 'dashboard.html'),
+        join(__dirname, 'views', 'dashboard.html'),
+        join(process.cwd(), 'src', 'views', 'dashboard.html'),
+        join(process.cwd(), 'dist', 'views', 'dashboard.html')
+      ]);
       return res.send('Error loading dashboard. Please check server logs.');
     }
   }
