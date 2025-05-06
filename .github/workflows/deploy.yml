@@ -247,24 +247,44 @@ jobs:
       - name: Prepare deployment files
         run: |
           echo "Preparing files for deployment..."
-          # Ensure we're in the correct directory
-          cd ${{ github.workspace }}
+          echo "Current directory: $PWD"
+          echo "GitHub workspace: $GITHUB_WORKSPACE"
+          ls -la
 
           # Create a temporary deployment directory
           mkdir -p deploy_temp
-          cp -r HealthCareBackend/* deploy_temp/
-          cp docker-compose.prod.yml deploy_temp/
 
-          # Verify files exist
+          # Check if we're in the repository root or HealthCareBackend directory
+          if [ -d "HealthCareBackend" ]; then
+            echo "Copying files from repository root..."
+            cp -r HealthCareBackend/* deploy_temp/
+            if [ -f "docker-compose.prod.yml" ]; then
+              cp docker-compose.prod.yml deploy_temp/
+            fi
+          else
+            echo "Copying files from current directory..."
+            cp -r * deploy_temp/
+          fi
+
+          # Verify the copied files
+          echo "Verifying copied files:"
+          ls -la deploy_temp/
+
+          if [ ! -d "deploy_temp/scripts" ]; then
+            echo "Error: scripts directory not found"
+            exit 1
+          fi
+
           if [ ! -f "deploy_temp/scripts/set-permissions.sh" ]; then
             echo "Error: set-permissions.sh not found in prepared files"
-            ls -la deploy_temp/scripts/
+            find . -name "set-permissions.sh"
             exit 1
           fi
 
           # Make scripts executable before copying
-          chmod +x deploy_temp/scripts/set-permissions.sh
-          chmod +x deploy_temp/nginx/deploy-nginx.sh
+          find deploy_temp -type f -name "*.sh" -exec chmod +x {} \;
+
+          echo "Deployment files prepared successfully"
 
       - name: Copy deployment files
         uses: appleboy/scp-action@master
