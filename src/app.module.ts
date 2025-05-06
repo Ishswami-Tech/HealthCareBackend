@@ -28,7 +28,31 @@ import { AppointmentSocketModule } from './services/appointments/appointment-soc
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: process.env.NODE_ENV === 'production' 
+        ? '.env.production' 
+        : '.env.development',
       load: [configuration],
+      expandVariables: true,
+      cache: true,
+      validate: (config) => {
+        // Add required environment variables here
+        const required = [
+          'API_URL',
+          'SWAGGER_URL',
+          'BULL_BOARD_URL',
+          'SOCKET_URL',
+          'REDIS_COMMANDER_URL',
+          'PRISMA_STUDIO_URL',
+          'PGADMIN_URL',
+        ];
+        
+        for (const key of required) {
+          if (!config[key]) {
+            throw new Error(`Missing required environment variable: ${key}`);
+          }
+        }
+        return config;
+      },
     }),
     EventEmitterModule.forRoot({
       // Add WebSocket specific event emitter config
