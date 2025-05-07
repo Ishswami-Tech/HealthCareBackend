@@ -19,6 +19,9 @@ RUN npm install --legacy-peer-deps --no-audit --no-progress
 # Copy the rest of the application
 COPY . .
 
+# Generate Prisma client before building
+RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
+RUN npx prisma studio --schema=./src/shared/database/prisma/schema.prisma
 # Build the application
 RUN npm run build
 
@@ -35,7 +38,9 @@ RUN apt-get update && apt-get install -y \
 # Copy built application and node_modules from builder stage
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY package.json package-lock.json ./
+COPY src/shared/database/prisma ./src/shared/database/prisma
 COPY .env.production ./.env
 
 # Set environment variables

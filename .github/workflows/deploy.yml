@@ -291,6 +291,10 @@ jobs:
             # Start Docker services
             docker compose -f docker-compose.prod.yml up -d --force-recreate --build
 
+            # Manually generate Prisma client in the API container to ensure it's available
+            echo "Generating Prisma client in API container..."
+            docker exec latest-api sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma" || true
+
             # Wait for containers to be healthy
             echo "Waiting for containers to be healthy..."
             for container in latest-api latest-postgres latest-redis latest-redis-commander; do
