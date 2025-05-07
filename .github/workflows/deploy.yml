@@ -234,20 +234,7 @@ jobs:
               # Create SSL parameters file if it doesn't exist
               if [ ! -f /etc/nginx/ssl-params.conf ]; then
                 echo "Creating SSL parameters file..."
-                sudo tee /etc/nginx/ssl-params.conf > /dev/null << 'EOF'
-                ssl_protocols TLSv1.2 TLSv1.3;
-                ssl_prefer_server_ciphers on;
-                ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
-                ssl_ecdh_curve secp384r1;
-                ssl_session_cache shared:SSL:10m;
-                ssl_session_timeout 1d;
-                ssl_session_tickets off;
-                ssl_dhparam /etc/ssl/certs/nginx/dhparam.pem;
-                add_header X-Frame-Options "SAMEORIGIN" always;
-                add_header X-XSS-Protection "1; mode=block" always;
-                add_header X-Content-Type-Options "nosniff" always;
-                add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-                EOF
+                echo 'ssl_protocols TLSv1.2 TLSv1.3; ssl_prefer_server_ciphers on; ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH"; ssl_ecdh_curve secp384r1; ssl_session_cache shared:SSL:10m; ssl_session_timeout 1d; ssl_session_tickets off; ssl_dhparam /etc/ssl/certs/nginx/dhparam.pem; add_header X-Frame-Options "SAMEORIGIN" always; add_header X-XSS-Protection "1; mode=block" always; add_header X-Content-Type-Options "nosniff" always; add_header Referrer-Policy "strict-origin-when-cross-origin" always;' | sudo tee /etc/nginx/ssl-params.conf
               fi
 
               # Check SSL certificate expiration
@@ -300,75 +287,7 @@ jobs:
             echo "Testing Nginx configuration..."
             if ! sudo nginx -t; then
               echo "Nginx configuration test failed, falling back to HTTP-only configuration..."
-              sudo tee /etc/nginx/conf.d/server.conf > /dev/null << EOF
-              # WebSocket configuration
-              map \$http_upgrade \$connection_upgrade {
-                  default upgrade;
-                  '' close;
-              }
-
-              # HTTP server
-              server {
-                  listen 80;
-                  listen [::]:80;
-                  server_name _;
-
-                  location / {
-                      root /var/www/healthcare/frontend/current;
-                      index index.html;
-                      try_files \$uri \$uri.html \$uri/index.html /index.html;
-                      add_header Cache-Control "no-cache, no-store, must-revalidate";
-                  }
-
-                  location /api {
-                      proxy_pass http://127.0.0.1:8088;
-                      proxy_http_version 1.1;
-                      proxy_set_header Upgrade \$http_upgrade;
-                      proxy_set_header Connection \$connection_upgrade;
-                      proxy_set_header Host \$host;
-                      proxy_set_header X-Real-IP \$remote_addr;
-                      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                      proxy_set_header X-Forwarded-Proto \$scheme;
-                      proxy_set_header X-Forwarded-Host \$host;
-                      proxy_set_header X-Forwarded-Port \$server_port;
-                      proxy_buffering off;
-                      proxy_request_buffering off;
-                      proxy_read_timeout 60s;
-                      proxy_connect_timeout 60s;
-                      proxy_send_timeout 60s;
-                  }
-
-                  location /socket.io/ {
-                      proxy_pass http://127.0.0.1:8088;
-                      proxy_http_version 1.1;
-                      proxy_set_header Upgrade \$http_upgrade;
-                      proxy_set_header Connection "upgrade";
-                      proxy_set_header Host \$host;
-                      proxy_cache_bypass \$http_upgrade;
-                      proxy_read_timeout 86400s;
-                      proxy_send_timeout 86400s;
-                      proxy_buffering off;
-                  }
-
-                  location /docs {
-                      proxy_pass http://127.0.0.1:8088/docs;
-                      proxy_http_version 1.1;
-                      proxy_set_header Host \$host;
-                      proxy_cache_bypass \$http_upgrade;
-                      proxy_buffering off;
-                  }
-
-                  location /health {
-                      proxy_pass http://127.0.0.1:8088/health;
-                      proxy_http_version 1.1;
-                      proxy_set_header Host \$host;
-                      proxy_set_header X-Real-IP \$remote_addr;
-                      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                      proxy_set_header X-Forwarded-Proto \$scheme;
-                      access_log off;
-                  }
-              }
-              EOF
+              echo 'map $http_upgrade $connection_upgrade { default upgrade; "" close; } server { listen 80; listen [::]:80; server_name _; location / { root /var/www/healthcare/frontend/current; index index.html; try_files $uri $uri.html $uri/index.html /index.html; add_header Cache-Control "no-cache, no-store, must-revalidate"; } location /api { proxy_pass http://127.0.0.1:8088; proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection $connection_upgrade; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-Host $host; proxy_set_header X-Forwarded-Port $server_port; proxy_buffering off; proxy_request_buffering off; proxy_read_timeout 60s; proxy_connect_timeout 60s; proxy_send_timeout 60s; } location /socket.io/ { proxy_pass http://127.0.0.1:8088; proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header Host $host; proxy_cache_bypass $http_upgrade; proxy_read_timeout 86400s; proxy_send_timeout 86400s; proxy_buffering off; } location /docs { proxy_pass http://127.0.0.1:8088/docs; proxy_http_version 1.1; proxy_set_header Host $host; proxy_cache_bypass $http_upgrade; proxy_buffering off; } location /health { proxy_pass http://127.0.0.1:8088/health; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; access_log off; } }' | sudo tee /etc/nginx/conf.d/server.conf
             fi
 
             # Reload Nginx
