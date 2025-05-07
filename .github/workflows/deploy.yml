@@ -18,11 +18,12 @@ env:
   SERVER_USER: ${{ secrets.SERVER_USER }}
   SERVER_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
   DEPLOY_PATH: /var/www/healthcare/backend
-  SERVER_IP: 82.208.20.16
+  SERVER_IP: 84.32.84.16
   DOMAIN: api.ishswami.in
   FRONTEND_DOMAIN: ishswami.in
   SSL_EMAIL: aadeshbhujbal99@gmail.com
   NODE_ENV: production
+  API_URL: https://api.ishswami.in
   API_CONTAINER: latest-api
   POSTGRES_CONTAINER: latest-postgres
   REDIS_CONTAINER: latest-redis
@@ -195,6 +196,13 @@ jobs:
             echo "Configuring hosts file for api.ishswami.in..."
             if ! grep -q "api.ishswami.in" /etc/hosts; then
               echo "127.0.0.1 api.ishswami.in" | sudo tee -a /etc/hosts
+            fi
+
+            # Make sure api.ishswami.in is also registered on the server's public IP
+            echo "Ensuring domain is properly configured on server..."
+            SERVER_IP=$(curl -s ifconfig.me)
+            if ! grep -q "$SERVER_IP api.ishswami.in" /etc/hosts; then
+              echo "$SERVER_IP api.ishswami.in" | sudo tee -a /etc/hosts
             fi
 
             # Handle Docker network
