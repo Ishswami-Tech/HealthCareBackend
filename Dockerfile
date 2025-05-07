@@ -29,12 +29,13 @@ RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma && \
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine AS production
+FROM node:20-alpine as production
 
 # Install necessary tools in a single layer
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ wget && \
+RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ curl wget && \
     rm -rf /var/cache/apk/*
 
+# Set working directory
 WORKDIR /app
 
 # Install npm@11.3.0 globally
@@ -42,6 +43,7 @@ RUN npm install -g npm@11.3.0
 
 # Copy package files
 COPY package*.json ./
+COPY prisma ./prisma/
 
 # Install production dependencies with exact versions
 RUN npm cache clean --force && \
@@ -53,21 +55,34 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY src/shared/database/prisma ./src/shared/database/prisma
 
+# Generate Prisma client
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 # Set environment variables
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=8088
+# Copy built application
+COPY dist ./dist
+COPY .env.production ./.env.production
+
+# Install Prisma CLI globally for studio
+RUN npm install -g prisma
 
 # Expose ports
 EXPOSE 8088
 EXPOSE 5555
 
-# Health check (using HTTP)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=8088
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
 # Start the application
-CMD ["node", "dist/main"]
+CMD ["node", "dist/main.js"]
 
 # Development stage
 FROM node:20-alpine AS development
