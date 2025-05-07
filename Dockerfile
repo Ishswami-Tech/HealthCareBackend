@@ -1,85 +1,55 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
-# Install necessary build tools
-RUN apk add --no-cache python3 make g++ git
+# Install build dependencies for bcrypt and other native modules
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files first for better caching
+COPY package.json package-lock.json ./
 
-# Install npm@11.3.0 globally
-RUN npm install -g npm@11.3.0
-
-# Clear npm cache and remove existing node_modules
-RUN npm cache clean --force && rm -rf node_modules
-
-# Install dependencies with exact versions
+# Install dependencies with explicit handling for bcrypt
 RUN npm install --legacy-peer-deps --no-audit --no-progress
 
-# Copy source code
+# Copy the rest of the application
 COPY . .
-
-# Generate Prisma client
-RUN npx prisma generate --schema=src/shared/database/prisma/schema.prisma && \
-    npx prisma generate --schema=src/shared/database/prisma/tenant.schema.prisma
 
 # Build the application
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine as production
+FROM node:20-slim
 
-# Install necessary tools in a single layer
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ curl wget && \
-    rm -rf /var/cache/apk/*
-
-# Set working directory
 WORKDIR /app
 
-# Install npm@11.3.0 globally
-RUN npm install -g npm@11.3.0
+# Install production dependencies for native modules
+RUN apt-get update && apt-get install -y \
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy package files
-COPY package*.json ./
-
-# Install production dependencies with exact versions
-RUN npm cache clean --force && \
-    npm install --only=production --legacy-peer-deps --no-audit --no-progress
-
-# Copy only necessary files from builder
+# Copy built application and node_modules from builder stage
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY src/shared/database/prisma ./src/shared/database/prisma
+COPY --from=builder /app/node_modules ./node_modules
+COPY package.json package-lock.json ./
+COPY .env.production ./.env
 
-# Generate Prisma client
-ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
-RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 # Set environment variables
 ENV NODE_ENV=production
-ENV HOST=0.0.0.0
-ENV PORT=8088
-COPY .env.production ./.env.production
 
-# Install Prisma CLI globally for studio
-RUN npm install -g prisma
-
-# Expose ports
+# Expose port
 EXPOSE 8088
-EXPOSE 5555
-
-# Set environment variables
-ENV NODE_ENV=production
-ENV PORT=8088
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
 # Start the application
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
