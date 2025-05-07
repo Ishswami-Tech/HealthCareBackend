@@ -43,7 +43,6 @@ RUN npm install -g npm@11.3.0
 
 # Copy package files
 COPY package*.json ./
-COPY prisma ./prisma/
 
 # Install production dependencies with exact versions
 RUN npm cache clean --force && \
@@ -62,8 +61,6 @@ RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=8088
-# Copy built application
-COPY dist ./dist
 COPY .env.production ./.env.production
 
 # Install Prisma CLI globally for studio
