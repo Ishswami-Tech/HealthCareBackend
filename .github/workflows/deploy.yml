@@ -220,24 +220,43 @@ jobs:
 
             # Check if SSL is already configured, otherwise set it up
             echo "Checking SSL configuration..."
-            if [ ! -f /etc/ssl/certs/nginx/nginx-selfsigned.crt ]; then
-              echo "SSL certificates not found, generating new ones..."
-              sudo mkdir -p /etc/ssl/certs/nginx
+            if [ ! -f /etc/letsencrypt/live/${{ env.DOMAIN }}/fullchain.pem ]; then
+              echo "Setting up Let's Encrypt SSL certificates..."
               
-              # Generate SSL certificate
-              sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
-                -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
-                -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
-                -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
+              # Install certbot if not installed
+              if ! command -v certbot &> /dev/null; then
+                echo "Installing certbot..."
+                sudo apt-get update
+                sudo apt-get install -y certbot python3-certbot-nginx
+              fi
               
-              # Set correct permissions
-              sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
-              sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
+              # Get certificates
+              echo "Getting Let's Encrypt certificates..."
+              sudo certbot --nginx --non-interactive --agree-tos --email ${{ env.SSL_EMAIL }} -d ${{ env.DOMAIN }} || {
+                echo "Let's Encrypt failed, falling back to self-signed certificate..."
+                sudo mkdir -p /etc/ssl/certs/nginx
+                
+                # Generate SSL certificate
+                sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
+                  -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
+                  -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
+                  -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
+                  -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
+                
+                # Set correct permissions
+                sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
+                sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
+                
+                # Update Nginx configuration to use self-signed certificates
+                sudo sed -i 's|ssl_certificate /etc/letsencrypt/live/${{ env.DOMAIN }}/fullchain.pem|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt|g' /etc/nginx/conf.d/server.conf
+                sudo sed -i 's|ssl_certificate_key /etc/letsencrypt/live/${{ env.DOMAIN }}/privkey.pem|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key|g' /etc/nginx/conf.d/server.conf
+                
+                echo "Self-signed certificate created as fallback."
+              }
               
-              echo "SSL certificates generated successfully."
+              echo "Let's Encrypt SSL certificates installed successfully."
             else
-              echo "Using existing SSL certificates."
+              echo "Using existing Let's Encrypt certificates."
             fi
 
             # Copy Nginx configuration from the repository
