@@ -136,21 +136,6 @@ export class AppController {
     return res.redirect(redisCommanderUrl);
   }
 
-  @Get('logger')
-  @Public()
-  @ApiOperation({
-    summary: 'Logging Dashboard',
-    description: 'Shows application logs and monitoring information.'
-  })
-  @ApiResponse({
-    status: 302,
-    description: 'Redirects to Logger Dashboard'
-  })
-  async getLogger(@Res() res: FastifyReply) {
-    // Redirect to the dedicated logger managed by LoggingController
-    return res.redirect('/logger');
-  }
-
   private async getRecentLogs(limit: number = 10) {
     try {
       // Use your logging service to get recent logs
