@@ -280,7 +280,16 @@ jobs:
 
             # Start services with fixed container names
             echo "Starting services..."
-            docker compose -f docker-compose.prod.yml up -d --force-recreate
+
+            # Install any required build dependencies for bcrypt
+            echo "Installing build dependencies for native modules..."
+            if ! command -v python3 &> /dev/null || ! command -v g++ &> /dev/null || ! command -v make &> /dev/null; then
+              sudo apt-get update
+              sudo apt-get install -y python3 make g++ build-essential
+            fi
+
+            # Start Docker services
+            docker compose -f docker-compose.prod.yml up -d --force-recreate --build
 
             # Wait for containers to be healthy
             echo "Waiting for containers to be healthy..."
