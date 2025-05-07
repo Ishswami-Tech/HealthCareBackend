@@ -69,7 +69,7 @@ services:
           cpus: '0.5'
           memory: 512M
     command: >
-      sh -c "npx prisma generate &&
+      sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
              npx prisma studio --port 5555 --hostname 0.0.0.0 &
              node dist/main.js"
 
