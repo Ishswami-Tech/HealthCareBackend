@@ -121,6 +121,21 @@ export class AppController {
     }
   }
 
+  @Get('redis-ui')
+  @Public()
+  @ApiOperation({
+    summary: 'Redis Commander',
+    description: 'Redis management interface for monitoring and managing Redis data.'
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to Redis Commander UI'
+  })
+  async getRedisUI(@Res() res: FastifyReply) {
+    const redisCommanderUrl = this.configService.get<string>('REDIS_COMMANDER_URL');
+    return res.redirect(redisCommanderUrl);
+  }
+
   @Get('logger')
   @Public()
   @ApiOperation({
@@ -128,20 +143,12 @@ export class AppController {
     description: 'Shows application logs and monitoring information.'
   })
   @ApiResponse({
-    status: 200,
-    description: 'Logger Dashboard HTML'
+    status: 302,
+    description: 'Redirects to Logger Dashboard'
   })
-  async getLoggerDashboard(@Res() res: FastifyReply) {
-    try {
-      const logs = await this.getRecentLogs(50); // Get more logs for the dedicated page
-      const html = this.generateLoggerHtml('Healthcare API Logger', logs);
-      
-      res.header('Content-Type', 'text/html');
-      return res.send(html);
-    } catch (error) {
-      console.error('Error serving logger dashboard:', error);
-      return res.send('Error loading logger dashboard. Please check server logs.');
-    }
+  async getLogger(@Res() res: FastifyReply) {
+    // Redirect to the dedicated logger managed by LoggingController
+    return res.redirect('/logger');
   }
 
   private async getRecentLogs(limit: number = 10) {
