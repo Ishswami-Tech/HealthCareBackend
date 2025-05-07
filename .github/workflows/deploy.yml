@@ -264,6 +264,12 @@ jobs:
               sudo apt-get install -y certbot python3-certbot-nginx
             else
               echo "Certbot is already installed."
+              # Make sure the nginx plugin is installed
+              if ! sudo certbot plugins | grep -q "nginx"; then
+                echo "Installing certbot-nginx plugin..."
+                sudo apt-get update
+                sudo apt-get install -y python3-certbot-nginx
+              fi
             fi
 
             # Check for Let's Encrypt certificates
@@ -276,20 +282,25 @@ jobs:
                 echo "Let's Encrypt certificate generation failed, creating a fallback self-signed certificate..."
                 sudo mkdir -p /etc/ssl/certs/nginx
                 
-                # Generate self-signed certificate for fallback
+                # Generate a stronger self-signed certificate with proper SANs
+                echo "Generating self-signed certificate..."
+                # Create a simpler command that doesn't require a config file
                 sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
                   -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
                   -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
                   -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=api.ishswami.in" \
-                  -addext "subjectAltName=DNS:api.ishswami.in,IP:${{ env.SERVER_IP }}"
+                  -addext "subjectAltName=DNS:api.ishswami.in,DNS:ishswami.in,IP:${{ env.SERVER_IP }}"
                 
                 # Set correct permissions
                 sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
                 sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
                 
                 # Update Nginx configuration to use self-signed certificates
+                echo "Updating Nginx configuration for self-signed certificates..."
                 sudo sed -i 's|ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt|g' /etc/nginx/conf.d/server.conf
                 sudo sed -i 's|ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key|g' /etc/nginx/conf.d/server.conf
+                sudo sed -i 's|ssl_stapling on|ssl_stapling off|g' /etc/nginx/conf.d/server.conf
+                sudo sed -i 's|ssl_stapling_verify on|# ssl_stapling_verify off|g' /etc/nginx/conf.d/server.conf
                 
                 echo "Using self-signed certificate as fallback."
               }
@@ -360,8 +371,15 @@ jobs:
               # Remove any conflicting configurations
               sudo rm -f /etc/nginx/conf.d/api.ishswami.in.conf
               
-              # Test Nginx configuration before applying
+              # Testing Nginx configuration
               echo "Testing Nginx configuration..."
+              # Temporarily disable ssl_stapling for self-signed certs
+              if [ -f /etc/ssl/certs/nginx/nginx-selfsigned.crt ]; then
+                echo "Using self-signed cert, temporarily disabling ssl_stapling..."
+                sudo sed -i 's/ssl_stapling on/ssl_stapling off/g' /etc/nginx/conf.d/server.conf
+                sudo sed -i 's/ssl_stapling_verify on/# ssl_stapling_verify off/g' /etc/nginx/conf.d/server.conf
+              fi
+              
               if ! sudo nginx -t; then
                 echo "Nginx configuration test failed, check server.conf"
                 exit 1
@@ -385,16 +403,19 @@ jobs:
 
             # Verify HTTP and HTTPS
             echo "Verifying HTTP and HTTPS..."
-            if curl -sI http://localhost | grep -q "301 Moved Permanently"; then
+            # Use -k to ignore SSL certificate validation
+            if curl -sk -I http://localhost | grep -q "301 Moved Permanently"; then
               echo "✅ HTTP redirect works!"
             else
-              echo "⚠️ HTTP redirect check failed"
+              echo "⚠️ HTTP redirect check failed, but continuing..."
+              curl -v http://localhost || true
             fi
 
-            if curl -sIk https://localhost | grep -q "200 OK"; then
+            if curl -sk -I https://localhost | grep -q "200 OK"; then
               echo "✅ HTTPS works!"
             else
-              echo "⚠️ HTTPS check failed"
+              echo "⚠️ HTTPS check failed, but continuing..."
+              curl -vk https://localhost || true
             fi
 
             # Start services with fixed container names
