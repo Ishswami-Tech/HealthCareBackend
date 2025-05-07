@@ -212,76 +212,71 @@ jobs:
               sudo apt-get install -y nginx
             fi
 
-            # Check if SSL is already configured
+            # Ensure required directories exist
+            echo "Setting up directories..."
+            sudo mkdir -p /etc/nginx/conf.d
+            sudo mkdir -p /var/www/healthcare/frontend/current
+            sudo chown -R www-data:www-data /var/www/healthcare
+
+            # Check if SSL is already configured, otherwise set it up
             echo "Checking SSL configuration..."
             if [ ! -f /etc/ssl/certs/nginx/nginx-selfsigned.crt ]; then
-              echo "SSL certificate not found, generating new certificate..."
+              echo "SSL certificates not found, generating new ones..."
               sudo mkdir -p /etc/ssl/certs/nginx
               
-              # Generate a stronger SSL certificate
-              sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
+              # Generate SSL certificate
+              sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
                 -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
                 -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
                 -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
-                -addext "subjectAltName=IP:${{ env.SERVER_IP }}" \
-                -addext "extendedKeyUsage=serverAuth" \
-                -addext "keyUsage=digitalSignature,keyEncipherment"
+                -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
               
-              # Generate stronger DH parameters
-              echo "Generating DH parameters (this may take a few minutes)..."
-              sudo openssl dhparam -out /etc/ssl/certs/nginx/dhparam.pem 4096
-              
-              # Set proper permissions
+              # Set correct permissions
               sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
               sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
-              sudo chmod 644 /etc/ssl/certs/nginx/dhparam.pem
+              
+              echo "SSL certificates generated successfully."
+            else
+              echo "Using existing SSL certificates."
             fi
 
-            # Create SSL parameters file if it doesn't exist
-            if [ ! -f /etc/nginx/ssl-params.conf ]; then
-              echo "Creating SSL parameters file..."
-              echo 'ssl_protocols TLSv1.2 TLSv1.3;
-              ssl_prefer_server_ciphers on;
-              ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
-              ssl_ecdh_curve secp384r1;
-              ssl_session_cache shared:SSL:10m;
-              ssl_session_timeout 1d;
-              ssl_session_tickets off;
-              ssl_dhparam /etc/ssl/certs/nginx/dhparam.pem;
-              add_header X-Frame-Options "SAMEORIGIN" always;
-              add_header X-XSS-Protection "1; mode=block" always;
-              add_header X-Content-Type-Options "nosniff" always;
-              add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-              ssl_stapling on;
-              ssl_stapling_verify on;
-              resolver 8.8.8.8 8.8.4.4 valid=300s;
-              resolver_timeout 5s;' | sudo tee /etc/nginx/ssl-params.conf
-            fi
-
-            # Copy Nginx configuration from the deployment
-            echo "Configuring Nginx..."
+            # Copy Nginx configuration from the repository
+            echo "Updating Nginx configuration..."
             sudo cp -f nginx/conf.d/server.conf /etc/nginx/conf.d/server.conf
 
-            # Remove any existing conflicting configurations
+            # Remove any conflicting configurations
             sudo rm -f /etc/nginx/conf.d/api.ishswami.in.conf
 
-            # Verify Nginx configuration
+            # Create a default index.html if frontend doesn't exist
+            if [ ! -f /var/www/healthcare/frontend/current/index.html ]; then
+              echo "Creating a default index.html..."
+              echo '<html><body><h1>HealthCare API Server</h1><p>API is running. Frontend not deployed yet.</p><p><a href="/health">API Health Check</a></p></body></html>' | sudo tee /var/www/healthcare/frontend/current/index.html
+            fi
+
+            # Test Nginx configuration
             echo "Testing Nginx configuration..."
             if ! sudo nginx -t; then
-              echo "Nginx configuration test failed."
+              echo "Nginx configuration test failed, check server.conf"
               exit 1
             fi
 
-            # Restart Nginx to ensure changes take effect
-            echo "Restarting Nginx..."
-            sudo systemctl restart nginx
+            # Reload Nginx instead of restarting to minimize downtime
+            echo "Reloading Nginx..."
+            sudo systemctl reload nginx || sudo systemctl restart nginx
 
-            # Verify HTTP and HTTPS are working
-            echo "Verifying HTTP configuration..."
-            curl -sI http://localhost | head -n 1 || echo "HTTP check failed"
+            # Verify HTTP and HTTPS
+            echo "Verifying HTTP and HTTPS..."
+            if curl -sI http://localhost | grep -q "301 Moved Permanently"; then
+              echo "✅ HTTP redirect works!"
+            else
+              echo "⚠️ HTTP redirect check failed"
+            fi
 
-            echo "Verifying HTTPS configuration..."
-            curl -sIk https://localhost | head -n 1 || echo "HTTPS check failed"
+            if curl -sIk https://localhost | grep -q "200 OK"; then
+              echo "✅ HTTPS works!"
+            else
+              echo "⚠️ HTTPS check failed"
+            fi
 
             # Start services with fixed container names
             echo "Starting services..."
