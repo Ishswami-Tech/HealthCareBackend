@@ -19,6 +19,7 @@ services:
       BULL_BOARD_URL: /queue-dashboard
       SOCKET_URL: /socket
       REDIS_UI_URL: /redis-ui
+      REDIS_COMMANDER_URL: /redis-ui
       LOGGER_URL: /logger
       PRISMA_STUDIO_URL: /prisma
       PGADMIN_URL: /pgadmin
