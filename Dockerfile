@@ -23,7 +23,7 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM node:20-slim
+FROM node:20-slim AS production
 
 WORKDIR /app
 
