@@ -220,68 +220,68 @@ jobs:
 
             # Check if SSL is already configured, otherwise set it up
             echo "Checking SSL configuration..."
-            if [ ! -f /etc/letsencrypt/live/${{ env.DOMAIN }}/fullchain.pem ]; then
-              echo "Setting up Let's Encrypt SSL certificates..."
+
+            # Use IP-based self-signed certificates instead of domain-based ones
+            if [ ! -f /etc/ssl/certs/nginx/nginx-selfsigned.crt ]; then
+              echo "SSL certificates not found, generating new ones..."
+              sudo mkdir -p /etc/ssl/certs/nginx
               
-              # Install certbot if not installed
-              if ! command -v certbot &> /dev/null; then
-                echo "Installing certbot..."
-                sudo apt-get update
-                sudo apt-get install -y certbot python3-certbot-nginx
-              fi
+              # Generate SSL certificate for IP address
+              sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
+                -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
+                -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
+                -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
+                -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
               
-              # Get certificates
-              echo "Getting Let's Encrypt certificates..."
-              sudo certbot --nginx --non-interactive --agree-tos --email ${{ env.SSL_EMAIL }} -d ${{ env.DOMAIN }} || {
-                echo "Let's Encrypt failed, falling back to self-signed certificate..."
-                sudo mkdir -p /etc/ssl/certs/nginx
-                
-                # Generate SSL certificate
-                sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
-                  -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
-                  -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
-                  -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
-                  -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
-                
-                # Set correct permissions
-                sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
-                sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
-                
-                # Update Nginx configuration to use self-signed certificates
-                sudo sed -i 's|ssl_certificate /etc/letsencrypt/live/${{ env.DOMAIN }}/fullchain.pem|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|ssl_certificate_key /etc/letsencrypt/live/${{ env.DOMAIN }}/privkey.pem|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key|g' /etc/nginx/conf.d/server.conf
-                
-                echo "Self-signed certificate created as fallback."
-              }
+              # Set correct permissions
+              sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
+              sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
               
-              echo "Let's Encrypt SSL certificates installed successfully."
+              echo "Self-signed certificates generated successfully."
             else
-              echo "Using existing Let's Encrypt certificates."
+              echo "Using existing SSL certificates, skipping generation."
             fi
 
-            # Copy Nginx configuration from the repository
-            echo "Updating Nginx configuration..."
-            sudo cp -f nginx/conf.d/server.conf /etc/nginx/conf.d/server.conf
+            # Copy Nginx configuration only if it doesn't exist or if it's different
+            echo "Checking Nginx configuration..."
 
-            # Remove any conflicting configurations
-            sudo rm -f /etc/nginx/conf.d/api.ishswami.in.conf
+            # Create a temporary copy to compare
+            sudo cp -f nginx/conf.d/server.conf /tmp/new_server.conf
+
+            # Update SSL paths in the new config to use self-signed certificates
+            sudo sed -i 's|ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt|g' /tmp/new_server.conf
+            sudo sed -i 's|ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key|g' /tmp/new_server.conf
+
+            # Check if configuration file exists and is different
+            if [ ! -f /etc/nginx/conf.d/server.conf ] || ! sudo diff -q /tmp/new_server.conf /etc/nginx/conf.d/server.conf >/dev/null; then
+              echo "Updating Nginx configuration..."
+              sudo cp -f /tmp/new_server.conf /etc/nginx/conf.d/server.conf
+              
+              # Remove any conflicting configurations
+              sudo rm -f /etc/nginx/conf.d/api.ishswami.in.conf
+              
+              # Test Nginx configuration before applying
+              echo "Testing Nginx configuration..."
+              if ! sudo nginx -t; then
+                echo "Nginx configuration test failed, check server.conf"
+                exit 1
+              fi
+              
+              # Reload Nginx instead of restarting to minimize downtime
+              echo "Reloading Nginx..."
+              sudo systemctl reload nginx || sudo systemctl restart nginx
+            else
+              echo "Nginx configuration unchanged, skipping update."
+            fi
+
+            # Clean up temporary files
+            sudo rm -f /tmp/new_server.conf
 
             # Create a default index.html if frontend doesn't exist
             if [ ! -f /var/www/healthcare/frontend/current/index.html ]; then
               echo "Creating a default index.html..."
               echo '<html><body><h1>HealthCare API Server</h1><p>API is running. Frontend not deployed yet.</p><p><a href="/health">API Health Check</a></p></body></html>' | sudo tee /var/www/healthcare/frontend/current/index.html
             fi
-
-            # Test Nginx configuration
-            echo "Testing Nginx configuration..."
-            if ! sudo nginx -t; then
-              echo "Nginx configuration test failed, check server.conf"
-              exit 1
-            fi
-
-            # Reload Nginx instead of restarting to minimize downtime
-            echo "Reloading Nginx..."
-            sudo systemctl reload nginx || sudo systemctl restart nginx
 
             # Verify HTTP and HTTPS
             echo "Verifying HTTP and HTTPS..."
