@@ -18,7 +18,7 @@ env:
   SERVER_USER: ${{ secrets.SERVER_USER }}
   SERVER_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
   DEPLOY_PATH: /var/www/healthcare/backend
-  SERVER_IP: 84.32.84.16
+  SERVER_IP: 82.208.20.16
   DOMAIN: api.ishswami.in
   FRONTEND_DOMAIN: ishswami.in
   SSL_EMAIL: aadeshbhujbal99@gmail.com
@@ -34,6 +34,25 @@ jobs:
   pre-deployment-check:
     runs-on: ubuntu-latest
     steps:
+      - name: Test SSH connection
+        run: |
+          echo "Testing SSH connection to ${{ env.SERVER_IP }}..."
+          # Create SSH key file
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          # Add server to known hosts and test connection with timeout
+          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
+          if timeout 30s ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} "echo SSH connection successful"; then
+            echo "✅ SSH connection successful"
+          else
+            echo "❌ SSH connection failed"
+            echo "Attempting to ping server..."
+            ping -c 4 ${{ env.SERVER_IP }}
+            exit 1
+          fi
+
       - name: Check domain DNS
         run: |
           echo "Checking DNS for ${{ env.DOMAIN }}..."
@@ -52,7 +71,13 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
+          debug: true
+          timeout: 60s
+          command_timeout: "30m"
           script: |
+            echo "Testing connection to server..."
+            echo "Current date and time: $(date)"
+            echo "Server IP: $(hostname -I || echo 'hostname command not available')"
             echo "Checking system resources..."
             df -h
             free -m
@@ -108,6 +133,9 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
+          debug: true
+          timeout: 60s
+          script_stop: true
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
@@ -229,25 +257,53 @@ jobs:
             # Check if SSL is already configured, otherwise set it up
             echo "Checking SSL configuration..."
 
-            # Use IP-based self-signed certificates instead of domain-based ones
-            if [ ! -f /etc/ssl/certs/nginx/nginx-selfsigned.crt ]; then
-              echo "SSL certificates not found, generating new ones..."
-              sudo mkdir -p /etc/ssl/certs/nginx
+            # Check for Let's Encrypt certificates
+            if [ ! -f /etc/letsencrypt/live/api.ishswami.in/fullchain.pem ]; then
+              echo "Let's Encrypt certificates not found, generating new ones..."
               
-              # Generate SSL certificate for IP address
-              sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
-                -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
-                -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
-                -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
-                -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
+              # Install certbot if not installed
+              if ! command -v certbot &> /dev/null; then
+                echo "Installing certbot..."
+                sudo apt-get update
+                sudo apt-get install -y certbot python3-certbot-nginx
+              fi
               
-              # Set correct permissions
-              sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
-              sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
-              
-              echo "Self-signed certificates generated successfully."
+              # Get certificates using DNS validation
+              echo "Getting Let's Encrypt certificates..."
+              sudo certbot --nginx -d api.ishswami.in --non-interactive --agree-tos --email ${{ env.SSL_EMAIL }} || {
+                echo "Let's Encrypt certificate generation failed, creating a fallback self-signed certificate..."
+                sudo mkdir -p /etc/ssl/certs/nginx
+                
+                # Generate self-signed certificate for fallback
+                sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
+                  -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
+                  -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
+                  -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=api.ishswami.in" \
+                  -addext "subjectAltName=DNS:api.ishswami.in,IP:${{ env.SERVER_IP }}"
+                
+                # Set correct permissions
+                sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
+                sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
+                
+                # Update Nginx configuration to use self-signed certificates
+                sudo sed -i 's|ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt|g' /etc/nginx/conf.d/server.conf
+                sudo sed -i 's|ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key|g' /etc/nginx/conf.d/server.conf
+                
+                echo "Using self-signed certificate as fallback."
+              }
             else
-              echo "Using existing SSL certificates, skipping generation."
+              echo "Using existing Let's Encrypt certificates."
+              
+              # Check if certificate renewal is needed (if it expires in less than 30 days)
+              if sudo certbot certificates | grep "VALID:" | grep -q "VALID:"; then
+                EXPIRY_DAYS=$(sudo certbot certificates | grep "VALID:" | sed -n 's/.*VALID: \([0-9]*\) days.*/\1/p')
+                if [ ! -z "$EXPIRY_DAYS" ] && [ "$EXPIRY_DAYS" -lt 30 ]; then
+                  echo "Certificate will expire in $EXPIRY_DAYS days. Attempting renewal..."
+                  sudo certbot renew --quiet
+                else
+                  echo "Certificate valid for $EXPIRY_DAYS days, no renewal needed."
+                fi
+              fi
             fi
 
             # Copy Nginx configuration only if it doesn't exist or if it's different
