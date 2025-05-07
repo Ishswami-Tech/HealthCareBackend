@@ -32,6 +32,7 @@ services:
       SOCKET_HOST: 0.0.0.0
       SOCKET_PORT: ${API_PORT:-8088}
       NPM_CONFIG_LOGLEVEL: error
+      PGADMIN_URL: "not-used"
     expose:
       - "${API_PORT:-8088}"
       - "5555"
