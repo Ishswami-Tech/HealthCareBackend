@@ -257,19 +257,21 @@ jobs:
             # Check if SSL is already configured, otherwise set it up
             echo "Checking SSL configuration..."
 
+            # First, check if certbot is installed, install if not
+            if ! command -v certbot &> /dev/null; then
+              echo "Installing certbot..."
+              sudo apt-get update
+              sudo apt-get install -y certbot python3-certbot-nginx
+            else
+              echo "Certbot is already installed."
+            fi
+
             # Check for Let's Encrypt certificates
             if [ ! -f /etc/letsencrypt/live/api.ishswami.in/fullchain.pem ]; then
               echo "Let's Encrypt certificates not found, generating new ones..."
               
-              # Install certbot if not installed
-              if ! command -v certbot &> /dev/null; then
-                echo "Installing certbot..."
-                sudo apt-get update
-                sudo apt-get install -y certbot python3-certbot-nginx
-              fi
-              
               # Get certificates using DNS validation
-              echo "Getting Let's Encrypt certificates..."
+              echo "Getting Let's Encrypt certificates for the first time..."
               sudo certbot --nginx -d api.ishswami.in --non-interactive --agree-tos --email ${{ env.SSL_EMAIL }} || {
                 echo "Let's Encrypt certificate generation failed, creating a fallback self-signed certificate..."
                 sudo mkdir -p /etc/ssl/certs/nginx
@@ -291,18 +293,52 @@ jobs:
                 
                 echo "Using self-signed certificate as fallback."
               }
+              
+              # Set up automatic renewal if we successfully got certificates
+              if [ -f /etc/letsencrypt/live/api.ishswami.in/fullchain.pem ]; then
+                echo "Setting up auto-renewal for Let's Encrypt certificates..."
+                
+                # Check if renewal cron job already exists
+                if ! sudo crontab -l | grep -q 'certbot renew'; then
+                  # Add cron job for certificate renewal
+                  (sudo crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --post-hook 'systemctl reload nginx'") | sudo crontab -
+                  echo "Added certificate renewal cron job."
+                else
+                  echo "Certificate renewal cron job already exists."
+                fi
+              fi
             else
               echo "Using existing Let's Encrypt certificates."
               
-              # Check if certificate renewal is needed (if it expires in less than 30 days)
-              if sudo certbot certificates | grep "VALID:" | grep -q "VALID:"; then
-                EXPIRY_DAYS=$(sudo certbot certificates | grep "VALID:" | sed -n 's/.*VALID: \([0-9]*\) days.*/\1/p')
-                if [ ! -z "$EXPIRY_DAYS" ] && [ "$EXPIRY_DAYS" -lt 30 ]; then
-                  echo "Certificate will expire in $EXPIRY_DAYS days. Attempting renewal..."
-                  sudo certbot renew --quiet
+              # Check if certificate is valid and not expiring soon
+              CERT_EXPIRY=$(sudo openssl x509 -enddate -noout -in /etc/letsencrypt/live/api.ishswami.in/fullchain.pem | cut -d= -f2)
+              EXPIRY_DATE=$(sudo date -d "$CERT_EXPIRY" +%s)
+              CURRENT_DATE=$(date +%s)
+              DAYS_LEFT=$(( ($EXPIRY_DATE - $CURRENT_DATE) / 86400 ))
+              
+              echo "Certificate expires in $DAYS_LEFT days."
+              
+              # Only attempt renewal if less than 30 days left
+              if [ "$DAYS_LEFT" -lt 30 ]; then
+                echo "Certificate expires soon. Attempting renewal..."
+                sudo certbot renew --quiet
+                
+                # Check if renewal succeeded
+                if [ $? -eq 0 ]; then
+                  echo "Certificate renewal succeeded."
+                  sudo systemctl reload nginx
                 else
-                  echo "Certificate valid for $EXPIRY_DAYS days, no renewal needed."
+                  echo "Certificate renewal failed. Will try again later."
                 fi
+              else
+                echo "Certificate is still valid. No renewal needed."
+              fi
+              
+              # Ensure auto-renewal is set up
+              if ! sudo crontab -l | grep -q 'certbot renew'; then
+                echo "Setting up auto-renewal for existing certificates..."
+                (sudo crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --post-hook 'systemctl reload nginx'") | sudo crontab -
+                echo "Added certificate renewal cron job."
               fi
             fi
 
@@ -410,9 +446,14 @@ jobs:
 
             echo "Deployment completed successfully!"
             echo "API should be accessible at:"
-            echo "HTTPS: https://${{ env.SERVER_IP }}"
-            echo "HTTP: http://${{ env.SERVER_IP }}"
+            echo "HTTPS (Domain): https://api.ishswami.in"
+            echo "HTTP (Domain): http://api.ishswami.in"
+            echo "HTTPS (IP): https://${{ env.SERVER_IP }}"
+            echo "HTTP (IP): http://${{ env.SERVER_IP }}"
             echo "Redis Commander: http://${{ env.SERVER_IP }}:8082"
+            echo "API Documentation: https://api.ishswami.in/docs"
+            echo "Health Check: https://api.ishswami.in/health"
+            echo "============================================="
 
             # Test API health
             echo "Testing API health..."
@@ -423,6 +464,17 @@ jobs:
             # Apply Nginx changes and restart API
             echo "Applying Nginx changes and restarting API..."
             sudo systemctl reload nginx || sudo systemctl restart nginx
+
+            # Set environment variables in the API container for service URLs
+            echo "Updating API environment variables for service URLs..."
+            docker exec latest-api sh -c "echo 'API_URL=https://api.ishswami.in' >> /app/.env"
+            docker exec latest-api sh -c "echo 'PRISMA_STUDIO_URL=https://api.ishswami.in:5555' >> /app/.env"
+            docker exec latest-api sh -c "echo 'REDIS_COMMANDER_URL=http://api.ishswami.in:8082' >> /app/.env"
+            docker exec latest-api sh -c "echo 'PGADMIN_URL=http://api.ishswami.in:8083' >> /app/.env"
+            docker exec latest-api sh -c "echo 'SWAGGER_URL=/docs' >> /app/.env"
+            docker exec latest-api sh -c "echo 'BULL_BOARD_URL=/admin/queues' >> /app/.env"
+
+            # Restart the API container to apply environment changes
             docker restart latest-api
 
             # Wait for the API to be healthy again
@@ -441,9 +493,13 @@ jobs:
             echo "ACCESS INFORMATION"
             echo "============================================="
             echo "API is accessible at:"
-            echo "HTTPS: https://${{ env.SERVER_IP }}"
-            echo "HTTP: http://${{ env.SERVER_IP }}"
+            echo "HTTPS (Domain): https://api.ishswami.in"
+            echo "HTTP (Domain): http://api.ishswami.in"
+            echo "HTTPS (IP): https://${{ env.SERVER_IP }}"
+            echo "HTTP (IP): http://${{ env.SERVER_IP }}"
             echo "Redis Commander: http://${{ env.SERVER_IP }}:8082"
+            echo "API Documentation: https://api.ishswami.in/docs"
+            echo "Health Check: https://api.ishswami.in/health"
             echo "============================================="
 
   post-deployment-verification:
