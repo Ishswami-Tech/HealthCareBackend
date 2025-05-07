@@ -165,7 +165,7 @@ jobs:
 
           # Copy required directories and files
           echo "Copying deployment files..."
-          cp -r src scripts deploy_temp/
+          cp -r src deploy_temp/
           cp docker-compose.prod.yml .env.production Dockerfile package*.json tsconfig*.json deploy_temp/
 
       - name: Copy deployment files
