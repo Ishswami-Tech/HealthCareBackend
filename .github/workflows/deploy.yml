@@ -55,7 +55,7 @@ jobs:
             echo "Checking system resources..."
             df -h
             free -m
-            
+
             # Don't exit if Docker system df fails (first deployment)
             echo "Checking Docker status..."
             docker system df || echo "Docker may not be initialized yet, continuing..."
@@ -204,6 +204,177 @@ jobs:
               docker network create app-network --subnet=172.18.0.0/16
             fi
 
+            # Check if Nginx is installed and configured
+            echo "Checking Nginx installation..."
+            if ! command -v nginx &> /dev/null; then
+              echo "Nginx not found, installing..."
+              sudo apt-get update
+              sudo apt-get install -y nginx
+            fi
+
+            # Check if SSL is already configured
+            echo "Checking SSL configuration..."
+            if [ ! -f /etc/ssl/certs/nginx/nginx-selfsigned.crt ]; then
+              echo "SSL certificate not found, generating new certificate..."
+              sudo mkdir -p /etc/ssl/certs/nginx
+              sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
+                -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
+                -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
+                -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
+              
+              # Generate DH parameters
+              sudo openssl dhparam -out /etc/ssl/certs/nginx/dhparam.pem 2048
+              
+              # Set proper permissions
+              sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
+              sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
+              sudo chmod 644 /etc/ssl/certs/nginx/dhparam.pem
+
+              # Create SSL parameters file if it doesn't exist
+              if [ ! -f /etc/nginx/ssl-params.conf ]; then
+                echo "Creating SSL parameters file..."
+                sudo tee /etc/nginx/ssl-params.conf > /dev/null << 'EOF'
+                ssl_protocols TLSv1.2 TLSv1.3;
+                ssl_prefer_server_ciphers on;
+                ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
+                ssl_ecdh_curve secp384r1;
+                ssl_session_cache shared:SSL:10m;
+                ssl_session_timeout 1d;
+                ssl_session_tickets off;
+                ssl_dhparam /etc/ssl/certs/nginx/dhparam.pem;
+                add_header X-Frame-Options "SAMEORIGIN" always;
+                add_header X-XSS-Protection "1; mode=block" always;
+                add_header X-Content-Type-Options "nosniff" always;
+                add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+                EOF
+              fi
+
+              # Check SSL certificate expiration
+              echo "Checking SSL certificate expiration..."
+              if [ -f /etc/ssl/certs/nginx/nginx-selfsigned.crt ]; then
+                EXPIRY_DATE=$(openssl x509 -enddate -noout -in /etc/ssl/certs/nginx/nginx-selfsigned.crt | cut -d= -f2)
+                EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s)
+                CURRENT_EPOCH=$(date +%s)
+                DAYS_LEFT=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+                
+                if [ $DAYS_LEFT -lt 30 ]; then
+                  echo "SSL certificate expires in $DAYS_LEFT days, renewing..."
+                  sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                    -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
+                    -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
+                    -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
+                    -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
+                  
+                  # Set proper permissions after renewal
+                  sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
+                  sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
+                else
+                  echo "SSL certificate is valid for $DAYS_LEFT days, no renewal needed"
+                fi
+              fi
+            else
+              echo "SSL certificate already exists, checking expiration..."
+              EXPIRY_DATE=$(openssl x509 -enddate -noout -in /etc/ssl/certs/nginx/nginx-selfsigned.crt | cut -d= -f2)
+              EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s)
+              CURRENT_EPOCH=$(date +%s)
+              DAYS_LEFT=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+              
+              if [ $DAYS_LEFT -lt 30 ]; then
+                echo "SSL certificate expires in $DAYS_LEFT days, renewing..."
+                sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                  -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
+                  -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
+                  -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=${{ env.SERVER_IP }}" \
+                  -addext "subjectAltName=IP:${{ env.SERVER_IP }}"
+                
+                # Set proper permissions after renewal
+                sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
+                sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
+              else
+                echo "SSL certificate is valid for $DAYS_LEFT days, no renewal needed"
+              fi
+            fi
+
+            # Test Nginx configuration
+            echo "Testing Nginx configuration..."
+            if ! sudo nginx -t; then
+              echo "Nginx configuration test failed, falling back to HTTP-only configuration..."
+              sudo tee /etc/nginx/conf.d/server.conf > /dev/null << EOF
+              # WebSocket configuration
+              map \$http_upgrade \$connection_upgrade {
+                  default upgrade;
+                  '' close;
+              }
+
+              # HTTP server
+              server {
+                  listen 80;
+                  listen [::]:80;
+                  server_name _;
+
+                  location / {
+                      root /var/www/healthcare/frontend/current;
+                      index index.html;
+                      try_files \$uri \$uri.html \$uri/index.html /index.html;
+                      add_header Cache-Control "no-cache, no-store, must-revalidate";
+                  }
+
+                  location /api {
+                      proxy_pass http://127.0.0.1:8088;
+                      proxy_http_version 1.1;
+                      proxy_set_header Upgrade \$http_upgrade;
+                      proxy_set_header Connection \$connection_upgrade;
+                      proxy_set_header Host \$host;
+                      proxy_set_header X-Real-IP \$remote_addr;
+                      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto \$scheme;
+                      proxy_set_header X-Forwarded-Host \$host;
+                      proxy_set_header X-Forwarded-Port \$server_port;
+                      proxy_buffering off;
+                      proxy_request_buffering off;
+                      proxy_read_timeout 60s;
+                      proxy_connect_timeout 60s;
+                      proxy_send_timeout 60s;
+                  }
+
+                  location /socket.io/ {
+                      proxy_pass http://127.0.0.1:8088;
+                      proxy_http_version 1.1;
+                      proxy_set_header Upgrade \$http_upgrade;
+                      proxy_set_header Connection "upgrade";
+                      proxy_set_header Host \$host;
+                      proxy_cache_bypass \$http_upgrade;
+                      proxy_read_timeout 86400s;
+                      proxy_send_timeout 86400s;
+                      proxy_buffering off;
+                  }
+
+                  location /docs {
+                      proxy_pass http://127.0.0.1:8088/docs;
+                      proxy_http_version 1.1;
+                      proxy_set_header Host \$host;
+                      proxy_cache_bypass \$http_upgrade;
+                      proxy_buffering off;
+                  }
+
+                  location /health {
+                      proxy_pass http://127.0.0.1:8088/health;
+                      proxy_http_version 1.1;
+                      proxy_set_header Host \$host;
+                      proxy_set_header X-Real-IP \$remote_addr;
+                      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto \$scheme;
+                      access_log off;
+                  }
+              }
+              EOF
+            fi
+
+            # Reload Nginx
+            echo "Reloading Nginx..."
+            sudo systemctl reload nginx
+
             # Start services with fixed container names
             echo "Starting services..."
             docker compose -f docker-compose.prod.yml up -d --force-recreate
@@ -227,8 +398,10 @@ jobs:
               done
             done
 
-            # Configure firewall to allow traffic on port 8088
+            # Configure firewall to allow traffic on ports
             echo "Configuring firewall..."
+            sudo ufw allow 80/tcp
+            sudo ufw allow 443/tcp
             sudo ufw allow 8088/tcp
             sudo ufw allow 8082/tcp
 
@@ -237,22 +410,25 @@ jobs:
             ln -sfn releases/${{ github.sha }} current
 
             echo "Deployment completed successfully!"
-            echo "API should be accessible at http://localhost:8088 or http://${{ env.SERVER_IP }}:8088"
-            echo "Redis Commander should be accessible at http://localhost:8082 or http://${{ env.SERVER_IP }}:8082"
+            echo "API should be accessible at:"
+            echo "HTTPS: https://${{ env.SERVER_IP }}"
+            echo "HTTP: http://${{ env.SERVER_IP }}"
+            echo "Redis Commander: http://${{ env.SERVER_IP }}:8082"
 
             # Test API health
             echo "Testing API health..."
             curl -v http://localhost:8088/health
 
             echo "All services are healthy!"
-            
+
             # Display access information
             echo "============================================="
             echo "ACCESS INFORMATION"
             echo "============================================="
-            echo "API is accessible at: http://${{ env.SERVER_IP }}:8088"
-            echo "Redis Commander is accessible at: http://${{ env.SERVER_IP }}:8082"
-            echo "If using DNS, update your records to point to ${{ env.SERVER_IP }}"
+            echo "API is accessible at:"
+            echo "HTTPS: https://${{ env.SERVER_IP }}"
+            echo "HTTP: http://${{ env.SERVER_IP }}"
+            echo "Redis Commander: http://${{ env.SERVER_IP }}:8082"
             echo "============================================="
 
   post-deployment-verification:
@@ -286,11 +462,11 @@ jobs:
               docker logs latest-api --tail 50
               exit 1
             fi
-            
+
             # Display the API health response for debugging
             echo "API Health Response:"
             cat /tmp/health_response
-            
+
             # Check status - accepting various success indicators
             if grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\"" /tmp/health_response; then
               echo "API health check passed"
@@ -325,7 +501,7 @@ jobs:
         if: success()
         run: |
           echo "Deployment successful"
-          
+
       - name: Update deployment status failure
         if: failure()
         run: |
@@ -345,10 +521,10 @@ jobs:
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
-            
+
             # Ensure backup directory exists
             mkdir -p backups
-            
+
             # Check if current deployment exists
             if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
               echo "Current deployment found, attempting to restore from previous version if available"
@@ -415,7 +591,7 @@ jobs:
         if: success()
         run: |
           echo "Rollback successful"
-          
+
       - name: Update deployment status failure
         if: failure()
         run: |
