@@ -4,7 +4,7 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
-import { ValidationPipe, Logger, LogLevel, Controller, Get } from '@nestjs/common';
+import { ValidationPipe, Logger, LogLevel } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
@@ -15,20 +15,6 @@ import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
 import { LoggingService } from './shared/logging/logging.service';
 import { LogType } from './shared/logging/types/logging.types';
 import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
-
-// Logger controller for the /logger endpoint
-@Controller('logger')
-class LoggerController {
-  constructor(private readonly loggingService: LoggingService) {}
-
-  @Get()
-  getLoggerDashboard() {
-    return { 
-      title: 'Application Logs',
-      logs: 'Log data will be displayed here'
-    };
-  }
-}
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -292,14 +278,6 @@ async function bootstrap() {
 
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('docs', app, document);
-
-    // Create a simple logger endpoint
-    fastifyInstance.get('/logger', (request, reply) => {
-      reply.send({
-        title: 'Application Logs',
-        logs: 'Log data will be displayed here'
-      });
-    });
 
     // Start the server
     const host = '0.0.0.0';
