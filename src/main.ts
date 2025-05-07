@@ -103,19 +103,7 @@ async function bootstrap() {
           const delay = Math.min(times * 100, maxDelay);
           logger.log(`Redis reconnection attempt ${times}, delay: ${delay}ms`);
           return delay;
-        },
-        reconnectOnError: (err: Error) => {
-          logger.error('Redis reconnection error:', err);
-          return true;
-        },
-        maxRetriesPerRequest: 5,
-        enableReadyCheck: true,
-        commandTimeout: 10000,
-        connectTimeout: 20000,
-        lazyConnect: true,
-        retryMaxDelay: 3000,
-        maxLoadingRetryTime: 30000,
-        enableOfflineQueue: true
+        }
       };
 
       // Create Redis pub/sub clients
@@ -131,7 +119,6 @@ async function bootstrap() {
           'Redis',
           { client, error: err.message, stack: err.stack }
         );
-        eventEmitter.emit('redisError', { client, error: err.message });
       };
 
       const handleRedisConnect = async (client: string) => {
@@ -142,7 +129,6 @@ async function bootstrap() {
           'Redis',
           { client }
         );
-        eventEmitter.emit('redisConnect', { client });
       };
 
       pubClient.on('error', (err) => handleRedisError('Pub', err));
@@ -153,97 +139,26 @@ async function bootstrap() {
       await Promise.all([pubClient.connect(), subClient.connect()]);
 
       class CustomIoAdapter extends IoAdapter {
-        constructor(private app: any) {
+        private adapterConstructor: ReturnType<typeof createAdapter>;
+
+        constructor(app: any) {
           super(app);
+          this.adapterConstructor = createAdapter(pubClient, subClient);
         }
         
-        async createIOServer(port: number, options?: any) {
-          const corsOrigins = '*';
-
-          await loggingService?.log(
-            LogType.SYSTEM,
-            AppLogLevel.INFO,
-            'WebSocket CORS configuration: Allow all origins (temporary)',
-            'WebSocket'
-          );
-
+        createIOServer(port: number, options?: any) {
           const server = super.createIOServer(port, {
+            ...options,
             cors: {
-              origin: corsOrigins,
-              credentials: true,
+              origin: '*',
               methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-            },
-            adapter: createAdapter(pubClient, subClient, {
-              key: 'healthcare-socket',
-              publishOnSpecificResponseChannel: true,
-              requestsTimeout: 5000,
-              parser: {
-                encode: JSON.stringify,
-                decode: JSON.parse
-              }
-            }),
-            connectionStateRecovery: {
-              maxDisconnectionDuration: 2 * 60 * 1000,
-              skipMiddlewares: true,
+              credentials: true
             },
             transports: ['websocket', 'polling'],
-            pingTimeout: 20000,
-            pingInterval: 25000,
-            upgradeTimeout: 10000,
-            maxHttpBufferSize: 1e6,
-            connectTimeout: 45000,
-            allowEIO3: true,
-            path: '/socket.io/'
+            allowEIO3: true
           });
 
-          server.on('error', async (error: Error) => {
-            await loggingService?.log(
-              LogType.ERROR,
-              AppLogLevel.ERROR,
-              'Socket.IO server error',
-              'WebSocket',
-              { error: error?.message || 'Unknown error', stack: error?.stack }
-            );
-          });
-
-          server.on('connection_error', async (error: Error) => {
-            await loggingService?.log(
-              LogType.ERROR,
-              AppLogLevel.ERROR,
-              'Socket.IO connection error',
-              'WebSocket',
-              { error: error?.message || 'Unknown error', stack: error?.stack }
-            );
-          });
-
-          server.of('/appointments').on('connection', async (socket) => {
-            await loggingService?.log(
-              LogType.SYSTEM,
-              AppLogLevel.INFO,
-              `Client connected to appointments namespace: ${socket.id}`,
-              'WebSocket',
-              { socketId: socket.id }
-            );
-            
-            socket.on('error', async (error: Error) => {
-              await loggingService?.log(
-                LogType.ERROR,
-                AppLogLevel.ERROR,
-                `Socket error in appointments namespace for client ${socket.id}`,
-                'WebSocket',
-                { socketId: socket.id, error: error?.message || 'Unknown error', stack: error?.stack }
-              );
-            });
-          });
-
-          await loggingService?.log(
-            LogType.SYSTEM,
-            AppLogLevel.INFO,
-            'WebSocket server initialized with namespaces',
-            'WebSocket',
-            { namespaces: Object.keys(server._nsps) }
-          );
-          
+          server.adapter(this.adapterConstructor);
           return server;
         }
       }
@@ -267,6 +182,7 @@ async function bootstrap() {
         'WebSocket',
         { error: error instanceof Error ? error.stack : 'No stack trace available' }
       );
+      throw error;
     }
 
     // Security headers
