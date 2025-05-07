@@ -21,7 +21,7 @@ COPY . .
 
 # Generate Prisma client before building
 RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
-RUN npx prisma studio --schema=./src/shared/database/prisma/schema.prisma
+
 # Build the application
 RUN npm run build
 
@@ -45,16 +45,17 @@ COPY .env.production ./.env
 
 # Set environment variables
 ENV NODE_ENV=production
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
 
-# Expose port
-EXPOSE 8088
+# Expose ports
+EXPOSE 8088 5555
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
-# Start the application
-CMD ["node", "dist/main"]
+# Start the application with Prisma Studio
+CMD ["sh", "-c", "npx prisma generate --schema=$PRISMA_SCHEMA_PATH && npx prisma studio --port 5555 --hostname 0.0.0.0 & node dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
