@@ -502,10 +502,11 @@ jobs:
             fi
 
             # Update service URLs in environment file
-            sed -i "s|REDIS_COMMANDER_URL=.*|REDIS_UI_URL=/redis-ui|g" .env.production
+            sed -i "s|REDIS_COMMANDER_URL=.*|REDIS_COMMANDER_URL=/redis-ui|g" .env.production
             sed -i "s|SOCKET_URL=.*|SOCKET_URL=/socket|g" .env.production
             sed -i "s|PRISMA_STUDIO_URL=.*|PRISMA_STUDIO_URL=/prisma|g" .env.production
             sed -i "s|PGADMIN_URL=.*|#PGADMIN_URL is disabled in production|g" .env.production
+            echo "REDIS_UI_URL=/redis-ui" >> .env.production
             echo "LOGGER_URL=/logger" >> .env.production
 
             # Ensure Prisma Studio is running
