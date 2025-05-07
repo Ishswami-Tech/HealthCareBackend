@@ -13,7 +13,8 @@ services:
     container_name: latest-api
     hostname: api
     ports:
-      - "${API_PORT:-8088}:${API_PORT:-8088}"  # Use environment variable with fallback
+      - "${API_PORT:-8088}:${API_PORT:-8088}"  # API port
+      - "5555:5555"  # Prisma Studio port
     env_file:
       - .env.production
     environment:
@@ -33,6 +34,7 @@ services:
       NPM_CONFIG_LOGLEVEL: error
     expose:
       - "${API_PORT:-8088}"
+      - "5555"
     networks:
       app-network:
         ipv4_address: 172.18.0.5
@@ -66,6 +68,10 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+    command: >
+      sh -c "npx prisma generate &&
+             npx prisma studio --port 5555 --hostname 0.0.0.0 &
+             node dist/main.js"
 
   postgres:
     image: postgres:16
@@ -161,6 +167,11 @@ services:
       - "8082:8081"
     environment:
       REDIS_HOSTS: local:redis:6379
+      HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin}
+      READ_ONLY: "false"
+      FOLDING_CHAR: ":"
+      ROOT_PATTERN: "*"
     depends_on:
       - redis
     networks:

@@ -150,15 +150,27 @@ async function bootstrap() {
           const server = super.createIOServer(port, {
             ...options,
             cors: {
-              origin: '*',
+              origin: process.env.CORS_ORIGIN?.split(',') || '*',
               methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
               credentials: true
             },
+            path: '/socket.io/',
+            serveClient: false,
             transports: ['websocket', 'polling'],
-            allowEIO3: true
+            allowEIO3: true,
+            pingTimeout: 60000,
+            pingInterval: 25000,
+            connectTimeout: 45000,
+            maxHttpBufferSize: 1e6
           });
 
           server.adapter(this.adapterConstructor);
+
+          // Add health check endpoint for Socket.io
+          server.of('/health').on('connection', (socket) => {
+            socket.emit('health', { status: 'healthy', timestamp: new Date() });
+          });
+
           return server;
         }
       }
