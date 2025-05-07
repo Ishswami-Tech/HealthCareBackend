@@ -43,8 +43,15 @@ import { AppointmentSocketModule } from './services/appointments/appointment-soc
           'SOCKET_URL',
           'REDIS_COMMANDER_URL',
           'PRISMA_STUDIO_URL',
-          'PGADMIN_URL',
         ];
+        
+        // In production, pgAdmin is not used, so set a dummy value
+        // In development, require the actual pgAdmin URL
+        if (process.env.NODE_ENV === 'production') {
+          config['PGADMIN_URL'] = 'not-used-in-production';
+        } else if (!config['PGADMIN_URL']) {
+          throw new Error(`Missing required environment variable: PGADMIN_URL`);
+        }
         
         for (const key of required) {
           if (!config[key]) {
