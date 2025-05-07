@@ -135,7 +135,6 @@ jobs:
           key: ${{ env.SERVER_SSH_KEY }}
           debug: true
           timeout: 60s
-          script_stop: true
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
@@ -471,8 +470,11 @@ jobs:
             echo "HTTP (Domain): http://api.ishswami.in"
             echo "HTTPS (IP): https://${{ env.SERVER_IP }}"
             echo "HTTP (IP): http://${{ env.SERVER_IP }}"
-            echo "Redis Commander: http://${{ env.SERVER_IP }}:8082"
             echo "API Documentation: https://api.ishswami.in/docs"
+            echo "Bull Queue Dashboard: https://api.ishswami.in/queue-dashboard"
+            echo "Redis Commander: https://api.ishswami.in/redis-commander/"
+            echo "PgAdmin: https://api.ishswami.in/pgadmin/"
+            echo "Prisma Studio: https://api.ishswami.in/prisma/"
             echo "Health Check: https://api.ishswami.in/health"
             echo "============================================="
 
@@ -486,14 +488,37 @@ jobs:
             echo "Applying Nginx changes and restarting API..."
             sudo systemctl reload nginx || sudo systemctl restart nginx
 
+            # Ensure ports are properly opened in firewall
+            echo "Ensuring firewall allows necessary ports..."
+            sudo ufw status | grep "8088" || sudo ufw allow 8088/tcp
+            sudo ufw status | grep "5555" || sudo ufw allow 5555/tcp
+            sudo ufw status | grep "8082" || sudo ufw allow 8082/tcp
+
             # Set environment variables in the API container for service URLs
             echo "Updating API environment variables for service URLs..."
             docker exec latest-api sh -c "echo 'API_URL=https://api.ishswami.in' >> /app/.env"
-            docker exec latest-api sh -c "echo 'PRISMA_STUDIO_URL=https://api.ishswami.in:5555' >> /app/.env"
-            docker exec latest-api sh -c "echo 'REDIS_COMMANDER_URL=http://api.ishswami.in:8082' >> /app/.env"
-            docker exec latest-api sh -c "echo 'PGADMIN_URL=http://api.ishswami.in:8083' >> /app/.env"
+            docker exec latest-api sh -c "echo 'PRISMA_STUDIO_URL=https://api.ishswami.in/prisma' >> /app/.env"
+            docker exec latest-api sh -c "echo 'REDIS_COMMANDER_URL=https://api.ishswami.in/redis-commander' >> /app/.env"
+            docker exec latest-api sh -c "echo 'PGADMIN_URL=https://api.ishswami.in/pgadmin' >> /app/.env"
             docker exec latest-api sh -c "echo 'SWAGGER_URL=/docs' >> /app/.env"
-            docker exec latest-api sh -c "echo 'BULL_BOARD_URL=/admin/queues' >> /app/.env"
+            docker exec latest-api sh -c "echo 'BULL_BOARD_URL=/queue-dashboard' >> /app/.env"
+
+            # Ensure Prisma Studio is running
+            echo "Checking Prisma Studio status..."
+            if ! docker exec latest-api netstat -tulpn | grep -q ":5555"; then
+              echo "Prisma Studio not detected, attempting to start it..."
+              docker exec latest-api sh -c "cd /app && BROWSER=none npx prisma studio --schema=/app/src/shared/database/prisma/schema.prisma --hostname 0.0.0.0 --port 5555 &"
+              sleep 5
+              
+              if docker exec latest-api netstat -tulpn | grep -q ":5555"; then
+                echo "✅ Prisma Studio successfully started"
+              else
+                echo "⚠️ Prisma Studio failed to start, check logs for details"
+                docker logs latest-api | tail -50
+              fi
+            else
+              echo "✅ Prisma Studio is already running"
+            fi
 
             # Restart the API container to apply environment changes
             docker restart latest-api
@@ -509,19 +534,41 @@ jobs:
                 sleep 3
             done
 
-            # Display access information
-            echo "============================================="
-            echo "ACCESS INFORMATION"
-            echo "============================================="
-            echo "API is accessible at:"
-            echo "HTTPS (Domain): https://api.ishswami.in"
-            echo "HTTP (Domain): http://api.ishswami.in"
-            echo "HTTPS (IP): https://${{ env.SERVER_IP }}"
-            echo "HTTP (IP): http://${{ env.SERVER_IP }}"
-            echo "Redis Commander: http://${{ env.SERVER_IP }}:8082"
-            echo "API Documentation: https://api.ishswami.in/docs"
-            echo "Health Check: https://api.ishswami.in/health"
-            echo "============================================="
+            # Final verification step - check if API is actually accessible
+            echo "Performing final verification of the API..."
+            # Check the actual health endpoint directly
+            echo "Checking API health endpoint directly..."
+            curl -v http://localhost:8088/health
+
+            # Verify all services are accessible through Nginx
+            echo "Verifying Nginx routing to services..."
+            echo "Testing API health through Nginx..."
+            curl -sk https://api.ishswami.in/health || echo "⚠️ API health through Nginx failed"
+
+            echo "Testing Swagger docs through Nginx..."
+            curl -sk -I https://api.ishswami.in/docs | grep "200" && echo "✅ Swagger docs accessible" || echo "⚠️ Swagger docs test failed"
+
+            echo "Testing Bull Queue Dashboard through Nginx..."
+            curl -sk -I https://api.ishswami.in/queue-dashboard | grep "200\|301\|302" && echo "✅ Bull Dashboard accessible" || echo "⚠️ Bull Dashboard test failed"
+
+            echo "Testing Redis Commander through Nginx..."
+            curl -sk -I https://api.ishswami.in/redis-commander/ | grep "200\|301\|302" && echo "✅ Redis Commander accessible" || echo "⚠️ Redis Commander test failed"
+
+            echo "Testing PgAdmin through Nginx..."
+            curl -sk -I https://api.ishswami.in/pgadmin/ | grep "200\|301\|302" && echo "✅ PgAdmin accessible" || echo "⚠️ PgAdmin test failed"
+
+            echo "Testing Prisma Studio through Nginx..."
+            curl -sk -I https://api.ishswami.in/prisma/ | grep "200\|301\|302" && echo "✅ Prisma Studio accessible" || echo "⚠️ Prisma Studio test failed"
+
+            # Display container status
+            echo "Docker container status:"
+            docker ps
+
+            # Check container logs for any issues
+            echo "Latest API container logs:"
+            docker logs latest-api --tail 20
+
+            echo "All services are healthy!"
 
   post-deployment-verification:
     needs: deploy
