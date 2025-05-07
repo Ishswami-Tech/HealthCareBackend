@@ -38,7 +38,9 @@ export class AppController {
   })
   async getDashboard(@Res() res: FastifyReply) {
     try {
-      const baseUrl = this.configService.get('API_URL');
+      // Use the server base URL or fall back to environment variable
+      const host = this.configService.get('API_URL') || `https://${this.configService.get('SERVER_IP') || '82.208.20.16'}`;
+      const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
       
       // Get real-time service status from health controller
       const healthStatus = await this.healthController.getServicesStatus() as HealthStatus;
