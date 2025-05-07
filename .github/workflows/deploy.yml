@@ -494,14 +494,19 @@ jobs:
             sudo ufw status | grep "5555" || sudo ufw allow 5555/tcp
             sudo ufw status | grep "8082" || sudo ufw allow 8082/tcp
 
-            # Set environment variables in the API container for service URLs
-            echo "Updating API environment variables for service URLs..."
-            docker exec latest-api sh -c "echo 'API_URL=https://api.ishswami.in' >> /app/.env"
-            docker exec latest-api sh -c "echo 'PRISMA_STUDIO_URL=https://api.ishswami.in/prisma' >> /app/.env"
-            docker exec latest-api sh -c "echo 'REDIS_COMMANDER_URL=https://api.ishswami.in/redis-commander' >> /app/.env"
-            docker exec latest-api sh -c "echo 'PGADMIN_URL=https://api.ishswami.in/pgadmin' >> /app/.env"
-            docker exec latest-api sh -c "echo 'SWAGGER_URL=/docs' >> /app/.env"
-            docker exec latest-api sh -c "echo 'BULL_BOARD_URL=/queue-dashboard' >> /app/.env"
+            # Update Nginx configuration for production environment
+            echo "Updating Nginx configuration for production..."
+            # Disable pgAdmin in production by commenting out its location block
+            if [ -f "/etc/nginx/conf.d/server.conf" ]; then
+              sudo sed -i '/location \/pgadmin\/ {/,/}/s/^/#/' /etc/nginx/conf.d/server.conf
+            fi
+
+            # Update service URLs in environment file
+            sed -i "s|REDIS_COMMANDER_URL=.*|REDIS_UI_URL=/redis-ui|g" .env.production
+            sed -i "s|SOCKET_URL=.*|SOCKET_URL=/socket|g" .env.production
+            sed -i "s|PRISMA_STUDIO_URL=.*|PRISMA_STUDIO_URL=/prisma|g" .env.production
+            sed -i "s|PGADMIN_URL=.*|#PGADMIN_URL is disabled in production|g" .env.production
+            echo "LOGGER_URL=/logger" >> .env.production
 
             # Ensure Prisma Studio is running
             echo "Checking Prisma Studio status..."
@@ -552,13 +557,16 @@ jobs:
             curl -sk -I https://api.ishswami.in/queue-dashboard | grep "200\|301\|302" && echo "✅ Bull Dashboard accessible" || echo "⚠️ Bull Dashboard test failed"
 
             echo "Testing Redis Commander through Nginx..."
-            curl -sk -I https://api.ishswami.in/redis-commander/ | grep "200\|301\|302" && echo "✅ Redis Commander accessible" || echo "⚠️ Redis Commander test failed"
+            curl -sk -I https://api.ishswami.in/redis-ui/ | grep "200\|301\|302" && echo "✅ Redis Commander accessible" || echo "⚠️ Redis Commander test failed"
 
-            echo "Testing PgAdmin through Nginx..."
-            curl -sk -I https://api.ishswami.in/pgadmin/ | grep "200\|301\|302" && echo "✅ PgAdmin accessible" || echo "⚠️ PgAdmin test failed"
+            echo "Testing Logger through Nginx..."
+            curl -sk -I https://api.ishswami.in/logger/ | grep "200\|301\|302" && echo "✅ Logger accessible" || echo "⚠️ Logger test failed"
 
             echo "Testing Prisma Studio through Nginx..."
             curl -sk -I https://api.ishswami.in/prisma/ | grep "200\|301\|302" && echo "✅ Prisma Studio accessible" || echo "⚠️ Prisma Studio test failed"
+
+            echo "Testing WebSocket through Nginx..."
+            curl -sk -I https://api.ishswami.in/socket/ | grep "200\|301\|302\|400" && echo "✅ WebSocket endpoint accessible" || echo "⚠️ WebSocket endpoint test failed"
 
             # Display container status
             echo "Docker container status:"

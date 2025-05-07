@@ -4,7 +4,7 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
-import { ValidationPipe, Logger, LogLevel } from '@nestjs/common';
+import { ValidationPipe, Logger, LogLevel, Controller, Get } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
@@ -15,6 +15,20 @@ import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
 import { LoggingService } from './shared/logging/logging.service';
 import { LogType } from './shared/logging/types/logging.types';
 import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
+
+// Logger controller for the /logger endpoint
+@Controller('logger')
+class LoggerController {
+  constructor(private readonly loggingService: LoggingService) {}
+
+  @Get()
+  getLoggerDashboard() {
+    return { 
+      title: 'Application Logs',
+      logs: 'Log data will be displayed here'
+    };
+  }
+}
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -56,7 +70,7 @@ async function bootstrap() {
         bufferLogs: true,
         cors: {
           origin: process.env.NODE_ENV === 'production' 
-            ? ['http://82.208.20.16:8088', 'http://ishswami.in', 'http://api.ishswami.in']
+            ? process.env.CORS_ORIGIN?.split(',') || ['https://ishswami.in', 'https://api.ishswami.in']
             : ['http://localhost:8088'],
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -147,6 +161,10 @@ async function bootstrap() {
         }
         
         createIOServer(port: number, options?: any) {
+          // Get Socket.io path from config
+          const socketPath = configService.get('SOCKET_URL', '/socket');
+          const socketPathWithoutLeadingSlash = socketPath.startsWith('/') ? socketPath.substring(1) : socketPath;
+          
           const server = super.createIOServer(port, {
             ...options,
             cors: {
@@ -154,7 +172,7 @@ async function bootstrap() {
               methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
               credentials: true
             },
-            path: '/socket.io/',
+            path: `/${socketPathWithoutLeadingSlash}/`,
             serveClient: false,
             transports: ['websocket', 'polling'],
             allowEIO3: true,
@@ -199,17 +217,65 @@ async function bootstrap() {
 
     // Security headers
     await app.register(fastifyHelmet, {
-      contentSecurityPolicy: false
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+          imgSrc: ["'self'", "data:", "https:"],
+          connectSrc: ["'self'", "https://api.ishswami.in", "wss://api.ishswami.in"],
+          fontSrc: ["'self'", "https://cdn.jsdelivr.net"],
+          objectSrc: ["'none'"],
+          frameSrc: ["'self'"],
+          formAction: ["'self'"],
+          baseUri: ["'self'"]
+        }
+      }
     });
 
-    // Configure route handling
+    // Configure route handling for admin paths
     const fastifyInstance = app.getHttpAdapter().getInstance();
     fastifyInstance.addHook('onRequest', (request, reply, done) => {
-      if (!request.url.startsWith('/queue-dashboard')) {
-        done();
-      } else {
-        done();
+      const url = request.url;
+      const isAdminPath = url.startsWith('/docs') || 
+                          url.startsWith('/queue-dashboard') || 
+                          url.startsWith('/redis-ui') || 
+                          url.startsWith('/logger') || 
+                          url.startsWith('/prisma');
+      
+      if (isAdminPath && process.env.NODE_ENV === 'production') {
+        // Add additional security checks for admin paths in production
+        // This is just a placeholder for your actual security implementation
+        const auth = request.headers.authorization;
+        if (!auth) {
+          reply.status(401).send({ message: 'Authentication required for admin paths' });
+          return;
+        }
       }
+      
+      done();
+    });
+
+    // Handle direct port access redirects
+    fastifyInstance.addHook('onRequest', (request, reply, done) => {
+      const host = request.headers.host;
+      if (host && process.env.NODE_ENV === 'production') {
+        // Check if accessing via direct port
+        if (host.includes(':8088')) {
+          reply.header('Location', 'https://api.ishswami.in/');
+          reply.status(301).send();
+          return;
+        } else if (host.includes(':8081')) {
+          reply.header('Location', 'https://api.ishswami.in/redis-ui/');
+          reply.status(301).send();
+          return;
+        } else if (host.includes(':5555')) {
+          reply.header('Location', 'https://api.ishswami.in/prisma/');
+          reply.status(301).send();
+          return;
+        }
+      }
+      done();
     });
 
     // Configure Swagger
@@ -227,6 +293,14 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('docs', app, document);
 
+    // Create a simple logger endpoint
+    fastifyInstance.get('/logger', (request, reply) => {
+      reply.send({
+        title: 'Application Logs',
+        logs: 'Log data will be displayed here'
+      });
+    });
+
     // Start the server
     const host = '0.0.0.0';
     
@@ -236,9 +310,12 @@ async function bootstrap() {
       // Log application startup information
       const startupInfo = {
         apiUrl: apiUrl || `http://${host}:${port}`,
-        swaggerUrl: `${apiUrl}/docs || http://${host}:${port}/docs`,
-        bullBoardUrl: `${apiUrl}/queue-dashboard || http://${host}:${port}/queue-dashboard`,
-        websocketUrl: `ws://${host}:${port}/socket.io`,
+        swaggerUrl: `${apiUrl}/docs`,
+        bullBoardUrl: `${apiUrl}/queue-dashboard`,
+        redisUrl: `${apiUrl}/redis-ui`,
+        loggerUrl: `${apiUrl}/logger`,
+        prismaUrl: `${apiUrl}/prisma`,
+        websocketUrl: `${apiUrl}/socket`,
         environment: process.env.NODE_ENV || 'development'
       };
 
