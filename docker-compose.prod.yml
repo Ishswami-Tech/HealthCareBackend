@@ -19,7 +19,7 @@ services:
     environment:
       NODE_ENV: production
       CORS_ORIGIN: "*"
-      FRONTEND_URL: http://ishswami.in
+      FRONTEND_URL: https://ishswami.in
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=20&pool_timeout=30
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -31,7 +31,13 @@ services:
       SOCKET_HOST: 0.0.0.0
       SOCKET_PORT: ${API_PORT:-8088}
       NPM_CONFIG_LOGLEVEL: error
-      PGADMIN_URL: "not-used"
+      API_URL: https://api.ishswami.in
+      SWAGGER_URL: /docs
+      BULL_BOARD_URL: /queue-dashboard
+      SOCKET_URL: /lsocket
+      REDIS_UI_URL: /redis-ui
+      LOGGER_URL: /logger
+      PRISMA_STUDIO_URL: /prisma
     expose:
       - "${API_PORT:-8088}"
       - "5555"
