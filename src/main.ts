@@ -4,7 +4,7 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
-import { ValidationPipe, Logger, LogLevel } from '@nestjs/common';
+import { ValidationPipe, Logger, LogLevel, INestApplication } from '@nestjs/common';
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
 import { initDatabase } from "./shared/database/scripts/init-db";
@@ -18,7 +18,7 @@ import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  let app: NestFastifyApplication;
+  let app: NestFastifyApplication & INestApplication;
   let loggingService: LoggingService;
   
   try {
@@ -147,10 +147,7 @@ async function bootstrap() {
         }
         
         createIOServer(port: number, options?: any) {
-          // Get Socket.io path from config
-          const socketPath = configService.get('SOCKET_URL', '/socket');
-          const socketPathWithoutLeadingSlash = socketPath.startsWith('/') ? socketPath.substring(1) : socketPath;
-          
+          // Always use socket.io as the path for consistency
           const server = super.createIOServer(port, {
             ...options,
             cors: {
@@ -158,7 +155,7 @@ async function bootstrap() {
               methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
               credentials: true
             },
-            path: `/${socketPathWithoutLeadingSlash}/`,
+            path: '/socket.io',
             serveClient: false,
             transports: ['websocket', 'polling'],
             allowEIO3: true,
@@ -245,8 +242,14 @@ async function bootstrap() {
       done();
     });
 
-    // Handle direct port access redirects
+    // Disable direct port access redirects to avoid redirect loops
+    // Handle health check requests specially
     fastifyInstance.addHook('onRequest', (request, reply, done) => {
+      if (request.url === '/health') {
+        // Don't redirect health check requests
+        return done();
+      }
+      
       const host = request.headers.host;
       if (host && process.env.NODE_ENV === 'production') {
         // Check if accessing via direct port

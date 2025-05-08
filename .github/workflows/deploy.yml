@@ -484,32 +484,33 @@ jobs:
 
             echo "All services are healthy!"
 
-            # Apply Nginx changes and restart API
-            echo "Applying Nginx changes and restarting API..."
-            sudo systemctl reload nginx || sudo systemctl restart nginx
-
-            # Ensure ports are properly opened in firewall
-            echo "Ensuring firewall allows necessary ports..."
-            sudo ufw status | grep "8088" || sudo ufw allow 8088/tcp
-            sudo ufw status | grep "5555" || sudo ufw allow 5555/tcp
-            sudo ufw status | grep "8082" || sudo ufw allow 8082/tcp
-
-            # Update Nginx configuration for production environment
-            echo "Updating Nginx configuration for production..."
-            # Disable pgAdmin in production by commenting out its location block
-            if [ -f "/etc/nginx/conf.d/server.conf" ]; then
-              sudo sed -i '/location \/pgadmin\/ {/,/}/s/^/#/' /etc/nginx/conf.d/server.conf
-            fi
-
-            # Update service URLs using environment variables
-            echo "Setting environment variables directly..."
+            # Setting environment variables directly...
             # Pass environment variables directly to the container
             docker exec -e REDIS_COMMANDER_URL=/redis-ui \
-                       -e SOCKET_URL=/socket \
+                       -e SOCKET_URL=/socket.io \
                        -e PRISMA_STUDIO_URL=/prisma \
                        -e REDIS_UI_URL=/redis-ui \
                        -e LOGGER_URL=/logger \
                        latest-api sh -c 'echo "Environment variables updated via Docker exec"'
+
+            # Restart Nginx to apply configuration changes
+            echo "Restarting Nginx service..."
+            sudo systemctl restart nginx
+
+            # Restart the API container to apply changes
+            echo "Restarting API container..."
+            docker restart latest-api
+
+            # Wait for API to become healthy
+            echo "Waiting for API to become healthy..."
+            for i in {1..30}; do
+              if curl -s http://localhost:8088/health | grep -q "\"status\":\"healthy\""; then
+                echo "API is healthy!"
+                break
+              fi
+              echo "Attempt $i/30: waiting for API to become healthy..."
+              sleep 5
+            done
 
             # Ensure Prisma Studio is running
             echo "Checking Prisma Studio status..."
@@ -527,20 +528,6 @@ jobs:
             else
               echo "✅ Prisma Studio is already running"
             fi
-
-            # Restart the API container to apply environment changes
-            docker restart latest-api
-
-            # Wait for the API to be healthy again
-            echo "Waiting for the API to be healthy after restart..."
-            for i in {1..10}; do
-                if curl -s http://localhost:8088/health | grep -q '"status":"healthy"'; then
-                    echo "✅ API is healthy after restart!"
-                    break
-                fi
-                echo "Waiting for API health check ($i/10)..."
-                sleep 3
-            done
 
             # Final verification step - check if API is actually accessible
             echo "Performing final verification of the API..."
