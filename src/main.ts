@@ -230,13 +230,16 @@ async function bootstrap() {
                           url.startsWith('/prisma');
       
       if (isAdminPath && process.env.NODE_ENV === 'production') {
+        // Comment out the authentication check for now to allow access for debugging
         // Add additional security checks for admin paths in production
         // This is just a placeholder for your actual security implementation
+        /*
         const auth = request.headers.authorization;
         if (!auth) {
           reply.status(401).send({ message: 'Authentication required for admin paths' });
           return;
         }
+        */
       }
       
       done();
@@ -251,7 +254,15 @@ async function bootstrap() {
           reply.header('Location', 'https://api.ishswami.in/');
           reply.status(301).send();
           return;
-        } else if (host.includes(':8081')) {
+        } else if (host.includes(':8088/docs')) {
+          reply.header('Location', 'https://api.ishswami.in/docs/');
+          reply.status(301).send();
+          return;
+        } else if (host.includes(':8088/queue-dashboard')) {
+          reply.header('Location', 'https://api.ishswami.in/queue-dashboard/');
+          reply.status(301).send();
+          return;
+        } else if (host.includes(':8088/redis-ui')) {
           reply.header('Location', 'https://api.ishswami.in/redis-ui/');
           reply.status(301).send();
           return;
@@ -261,6 +272,7 @@ async function bootstrap() {
           return;
         }
       }
+      
       done();
     });
 
