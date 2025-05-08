@@ -150,6 +150,21 @@ export class AppController {
     return res.redirect(redisCommanderUrl);
   }
 
+  @Get('redis-commander')
+  @Public()
+  @ApiOperation({
+    summary: 'Redis Commander (Alternate Path)',
+    description: 'Redis management interface for monitoring and managing Redis data.'
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to Redis Commander UI'
+  })
+  async getRedisCommander(@Res() res: FastifyReply) {
+    const redisCommanderUrl = this.configService.get<string>('REDIS_COMMANDER_URL');
+    return res.redirect(redisCommanderUrl);
+  }
+
   private async getRecentLogs(limit: number = 10) {
     try {
       // Use your logging service to get recent logs
