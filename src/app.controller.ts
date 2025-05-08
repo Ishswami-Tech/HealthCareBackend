@@ -30,7 +30,7 @@ export class AppController {
     private readonly loggingService: LoggingService,
   ) {}
 
-  @Get('health')
+  @Get('api-health')
   @Public()
   @ApiOperation({ 
     summary: 'Health check',
