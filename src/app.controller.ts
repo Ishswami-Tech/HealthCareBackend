@@ -30,6 +30,20 @@ export class AppController {
     private readonly loggingService: LoggingService,
   ) {}
 
+  @Get('health')
+  @Public()
+  @ApiOperation({ 
+    summary: 'Health check',
+    description: 'Returns the health status of the API and its dependencies'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Health check response'
+  })
+  async getHealth() {
+    return this.healthController.getServicesStatus();
+  }
+
   @Get()
   @Public()
   @ApiOperation({ 
@@ -240,6 +254,5 @@ export class AppController {
 </body>
 </html>`;
   }
-
 
 }
