@@ -317,7 +317,11 @@ async function bootstrap() {
         AppLogLevel.INFO,
         'Application started successfully',
         'Bootstrap',
-        startupInfo
+        { 
+          ...startupInfo,
+          prismaStudioUrl: `${apiUrl}/prisma`,
+          socketioUrl: `${apiUrl}/socket.io` 
+        }
       );
     } catch (listenError) {
       logger.error(`Failed to start server on ${host}:${port}:`, listenError);
