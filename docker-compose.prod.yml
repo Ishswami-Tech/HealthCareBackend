@@ -16,6 +16,9 @@ services:
       - "5555:5555"  # Prisma Studio port
     env_file:
       - .env.production
+    volumes:
+      - ./logs:/app/logs
+      - ./.env.production:/app/.env
     environment:
       NODE_ENV: production
       CORS_ORIGIN: "*"
@@ -52,8 +55,6 @@ services:
       - "postgres:172.18.0.2"
       - "redis:172.18.0.3"
       - "redis-commander:172.18.0.4"
-    volumes:
-      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy

@@ -501,13 +501,14 @@ jobs:
               sudo sed -i '/location \/pgadmin\/ {/,/}/s/^/#/' /etc/nginx/conf.d/server.conf
             fi
 
-            # Update service URLs in environment file
-            sed -i "s|REDIS_COMMANDER_URL=.*|REDIS_COMMANDER_URL=/redis-ui|g" .env.production
-            sed -i "s|SOCKET_URL=.*|SOCKET_URL=/socket|g" .env.production
-            sed -i "s|PRISMA_STUDIO_URL=.*|PRISMA_STUDIO_URL=/prisma|g" .env.production
-            sed -i "s|PGADMIN_URL=.*|#PGADMIN_URL is disabled in production|g" .env.production
-            echo "REDIS_UI_URL=/redis-ui" >> .env.production
-            echo "LOGGER_URL=/logger" >> .env.production
+            # Update service URLs in the container env file
+            echo "Updating service URLs in the container..."
+            docker exec latest-api sh -c "sed -i 's|REDIS_COMMANDER_URL=.*|REDIS_COMMANDER_URL=/redis-ui|g' /app/.env"
+            docker exec latest-api sh -c "sed -i 's|SOCKET_URL=.*|SOCKET_URL=/socket|g' /app/.env"
+            docker exec latest-api sh -c "sed -i 's|PRISMA_STUDIO_URL=.*|PRISMA_STUDIO_URL=/prisma|g' /app/.env"
+            docker exec latest-api sh -c "sed -i 's|PGADMIN_URL=.*|#PGADMIN_URL is disabled in production|g' /app/.env"
+            docker exec latest-api sh -c "grep -q 'REDIS_UI_URL=' /app/.env || echo 'REDIS_UI_URL=/redis-ui' >> /app/.env"
+            docker exec latest-api sh -c "grep -q 'LOGGER_URL=' /app/.env || echo 'LOGGER_URL=/logger' >> /app/.env"
 
             # Ensure Prisma Studio is running
             echo "Checking Prisma Studio status..."

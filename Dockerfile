@@ -41,7 +41,6 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY package.json package-lock.json ./
 COPY src/shared/database/prisma ./src/shared/database/prisma
-COPY .env.production ./.env
 
 # Set environment variables
 ENV NODE_ENV=production
