@@ -432,6 +432,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       '/auth/verify-email',
       '/health',
       '/health/check',
+      '/api-health',
       '/docs',
       '/api',
       '/api-json',

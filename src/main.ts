@@ -245,7 +245,7 @@ async function bootstrap() {
     // Disable direct port access redirects to avoid redirect loops
     // Handle health check requests specially
     fastifyInstance.addHook('onRequest', (request, reply, done) => {
-      if (request.url === '/health') {
+      if (request.url === '/health' || request.url === '/api-health') {
         // Don't redirect health check requests
         return done();
       }
