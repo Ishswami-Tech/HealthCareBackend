@@ -46,7 +46,7 @@ COPY src/shared/database/prisma ./src/shared/database/prisma
 ENV NODE_ENV=production
 ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
 ENV REDIS_COMMANDER_URL=/redis-ui
-ENV SOCKET_URL=/socket
+ENV SOCKET_URL=/socket.io
 ENV PRISMA_STUDIO_URL=/prisma
 ENV REDIS_UI_URL=/redis-ui
 ENV LOGGER_URL=/logger
