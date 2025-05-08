@@ -45,6 +45,11 @@ COPY src/shared/database/prisma ./src/shared/database/prisma
 # Set environment variables
 ENV NODE_ENV=production
 ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+ENV REDIS_COMMANDER_URL=/redis-ui
+ENV SOCKET_URL=/socket
+ENV PRISMA_STUDIO_URL=/prisma
+ENV REDIS_UI_URL=/redis-ui
+ENV LOGGER_URL=/logger
 
 # Expose ports
 EXPOSE 8088 5555
