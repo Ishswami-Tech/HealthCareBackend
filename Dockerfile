@@ -47,19 +47,18 @@ ENV NODE_ENV=production
 ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
 ENV REDIS_COMMANDER_URL=/redis-ui
 ENV SOCKET_URL=/socket.io
-ENV PRISMA_STUDIO_URL=/prisma
 ENV REDIS_UI_URL=/redis-ui
 ENV LOGGER_URL=/logger
 
 # Expose ports
-EXPOSE 8088 5555
+EXPOSE 8088
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
-# Start the application with Prisma Studio
-CMD ["sh", "-c", "npx prisma generate --schema=$PRISMA_SCHEMA_PATH && npx prisma studio --port 5555 --hostname 0.0.0.0 & node dist/main"]
+# Start the application
+CMD ["sh", "-c", "npx prisma generate --schema=$PRISMA_SCHEMA_PATH && node dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development

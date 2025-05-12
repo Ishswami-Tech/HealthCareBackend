@@ -473,8 +473,6 @@ jobs:
             echo "API Documentation: https://api.ishswami.in/docs"
             echo "Bull Queue Dashboard: https://api.ishswami.in/queue-dashboard"
             echo "Redis Commander: https://api.ishswami.in/redis-commander/"
-            echo "PgAdmin: https://api.ishswami.in/pgadmin/"
-            echo "Prisma Studio: https://api.ishswami.in/prisma/"
             echo "Health Check: https://api.ishswami.in/health"
             echo "============================================="
 
@@ -488,7 +486,6 @@ jobs:
             # Pass environment variables directly to the container
             docker exec -e REDIS_COMMANDER_URL=/redis-ui \
                        -e SOCKET_URL=/socket.io \
-                       -e PRISMA_STUDIO_URL=/prisma \
                        -e REDIS_UI_URL=/redis-ui \
                        -e LOGGER_URL=/logger \
                        latest-api sh -c 'echo "Environment variables updated via Docker exec"'
@@ -511,23 +508,6 @@ jobs:
               echo "Attempt $i/30: waiting for API to become healthy..."
               sleep 5
             done
-
-            # Ensure Prisma Studio is running
-            echo "Checking Prisma Studio status..."
-            if ! docker exec latest-api netstat -tulpn | grep -q ":5555"; then
-              echo "Prisma Studio not detected, attempting to start it..."
-              docker exec latest-api sh -c "cd /app && BROWSER=none npx prisma studio --schema=/app/src/shared/database/prisma/schema.prisma --hostname 0.0.0.0 --port 5555 &"
-              sleep 5
-              
-              if docker exec latest-api netstat -tulpn | grep -q ":5555"; then
-                echo "✅ Prisma Studio successfully started"
-              else
-                echo "⚠️ Prisma Studio failed to start, check logs for details"
-                docker logs latest-api | tail -50
-              fi
-            else
-              echo "✅ Prisma Studio is already running"
-            fi
 
             # Final verification step - check if API is actually accessible
             echo "Performing final verification of the API..."
@@ -552,11 +532,8 @@ jobs:
             echo "Testing Logger through Nginx..."
             curl -sk -I https://api.ishswami.in/logger/ | grep "200\|301\|302" && echo "✅ Logger accessible" || echo "⚠️ Logger test failed"
 
-            echo "Testing Prisma Studio through Nginx..."
-            curl -sk -I https://api.ishswami.in/prisma/ | grep "200\|301\|302" && echo "✅ Prisma Studio accessible" || echo "⚠️ Prisma Studio test failed"
-
             echo "Testing WebSocket through Nginx..."
-            curl -sk -I https://api.ishswami.in/socket/ | grep "200\|301\|302\|400" && echo "✅ WebSocket endpoint accessible" || echo "⚠️ WebSocket endpoint test failed"
+            curl -sk -I https://api.ishswami.in/socket.io | grep "200\|101\|400" && echo "✅ WebSocket endpoint accessible" || echo "⚠️ WebSocket endpoint test failed"
 
             # Display container status
             echo "Docker container status:"
