@@ -434,6 +434,10 @@ jobs:
             echo "Generating Prisma client in API container..."
             docker exec latest-api sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma" || true
 
+            # Test database connection 
+            echo "Testing database connection..."
+            docker exec latest-api sh -c "node -e \"const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.\$connect().then(() => { console.log('Prisma connection successful'); process.exit(0); }).catch(e => { console.error('Prisma connection failed:', e); process.exit(1); })\"" || echo "Database connection test failed, but continuing deployment..."
+
             # Wait for containers to be healthy
             echo "Waiting for containers to be healthy..."
             for container in latest-api latest-postgres latest-redis latest-redis-commander; do

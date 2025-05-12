@@ -35,7 +35,7 @@ services:
       API_URL: https://api.ishswami.in
       SWAGGER_URL: /docs
       BULL_BOARD_URL: /queue-dashboard
-      SOCKET_URL: /socket
+      SOCKET_URL: /socket.io
       REDIS_UI_URL: /redis-ui
       LOGGER_URL: /logger
     expose:
@@ -74,7 +74,6 @@ services:
     command: >
       sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
              npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma &&
-             node -e \"const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.\$connect().then(() => console.log('Prisma connection successful')).catch(e => console.error('Prisma connection failed:', e))\" &&
              mkdir -p /app/logs &&
              node dist/main.js"
 
