@@ -250,18 +250,18 @@ jobs:
           cp -r src nginx deploy_temp/
           cp docker-compose.prod.yml .env.production Dockerfile package*.json tsconfig*.json deploy_temp/
 
-          # Also copy scripts directory to ensure rollback script is available
+          # Also copy scripts directory to ensure all scripts are available
           mkdir -p deploy_temp/scripts
           if [ -d "scripts" ]; then
             cp -r scripts/* deploy_temp/scripts/
+            # Ensure all scripts are executable
+            chmod +x deploy_temp/scripts/*.sh
+            echo "Scripts copied and made executable:"
+            ls -la deploy_temp/scripts/
           else
             # Create scripts directory if it doesn't exist
             mkdir -p scripts
-          fi
-
-          # Ensure rollback script is executable
-          if [ -f "deploy_temp/scripts/rollback.sh" ]; then
-            chmod +x deploy_temp/scripts/rollback.sh
+            echo "No scripts directory found in source"
           fi
 
       - name: Copy deployment files
@@ -764,6 +764,10 @@ jobs:
           proxy_timeout: 120s
           script: |
             echo "Triggering offsite backup to Google Drive..."
+            # Debugging: List all scripts in current directory
+            echo "Scripts in current deployment directory:"
+            ls -la /var/www/healthcare/backend/current/scripts/
+
             # Make the script executable if it exists
             if [ -f "/var/www/healthcare/backend/current/scripts/offsite-backup.sh" ]; then
               chmod +x /var/www/healthcare/backend/current/scripts/offsite-backup.sh
@@ -771,7 +775,16 @@ jobs:
               nohup bash /var/www/healthcare/backend/current/scripts/offsite-backup.sh > /dev/null 2>&1 &
               echo "Offsite backup script started in background"
             else
-              echo "Offsite backup script not found"
+              echo "Offsite backup script not found at: /var/www/healthcare/backend/current/scripts/offsite-backup.sh"
+              # Check in other potential locations
+              if [ -f "/var/www/healthcare/backend/scripts/offsite-backup.sh" ]; then
+                echo "Found script in /var/www/healthcare/backend/scripts/"
+                chmod +x /var/www/healthcare/backend/scripts/offsite-backup.sh
+                nohup bash /var/www/healthcare/backend/scripts/offsite-backup.sh > /dev/null 2>&1 &
+                echo "Offsite backup script started from alternative location"
+              else
+                echo "Script not found in any expected location"
+              fi
             fi
 
       - name: Update deployment status failure
