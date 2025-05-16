@@ -8,13 +8,26 @@ APP_DIR="/var/www/healthcare/backend"
 BACKUP_DIR="$APP_DIR/backups"
 DB_BACKUP_DIR="/var/backups/postgres"
 LOG_FILE="/var/log/healthcare/offsite-backup.log"
+DEBUG_LOG_FILE="/var/log/healthcare/offsite-backup-debug.log"
+SUCCESSFUL_DEPLOYMENTS_FILE="$APP_DIR/successful_deployments.txt"
+RETENTION_COUNT=5  # Number of backups to keep
 
 # Ensure log directory exists
-mkdir -p "$(dirname "$LOG_FILE")"
+mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$DEBUG_LOG_FILE")"
 
 # Function to log messages
 log_message() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# Function for error logging
+log_error() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | tee -a "$LOG_FILE" | tee -a "$DEBUG_LOG_FILE"
+}
+
+# Function to log debug information
+log_debug() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] DEBUG: $1" >> "$DEBUG_LOG_FILE"
 }
 
 # Function to check if a command exists
@@ -22,133 +35,137 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Function to verify file upload to Google Drive
+verify_gdrive_upload() {
+  local source_file="$1"
+  local gdrive_path="$2"
+  local file_name=$(basename "$source_file")
+  
+  log_debug "Verifying upload of $file_name to $gdrive_path"
+  
+  # Get local file size and MD5
+  local_size=$(stat -f%z "$source_file" 2>/dev/null || stat -c%s "$source_file")
+  local_md5=$(md5sum "$source_file" | cut -d' ' -f1)
+  
+  # Get remote file size and MD5
+  remote_size=$(rclone size "${gdrive_path}/${file_name}" 2>/dev/null | grep "Total size:" | awk '{print $3}')
+  remote_md5=$(rclone md5sum "${gdrive_path}/${file_name}" 2>/dev/null | cut -d' ' -f1)
+  
+  if [ "$local_size" = "$remote_size" ] && [ "$local_md5" = "$remote_md5" ]; then
+    log_debug "Verification successful for $file_name"
+    return 0
+  else
+    log_error "Verification failed for $file_name (size: $local_size/$remote_size, md5: $local_md5/$remote_md5)"
+    return 1
+  fi
+}
+
+# Function to clean up old backups in Google Drive
+cleanup_gdrive_backups() {
+  local backup_type="$1"  # 'application', 'database', or 'reports'
+  local retention="$2"    # number of backups to keep
+  
+  log_message "Cleaning up old $backup_type backups in Google Drive..."
+  
+  # List files sorted by modification time
+  local files_to_delete=$(rclone lsf --format "tp" "gdrive:HealthcareBackups/$backup_type" | sort -r | tail -n +$((retention + 1)) | cut -d';' -f2)
+  
+  if [ -n "$files_to_delete" ]; then
+    echo "$files_to_delete" | while read -r file; do
+      if [ -n "$file" ]; then
+        log_debug "Deleting old backup: $file"
+        rclone delete "gdrive:HealthcareBackups/$backup_type/$file"
+      fi
+    done
+    log_message "Cleaned up old $backup_type backups in Google Drive"
+  else
+    log_debug "No old $backup_type backups to clean up in Google Drive"
+  fi
+}
+
+# Function to get the latest successful deployment
+get_latest_successful_deployment() {
+  if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
+    tail -n 1 "$SUCCESSFUL_DEPLOYMENTS_FILE"
+  else
+    log_error "No successful deployments file found"
+    return 1
+  fi
+}
+
+# Function to ensure required directories exist
+ensure_directories() {
+  log_message "Ensuring required directories exist..."
+  
+  # Create application backup directory if it doesn't exist
+  if [ ! -d "$BACKUP_DIR" ]; then
+    log_message "Creating backup directory: $BACKUP_DIR"
+    mkdir -p "$BACKUP_DIR"
+  fi
+  
+  # Create database backup directory if it doesn't exist
+  if [ ! -d "$DB_BACKUP_DIR" ]; then
+    log_message "Creating database backup directory: $DB_BACKUP_DIR"
+    sudo mkdir -p "$DB_BACKUP_DIR"
+    sudo chown -R www-data:www-data "$DB_BACKUP_DIR"
+  fi
+  
+  # Create latest_backup marker if it doesn't exist
+  if [ ! -f "$BACKUP_DIR/latest_backup" ]; then
+    log_message "Creating latest_backup marker..."
+    # Try to get the latest successful deployment first
+    LATEST_DEPLOY=$(get_latest_successful_deployment)
+    if [ -n "$LATEST_DEPLOY" ] && [ -d "$APP_DIR/releases/$LATEST_DEPLOY" ]; then
+      echo "$LATEST_DEPLOY" > "$BACKUP_DIR/latest_backup"
+      log_message "Set latest_backup to successful deployment: $LATEST_DEPLOY"
+    else
+      # Fall back to timestamp-based backup
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      mkdir -p "$BACKUP_DIR/$TIMESTAMP"
+      echo "$TIMESTAMP" > "$BACKUP_DIR/latest_backup"
+      log_message "Created initial backup directory: $TIMESTAMP"
+    fi
+  fi
+  
+  # Ensure Google Drive directories exist
+  log_message "Ensuring Google Drive directories exist..."
+  rclone mkdir "gdrive:HealthcareBackups" 2>/dev/null || true
+  rclone mkdir "gdrive:HealthcareBackups/application" 2>/dev/null || true
+  rclone mkdir "gdrive:HealthcareBackups/database" 2>/dev/null || true
+  rclone mkdir "gdrive:HealthcareBackups/reports" 2>/dev/null || true
+}
+
 # Function to install rclone if not present
 ensure_rclone() {
   if ! command_exists rclone; then
     log_message "Installing rclone..."
-    curl https://rclone.org/install.sh | sudo bash
-    log_message "rclone installed successfully"
+    curl -s https://rclone.org/install.sh | sudo bash
+    if command_exists rclone; then
+      log_message "rclone installed successfully"
+    else
+      log_error "Failed to install rclone"
+      return 1
+    fi
   else
-    log_message "rclone is already installed"
+    log_message "rclone is already installed (version: $(rclone --version | head -n 1))"
   fi
-}
-
-# Function to automatically configure rclone for Google Drive
-configure_rclone() {
-  EMAIL="aadeshbhujbal99@gmail.com"
-  CONFIG_FILE="/root/.config/rclone/rclone.conf"
-  CONFIG_DIR=$(dirname "$CONFIG_FILE")
-  
-  # Create config directory if it doesn't exist
-  mkdir -p "$CONFIG_DIR"
-  
-  # Check if config file already exists and is configured
-  if [ -f "$CONFIG_FILE" ] && grep -q "gdrive" "$CONFIG_FILE"; then
-    log_message "rclone is already configured with Google Drive"
-    return 0
-  fi
-  
-  log_message "Configuring rclone for Google Drive with account $EMAIL"
-  
-  # Install required packages
-  apt-get update && apt-get install -y expect > /dev/null 2>&1
-  
-  # Create expect script to automate rclone config
-  cat > /tmp/rclone_config.exp << EOF
-#!/usr/bin/expect -f
-set timeout -1
-spawn rclone config
-expect "n/s/q>"
-send "n\r"
-expect "name>"
-send "gdrive\r"
-expect "Storage>"
-send "drive\r"
-expect "client_id>"
-send "\r"
-expect "client_secret>"
-send "\r"
-expect "scope>"
-send "1\r"
-expect "root_folder_id>"
-send "\r"
-expect "service_account_file>"
-send "\r"
-expect "Edit advanced config?"
-send "n\r"
-expect "Use auto config?"
-send "n\r"
-expect "Please go to the following link:"
-set link "\$expect_out(buffer)"
-puts "Please visit the following URL to authorize rclone:"
-puts \$link
-expect "Enter verification code>"
-
-# Wait for user to manually enter verification code
-puts "*** MANUAL STEP REQUIRED ***"
-puts "1. Copy the URL displayed above"
-puts "2. Open it in a browser while logged in as $EMAIL"
-puts "3. Authorize the app and copy the verification code"
-puts "4. Paste the verification code here and press Enter"
-expect_user -re "(.*)\r"
-set code \$expect_out(1,string)
-send "\$code\r"
-
-expect "Configure this as a team drive?"
-send "n\r"
-expect "y/n>"
-send "y\r"
-expect "q>"
-send "q\r"
-expect eof
-EOF
-  
-  # Make the expect script executable
-  chmod +x /tmp/rclone_config.exp
-  
-  # Manual configuration instruction
-  log_message "===== MANUAL CONFIGURATION STEP ====="
-  log_message "To complete the Google Drive setup, you need to authorize rclone once."
-  log_message "Please follow the instructions when the authorization URL appears."
-  log_message "This only needs to be done once."
-  log_message "====================================="
-  
-  # Run the expect script
-  /tmp/rclone_config.exp
-  
-  # Clean up
-  rm -f /tmp/rclone_config.exp
-  
-  # Check if configuration was successful
-  if grep -q "gdrive" "$CONFIG_FILE"; then
-    log_message "rclone configured successfully for Google Drive with account $EMAIL"
-    # Create HealthcareBackups folder structure
-    rclone mkdir gdrive:HealthcareBackups
-    rclone mkdir gdrive:HealthcareBackups/application
-    rclone mkdir gdrive:HealthcareBackups/database
-    rclone mkdir gdrive:HealthcareBackups/reports
-    log_message "Created folder structure in Google Drive"
-    return 0
-  else
-    log_message "Failed to configure rclone for Google Drive"
-    return 1
-  fi
+  return 0
 }
 
 # Function to check if rclone is configured
 check_rclone_config() {
   if ! rclone listremotes | grep -q "gdrive:"; then
-    log_message "Google Drive remote 'gdrive:' is not configured in rclone"
-    log_message "Attempting to configure automatically..."
-    if configure_rclone; then
-      log_message "Successfully configured rclone for Google Drive"
-      return 0
-    else
-      log_message "ERROR: Failed to configure rclone automatically"
-      log_message "Please run 'rclone config' manually to set up Google Drive access"
-      return 1
-    fi
+    log_error "Google Drive remote 'gdrive:' is not configured in rclone"
+    log_error "Please run 'rclone config' manually to set up Google Drive access"
+    return 1
   fi
+  
+  # Test Google Drive access
+  if ! rclone lsd gdrive: >/dev/null 2>&1; then
+    log_error "Cannot access Google Drive. Please check authentication"
+    return 1
+  fi
+  
   log_message "rclone is properly configured with Google Drive remote"
   return 0
 }
@@ -160,43 +177,53 @@ sync_app_backups() {
   # Create a timestamp for this backup
   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
   
-  # Ensure the backup directory exists
-  if [ ! -d "$BACKUP_DIR" ]; then
-    log_message "ERROR: Backup directory $BACKUP_DIR does not exist"
-    return 1
-  fi
-  
-  # Check if there are any backups
-  if [ -z "$(ls -A $BACKUP_DIR 2>/dev/null)" ]; then
-    log_message "No application backups found to sync"
-    return 0
-  fi
-  
-  # Compress the latest backup
-  LATEST_BACKUP=""
-  if [ -f "$BACKUP_DIR/latest_backup" ]; then
-    LATEST_BACKUP=$(cat "$BACKUP_DIR/latest_backup")
-    if [ -d "$BACKUP_DIR/$LATEST_BACKUP" ]; then
-      log_message "Found latest backup: $LATEST_BACKUP"
-      
-      # Create archive of the latest backup
-      ARCHIVE_NAME="healthcare_app_${LATEST_BACKUP}_${TIMESTAMP}.tar.gz"
-      log_message "Creating archive: $ARCHIVE_NAME"
-      tar -czf "/tmp/$ARCHIVE_NAME" -C "$BACKUP_DIR" "$LATEST_BACKUP"
-      
-      # Sync to Google Drive
-      log_message "Uploading archive to Google Drive..."
-      # Creates a folder structure: HealthcareBackups/application/ in your Google Drive
-      rclone copy "/tmp/$ARCHIVE_NAME" gdrive:HealthcareBackups/application/
-      
-      # Clean up temporary archive
-      rm -f "/tmp/$ARCHIVE_NAME"
-      log_message "Application backup synced to Google Drive successfully"
+  # Try to get the latest successful deployment
+  LATEST_DEPLOY=$(get_latest_successful_deployment)
+  if [ -n "$LATEST_DEPLOY" ] && [ -d "$APP_DIR/releases/$LATEST_DEPLOY" ]; then
+    log_message "Found latest successful deployment: $LATEST_DEPLOY"
+    
+    # Create backup from successful deployment
+    mkdir -p "$BACKUP_DIR/$TIMESTAMP"
+    cp -r "$APP_DIR/releases/$LATEST_DEPLOY"/* "$BACKUP_DIR/$TIMESTAMP/"
+    echo "$TIMESTAMP" > "$BACKUP_DIR/latest_backup"
+    
+    # Create archive of the backup
+    ARCHIVE_NAME="healthcare_app_${TIMESTAMP}_deploy_${LATEST_DEPLOY}.tar.gz"
+    log_message "Creating archive: $ARCHIVE_NAME"
+    tar -czf "/tmp/$ARCHIVE_NAME" -C "$BACKUP_DIR" "$TIMESTAMP" || {
+      log_error "Failed to create archive"
+      return 1
+    }
+    
+    # Upload to Google Drive with parallel transfer and verification
+    log_message "Uploading archive to Google Drive..."
+    if rclone copy --transfers 4 --progress "/tmp/$ARCHIVE_NAME" "gdrive:HealthcareBackups/application/" 2>&1 | tee -a "$DEBUG_LOG_FILE"; then
+      if verify_gdrive_upload "/tmp/$ARCHIVE_NAME" "gdrive:HealthcareBackups/application"; then
+        log_message "Application backup uploaded and verified successfully"
+      else
+        log_error "Application backup verification failed"
+        return 1
+      fi
     else
-      log_message "WARNING: Latest backup directory $BACKUP_DIR/$LATEST_BACKUP not found"
+      log_error "Failed to upload application backup to Google Drive"
+      return 1
     fi
+    
+    # Clean up temporary archive
+    rm -f "/tmp/$ARCHIVE_NAME"
+    
+    # Clean up old backups (local)
+    find "$BACKUP_DIR" -maxdepth 1 -type d -not -name "." -not -name ".." | \
+      sort -r | tail -n +$((RETENTION_COUNT + 1)) | xargs -r rm -rf
+    log_message "Cleaned up old local application backups"
+    
+    # Clean up old backups (Google Drive)
+    cleanup_gdrive_backups "application" "$RETENTION_COUNT"
   else
-    log_message "WARNING: No latest_backup marker found"
+    log_error "No successful deployment found to backup"
+    # Create an empty backup directory just to maintain the structure
+    mkdir -p "$BACKUP_DIR/$TIMESTAMP"
+    echo "$TIMESTAMP" > "$BACKUP_DIR/latest_backup"
   fi
 }
 
@@ -204,43 +231,70 @@ sync_app_backups() {
 sync_db_backups() {
   log_message "Syncing database backups to Google Drive..."
   
-  # Ensure the DB backup directory exists
+  # Create DB backup directory if it doesn't exist
   if [ ! -d "$DB_BACKUP_DIR" ]; then
-    log_message "ERROR: Database backup directory $DB_BACKUP_DIR does not exist"
-    return 1
+    log_message "Creating database backup directory..."
+    sudo mkdir -p "$DB_BACKUP_DIR"
+    sudo chown -R www-data:www-data "$DB_BACKUP_DIR"
   fi
   
-  # Check if there are any DB backups
-  if [ -z "$(ls -A $DB_BACKUP_DIR 2>/dev/null)" ]; then
-    log_message "No database backups found to sync"
-    return 0
-  fi
+  # Get latest successful deployment for backup name
+  LATEST_DEPLOY=$(get_latest_successful_deployment)
+  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
   
-  # Find the latest database backup
-  LATEST_DB_BACKUP=$(find "$DB_BACKUP_DIR" -type f -name "*.sql.gz" -o -name "*.dump" | sort -r | head -n 1)
-  
-  if [ -n "$LATEST_DB_BACKUP" ]; then
-    log_message "Found latest database backup: $LATEST_DB_BACKUP"
-    
-    # Sync to Google Drive
-    log_message "Uploading database backup to Google Drive..."
-    rclone copy "$LATEST_DB_BACKUP" gdrive:HealthcareBackups/database/
-    log_message "Database backup synced to Google Drive successfully"
+  # Create the backup filename
+  if [ -n "$LATEST_DEPLOY" ]; then
+    DB_BACKUP_FILE="$DB_BACKUP_DIR/healthcare_db_${TIMESTAMP}_deploy_${LATEST_DEPLOY}.sql.gz"
   else
-    log_message "WARNING: No database backups found to sync"
+    DB_BACKUP_FILE="$DB_BACKUP_DIR/healthcare_db_${TIMESTAMP}.sql.gz"
+  fi
+  
+  log_message "Creating new database backup..."
+  if docker exec latest-postgres pg_dumpall -U postgres | gzip > "$DB_BACKUP_FILE"; then
+    log_message "Database backup created successfully: $DB_BACKUP_FILE"
+    
+    # Upload to Google Drive with parallel transfer and verification
+    log_message "Uploading database backup to Google Drive..."
+    if rclone copy --transfers 4 --progress "$DB_BACKUP_FILE" "gdrive:HealthcareBackups/database/" 2>&1 | tee -a "$DEBUG_LOG_FILE"; then
+      if verify_gdrive_upload "$DB_BACKUP_FILE" "gdrive:HealthcareBackups/database"; then
+        log_message "Database backup uploaded and verified successfully"
+      else
+        log_error "Database backup verification failed"
+        return 1
+      fi
+    else
+      log_error "Failed to upload database backup to Google Drive"
+      return 1
+    fi
+    
+    # Clean up old backups (local)
+    find "$DB_BACKUP_DIR" -name "*.sql.gz" -type f -printf '%T@ %p\n' | \
+      sort -n | head -n -"$RETENTION_COUNT" | cut -d' ' -f2- | xargs -r rm
+    log_message "Cleaned up old local database backups"
+    
+    # Clean up old backups (Google Drive)
+    cleanup_gdrive_backups "database" "$RETENTION_COUNT"
+  else
+    log_error "Failed to create database backup"
+    return 1
   fi
 }
 
 # Function to create a complete system backup report
 create_system_report() {
   log_message "Creating system report..."
-  REPORT_FILE="/tmp/healthcare_system_report_$(date +%Y%m%d_%H%M%S).txt"
+  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+  LATEST_DEPLOY=$(get_latest_successful_deployment)
+  REPORT_FILE="/tmp/healthcare_system_report_${TIMESTAMP}.txt"
   
   {
     echo "===== HEALTHCARE SYSTEM BACKUP REPORT ====="
     echo "Date: $(date)"
     echo "Hostname: $(hostname)"
     echo "IP: $(hostname -I || echo 'Unable to determine IP')"
+    if [ -n "$LATEST_DEPLOY" ]; then
+      echo "Latest Successful Deployment: $LATEST_DEPLOY"
+    fi
     echo ""
     
     echo "===== DOCKER CONTAINERS ====="
@@ -260,9 +314,9 @@ create_system_report() {
     echo ""
     
     echo "===== DEPLOYMENTS ====="
-    if [ -f "$APP_DIR/successful_deployments.txt" ]; then
-      echo "Successful deployments:"
-      cat "$APP_DIR/successful_deployments.txt"
+    if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
+      echo "Successful deployments (most recent first):"
+      tac "$SUCCESSFUL_DEPLOYMENTS_FILE"
     else
       echo "No successful deployments file found"
     fi
@@ -274,35 +328,77 @@ create_system_report() {
     echo ""
     echo "Database backups:"
     ls -la "$DB_BACKUP_DIR" || echo "Failed to list database backups"
+    echo ""
+    
+    echo "===== GOOGLE DRIVE BACKUP INVENTORY ====="
+    echo "Application backups in Google Drive:"
+    rclone ls "gdrive:HealthcareBackups/application" || echo "Failed to list Google Drive application backups"
+    echo ""
+    echo "Database backups in Google Drive:"
+    rclone ls "gdrive:HealthcareBackups/database" || echo "Failed to list Google Drive database backups"
+    echo ""
+    echo "Previous reports in Google Drive:"
+    rclone ls "gdrive:HealthcareBackups/reports" || echo "Failed to list Google Drive reports"
     
   } > "$REPORT_FILE"
   
-  # Upload the report to Google Drive
+  # Upload the report to Google Drive with verification
   log_message "Uploading system report to Google Drive..."
-  rclone copy "$REPORT_FILE" gdrive:HealthcareBackups/reports/
+  if rclone copy --progress "$REPORT_FILE" "gdrive:HealthcareBackups/reports/" 2>&1 | tee -a "$DEBUG_LOG_FILE"; then
+    if verify_gdrive_upload "$REPORT_FILE" "gdrive:HealthcareBackups/reports"; then
+      log_message "System report uploaded and verified successfully"
+    else
+      log_error "System report verification failed"
+      return 1
+    fi
+  else
+    log_error "Failed to upload system report to Google Drive"
+    return 1
+  fi
   
   # Cleanup
   rm -f "$REPORT_FILE"
-  log_message "System report created and uploaded successfully"
+  
+  # Clean up old reports in Google Drive
+  cleanup_gdrive_backups "reports" "$RETENTION_COUNT"
+  
+  log_message "System report process completed"
 }
 
 # Main execution
 log_message "====================== OFFSITE BACKUP PROCESS STARTED ======================"
 
+# Ensure required directories exist
+ensure_directories || {
+  log_error "Failed to ensure required directories"
+  exit 1
+}
+
 # Ensure rclone is installed
-ensure_rclone
+if ! ensure_rclone; then
+  log_error "Failed to ensure rclone installation"
+  exit 1
+fi
 
 # Check rclone configuration
 if check_rclone_config; then
-  # Sync backups
-  sync_app_backups
-  sync_db_backups
-  create_system_report
+  # Initialize error flag
+  ERROR_FLAG=0
   
-  log_message "✅ Offsite backup process completed successfully"
-  exit 0
+  # Sync backups with error handling
+  sync_app_backups || ERROR_FLAG=1
+  sync_db_backups || ERROR_FLAG=1
+  create_system_report || ERROR_FLAG=1
+  
+  if [ $ERROR_FLAG -eq 0 ]; then
+    log_message "✅ Offsite backup process completed successfully"
+    exit 0
+  else
+    log_error "❌ Offsite backup process completed with errors"
+    exit 1
+  fi
 else
-  log_message "❌ Offsite backup process failed - rclone not configured correctly"
-  log_message "Please run 'rclone config' on the server to set up Google Drive"
+  log_error "❌ Offsite backup process failed - rclone not configured correctly"
+  log_error "Please run 'rclone config' on the server to set up Google Drive"
   exit 1
 fi 
