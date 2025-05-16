@@ -157,9 +157,9 @@ sync_backups() {
           log_message "$MAINTENANCE_LOG" "Syncing missing database backup: $backup_name"
           sync_backup "$backup_name" "database" "to_gdrive"
         fi
-      fi
-    done
-  fi
+        fi
+      done
+    fi
   
   log_message "$MAINTENANCE_LOG" "Backup sync completed"
 }
