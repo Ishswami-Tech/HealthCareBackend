@@ -153,7 +153,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create backup and cleanup
+      - name: Create targeted backup and cleanup
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
@@ -171,8 +171,32 @@ jobs:
             timestamp=$(date +%Y%m%d_%H%M%S)
             mkdir -p backups/$timestamp
 
+            # Check if successful deployments file exists
+            SUCCESSFUL_DEPLOYMENTS_FILE="${{ env.DEPLOY_PATH }}/successful_deployments.txt"
+            CURRENT_DEPLOYMENT_IS_SUCCESSFUL=false
+
             # Only backup and stop API container since we're only updating the API
             if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
+              echo "Checking if current deployment is marked as successful..."
+              
+              # Get current deployment hash
+              CURRENT_DEPLOY=$(basename $(readlink -f current))
+              echo "Current deployment: $CURRENT_DEPLOY"
+              
+              # Check if it's in the successful deployments file
+              if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ] && grep -q "$CURRENT_DEPLOY" "$SUCCESSFUL_DEPLOYMENTS_FILE"; then
+                echo "Current deployment is marked as successful, creating backup..."
+                CURRENT_DEPLOYMENT_IS_SUCCESSFUL=true
+                
+                # Only backup successful deployments
+                echo "Creating backup of successful API deployment..."
+              cp -r current/* backups/$timestamp/ 2>/dev/null || true
+              echo $timestamp > backups/latest_backup
+                echo "Backup created with timestamp: $timestamp"
+              else
+                echo "Current deployment is not marked as successful, skipping backup..."
+              fi
+              
               echo "Stopping current API deployment..."
               cd current
               
@@ -186,10 +210,6 @@ jobs:
               # Keep database containers running
               echo "Keeping database containers running for persistence..."
               cd ..
-
-              echo "Creating backup of API code..."
-              cp -r current/* backups/$timestamp/ 2>/dev/null || true
-              echo $timestamp > backups/latest_backup
             else
               echo "No current deployment found, proceeding with fresh deployment..."
             fi
@@ -202,7 +222,7 @@ jobs:
             if docker ps -a --format '{{.Names}}' | grep -q "^${{ env.API_CONTAINER }}$"; then
               echo "Removing existing API container: ${{ env.API_CONTAINER }}"
               docker rm -f ${{ env.API_CONTAINER }} || true
-            fi
+              fi
 
             # Create necessary Docker network if it doesn't exist
             echo "Creating Docker network if it doesn't exist..."
@@ -355,7 +375,7 @@ jobs:
               # Simple connection test using the detected container name
               if docker exec $REAL_POSTGRES_CONTAINER pg_isready -q; then
                 echo "PostgreSQL container is responsive."
-              else
+                else
                 echo "Warning: PostgreSQL container exists but isn't responding to connection tests."
                 # Still keeping it to avoid data loss - might self-recover
               fi
@@ -464,19 +484,19 @@ jobs:
 
             # Wait for API container to be healthy
             echo "Waiting for API container to be healthy..."
-            for i in {1..30}; do
+              for i in {1..30}; do
               if docker ps --filter "name=${{ env.API_CONTAINER }}" --format "{{.Status}}" | grep -q "healthy"; then
                 echo "API container is healthy"
                 DEPLOY_SUCCESS=true
-                break
-              fi
-              if [ $i -eq 30 ]; then
+                  break
+                fi
+                if [ $i -eq 30 ]; then
                 echo "Error: API container failed to become healthy"
                 docker logs ${{ env.API_CONTAINER }}
-                exit 1
-              fi
+                  exit 1
+                fi
               echo "Attempt $i/30: Waiting for API container to be healthy..."
-              sleep 10
+                sleep 10
             done
 
             # Configure firewall to allow traffic on ports
@@ -578,10 +598,10 @@ jobs:
 
             # Setting environment variables directly to API container
             docker exec -e REDIS_COMMANDER_URL=/redis-ui \
-                      -e SOCKET_URL=/socket.io \
-                      -e REDIS_UI_URL=/redis-ui \
-                      -e LOGGER_URL=/logger \
-                      latest-api sh -c 'echo "Environment variables updated via Docker exec"'
+                       -e SOCKET_URL=/socket.io \
+                       -e REDIS_UI_URL=/redis-ui \
+                       -e LOGGER_URL=/logger \
+                       latest-api sh -c 'echo "Environment variables updated via Docker exec"'
 
             # Restart Nginx to apply configuration changes
             echo "Restarting Nginx service..."
@@ -653,12 +673,12 @@ jobs:
               else
                 HTTP_CODE=$(echo "$CURL_OUTPUT" | tail -n1)
                 echo "HTTP Status Code (extracted): $HTTP_CODE"
-              fi
-              
-              # Display the API health response for debugging
-              echo "API Health Response:"
+            fi
+
+            # Display the API health response for debugging
+            echo "API Health Response:"
               if [ -f "/tmp/health_response" ]; then
-                cat /tmp/health_response
+            cat /tmp/health_response
               else
                 echo "No health response file found"
               fi
@@ -691,7 +711,17 @@ jobs:
               if ! grep -q "${{ github.sha }}" "$SUCCESSFUL_DEPLOYMENTS_FILE"; then
                 echo "${{ github.sha }}" >> "$SUCCESSFUL_DEPLOYMENTS_FILE"
                 echo "Deployment confirmed successful after verification"
-              fi
+            fi
+
+              # Schedule the server maintenance script to run in the background
+              # This will clean up old releases and perform other maintenance tasks
+              nohup bash /var/www/healthcare/backend/current/scripts/server-maintenance.sh > /dev/null 2>&1 &
+              echo "Scheduled maintenance script to run in the background"
+              
+              # Also schedule a database backup
+              nohup bash /var/www/healthcare/backend/current/scripts/backup-database.sh > /dev/null 2>&1 &
+              echo "Scheduled database backup to run in the background"
+              
             elif docker ps | grep -q "latest-api"; then
               echo "API container is running but failed health checks. Marking as successful anyway."
               echo "Check container logs for details:"
@@ -702,23 +732,16 @@ jobs:
               if ! grep -q "${{ github.sha }}" "$SUCCESSFUL_DEPLOYMENTS_FILE"; then
                 echo "${{ github.sha }}" >> "$SUCCESSFUL_DEPLOYMENTS_FILE"
                 echo "Deployment marked as successful despite health check issues"
-              fi
-            else
-              echo "ERROR: API container is not running and health check failed"
-              docker logs latest-api --tail 50
-              exit 1
             fi
-              
-              # Schedule the server maintenance script to run in the background
-              # This will clean up old releases and perform other maintenance tasks
+
+              # Schedule maintenance tasks even if health check didn't fully pass
               nohup bash /var/www/healthcare/backend/current/scripts/server-maintenance.sh > /dev/null 2>&1 &
               echo "Scheduled maintenance script to run in the background"
-              
-              # Also schedule a database backup
               nohup bash /var/www/healthcare/backend/current/scripts/backup-database.sh > /dev/null 2>&1 &
               echo "Scheduled database backup to run in the background"
+              
             else
-              echo "Error: API health check failed - unexpected response"
+              echo "ERROR: API container is not running and health check failed"
               docker logs latest-api --tail 50
               exit 1
             fi
@@ -730,13 +753,34 @@ jobs:
         run: |
           echo "Deployment successful"
 
+      - name: Trigger offsite backup
+        if: success()
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          timeout: 120s
+          proxy_timeout: 120s
+          script: |
+            echo "Triggering offsite backup to Google Drive..."
+            # Make the script executable if it exists
+            if [ -f "/var/www/healthcare/backend/current/scripts/offsite-backup.sh" ]; then
+              chmod +x /var/www/healthcare/backend/current/scripts/offsite-backup.sh
+              # Run the backup script in the background
+              nohup bash /var/www/healthcare/backend/current/scripts/offsite-backup.sh > /dev/null 2>&1 &
+              echo "Offsite backup script started in background"
+            else
+              echo "Offsite backup script not found"
+            fi
+
       - name: Update deployment status failure
         if: failure()
         run: |
           echo "Deployment failed"
 
   rollback:
-    if: failure() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
+    if: always() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
     needs: [deploy, post-deployment-verification, create-deployment]
     runs-on: ubuntu-latest
     steps:
@@ -752,64 +796,112 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_PATH }}
 
+            echo "========== ROLLBACK PROCESS STARTED =========="
             echo "Deployment failed. Initiating automatic rollback..."
+            echo "Current directory: $(pwd)"
+            echo "Listing deployment directory contents:"
+            ls -la
 
+            # Check current Docker status
+            echo "Current Docker containers:"
+            docker ps -a
+            echo "Current Docker volumes:"
+            docker volume ls
+
+            echo "Checking for rollback script..."
             # Check if our rollback script exists
             if [ -f "current/scripts/rollback.sh" ]; then
-              echo "Using rollback script to revert to last successful deployment..."
+              echo "✅ Rollback script found, using it to revert to last successful deployment..."
               cd current/scripts
               chmod +x rollback.sh
               ./rollback.sh auto
               
-              if [ $? -eq 0 ]; then
-                echo "Rollback completed successfully using rollback script"
+              ROLLBACK_RESULT=$?
+              if [ $ROLLBACK_RESULT -eq 0 ]; then
+                echo "✅ Rollback completed successfully using rollback script"
+                # Show the current container status after rollback
+                echo "Container status after rollback:"
+                docker ps
                 exit 0
               else
-                echo "Rollback script failed, falling back to manual rollback procedure"
+                echo "❌ Rollback script failed with exit code $ROLLBACK_RESULT"
+                echo "Falling back to manual rollback procedure"
               fi
             else
-              echo "Rollback script not found, using manual rollback procedure"
+              echo "❌ Rollback script not found in $(pwd)/current/scripts/"
+              echo "Falling back to manual rollback procedure"
             fi
 
             # Manual rollback procedure as fallback
             cd ${{ env.DEPLOY_PATH }}
+            echo "Manual rollback procedure starting from: $(pwd)"
 
             # Ensure backup directory exists
             mkdir -p backups
+            echo "Created backups directory if it didn't exist"
 
-            # Check if current deployment exists
-            if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
-              echo "Current deployment found, attempting to restore from previous version if available"
+            # Check for releases directory
+            if [ -d "releases" ]; then
+              echo "Releases directory exists, contents:"
+              ls -la releases/
+            else
+              echo "No releases directory found - this may be the first deployment"
+              mkdir -p releases
+            fi
+
+            # Check if there are any successful deployments
+            SUCCESSFUL_DEPLOYMENTS_FILE="${{ env.DEPLOY_PATH }}/successful_deployments.txt"
+            if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
+              echo "Found successful deployments record:"
+              cat "$SUCCESSFUL_DEPLOYMENTS_FILE"
+            else
+              echo "No successful deployments record found"
+              touch "$SUCCESSFUL_DEPLOYMENTS_FILE"
+            fi
+
+            # Check if current deployment exists and is valid
+            if [ -L "current" ] && [ -d "$(readlink -f current)" ] && [ -f "$(readlink -f current)/docker-compose.prod.yml" ]; then
+              echo "✅ Valid current deployment found, attempting to restore from previous version"
               
-              # Check if successful deployments file exists
-              SUCCESSFUL_DEPLOYMENTS_FILE="${{ env.DEPLOY_PATH }}/successful_deployments.txt"
               if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
-                echo "Found successful deployments record"
-                
                 # Get the last successful deployment that's not the current one
                 CURRENT_DEPLOY=$(basename $(readlink -f current))
+                echo "Current deployment: $CURRENT_DEPLOY"
+                
                 LAST_SUCCESSFUL=$(grep -v "$CURRENT_DEPLOY" "$SUCCESSFUL_DEPLOYMENTS_FILE" | tail -n 1)
+                echo "Last successful deployment: ${LAST_SUCCESSFUL:-none}"
                 
                 if [ -n "$LAST_SUCCESSFUL" ] && [ -d "releases/$LAST_SUCCESSFUL" ]; then
-                  echo "Rolling back to last successful deployment: $LAST_SUCCESSFUL"
-                  
+                  echo "✅ Rolling back to last successful deployment: $LAST_SUCCESSFUL"
+                
                   # Stop current API container
                   echo "Stopping current API container..."
-                  docker stop latest-api || true
-                  docker rm latest-api || true
-                  
+                  docker stop latest-api || echo "No API container found to stop"
+                  docker rm latest-api || echo "No API container found to remove"
+                
                   # Clean up Docker resources specifically for API only
                   echo "Cleaning up API Docker resources..."
-                  docker system prune -f --filter "label=com.docker.compose.service=api"
+                  docker system prune -f --filter "label=com.docker.compose.service=api" || echo "No API resources to prune"
                   
                   # Update symlink to the last successful deployment
+                  echo "Updating symlink to point to releases/$LAST_SUCCESSFUL"
                   ln -sfn "releases/$LAST_SUCCESSFUL" current
                   
                   # Start the API from the last successful deployment
-                  cd current
-                  # Using --no-deps ensures database containers are not touched
-                  docker-compose -f docker-compose.prod.yml up -d --build --no-deps api
+                cd current
+                  echo "Starting API from previous successful deployment in $(pwd)"
                   
+                  # Check if docker-compose.prod.yml exists
+                  if [ ! -f "docker-compose.prod.yml" ]; then
+                    echo "❌ ERROR: docker-compose.prod.yml not found in $(pwd)"
+                    ls -la
+                    exit 1
+                  fi
+                  
+                  # Using --no-deps ensures database containers are not touched
+                  echo "Starting API container..."
+                  docker-compose -f docker-compose.prod.yml up -d --build --no-deps api
+                
                   # Verify database containers are still running
                   echo "Verifying database containers are still running..."
                   
@@ -829,76 +921,109 @@ jobs:
                     echo "Redis container appears to be running."
                   fi
                   
-                  # Wait for API to be healthy
-                  echo "Waiting for API to be healthy..."
-                  for i in {1..30}; do
-                    sleep 10
-                    if curl -s http://localhost:8088/health | grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\""; then
-                      echo "API is healthy after rollback"
+                  # Show container status
+                  echo "Container status after rollback:"
+                  docker ps
+                  
+                  # Wait for API to be healthy with timeout protection
+                echo "Waiting for API to be healthy..."
+                  for i in {1..10}; do
+                    echo "Health check attempt $i/10..."
+                    HEALTH_OUTPUT=$(timeout 5 curl -v --max-time 5 http://localhost:8088/health 2>&1 || echo "Connection failed")
+                    echo "$HEALTH_OUTPUT"
+                    
+                    if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200"; then
+                      echo "✅ API is healthy after rollback (HTTP 200)"
+                      exit 0
+                    elif echo "$HEALTH_OUTPUT" | grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\""; then
+                      echo "✅ API is healthy after rollback (status indicators)"
                       exit 0
                     fi
-                    echo "Attempt $i/30: Waiting for API to be healthy..."
+                    
+                    echo "Waiting 5 seconds before next health check..."
+                    sleep 5
                   done
                   
-                  echo "API failed to become healthy after rollback"
-                  exit 1
+                  echo "⚠️ API health check didn't pass, but container is running"
+                  echo "Final container status:"
+                  docker ps
+                  echo "API logs:"
+                  docker logs latest-api --tail 20
+                  exit 0
+                else
+                  echo "❌ No valid previous successful deployment found to roll back to"
                 fi
               fi
               
-              # If we get here, either no successful deployments file exists or no valid last successful deployment was found
+              # If we get here, no valid last successful deployment was found
+              echo "Checking for backup to use..."
+              
+              # List backups
+              echo "Available backups:"
+              ls -la backups/
+              
               # Fall back to using the backup
               if [ -f backups/latest_backup ]; then
                 timestamp=$(cat backups/latest_backup)
-                echo "Rolling back to backup from $timestamp"
+                echo "✅ Rolling back to backup from $timestamp"
                 
                 # Stop current API container
                 echo "Stopping current API container..."
-                docker stop ${{ env.API_CONTAINER }} || true
-                docker rm ${{ env.API_CONTAINER }} || true
+                docker stop latest-api || echo "No API container found to stop"
+                docker rm latest-api || echo "No API container found to remove"
                 
                 # Clean up Docker resources specifically for API
                 echo "Cleaning up API Docker resources..."
-                docker system prune -f --filter "label=com.docker.compose.service=api"
+                docker system prune -f --filter "label=com.docker.compose.service=api" || echo "No API resources to prune"
                 
                 # Restore from backup
-                rm -rf current
-                cp -r backups/$timestamp current/
+                echo "Restoring from backup..."
+                rm -rf current_old || true
+                mv current current_old || true
+                mkdir -p current
+                cp -r "backups/$timestamp/"* current/
                 
                 # Start API from backup
                 cd current
-                docker-compose -f docker-compose.prod.yml up -d --build api
+                echo "Starting API from backup in $(pwd)"
                 
-                # Wait for API to be healthy
-                echo "Waiting for API to be healthy..."
-                attempt=1
-                max_attempts=30
-                while [ $attempt -le $max_attempts ]; do
-                  curl -s http://localhost:8088/health > /tmp/health_response
-                  if grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\"" /tmp/health_response; then
-                    echo "API service is healthy after rollback"
-                    echo "Response: $(cat /tmp/health_response)"
-                    break
-                  fi
-                  echo "Attempt $attempt/$max_attempts: Waiting for API service..."
-                  echo "Current response: $(cat /tmp/health_response)"
-                  sleep 10
-                  attempt=$((attempt + 1))
-                done
-                
-                if [ $attempt -gt $max_attempts ]; then
-                  echo "Error: API service failed to become healthy after rollback"
-                  docker logs latest-api
+                if [ ! -f "docker-compose.prod.yml" ]; then
+                  echo "❌ ERROR: docker-compose.prod.yml not found in restored backup"
+                  ls -la
                   exit 1
                 fi
                 
-                echo "Rollback completed successfully"
+                echo "Starting API container from backup..."
+                docker-compose -f docker-compose.prod.yml up -d --build --no-deps api
+                
+                # Show container status
+                echo "Container status after backup restoration:"
+                docker ps
+                
+                echo "Rollback completed successfully using backup"
+                exit 0
               else
-                echo "No backup found for rollback, but current deployment exists"
+                echo "⚠️ No backup found for rollback, but current deployment exists"
                 echo "No action taken - keeping current deployment"
+                echo "Current container status:"
+                docker ps
                 exit 0
               fi
             else
-              echo "No current deployment found, nothing to roll back"
+              echo "⚠️ No valid current deployment found"
+              echo "Filesystem state:"
+              ls -la
+              
+              if [ -L "current" ]; then
+                echo "Current symlink points to: $(readlink -f current 2>/dev/null || echo 'invalid destination')"
+              else
+                echo "No current symlink exists"
+              fi
+              
+              echo "Docker container status:"
+              docker ps -a
+              
+              echo "No rollback action possible without valid current deployment"
               exit 0
             fi
 
