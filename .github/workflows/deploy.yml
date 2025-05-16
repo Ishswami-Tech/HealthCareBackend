@@ -42,15 +42,40 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-          # Add server to known hosts and test connection with timeout
+          # Add server to known hosts and test connection with timeout and retries
           ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
-          if timeout 30s ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} "echo SSH connection successful"; then
-            echo "✅ SSH connection successful"
-          else
-            echo "❌ SSH connection failed"
-            echo "Attempting to ping server..."
-            ping -c 4 ${{ env.SERVER_IP }}
-            exit 1
+          # Try multiple times with increasing backoff
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          CONNECTED=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$CONNECTED" != "true" ]; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            SLEEP_TIME=$((RETRY_COUNT * 5))
+            
+            echo "Connection attempt $RETRY_COUNT/$MAX_RETRIES..."
+            if timeout 30s ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=10 -o TCPKeepAlive=yes ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} "echo SSH connection successful"; then
+              echo "✅ SSH connection successful"
+              CONNECTED=true
+              break
+            else
+              echo "❌ SSH connection failed"
+              echo "Waiting $SLEEP_TIME seconds before retry..."
+              sleep $SLEEP_TIME
+            fi
+          done
+
+          if [ "$CONNECTED" != "true" ]; then
+            echo "All connection attempts failed. Trying one last time with different settings..."
+            if timeout 60s ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=15 -o TCPKeepAlive=yes -o IPQoS=throughput ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} "echo SSH connection successful"; then
+              echo "✅ Last attempt SSH connection successful"
+              CONNECTED=true
+            else
+              echo "❌ All SSH connection attempts failed"
+              echo "Attempting to ping server..."
+              ping -c 4 ${{ env.SERVER_IP }}
+              exit 1
+            fi
           fi
 
       - name: Check domain DNS
@@ -72,8 +97,11 @@ jobs:
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
           debug: true
-          timeout: 60s
+          timeout: 120s
           command_timeout: "30m"
+          proxy_timeout: 120s
+          script_stop: false
+          retries: 5
           script: |
             echo "Testing connection to server..."
             echo "Current date and time: $(date)"
@@ -134,7 +162,11 @@ jobs:
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
           debug: true
-          timeout: 60s
+          timeout: 120s
+          command_timeout: "30m"
+          proxy_timeout: 120s
+          script_stop: false
+          retries: 5
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
@@ -215,6 +247,10 @@ jobs:
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
           command_timeout: "30m"
+          timeout: 120s
+          proxy_timeout: 120s
+          script_stop: false
+          retries: 5
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
@@ -613,6 +649,10 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
+          timeout: 120s
+          proxy_timeout: 120s
+          script_stop: false
+          retries: 5
           script: |
             set -e
 
@@ -680,6 +720,10 @@ jobs:
           host: ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
           key: ${{ env.SERVER_SSH_KEY }}
+          timeout: 120s
+          proxy_timeout: 120s
+          script_stop: false
+          retries: 5
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
