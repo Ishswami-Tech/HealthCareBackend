@@ -432,24 +432,28 @@ jobs:
             echo "Generating Prisma client in API container..."
             docker exec latest-api sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma" || true
 
-            # Test database connection with corrected syntax and more detailed error handling
+            # Test database connection with fixed syntax
             echo "Testing database connection..."
-            docker exec latest-api sh -c "node -e \"
+            docker exec latest-api sh -c "cd /app && node -e \"
               try {
-                const { PrismaClient } = require('@prisma/client'); 
-                const prisma = new PrismaClient(); 
-                console.log('PrismaClient initialized');
+                console.log('Initializing Prisma client...');
+                const { PrismaClient } = require('@prisma/client');
+                console.log('PrismaClient imported successfully');
+                
+                const prisma = new PrismaClient();
+                console.log('PrismaClient instance created');
+                
                 prisma.\$connect()
-                  .then(() => { 
-                    console.log('Prisma connection successful'); 
-                    process.exit(0); 
+                  .then(() => {
+                    console.log('Database connection successful');
+                    process.exit(0);
                   })
-                  .catch(e => { 
-                    console.error('Prisma connection failed:', e); 
-                    process.exit(1); 
+                  .catch(err => {
+                    console.error('Database connection failed:', err);
+                    process.exit(1);
                   });
               } catch (error) {
-                console.error('Error in Prisma setup:', error);
+                console.error('Error setting up Prisma:', error);
                 process.exit(1);
               }
             \"" || echo "Database connection failed, continuing deployment anyway..."
@@ -482,32 +486,61 @@ jobs:
             sudo ufw allow 8088/tcp
             sudo ufw allow 8082/tcp
 
-            # Improved final health check with better error handling
-            echo "Performing final health check..."
-            HEALTH_OUTPUT=$(curl -v --max-time 15 http://localhost:8088/health 2>&1)
-            echo "Health check output: $HEALTH_OUTPUT"
+                        # Robust health check with retry mechanism
+            echo "Performing final health check with retries..."
 
-            # Check for any valid response, not just specific health format
-            if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200"; then
-              echo "API health check successful - received HTTP 200"
-              DEPLOY_SUCCESS=true
-            elif echo "$HEALTH_OUTPUT" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"\|"ok"\|"UP"\|"HEALTHY"'; then
-              echo "API health check successful - found health indicator in response"
-              DEPLOY_SUCCESS=true
-            else
-              echo "Warning: API health check did not return healthy status"
-              # Continue anyway but log the details for debugging
-              echo "HEALTH CHECK DETAILS:"
+            MAX_RETRIES=5
+            RETRY_COUNT=0
+            DEPLOY_SUCCESS=false
+
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$DEPLOY_SUCCESS" != "true" ]; do
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
+              
+              # Use timeout to prevent curl from hanging
+              HEALTH_OUTPUT=$(timeout 10 curl -v --max-time 10 http://localhost:8088/health 2>&1 || echo "Connection timed out")
+              
+              if echo "$HEALTH_OUTPUT" | grep -q "Connection timed out\|Empty reply"; then
+                echo "Warning: Connection timed out or empty reply received"
+                sleep 5
+                continue
+              fi
+              
+              echo "Health check raw output:"
               echo "$HEALTH_OUTPUT"
               
-              # Check if container is actually running
-              echo "Checking container logs for troubleshooting:"
-              docker logs latest-api --tail 20
+              # Check for any valid HTTP 200 response
+              if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200\|< HTTP/1.1 200"; then
+                echo "API health check successful - received HTTP 200"
+                DEPLOY_SUCCESS=true
+                break
+              # Look for health indicators in the response
+              elif echo "$HEALTH_OUTPUT" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"\|"ok"\|"UP"\|"HEALTHY"'; then
+                echo "API health check successful - found health indicator in response"
+                DEPLOY_SUCCESS=true
+                break
+              fi
               
-              # Mark as successful anyway if container is running
+              echo "Health check attempt $RETRY_COUNT failed, waiting 5 seconds before retry..."
+              sleep 5
+            done
+
+            # Final decision based on container status if health check failed
+            if [ "$DEPLOY_SUCCESS" != "true" ]; then
+              echo "All health check attempts failed."
+              
+              # Check container status and logs
+              echo "Checking container status and logs..."
               if docker ps | grep -q "latest-api"; then
+                echo "Container is running despite health check failures."
+                docker logs latest-api --tail 30
+                
+                # Mark deployment as successful if container is running
                 echo "Container is running, marking deployment as successful despite health check issues"
                 DEPLOY_SUCCESS=true
+              else
+                echo "ERROR: API container is not running!"
+                docker ps -a | grep latest-api || true
               fi
             fi
 
@@ -599,32 +632,49 @@ jobs:
               exit 1
             fi
 
-            # Verify health with multiple retries
+            # Verify health with multiple retries, improved error handling
             MAX_RETRIES=5
             for i in $(seq 1 $MAX_RETRIES); do
               echo "Health check attempt $i/$MAX_RETRIES..."
               
-              if curl -s -o /tmp/health_response -w "%{http_code}" http://localhost:8088/health > /tmp/http_code; then
+              # Use timeout to prevent curl from hanging
+              CURL_OUTPUT=$(timeout 15 curl -v -s -o /tmp/health_response -w "%{http_code}" http://localhost:8088/health 2>&1 || echo "Connection failed")
+              
+              if echo "$CURL_OUTPUT" | grep -q "Connection failed\|timed out\|Empty reply"; then
+                echo "Warning: Connection issue on attempt $i"
+                sleep 5
+                continue
+              fi
+              
+              # Get HTTP code if available
+              if [ -f "/tmp/http_code" ]; then
                 HTTP_CODE=$(cat /tmp/http_code)
                 echo "HTTP Status Code: $HTTP_CODE"
-                
-                # Display the API health response for debugging
-                echo "API Health Response:"
+              else
+                HTTP_CODE=$(echo "$CURL_OUTPUT" | tail -n1)
+                echo "HTTP Status Code (extracted): $HTTP_CODE"
+              fi
+              
+              # Display the API health response for debugging
+              echo "API Health Response:"
+              if [ -f "/tmp/health_response" ]; then
                 cat /tmp/health_response
-                
-                # If we got a 200 OK, consider it a success regardless of content
-                if [ "$HTTP_CODE" = "200" ]; then
-                  echo "API returned HTTP 200 - health check passed"
-                  HEALTH_CHECK_PASSED=true
-                  break
-                fi
-                
-                # Check response content for success indicators
-                if grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\"\|\"status\":\"healthy\"\|healthy\|UP" /tmp/health_response; then
-                  echo "API health check passed based on response content"
-                  HEALTH_CHECK_PASSED=true
-                  break
-                fi
+              else
+                echo "No health response file found"
+              fi
+              
+              # If we got a 200 OK, consider it a success regardless of content
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "API returned HTTP 200 - health check passed"
+                HEALTH_CHECK_PASSED=true
+                break
+              fi
+              
+              # Check response content for success indicators (if file exists)
+              if [ -f "/tmp/health_response" ] && grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\"\|\"status\":\"healthy\"\|healthy\|UP" /tmp/health_response; then
+                echo "API health check passed based on response content"
+                HEALTH_CHECK_PASSED=true
+                break
               fi
               
               # If we're here, the health check failed this attempt
