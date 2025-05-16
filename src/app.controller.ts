@@ -18,6 +18,16 @@ interface HealthStatus {
   logger?: { status: 'up' | 'down' };
 }
 
+interface ServiceInfo {
+  name: string;
+  description: string;
+  url: string;
+  active: boolean;
+  category: string;
+  credentials?: string; // Optional credentials property
+  devOnly?: boolean;    // Flag to indicate if service is dev-only
+}
+
 @ApiTags('root')
 @Controller()
 export class AppController {
@@ -59,14 +69,16 @@ export class AppController {
       // Use the domain name for API URL
       const host = this.configService.get('API_URL') || 'https://api.ishswami.in';
       const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
+      const isProduction = process.env.NODE_ENV === 'production';
       
       // Get real-time service status from health controller
       const healthStatus = await this.healthController.getServicesStatus() as HealthStatus;
       
-      // Get recent logs
-      const recentLogs = await this.getRecentLogs();
+      // Only fetch logs in development mode to reduce DB load in production
+      const recentLogs = isProduction ? [] : await this.getRecentLogs();
       
-      const services = [
+      // Define all services
+      const allServices: ServiceInfo[] = [
         {
           name: 'API Documentation',
           description: 'Swagger API documentation and testing interface.',
@@ -82,21 +94,6 @@ export class AppController {
           category: 'Monitoring'
         },
         {
-          name: 'Redis Commander',
-          description: 'Redis database management interface.',
-          url: `${baseUrl}/redis-ui`,
-          active: healthStatus?.redis?.status === 'up',
-          category: 'Database',
-          credentials: 'Username: admin, Password: admin'
-        },
-        {
-          name: 'Prisma Studio',
-          description: 'PostgreSQL database management through Prisma.',
-          url: `${baseUrl}/prisma`,
-          active: healthStatus?.database?.status === 'up',
-          category: 'Database'
-        },
-        {
           name: 'Logger',
           description: 'Application logs and monitoring interface.',
           url: `${baseUrl}/logger`,
@@ -109,23 +106,42 @@ export class AppController {
           url: `${baseUrl}/socket`,
           active: healthStatus?.api?.status === 'up',
           category: 'API'
-        }
-      ];
-
-      // Conditionally add pgAdmin only in development environment
-      if (process.env.NODE_ENV !== 'production') {
-        services.push({
+        },
+        {
+          name: 'Redis Commander',
+          description: 'Redis database management interface.',
+          url: `${baseUrl}/redis-ui`,
+          active: healthStatus?.redis?.status === 'up',
+          category: 'Database',
+          credentials: 'Username: admin, Password: admin',
+          devOnly: true
+        },
+        {
+          name: 'Prisma Studio',
+          description: 'PostgreSQL database management through Prisma.',
+          url: `${baseUrl}/prisma`,
+          active: healthStatus?.database?.status === 'up',
+          category: 'Database',
+          devOnly: true
+        },
+        {
           name: 'pgAdmin',
           description: 'PostgreSQL database management interface.',
           url: `${baseUrl}/pgadmin`,
           active: healthStatus?.database?.status === 'up',
           category: 'Database',
-          credentials: 'Email: admin@admin.com, Password: admin'
-        });
-      }
+          credentials: 'Email: admin@admin.com, Password: admin',
+          devOnly: true
+        }
+      ];
+
+      // Filter services based on environment
+      const services = isProduction 
+        ? allServices.filter(service => !service.devOnly)
+        : allServices;
 
       // Generate HTML content
-      const html = this.generateDashboardHtml('Healthcare API Dashboard', services, recentLogs);
+      const html = this.generateDashboardHtml('Healthcare API Dashboard', services, recentLogs, isProduction);
 
       res.header('Content-Type', 'text/html');
       return res.send(html);
@@ -145,7 +161,18 @@ export class AppController {
     status: 302,
     description: 'Redirects to Redis Commander UI'
   })
+  @ApiResponse({
+    status: 404,
+    description: 'Not available in production'
+  })
   async getRedisUI(@Res() res: FastifyReply) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(HttpStatus.NOT_FOUND)
+        .send({ 
+          message: 'Redis Commander is only available in development mode',
+          status: 'error'
+        });
+    }
     const redisCommanderUrl = this.configService.get<string>('REDIS_COMMANDER_URL');
     return res.redirect(redisCommanderUrl);
   }
@@ -160,7 +187,18 @@ export class AppController {
     status: 302,
     description: 'Redirects to Redis Commander UI'
   })
+  @ApiResponse({
+    status: 404,
+    description: 'Not available in production'
+  })
   async getRedisCommander(@Res() res: FastifyReply) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(HttpStatus.NOT_FOUND)
+        .send({ 
+          message: 'Redis Commander is only available in development mode',
+          status: 'error'
+        });
+    }
     const redisCommanderUrl = this.configService.get<string>('REDIS_COMMANDER_URL');
     return res.redirect(redisCommanderUrl);
   }
@@ -195,7 +233,10 @@ export class AppController {
     }
   }
 
-  private generateDashboardHtml(title: string, services: any[], recentLogs: any[]): string {
+  private generateDashboardHtml(title: string, services: ServiceInfo[], recentLogs: any[], isProduction: boolean): string {
+    // In production, we use a more lightweight template with fewer features
+    const refreshInterval = isProduction ? 60000 : 30000; // Less frequent refresh in production
+    
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -220,7 +261,7 @@ export class AppController {
     <div class="container mx-auto px-4 py-8">
         <header class="text-center mb-12">
             <h1 class="text-4xl font-bold text-gray-800 mb-4">${title}</h1>
-            <p class="text-gray-600">System Status and Service Management</p>
+            <p class="text-gray-600">System Status and Service Management${isProduction ? ' (Production Mode)' : ' (Development Mode)'}</p>
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
@@ -253,6 +294,41 @@ export class AppController {
             `).join('')}
         </div>
 
+        ${!isProduction && recentLogs.length > 0 ? `
+        <div class="bg-white rounded-lg shadow-md p-6 mb-10">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Recent Logs</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="bg-gray-100">
+                            <th class="px-4 py-2 text-left">Time</th>
+                            <th class="px-4 py-2 text-left">Level</th>
+                            <th class="px-4 py-2 text-left">Source</th>
+                            <th class="px-4 py-2 text-left">Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${recentLogs.map(log => `
+                            <tr class="log-row">
+                                <td class="px-4 py-2">${new Date(log.timestamp).toLocaleString()}</td>
+                                <td class="px-4 py-2">
+                                    <span class="px-2 py-1 rounded-full text-xs ${
+                                        log.level === 'error' ? 'bg-red-100 text-red-800' :
+                                        log.level === 'warn' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-blue-100 text-blue-800'
+                                    }">
+                                        ${log.level}
+                                    </span>
+                                </td>
+                                <td class="px-4 py-2">${log.source}</td>
+                                <td class="px-4 py-2">${log.message}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        ` : ''}
     
         <footer class="mt-12 text-center text-gray-600">
             <p>Environment: ${process.env.NODE_ENV || 'development'}</p>
@@ -261,13 +337,12 @@ export class AppController {
     </div>
 
     <script>
-        // Refresh status every 30 seconds
+        // Refresh status with environment-appropriate interval
         setInterval(() => {
             window.location.reload();
-        }, 30000);
+        }, ${refreshInterval});
     </script>
 </body>
 </html>`;
   }
-
 }

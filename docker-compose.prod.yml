@@ -51,7 +51,6 @@ services:
       - "api:172.18.0.5"
       - "postgres:172.18.0.2"
       - "redis:172.18.0.3"
-      - "redis-commander:172.18.0.4"
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,8 +66,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '1.5'
+          memory: 1.5G
         reservations:
           cpus: '0.5'
           memory: 512M
@@ -77,6 +76,10 @@ services:
              npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma &&
              mkdir -p /app/logs &&
              node dist/main.js"
+    labels:
+      - "com.docker.compose.service=api"
+      - "app.component=backend"
+      - "app.type=api"
 
   postgres:
     image: postgres:16
@@ -113,11 +116,15 @@ services:
     shm_size: 128mb
     command: >
       postgres -c max_connections=100 -c shared_buffers=256MB -c effective_cache_size=768MB -c maintenance_work_mem=64MB -c checkpoint_completion_target=0.9 -c wal_buffers=16MB -c default_statistics_target=100 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c work_mem=4MB -c min_wal_size=1GB -c max_wal_size=4GB -c max_worker_processes=4 -c max_parallel_workers_per_gather=2 -c max_parallel_workers=4 -c max_parallel_maintenance_workers=2
+    labels:
+      - "com.docker.compose.service=postgres"
+      - "app.component=database"
+      - "app.type=postgres"
 
   redis:
     image: redis:7
     container_name: latest-redis
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -135,7 +142,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          memory: 384M
         reservations:
           cpus: '0.1'
           memory: 128M
@@ -147,45 +154,23 @@ services:
       nofile:
         soft: 65535
         hard: 65535
-
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: latest-redis-commander
-    hostname: redis-commander
-    ports:
-      - "8082:8081"
-    environment:
-      REDIS_HOSTS: local:redis:6379
-      HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
-      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin}
-      READ_ONLY: "false"
-      FOLDING_CHAR: ":"
-      ROOT_PATTERN: "*"
-    depends_on:
-      - redis
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.4
-    healthcheck:
-      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:8081/" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.2'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
-    restart: always
+    labels:
+      - "com.docker.compose.service=redis"
+      - "app.component=cache"
+      - "app.type=redis"
 
 volumes:
   postgres_data:
+    name: healthcare_postgres_data
+    # Add labels to ensure volume persistence even during prune operations
+    labels:
+      - "app.component=database"
+      - "app.persist=true"
   redis_data:
-
+    name: healthcare_redis_data
+    labels:
+      - "app.component=cache"
+      - "app.persist=true"
 
 networks:
   app-network:

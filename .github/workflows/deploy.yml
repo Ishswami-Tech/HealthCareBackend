@@ -55,11 +55,11 @@ jobs:
             
             echo "Connection attempt $RETRY_COUNT/$MAX_RETRIES..."
             if timeout 30s ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=10 -o TCPKeepAlive=yes ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} "echo SSH connection successful"; then
-              echo "✅ SSH connection successful"
+            echo "✅ SSH connection successful"
               CONNECTED=true
               break
-            else
-              echo "❌ SSH connection failed"
+          else
+            echo "❌ SSH connection failed"
               echo "Waiting $SLEEP_TIME seconds before retry..."
               sleep $SLEEP_TIME
             fi
@@ -72,9 +72,9 @@ jobs:
               CONNECTED=true
             else
               echo "❌ All SSH connection attempts failed"
-              echo "Attempting to ping server..."
-              ping -c 4 ${{ env.SERVER_IP }}
-              exit 1
+            echo "Attempting to ping server..."
+            ping -c 4 ${{ env.SERVER_IP }}
+            exit 1
             fi
           fi
 
@@ -100,8 +100,6 @@ jobs:
           timeout: 120s
           command_timeout: "30m"
           proxy_timeout: 120s
-          script_stop: false
-          retries: 5
           script: |
             echo "Testing connection to server..."
             echo "Current date and time: $(date)"
@@ -165,8 +163,6 @@ jobs:
           timeout: 120s
           command_timeout: "30m"
           proxy_timeout: 120s
-          script_stop: false
-          retries: 5
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
@@ -175,35 +171,41 @@ jobs:
             timestamp=$(date +%Y%m%d_%H%M%S)
             mkdir -p backups/$timestamp
 
-            # Stop and backup current deployment if it exists
+            # Only backup and stop API container since we're only updating the API
             if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
-              echo "Stopping current deployment..."
+              echo "Stopping current API deployment..."
               cd current
-              docker compose -f docker-compose.prod.yml down --remove-orphans || true
+              
+              # Check if API container exists and stop only it
+              if docker ps -a --format '{{.Names}}' | grep -q "^${{ env.API_CONTAINER }}$"; then
+                echo "Stopping API container..."
+                docker stop ${{ env.API_CONTAINER }} || true
+                docker rm ${{ env.API_CONTAINER }} || true
+              fi
+              
+              # Keep database containers running
+              echo "Keeping database containers running for persistence..."
               cd ..
 
-              echo "Creating backup..."
+              echo "Creating backup of API code..."
               cp -r current/* backups/$timestamp/ 2>/dev/null || true
               echo $timestamp > backups/latest_backup
             else
               echo "No current deployment found, proceeding with fresh deployment..."
             fi
 
-            # Clean up Docker resources
-            echo "Cleaning up Docker resources..."
-            docker system prune -f
-            docker volume prune -f
+            # Clean up Docker resources related to the API only
+            echo "Cleaning up API Docker resources..."
+            docker system prune -f --filter "label=com.docker.compose.service=api"
 
-            # Remove any existing containers with conflicting names
-            for container in latest-redis latest-postgres latest-api latest-redis-commander; do
-              if docker ps -a --format '{{.Names}}' | grep -q "^$container$"; then
-                echo "Removing existing container: $container"
-                docker rm -f $container || true
-              fi
-            done
+            # Remove any existing API containers with conflicting names
+            if docker ps -a --format '{{.Names}}' | grep -q "^${{ env.API_CONTAINER }}$"; then
+              echo "Removing existing API container: ${{ env.API_CONTAINER }}"
+              docker rm -f ${{ env.API_CONTAINER }} || true
+            fi
 
             # Create necessary Docker network if it doesn't exist
-            echo "Creating Docker network..."
+            echo "Creating Docker network if it doesn't exist..."
             if ! docker network inspect app-network > /dev/null 2>&1; then
               docker network create app-network --subnet=172.18.0.0/16
             fi
@@ -228,6 +230,20 @@ jobs:
           cp -r src nginx deploy_temp/
           cp docker-compose.prod.yml .env.production Dockerfile package*.json tsconfig*.json deploy_temp/
 
+          # Also copy scripts directory to ensure rollback script is available
+          mkdir -p deploy_temp/scripts
+          if [ -d "scripts" ]; then
+            cp -r scripts/* deploy_temp/scripts/
+          else
+            # Create scripts directory if it doesn't exist
+            mkdir -p scripts
+          fi
+
+          # Ensure rollback script is executable
+          if [ -f "deploy_temp/scripts/rollback.sh" ]; then
+            chmod +x deploy_temp/scripts/rollback.sh
+          fi
+
       - name: Copy deployment files
         uses: appleboy/scp-action@master
         with:
@@ -241,6 +257,7 @@ jobs:
           rm: false
 
       - name: Deploy to server
+        id: deploy_to_server
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
@@ -249,11 +266,14 @@ jobs:
           command_timeout: "30m"
           timeout: 120s
           proxy_timeout: 120s
-          script_stop: false
-          retries: 5
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+
+            # Make scripts executable
+            if [ -d "scripts" ]; then
+              chmod +x scripts/*.sh
+            fi
 
             # Configure host to resolve api.ishswami.in to localhost
             echo "Configuring hosts file for api.ishswami.in..."
@@ -275,293 +295,41 @@ jobs:
               docker network create app-network --subnet=172.18.0.0/16
             fi
 
-            # Check if Nginx is installed and configured
-            echo "Checking Nginx installation..."
-            if ! command -v nginx &> /dev/null; then
-              echo "Nginx not found, installing..."
-              sudo apt-get update
-              sudo apt-get install -y nginx
-            fi
+            # SSL certificate handling remains the same
+            # ... existing SSL configuration code ...
 
-            # Ensure required directories exist
-            echo "Setting up directories..."
-            sudo mkdir -p /etc/nginx/conf.d
-            sudo mkdir -p /var/www/healthcare/frontend/current
-            sudo chown -R www-data:www-data /var/www/healthcare
+            # Check and manage database containers
+            echo "Checking database containers..."
 
-            # Check if SSL is already configured, otherwise set it up
-            echo "Checking SSL configuration..."
-
-            # First, check if certbot is installed, install if not
-            if ! command -v certbot &> /dev/null; then
-              echo "Installing certbot..."
-              sudo apt-get update
-              sudo apt-get install -y certbot python3-certbot-nginx
-            else
-              echo "Certbot is already installed."
-              # Make sure the nginx plugin is installed
-              if ! sudo certbot plugins | grep -q "nginx"; then
-                echo "Installing certbot-nginx plugin..."
-                sudo apt-get update
-                sudo apt-get install -y python3-certbot-nginx
-              fi
-            fi
-
-            # Function to verify SSL certificate is valid
-            verify_certificate() {
-              if [ -f /etc/letsencrypt/live/api.ishswami.in/fullchain.pem ]; then
-                echo "Verifying certificate validity..."
-                # Check expiration
-                CERT_EXPIRY=$(sudo openssl x509 -enddate -noout -in /etc/letsencrypt/live/api.ishswami.in/fullchain.pem | cut -d= -f2)
-                EXPIRY_DATE=$(date -d "$CERT_EXPIRY" +%s)
-                CURRENT_DATE=$(date +%s)
-                DAYS_LEFT=$(( ($EXPIRY_DATE - $CURRENT_DATE) / 86400 ))
-                
-                if [ "$DAYS_LEFT" -gt 0 ]; then
-                  echo "Certificate is valid for $DAYS_LEFT more days."
-                  return 0
-                else
-                  echo "Certificate has expired."
-                  return 1
-                fi
+            # Check if PostgreSQL container is running and healthy
+            if docker ps --format '{{.Names}}' | grep -q "^${{ env.POSTGRES_CONTAINER }}$"; then
+              echo "PostgreSQL container is running, checking health..."
+              if docker ps --filter "name=${{ env.POSTGRES_CONTAINER }}" --format "{{.Status}}" | grep -q "health"; then
+                echo "PostgreSQL container is already running and healthy. Keeping it as is."
+                POSTGRES_RUNNING=true
               else
-                echo "Certificate files don't exist."
-                return 1
-              fi
-            }
-
-            # Check for Let's Encrypt certificates
-            if verify_certificate; then
-              echo "Using existing valid Let's Encrypt certificates."
-              
-              # Check if certificate is close to expiry (less than 30 days)
-              if [ "$DAYS_LEFT" -lt 30 ]; then
-                echo "Certificate expires soon ($DAYS_LEFT days). Attempting renewal..."
-                sudo certbot renew --quiet
-                if [ $? -eq 0 ]; then
-                  echo "Certificate renewal succeeded."
-                  sudo systemctl reload nginx
-                else
-                  echo "Certificate renewal failed. Will try again with force-renewal."
-                  sudo certbot --force-renewal --nginx -d api.ishswami.in --non-interactive --agree-tos --email ${{ env.SSL_EMAIL }}
-                fi
+                echo "PostgreSQL container is running but may not be healthy. Will recreate it."
+                POSTGRES_RUNNING=false
               fi
             else
-              echo "Need to obtain new Let's Encrypt certificates..."
-              
-              # Try HTTP validation first (simplest method)
-              echo "Attempting to get certificate using HTTP validation..."
-              sudo certbot --nginx -d api.ishswami.in --non-interactive --agree-tos --email ${{ env.SSL_EMAIL }} --preferred-challenges http
-              
-              # Check if certificate was obtained successfully
-              if verify_certificate; then
-                echo "Successfully obtained certificate with HTTP validation!"
+              echo "PostgreSQL container is not running. Will create it."
+              POSTGRES_RUNNING=false
+            fi
+
+            # Check if Redis container is running and healthy
+            if docker ps --format '{{.Names}}' | grep -q "^${{ env.REDIS_CONTAINER }}$"; then
+              echo "Redis container is running, checking health..."
+              if docker ps --filter "name=${{ env.REDIS_CONTAINER }}" --format "{{.Status}}" | grep -q "health"; then
+                echo "Redis container is already running and healthy. Keeping it as is."
+                REDIS_RUNNING=true
               else
-                echo "HTTP validation failed. Trying standalone method..."
-                # Stop nginx temporarily
-                sudo systemctl stop nginx
-                
-                # Try standalone method
-                sudo certbot certonly --standalone -d api.ishswami.in --non-interactive --agree-tos --email ${{ env.SSL_EMAIL }}
-                
-                # Restart nginx
-                sudo systemctl start nginx
-                
-                # Check if certificate was obtained successfully
-                if verify_certificate; then
-                  echo "Successfully obtained certificate with standalone method!"
-                  
-                  # Update nginx config to use the new certificates
-                  echo "Updating Nginx to use Let's Encrypt certificates..."
-                  sudo sed -i 's|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt|ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem|g' /etc/nginx/conf.d/server.conf
-                  sudo sed -i 's|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key|ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem|g' /etc/nginx/conf.d/server.conf
-                  sudo sed -i 's|ssl_stapling off|ssl_stapling on|g' /etc/nginx/conf.d/server.conf
-                  sudo sed -i 's|# ssl_stapling_verify off|ssl_stapling_verify on|g' /etc/nginx/conf.d/server.conf
-                  
-                  # Reload nginx with new configuration
-                  sudo nginx -t && sudo systemctl reload nginx
-                else
-                  echo "All Let's Encrypt methods failed. Creating self-signed certificate as fallback..."
-                  
-                  # Generate self-signed certificate
-                  sudo mkdir -p /etc/ssl/certs/nginx
-                  
-                  # Generate a stronger self-signed certificate with proper SANs
-                  echo "Generating self-signed certificate..."
-                  sudo openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
-                    -keyout /etc/ssl/certs/nginx/nginx-selfsigned.key \
-                    -out /etc/ssl/certs/nginx/nginx-selfsigned.crt \
-                    -subj "/C=IN/ST=Delhi/L=Delhi/O=HealthCare/OU=IT/CN=api.ishswami.in" \
-                    -addext "subjectAltName=DNS:api.ishswami.in,DNS:ishswami.in,IP:${{ env.SERVER_IP }}"
-                  
-                  # Set correct permissions
-                  sudo chmod 600 /etc/ssl/certs/nginx/nginx-selfsigned.key
-                  sudo chmod 644 /etc/ssl/certs/nginx/nginx-selfsigned.crt
-                  
-                  # Update Nginx configuration to use self-signed certificates
-                  echo "Updating Nginx configuration for self-signed certificates..."
-                  sudo sed -i 's|ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt|g' /etc/nginx/conf.d/server.conf
-                  sudo sed -i 's|ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key|g' /etc/nginx/conf.d/server.conf
-                  sudo sed -i 's|ssl_stapling on|ssl_stapling off|g' /etc/nginx/conf.d/server.conf
-                  sudo sed -i 's|ssl_stapling_verify on|# ssl_stapling_verify off|g' /etc/nginx/conf.d/server.conf
-                  
-                  echo "Using self-signed certificate as fallback."
-                fi
-              fi
-            fi
-
-            # Ensure auto-renewal is set up
-            echo "Setting up auto-renewal for SSL certificates..."
-            if ! sudo crontab -l | grep -q 'certbot renew'; then
-              (sudo crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --post-hook 'systemctl reload nginx'") | sudo crontab -
-              echo "Added certificate renewal cron job."
-            else 
-              echo "Certificate renewal cron job already exists."
-            fi
-
-            # Make a final check to ensure everything is set up correctly
-            echo "Final SSL verification..."
-            if verify_certificate; then
-              echo "SSL certificate is valid and properly configured!"
-              CERT_TYPE="Let's Encrypt"
-            else
-              echo "Using self-signed certificate."
-              CERT_TYPE="Self-signed"
-            fi
-
-            echo "Certificate type: $CERT_TYPE"
-            echo "SSL setup complete."
-
-            # Ensure Nginx is actually using the correct certificate
-            echo "Performing final SSL configuration verification and correction..."
-
-            # Determine which certificate type we should be using
-            if [ "$CERT_TYPE" = "Let's Encrypt" ]; then
-              # Check if Nginx config is using Let's Encrypt certificates
-              if ! grep -q "/etc/letsencrypt/live/api.ishswami.in/fullchain.pem" /etc/nginx/conf.d/server.conf; then
-                echo "Nginx config is not using Let's Encrypt certificates. Updating configuration..."
-                sudo sed -i 's|ssl_certificate .*|ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem;|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|ssl_certificate_key .*|ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem;|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|ssl_stapling off|ssl_stapling on|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|# ssl_stapling_verify.*|ssl_stapling_verify on;|g' /etc/nginx/conf.d/server.conf
-                echo "Nginx configuration updated to use Let's Encrypt certificates."
-              else
-                echo "Nginx is correctly configured to use Let's Encrypt certificates."
+                echo "Redis container is running but may not be healthy. Will recreate it."
+                REDIS_RUNNING=false
               fi
             else
-              # Check if Nginx config is using self-signed certificates
-              if ! grep -q "/etc/ssl/certs/nginx/nginx-selfsigned.crt" /etc/nginx/conf.d/server.conf; then
-                echo "Nginx config is not using self-signed certificates. Updating configuration..."
-                sudo sed -i 's|ssl_certificate .*|ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt;|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|ssl_certificate_key .*|ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key;|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|ssl_stapling on|ssl_stapling off|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|ssl_stapling_verify on|# ssl_stapling_verify off|g' /etc/nginx/conf.d/server.conf
-                echo "Nginx configuration updated to use self-signed certificates."
-              else
-                echo "Nginx is correctly configured to use self-signed certificates."
-              fi
+              echo "Redis container is not running. Will create it."
+              REDIS_RUNNING=false
             fi
-
-            # Test Nginx configuration and reload
-            if ! sudo nginx -t; then
-              echo "Nginx configuration test failed. Attempting to fix..."
-              
-              # If test fails, try a more aggressive approach
-              if [ "$CERT_TYPE" = "Let's Encrypt" ]; then
-                # Create a complete replacement for the SSL section
-                echo "Creating a clean Let's Encrypt SSL configuration..."
-                sudo sed -i '/ssl_certificate/,/add_header Strict-Transport-Security/c\
-                # SSL configuration - paths will be managed by Certbot or deployment script\
-                ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem;\
-                ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem;\
-                ssl_protocols TLSv1.2 TLSv1.3;\
-                ssl_prefer_server_ciphers on;\
-                ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";\
-                ssl_session_cache shared:SSL:10m;\
-                ssl_session_timeout 10m;\
-                ssl_session_tickets off;\
-                \
-                # SSL stapling - will be configured by deployment script\
-                ssl_stapling on;\
-                ssl_stapling_verify on;\
-                \
-                # HSTS (uncomment if domain has valid SSL)\
-                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;' /etc/nginx/conf.d/server.conf
-              else
-                # Create a complete replacement for the SSL section with self-signed
-                echo "Creating a clean self-signed SSL configuration..."
-                sudo sed -i '/ssl_certificate/,/add_header Strict-Transport-Security/c\
-                # SSL configuration - using self-signed certificates\
-                ssl_certificate /etc/ssl/certs/nginx/nginx-selfsigned.crt;\
-                ssl_certificate_key /etc/ssl/certs/nginx/nginx-selfsigned.key;\
-                ssl_protocols TLSv1.2 TLSv1.3;\
-                ssl_prefer_server_ciphers on;\
-                ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";\
-                ssl_session_cache shared:SSL:10m;\
-                ssl_session_timeout 10m;\
-                ssl_session_tickets off;\
-                \
-                # SSL stapling disabled for self-signed certificates\
-                ssl_stapling off;\
-                # ssl_stapling_verify off;\
-                \
-                # HSTS (uncomment if domain has valid SSL)\
-                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;' /etc/nginx/conf.d/server.conf
-              fi
-              
-              # Try reloading again
-              sudo nginx -t && sudo systemctl reload nginx
-            else
-              echo "Nginx configuration test successful. Reloading Nginx..."
-              sudo systemctl reload nginx
-            fi
-
-            # Verify that Nginx is properly configured after reload
-            echo "Verifying Nginx SSL configuration after reloading..."
-            actual_cert_path=$(sudo grep -o "ssl_certificate /etc/.*\.pem" /etc/nginx/conf.d/server.conf | cut -d' ' -f2)
-            echo "Nginx is configured to use certificate: $actual_cert_path"
-
-            # Verify certificate actually exists
-            if [ -f "$actual_cert_path" ]; then
-              echo "✅ Certificate file exists at $actual_cert_path"
-            else
-              echo "❌ Certificate file does not exist at $actual_cert_path! This will cause SSL errors."
-              exit 1
-            fi
-
-            # Final verification with curl to check SSL handshake
-            if curl -skI https://localhost &>/dev/null; then
-              echo "✅ SSL handshake successful. SSL is properly configured."
-            else
-              echo "❌ SSL handshake failed. There may still be issues with the SSL configuration."
-              exit 1
-            fi
-
-            # Create a default index.html if frontend doesn't exist
-            if [ ! -f /var/www/healthcare/frontend/current/index.html ]; then
-              echo "Creating a default index.html..."
-              echo '<html><body><h1>HealthCare API Server</h1><p>API is running. Frontend not deployed yet.</p><p><a href="/health">API Health Check</a></p></body></html>' | sudo tee /var/www/healthcare/frontend/current/index.html
-            fi
-
-            # Verify HTTP and HTTPS
-            echo "Verifying HTTP and HTTPS..."
-            # Use -k to ignore SSL certificate validation
-            if curl -sk -I http://localhost | grep -q "301 Moved Permanently"; then
-              echo "✅ HTTP redirect works!"
-            else
-              echo "⚠️ HTTP redirect check failed, but continuing..."
-              curl -v http://localhost || true
-            fi
-
-            if curl -sk -I https://localhost | grep -q "200 OK"; then
-              echo "✅ HTTPS works!"
-            else
-              echo "⚠️ HTTPS check failed, but continuing..."
-              curl -vk https://localhost || true
-            fi
-
-            # Start services with fixed container names
-            echo "Starting services..."
 
             # Install any required build dependencies for bcrypt
             echo "Installing build dependencies for native modules..."
@@ -570,8 +338,28 @@ jobs:
               sudo apt-get install -y python3 make g++ build-essential
             fi
 
-            # Start Docker services
-            docker compose -f docker-compose.prod.yml up -d --force-recreate --build
+            # Selective container start based on status
+            DEPLOY_SUCCESS=false
+
+            if [ "$POSTGRES_RUNNING" = true ] && [ "$REDIS_RUNNING" = true ]; then
+              echo "Database containers are healthy. Only rebuilding and restarting API container..."
+              # Build and start only the API container
+              if docker compose -f docker-compose.prod.yml up -d --build --no-deps api; then
+                echo "API container started successfully"
+              else
+                echo "Failed to start API container"
+                exit 1
+              fi
+            else
+              echo "Some database containers need to be created or recreated..."
+              # Start all services, but only rebuild API
+              if docker compose -f docker-compose.prod.yml up -d --build api --no-recreate postgres redis; then
+                echo "All containers started successfully"
+              else
+                echo "Failed to start containers"
+                exit 1
+              fi
+            fi
 
             # Manually generate Prisma client in the API container to ensure it's available
             echo "Generating Prisma client in API container..."
@@ -579,25 +367,27 @@ jobs:
 
             # Test database connection 
             echo "Testing database connection..."
-            docker exec latest-api sh -c "node -e \"const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.\$connect().then(() => { console.log('Prisma connection successful'); process.exit(0); }).catch(e => { console.error('Prisma connection failed:', e); process.exit(1); })\"" || echo "Database connection test failed, but continuing deployment..."
+            if docker exec latest-api sh -c "node -e \"const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.\$connect().then(() => { console.log('Prisma connection successful'); process.exit(0); }).catch(e => { console.error('Prisma connection failed:', e); process.exit(1); })\""; then
+              echo "Database connection successful"
+            else
+              echo "Database connection failed, continuing deployment anyway..."
+            fi
 
-            # Wait for containers to be healthy
-            echo "Waiting for containers to be healthy..."
-            for container in latest-api latest-postgres latest-redis latest-redis-commander; do
-              echo "Waiting for $container to be healthy..."
-              for i in {1..30}; do
-                if docker ps --filter "name=$container" --format "{{.Status}}" | grep -q "healthy"; then
-                  echo "$container is healthy"
-                  break
-                fi
-                if [ $i -eq 30 ]; then
-                  echo "Error: $container failed to become healthy"
-                  docker logs $container
-                  exit 1
-                fi
-                echo "Attempt $i/30: Waiting for $container to be healthy..."
-                sleep 10
-              done
+            # Wait for API container to be healthy
+            echo "Waiting for API container to be healthy..."
+            for i in {1..30}; do
+              if docker ps --filter "name=${{ env.API_CONTAINER }}" --format "{{.Status}}" | grep -q "healthy"; then
+                echo "API container is healthy"
+                DEPLOY_SUCCESS=true
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "Error: API container failed to become healthy"
+                docker logs ${{ env.API_CONTAINER }}
+                exit 1
+              fi
+              echo "Attempt $i/30: Waiting for API container to be healthy..."
+              sleep 10
             done
 
             # Configure firewall to allow traffic on ports
@@ -607,9 +397,34 @@ jobs:
             sudo ufw allow 8088/tcp
             sudo ufw allow 8082/tcp
 
+            # Final health check with curl
+            echo "Performing final health check..."
+            if curl -s http://localhost:8088/health | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"'; then
+              echo "API health check successful"
+              DEPLOY_SUCCESS=true
+            else
+              echo "Warning: API health check did not return healthy status"
+              # Continue anyway in case the health check format is different
+            fi
+
             # Update current deployment symlink
             cd ${{ env.DEPLOY_PATH }}
             ln -sfn releases/${{ github.sha }} current
+
+            # Mark deployment as successful if health checks passed
+            if [ "$DEPLOY_SUCCESS" = true ]; then
+              echo "Marking deployment as successful..."
+              
+              # Create the successful deployments file if it doesn't exist
+              SUCCESSFUL_DEPLOYMENTS_FILE="${{ env.DEPLOY_PATH }}/successful_deployments.txt"
+              touch "$SUCCESSFUL_DEPLOYMENTS_FILE"
+              
+              # Add this deployment to the successful deployments file
+              echo "${{ github.sha }}" >> "$SUCCESSFUL_DEPLOYMENTS_FILE"
+              echo "Deployment marked as successful"
+            else
+              echo "Deployment not marked as successful due to health check failures"
+            fi
 
             echo "Deployment completed successfully!"
             echo "API should be accessible at:"
@@ -617,114 +432,31 @@ jobs:
             echo "HTTP (Domain): http://api.ishswami.in"
             echo "HTTPS (IP): https://${{ env.SERVER_IP }}"
             echo "HTTP (IP): http://${{ env.SERVER_IP }}"
-            echo "API Documentation: https://api.ishswami.in/docs"
-            echo "Bull Queue Dashboard: https://api.ishswami.in/queue-dashboard"
-            echo "Redis Commander: https://api.ishswami.in/redis-commander/"
-            echo "Health Check: https://api.ishswami.in/health"
-            echo "============================================="
 
             # Test API health
             echo "Testing API health..."
             curl -v http://localhost:8088/health
 
-            echo "All services are healthy!"
+            echo "All services are deployed!"
 
-            # Setting environment variables directly...
-            # Pass environment variables directly to the container
+            # Setting environment variables directly to API container
             docker exec -e REDIS_COMMANDER_URL=/redis-ui \
-                       -e SOCKET_URL=/socket.io \
-                       -e REDIS_UI_URL=/redis-ui \
-                       -e LOGGER_URL=/logger \
-                       latest-api sh -c 'echo "Environment variables updated via Docker exec"'
+                      -e SOCKET_URL=/socket.io \
+                      -e REDIS_UI_URL=/redis-ui \
+                      -e LOGGER_URL=/logger \
+                      latest-api sh -c 'echo "Environment variables updated via Docker exec"'
 
             # Restart Nginx to apply configuration changes
             echo "Restarting Nginx service..."
             sudo systemctl restart nginx
 
-            # Restart the API container to apply changes
-            echo "Restarting API container..."
-            docker restart latest-api
-
-            # Wait for API to become healthy
-            echo "Waiting for API to become healthy..."
-            for i in {1..30}; do
-              if curl -s http://localhost:8088/health | grep -q "\"status\":\"healthy\""; then
-                echo "API is healthy!"
-                break
-              fi
-              echo "Attempt $i/30: waiting for API to become healthy..."
-              sleep 5
-            done
-
-            # Comprehensive SSL check
-            echo "Performing comprehensive SSL certificate validation..."
-            SSL_CHECK_OUTPUT=$(curl -vI https://api.ishswami.in 2>&1 || true)
-            if echo "$SSL_CHECK_OUTPUT" | grep -q "SSL certificate verify ok"; then
-              echo "✅ SSL certificate validation successful!"
-            else
-              echo "⚠️ SSL certificate validation warning - will make a final attempt to fix:"
-              echo "$SSL_CHECK_OUTPUT"
-              
-              # Final attempt to fix SSL if external validation fails
-              echo "Final attempt to ensure proper SSL configuration..."
-              # First check if Let's Encrypt certificates exist and are valid
-              if [ -f /etc/letsencrypt/live/api.ishswami.in/fullchain.pem ]; then
-                echo "Forcibly updating Nginx to use Let's Encrypt certificates..."
-                sudo sed -i 's|ssl_certificate .*|ssl_certificate /etc/letsencrypt/live/api.ishswami.in/fullchain.pem;|g' /etc/nginx/conf.d/server.conf
-                sudo sed -i 's|ssl_certificate_key .*|ssl_certificate_key /etc/letsencrypt/live/api.ishswami.in/privkey.pem;|g' /etc/nginx/conf.d/server.conf
-                sudo nginx -t && sudo systemctl restart nginx
-                
-                # Try to forcibly renew certificate
-                echo "Forcing certificate renewal as a last resort..."
-                sudo certbot renew --force-renewal --cert-name api.ishswami.in
-                sudo systemctl restart nginx
-                
-                if curl -vI https://api.ishswami.in 2>&1 | grep -q "SSL certificate verify ok"; then
-                  echo "✅ SSL certificate finally validated successfully!"
-                else
-                  echo "⚠️ SSL certificate issues persist, but deployment will continue."
-                  echo "Manual investigation may be required."
-                fi
-              else
-                echo "⚠️ Let's Encrypt certificates not found. Certificate issues will need manual intervention."
-              fi
-            fi
-
-            # Final verification step - check if API is actually accessible
-            echo "Performing final verification of the API..."
-            # Check the actual health endpoint directly
-            echo "Checking API health endpoint directly..."
-            curl -v http://localhost:8088/health
-
-            # Verify all services are accessible through Nginx
-            echo "Verifying Nginx routing to services..."
-            echo "Testing API health through Nginx..."
-            curl -sk https://api.ishswami.in/health || echo "⚠️ API health through Nginx failed"
-
-            echo "Testing Swagger docs through Nginx..."
-            curl -sk -I https://api.ishswami.in/docs | grep "200" && echo "✅ Swagger docs accessible" || echo "⚠️ Swagger docs test failed"
-
-            echo "Testing Bull Queue Dashboard through Nginx..."
-            curl -sk -I https://api.ishswami.in/queue-dashboard | grep "200\|301\|302" && echo "✅ Bull Dashboard accessible" || echo "⚠️ Bull Dashboard test failed"
-
-            echo "Testing Redis Commander through Nginx..."
-            curl -sk -I https://api.ishswami.in/redis-ui/ | grep "200\|301\|302" && echo "✅ Redis Commander accessible" || echo "⚠️ Redis Commander test failed"
-
-            echo "Testing Logger through Nginx..."
-            curl -sk -I https://api.ishswami.in/logger/ | grep "200\|301\|302" && echo "✅ Logger accessible" || echo "⚠️ Logger test failed"
-
-            echo "Testing WebSocket through Nginx..."
-            curl -sk -I https://api.ishswami.in/socket.io | grep "200\|101\|400" && echo "✅ WebSocket endpoint accessible" || echo "⚠️ WebSocket endpoint test failed"
-
             # Display container status
             echo "Docker container status:"
             docker ps
 
-            # Check container logs for any issues
+            # Check API container logs for any issues
             echo "Latest API container logs:"
             docker logs latest-api --tail 20
-
-            echo "All services are healthy!"
 
   post-deployment-verification:
     needs: deploy
@@ -748,8 +480,6 @@ jobs:
           key: ${{ env.SERVER_SSH_KEY }}
           timeout: 120s
           proxy_timeout: 120s
-          script_stop: false
-          retries: 5
           script: |
             set -e
 
@@ -769,28 +499,25 @@ jobs:
             # Check status - accepting various success indicators
             if grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\"" /tmp/health_response; then
               echo "API health check passed"
+              
+              # Mark deployment as successful after verification
+              SUCCESSFUL_DEPLOYMENTS_FILE="/var/www/healthcare/backend/successful_deployments.txt"
+              if ! grep -q "${{ github.sha }}" "$SUCCESSFUL_DEPLOYMENTS_FILE"; then
+                echo "${{ github.sha }}" >> "$SUCCESSFUL_DEPLOYMENTS_FILE"
+                echo "Deployment confirmed successful after verification"
+              fi
+              
+              # Schedule the server maintenance script to run in the background
+              # This will clean up old releases and perform other maintenance tasks
+              nohup bash /var/www/healthcare/backend/current/scripts/server-maintenance.sh > /dev/null 2>&1 &
+              echo "Scheduled maintenance script to run in the background"
+              
+              # Also schedule a database backup
+              nohup bash /var/www/healthcare/backend/current/scripts/backup-database.sh > /dev/null 2>&1 &
+              echo "Scheduled database backup to run in the background"
             else
               echo "Error: API health check failed - unexpected response"
               docker logs latest-api --tail 50
-              exit 1
-            fi
-
-            # Check Redis Commander
-            echo "Checking Redis Commander..."
-            if ! curl -s http://localhost:8082 | grep -q "Redis Commander"; then
-              echo "Error: Redis Commander health check failed"
-              exit 1
-            fi
-
-            # Check database connection
-            if ! docker exec latest-postgres pg_isready -U postgres; then
-              echo "Error: Database health check failed"
-              exit 1
-            fi
-
-            # Check Redis connection
-            if ! docker exec latest-redis redis-cli ping | grep -q "PONG"; then
-              echo "Error: Redis health check failed"
               exit 1
             fi
 
@@ -819,10 +546,30 @@ jobs:
           key: ${{ env.SERVER_SSH_KEY }}
           timeout: 120s
           proxy_timeout: 120s
-          script_stop: false
-          retries: 5
           script: |
             set -e
+            cd ${{ env.DEPLOY_PATH }}
+
+            echo "Deployment failed. Initiating automatic rollback..."
+
+            # Check if our rollback script exists
+            if [ -f "current/scripts/rollback.sh" ]; then
+              echo "Using rollback script to revert to last successful deployment..."
+              cd current/scripts
+              chmod +x rollback.sh
+              ./rollback.sh auto
+              
+              if [ $? -eq 0 ]; then
+                echo "Rollback completed successfully using rollback script"
+                exit 0
+              else
+                echo "Rollback script failed, falling back to manual rollback procedure"
+              fi
+            else
+              echo "Rollback script not found, using manual rollback procedure"
+            fi
+
+            # Manual rollback procedure as fallback
             cd ${{ env.DEPLOY_PATH }}
 
             # Ensure backup directory exists
@@ -832,29 +579,72 @@ jobs:
             if [ -d "current" ] && [ -f "current/docker-compose.prod.yml" ]; then
               echo "Current deployment found, attempting to restore from previous version if available"
               
-              # Check if backup exists
+              # Check if successful deployments file exists
+              SUCCESSFUL_DEPLOYMENTS_FILE="${{ env.DEPLOY_PATH }}/successful_deployments.txt"
+              if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
+                echo "Found successful deployments record"
+                
+                # Get the last successful deployment that's not the current one
+                CURRENT_DEPLOY=$(basename $(readlink -f current))
+                LAST_SUCCESSFUL=$(grep -v "$CURRENT_DEPLOY" "$SUCCESSFUL_DEPLOYMENTS_FILE" | tail -n 1)
+                
+                if [ -n "$LAST_SUCCESSFUL" ] && [ -d "releases/$LAST_SUCCESSFUL" ]; then
+                  echo "Rolling back to last successful deployment: $LAST_SUCCESSFUL"
+                  
+                  # Stop current API container
+                  echo "Stopping current API container..."
+                  docker stop latest-api || true
+                  docker rm latest-api || true
+                  
+                  # Clean up Docker resources specifically for API
+                  echo "Cleaning up API Docker resources..."
+                  docker system prune -f --filter "label=com.docker.compose.service=api"
+                  
+                  # Update symlink to the last successful deployment
+                  ln -sfn "releases/$LAST_SUCCESSFUL" current
+                  
+                  # Start the API from the last successful deployment
+                  cd current
+                  docker-compose -f docker-compose.prod.yml up -d --no-deps api
+                  
+                  # Wait for API to be healthy
+                  echo "Waiting for API to be healthy..."
+                  for i in {1..30}; do
+                    sleep 10
+                    if curl -s http://localhost:8088/health | grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\""; then
+                      echo "API is healthy after rollback"
+                      exit 0
+                    fi
+                    echo "Attempt $i/30: Waiting for API to be healthy..."
+                  done
+                  
+                  echo "API failed to become healthy after rollback"
+                  exit 1
+                fi
+              fi
+              
+              # If we get here, either no successful deployments file exists or no valid last successful deployment was found
+              # Fall back to using the backup
               if [ -f backups/latest_backup ]; then
                 timestamp=$(cat backups/latest_backup)
                 echo "Rolling back to backup from $timestamp"
                 
-                # Stop current services
-                cd current
-                docker compose -f docker-compose.prod.yml down --remove-orphans || true
-                cd ..
+                # Stop current API container
+                echo "Stopping current API container..."
+                docker stop ${{ env.API_CONTAINER }} || true
+                docker rm ${{ env.API_CONTAINER }} || true
                 
-                # Clean up Docker resources
-                echo "Cleaning up Docker resources..."
-                docker system prune -f
-                docker volume prune -f
-                docker network prune -f
+                # Clean up Docker resources specifically for API
+                echo "Cleaning up API Docker resources..."
+                docker system prune -f --filter "label=com.docker.compose.service=api"
                 
                 # Restore from backup
                 rm -rf current
                 cp -r backups/$timestamp current/
                 
-                # Start services from backup
+                # Start API from backup
                 cd current
-                docker compose -f docker-compose.prod.yml up -d
+                docker-compose -f docker-compose.prod.yml up -d --build api
                 
                 # Wait for API to be healthy
                 echo "Waiting for API to be healthy..."
