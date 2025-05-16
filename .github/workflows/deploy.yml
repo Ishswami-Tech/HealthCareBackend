@@ -301,34 +301,75 @@ jobs:
             # Check and manage database containers
             echo "Checking database containers..."
 
-            # Check if PostgreSQL container is running and healthy
-            if docker ps --format '{{.Names}}' | grep -q "^${{ env.POSTGRES_CONTAINER }}$"; then
-              echo "PostgreSQL container is running, checking health..."
-              if docker ps --filter "name=${{ env.POSTGRES_CONTAINER }}" --format "{{.Status}}" | grep -q "health"; then
-                echo "PostgreSQL container is already running and healthy. Keeping it as is."
+                        # Improved PostgreSQL container health check - use pattern matching instead of exact names
+            # Find postgres container regardless of exact name
+            POSTGRES_CONTAINER_ID=$(docker ps | grep postgres | grep -v "grep" | awk '{print $1}' | head -n 1)
+            if [ -n "$POSTGRES_CONTAINER_ID" ]; then
+              echo "PostgreSQL container is running with ID: $POSTGRES_CONTAINER_ID"
+              # More reliable health check - containers often report "Up" or "(healthy)" status
+              if docker inspect --format="{{.State.Status}}" $POSTGRES_CONTAINER_ID | grep -q "running"; then
+                echo "PostgreSQL container is already running and appears healthy. Keeping it as is."
                 POSTGRES_RUNNING=true
+                # Save the container name for later usage
+                REAL_POSTGRES_CONTAINER=$(docker inspect --format="{{.Name}}" $POSTGRES_CONTAINER_ID | sed 's/^\///')
+                echo "Detected actual PostgreSQL container name: $REAL_POSTGRES_CONTAINER"
               else
-                echo "PostgreSQL container is running but may not be healthy. Will recreate it."
-                POSTGRES_RUNNING=false
+                echo "PostgreSQL container exists but may not be running. Will attempt to keep it anyway."
+                # Changed to keep existing DB container even if health check isn't perfect
+                POSTGRES_RUNNING=true
+                REAL_POSTGRES_CONTAINER=$(docker inspect --format="{{.Name}}" $POSTGRES_CONTAINER_ID | sed 's/^\///')
               fi
             else
-              echo "PostgreSQL container is not running. Will create it."
+              echo "No running PostgreSQL container found. Will create it."
               POSTGRES_RUNNING=false
+              REAL_POSTGRES_CONTAINER=""
             fi
 
-            # Check if Redis container is running and healthy
-            if docker ps --format '{{.Names}}' | grep -q "^${{ env.REDIS_CONTAINER }}$"; then
-              echo "Redis container is running, checking health..."
-              if docker ps --filter "name=${{ env.REDIS_CONTAINER }}" --format "{{.Status}}" | grep -q "health"; then
-                echo "Redis container is already running and healthy. Keeping it as is."
+            # Improved Redis container health check - use pattern matching instead of exact names
+            # Find redis container regardless of exact name, excluding redis-commander
+            REDIS_CONTAINER_ID=$(docker ps | grep redis | grep -v "commander\|grep" | awk '{print $1}' | head -n 1)
+            if [ -n "$REDIS_CONTAINER_ID" ]; then
+              echo "Redis container is running with ID: $REDIS_CONTAINER_ID"
+              # More reliable health check using docker inspect
+              if docker inspect --format="{{.State.Status}}" $REDIS_CONTAINER_ID | grep -q "running"; then
+                echo "Redis container is already running and appears healthy. Keeping it as is."
                 REDIS_RUNNING=true
+                # Save the container name for later usage
+                REAL_REDIS_CONTAINER=$(docker inspect --format="{{.Name}}" $REDIS_CONTAINER_ID | sed 's/^\///')
+                echo "Detected actual Redis container name: $REAL_REDIS_CONTAINER"
               else
-                echo "Redis container is running but may not be healthy. Will recreate it."
-                REDIS_RUNNING=false
+                echo "Redis container exists but may not be running. Will attempt to keep it anyway."
+                # Changed to keep existing Redis container even if health check isn't perfect
+                REDIS_RUNNING=true
+                REAL_REDIS_CONTAINER=$(docker inspect --format="{{.Name}}" $REDIS_CONTAINER_ID | sed 's/^\///')
               fi
             else
-              echo "Redis container is not running. Will create it."
+              echo "No running Redis container found. Will create it."
               REDIS_RUNNING=false
+              REAL_REDIS_CONTAINER=""
+            fi
+
+            # Additional verification of database containers with dynamic names
+            if [ "$POSTGRES_RUNNING" = true ] && [ -n "$REAL_POSTGRES_CONTAINER" ]; then
+              echo "Verifying PostgreSQL container is responsive..."
+              # Simple connection test using the detected container name
+              if docker exec $REAL_POSTGRES_CONTAINER pg_isready -q; then
+                echo "PostgreSQL container is responsive."
+              else
+                echo "Warning: PostgreSQL container exists but isn't responding to connection tests."
+                # Still keeping it to avoid data loss - might self-recover
+              fi
+            fi
+
+            if [ "$REDIS_RUNNING" = true ] && [ -n "$REAL_REDIS_CONTAINER" ]; then
+              echo "Verifying Redis container is responsive..."
+              # Simple ping test using the detected container name
+              if docker exec $REAL_REDIS_CONTAINER redis-cli ping | grep -q "PONG"; then
+                echo "Redis container is responsive."
+              else
+                echo "Warning: Redis container exists but isn't responding to ping tests."
+                # Still keeping it to avoid data loss - might self-recover
+              fi
             fi
 
             # Install any required build dependencies for bcrypt
@@ -343,7 +384,7 @@ jobs:
 
             if [ "$POSTGRES_RUNNING" = true ] && [ "$REDIS_RUNNING" = true ]; then
               echo "Database containers are healthy. Only rebuilding and restarting API container..."
-              # Build and start only the API container
+              # Build and start only the API container with --no-deps to avoid touching database containers
               if docker compose -f docker-compose.prod.yml up -d --build --no-deps api; then
                 echo "API container started successfully"
               else
@@ -352,14 +393,40 @@ jobs:
               fi
             else
               echo "Some database containers need to be created or recreated..."
-              # Start all services, but only rebuild API
-              if docker compose -f docker-compose.prod.yml up -d --build api --no-recreate postgres redis; then
-                echo "All containers started successfully"
+              
+              # Handle each container separately for better control
+              # First, make sure the network exists
+              docker network inspect app-network >/dev/null 2>&1 || docker network create app-network
+              
+              # Start/create PostgreSQL if needed
+              if [ "$POSTGRES_RUNNING" = false ]; then
+                echo "Creating PostgreSQL container..."
+                if ! docker compose -f docker-compose.prod.yml up -d --no-recreate postgres; then
+                  echo "Warning: Issue starting PostgreSQL container, but continuing..."
+                fi
+              fi
+              
+              # Start/create Redis if needed
+              if [ "$REDIS_RUNNING" = false ]; then
+                echo "Creating Redis container..."
+                if ! docker compose -f docker-compose.prod.yml up -d --no-recreate redis; then
+                  echo "Warning: Issue starting Redis container, but continuing..."
+                fi
+              fi
+              
+              # Now build and start the API container
+              echo "Building and starting API container..."
+              if docker compose -f docker-compose.prod.yml up -d --build --no-deps api; then
+                echo "API container started successfully"
               else
-                echo "Failed to start containers"
+                echo "Failed to start API container"
                 exit 1
               fi
             fi
+
+            # Verify all containers are running
+            echo "Verifying all required containers are running..."
+            docker ps
 
             # Manually generate Prisma client in the API container to ensure it's available
             echo "Generating Prisma client in API container..."
@@ -596,7 +663,7 @@ jobs:
                   docker stop latest-api || true
                   docker rm latest-api || true
                   
-                  # Clean up Docker resources specifically for API
+                  # Clean up Docker resources specifically for API only
                   echo "Cleaning up API Docker resources..."
                   docker system prune -f --filter "label=com.docker.compose.service=api"
                   
@@ -605,7 +672,27 @@ jobs:
                   
                   # Start the API from the last successful deployment
                   cd current
-                  docker-compose -f docker-compose.prod.yml up -d --no-deps api
+                  # Using --no-deps ensures database containers are not touched
+                  docker-compose -f docker-compose.prod.yml up -d --build --no-deps api
+                  
+                  # Verify database containers are still running
+                  echo "Verifying database containers are still running..."
+                  
+                  # Check if any PostgreSQL container is running (safer than exact name matching)
+                  if ! docker ps | grep -q "postgres"; then
+                    echo "Warning: No PostgreSQL container appears to be running after rollback. Starting it..."
+                    docker-compose -f docker-compose.prod.yml up -d --no-recreate postgres
+                  else
+                    echo "PostgreSQL container appears to be running."
+                  fi
+                  
+                  # Check if any Redis container is running (safer than exact name matching)
+                  if ! docker ps | grep -q "redis" | grep -v "commander"; then
+                    echo "Warning: No Redis container appears to be running after rollback. Starting it..."
+                    docker-compose -f docker-compose.prod.yml up -d --no-recreate redis
+                  else
+                    echo "Redis container appears to be running."
+                  fi
                   
                   # Wait for API to be healthy
                   echo "Waiting for API to be healthy..."
