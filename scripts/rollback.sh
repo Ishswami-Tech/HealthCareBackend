@@ -128,16 +128,23 @@ backup_current_deployment() {
   local timestamp=$(date +%Y%m%d_%H%M%S)
   local backup_path="$BACKUP_DIR/$timestamp"
   
-  log_message "Creating backup of current deployment: $current → $backup_path"
-  
-  mkdir -p "$backup_path"
-  if [ -d "$RELEASES_DIR/$current" ]; then
-    cp -r "$RELEASES_DIR/$current"/* "$backup_path"/ 2>/dev/null || true
-    echo "$current" > "$BACKUP_DIR/latest_backup"
-    log_message "✅ Backup created successfully"
+  # Check if current deployment is marked as successful
+  if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ] && grep -q "^$current$" "$SUCCESSFUL_DEPLOYMENTS_FILE"; then
+    log_message "Current deployment $current is marked as successful - creating backup"
+    
+    mkdir -p "$backup_path"
+    if [ -d "$RELEASES_DIR/$current" ]; then
+      cp -r "$RELEASES_DIR/$current"/* "$backup_path"/ 2>/dev/null || true
+      echo "$current" > "$BACKUP_DIR/latest_backup"
+      log_message "✅ Backup created successfully at $backup_path"
+    else
+      log_message "❌ Could not create backup - release directory not found"
+      return 1
+    fi
   else
-    log_message "❌ Could not create backup - release directory not found"
-    return 1
+    log_message "Current deployment $current is not marked as successful - skipping backup"
+    # Return success - it's not an error to skip backup of unsuccessful deployment
+    return 0
   fi
 }
 
@@ -233,10 +240,14 @@ perform_rollback() {
   return 0
 }
 
-# Function to cleanup old releases
+# Function to cleanup old releases and backups
 cleanup_old_releases() {
   local keep_count=5
+  local keep_backups=3
   
+  log_message "Cleaning up old releases and backups..."
+  
+  # === CLEAN UP RELEASES ===
   log_message "Cleaning up old releases (keeping the last $keep_count)..."
   
   # Get all releases sorted by time (newest first)
@@ -249,30 +260,59 @@ cleanup_old_releases() {
   
   if [ "$release_count" -le "$keep_count" ]; then
     log_message "Only $release_count releases exist, no cleanup needed"
-    return 0
-  fi
-  
-  # Get list of releases to remove (all except the newest $keep_count)
-  local releases_to_remove
-  releases_to_remove=$(echo "$all_releases" | tail -n +"$((keep_count + 1))")
-  
-  # Get list of successful deployments to preserve
-  local successful_deployments=""
-  if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
-    successful_deployments=$(cat "$SUCCESSFUL_DEPLOYMENTS_FILE")
-  fi
-  
-  # Remove old releases, but preserve successful ones
-  for release in $releases_to_remove; do
-    # Skip if this is a successful deployment we want to keep
-    if echo "$successful_deployments" | grep -q "^$release$"; then
-      log_message "Keeping successful deployment: $release"
-      continue
+  else
+    # Get list of releases to remove (all except the newest $keep_count)
+    local releases_to_remove
+    releases_to_remove=$(echo "$all_releases" | tail -n +"$((keep_count + 1))")
+    
+    # Get list of successful deployments to preserve
+    local successful_deployments=""
+    if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
+      successful_deployments=$(cat "$SUCCESSFUL_DEPLOYMENTS_FILE")
     fi
     
-    log_message "Removing old release: $release"
-    rm -rf "$RELEASES_DIR/$release"
-  done
+    # Remove old releases, but preserve successful ones
+    for release in $releases_to_remove; do
+      # Skip if this is a successful deployment we want to keep
+      if echo "$successful_deployments" | grep -q "^$release$"; then
+        log_message "Keeping successful deployment: $release"
+        continue
+      fi
+      
+      log_message "Removing old release: $release"
+      rm -rf "$RELEASES_DIR/$release"
+    done
+  fi
+  
+  # === CLEAN UP BACKUPS ===
+  log_message "Cleaning up old backups (keeping the last $keep_backups)..."
+  
+  # Make sure backup directory exists
+  if [ ! -d "$BACKUP_DIR" ]; then
+    log_message "No backup directory exists, skipping backup cleanup"
+  else
+    # Get all backups sorted by time (newest first)
+    local all_backups
+    all_backups=$(ls -t "$BACKUP_DIR" | grep -v "latest_backup")
+    
+    # Count the total number of backups
+    local backup_count
+    backup_count=$(echo "$all_backups" | wc -l)
+    
+    if [ "$backup_count" -le "$keep_backups" ]; then
+      log_message "Only $backup_count backups exist, no cleanup needed"
+    else
+      # Get list of backups to remove (all except the newest $keep_backups)
+      local backups_to_remove
+      backups_to_remove=$(echo "$all_backups" | tail -n +"$((keep_backups + 1))")
+      
+      # Remove old backups
+      for backup in $backups_to_remove; do
+        log_message "Removing old backup: $backup"
+        rm -rf "$BACKUP_DIR/$backup"
+      done
+    fi
+  fi
   
   log_message "✅ Cleanup completed"
   return 0
