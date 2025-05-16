@@ -1,6 +1,11 @@
 # Build stage
 FROM node:20-slim AS builder
 
+# Label the builder stage for better cache management
+LABEL stage=builder
+LABEL app.component=backend
+LABEL app.stage=build
+
 # Install build dependencies for bcrypt and other native modules
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -25,21 +30,33 @@ RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
 # Build the application
 RUN npm run build
 
-# Production stage
+# Production stage with optimizations
 FROM node:20-slim AS production
+
+# Label the production image for identification
+LABEL app.component=backend
+LABEL app.stage=production
+LABEL com.docker.compose.service=api
 
 WORKDIR /app
 
-# Install production dependencies for native modules
+# Install only production dependencies for native modules
 RUN apt-get update && apt-get install -y \
     openssl \
+    ca-certificates \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built application and node_modules from builder stage
+# Copy package.json files for production install
+COPY package*.json ./
+
+# Install only production dependencies to reduce image size
+RUN npm ci --omit=dev --legacy-peer-deps --no-audit --no-progress && \
+    npm cache clean --force
+
+# Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY package.json package-lock.json ./
 COPY src/shared/database/prisma ./src/shared/database/prisma
 
 # Set environment variables
@@ -49,6 +66,11 @@ ENV REDIS_COMMANDER_URL=/redis-ui
 ENV SOCKET_URL=/socket.io
 ENV REDIS_UI_URL=/redis-ui
 ENV LOGGER_URL=/logger
+# Optimize Node.js for production
+ENV NODE_OPTIONS="--max-old-space-size=1536 --max-http-header-size=16384 --expose-gc"
+# Enable garbage collection to help with memory management
+ENV ENABLE_GC=true
+ENV GC_INTERVAL=21600
 
 # Expose ports
 EXPOSE 8088
@@ -57,11 +79,15 @@ EXPOSE 8088
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
-# Start the application
+# Start the application with improved startup sequence
 CMD ["sh", "-c", "npx prisma generate --schema=$PRISMA_SCHEMA_PATH && node dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
+
+# Label the development image
+LABEL app.component=backend
+LABEL app.stage=development
 
 # Install necessary tools in a single layer
 RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ && \
@@ -84,6 +110,9 @@ RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
 
 # Make the script executable
 RUN chmod +x /app/src/shared/database/prisma/wait-for-postgres.sh
+
+# Set proper permissions for hot reloading
+RUN chmod -R 777 /app
 
 # Expose ports
 EXPOSE 8088 5555
