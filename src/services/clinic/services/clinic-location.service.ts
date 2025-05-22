@@ -78,7 +78,7 @@ export class ClinicLocationService {
         },
         include: {
           clinic: true,
-          DoctorClinic: {
+          doctorClinic: {
             include: {
               doctor: {
                 include: {
@@ -111,7 +111,7 @@ export class ClinicLocationService {
         timezone: location.timezone,
         workingHours: location.workingHours as any,
         isActive: location.isActive,
-        doctors: location.DoctorClinic.map(dc => ({
+        doctors: location.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
           profilePicture: dc.doctor.user.profilePicture
@@ -151,7 +151,7 @@ export class ClinicLocationService {
           isActive: true 
         },
         include: {
-          DoctorClinic: {
+          doctorClinic: {
             include: {
               doctor: {
                 include: {
@@ -187,7 +187,7 @@ export class ClinicLocationService {
         timezone: location.timezone,
         workingHours: location.workingHours as any,
         isActive: location.isActive,
-        doctors: location.DoctorClinic.map(dc => ({
+        doctors: location.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
           profilePicture: dc.doctor.user.profilePicture
@@ -219,7 +219,7 @@ export class ClinicLocationService {
           isActive: true
         },
         include: {
-          DoctorClinic: {
+          doctorClinic: {
             include: {
               doctor: {
                 include: {
@@ -256,7 +256,7 @@ export class ClinicLocationService {
         timezone: location.timezone,
         workingHours: location.workingHours as any,
         isActive: location.isActive,
-        doctors: location.DoctorClinic.map(dc => ({
+        doctors: location.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
           profilePicture: dc.doctor.user.profilePicture
@@ -396,7 +396,7 @@ export class ClinicLocationService {
           updatedAt: new Date()
         },
         include: {
-          DoctorClinic: {
+          doctorClinic: {
             include: {
               doctor: {
                 include: {
@@ -436,7 +436,7 @@ export class ClinicLocationService {
         timezone: updatedLocation.timezone,
         workingHours: updatedLocation.workingHours as any,
         isActive: updatedLocation.isActive,
-        doctors: updatedLocation.DoctorClinic.map(dc => ({
+        doctors: updatedLocation.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
           profilePicture: dc.doctor.user.profilePicture

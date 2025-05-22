@@ -10,7 +10,6 @@ import { EmailService } from '../../../shared/messaging/email/email.service';
 import { EmailTemplate } from '../../../libs/types/email.types';
 import axios from 'axios';
 import { WhatsAppService } from '../../../shared/messaging/whatsapp/whatsapp.service';
-import { ClinicDatabaseService } from '../../clinic/clinic-database.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
 import { EventService } from '../../../shared/events/event.service';
 import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
@@ -40,7 +39,6 @@ export class AuthService {
     private readonly redisService: RedisService,
     private readonly emailService: EmailService,
     private readonly whatsAppService: WhatsAppService,
-    private readonly clinicDatabaseService: ClinicDatabaseService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
     private readonly clinicService: ClinicService,

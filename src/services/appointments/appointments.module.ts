@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { AppointmentController } from './appointments.controller';
+import { AppointmentsController } from './appointments.controller';
 import { AppointmentLocationModule } from './appointment-location/appointment-location.module';
 import { AppointmentConfirmationModule } from './appointment-confirmation/appointment-confirmation.module';
 import { AppointmentSocketModule } from './appointment-socket/appointment-socket.module';
@@ -34,7 +34,7 @@ import { GuardsModule } from '../../libs/guards/guards.module';
     RateLimitModule,
     GuardsModule,
   ],
-  controllers: [AppointmentController],
+  controllers: [AppointmentsController],
   providers: [AppointmentService],
   exports: [AppointmentService],
 })

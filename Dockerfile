@@ -30,6 +30,10 @@ RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
 # Build the application
 RUN npm run build
 
+# Ensure schema is copied to the dist folder
+RUN mkdir -p /app/dist/shared/database/prisma
+RUN cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/
+
 # Production stage with optimizations
 FROM node:20-slim AS production
 
@@ -57,7 +61,10 @@ RUN npm ci --omit=dev --legacy-peer-deps --no-audit --no-progress && \
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY src/shared/database/prisma ./src/shared/database/prisma
+
+# Copy Prisma schema to both src and dist directories to ensure availability
+COPY --from=builder /app/src/shared/database/prisma/schema.prisma ./src/shared/database/prisma/schema.prisma
+COPY --from=builder /app/dist/shared/database/prisma/schema.prisma ./dist/shared/database/prisma/schema.prisma
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -80,7 +87,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
 # Start the application with improved startup sequence
-CMD ["sh", "-c", "npx prisma generate --schema=$PRISMA_SCHEMA_PATH && node dist/main"]
+CMD ["sh", "-c", "npx prisma generate --schema=\"$PRISMA_SCHEMA_PATH\" && node dist/main"]
 
 # Development stage
 FROM node:20-alpine AS development
@@ -106,7 +113,11 @@ COPY . .
 
 # Set Prisma schema path and generate client
 ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
-RUN npx prisma generate --schema=$PRISMA_SCHEMA_PATH
+RUN npx prisma generate --schema=\"$PRISMA_SCHEMA_PATH\"
+
+# Ensure dist directory exists and contains schema
+RUN mkdir -p /app/dist/shared/database/prisma
+RUN cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/
 
 # Make the script executable
 RUN chmod +x /app/src/shared/database/prisma/wait-for-postgres.sh
@@ -122,4 +133,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
 # Use nodemon in development with migrations
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma && nodemon --watch src --ext ts --exec npm run start:dev"] 
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=\"$PRISMA_SCHEMA_PATH\" && npm run start:dev"] 

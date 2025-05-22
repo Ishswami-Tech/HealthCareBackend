@@ -2,7 +2,6 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
 import { ClinicController } from './clinic.controller';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
-import { ClinicDatabaseService } from './clinic-database.service';
 import { ClinicLocationService } from './services/clinic-location.service';
 import { ClinicLocationController } from './cliniclocation/clinic-location.controller';
 import { LoggingModule } from '../../shared/logging/logging.module';
@@ -31,7 +30,6 @@ import { SharedModule } from '../../shared/shared.module';
   providers: [
     ClinicService, 
     PrismaService, 
-    ClinicDatabaseService, 
     ClinicLocationService,
     EventService,
     ClinicPermissionService,
@@ -40,7 +38,6 @@ import { SharedModule } from '../../shared/shared.module';
   ],
   exports: [
     ClinicService, 
-    ClinicDatabaseService, 
     ClinicPermissionService,
     ClinicErrorService,
     ClinicUserService,

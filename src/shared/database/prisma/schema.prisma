@@ -1,3 +1,4 @@
+// This is the single schema file for both global and tenant-specific models
 generator client {
   provider      = "prisma-client-js"
   output        = "../../../../node_modules/.prisma/client"
@@ -5,11 +6,19 @@ generator client {
   engineType    = "binary"
 }
 
+// // Generate Entity Relationship Diagram
+// generator erd {
+//   provider = "prisma-erd-generator"
+//   output   = "../../../../docs/ERD.svg"
+//   theme    = "forest"
+// }
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+// Core shared models
 model User {
   id                String         @id @default(uuid())
   email             String         @unique
@@ -46,7 +55,7 @@ model User {
   googleId          String?
   facebookId        String?
   appleId           String?
-  Clinic            Clinic[]
+  clinics           Clinic[] // User's associated clinics
   appName           String?
   medicalConditions String?
 
@@ -56,7 +65,7 @@ model User {
 model Receptionist {
   id        String   @id @default(uuid())
   userId    String   @unique
-  clinicId  String?
+  clinicId  String?  @unique
   createdAt DateTime @default(now())
   clinic    Clinic?  @relation(fields: [clinicId], references: [id])
   user      User     @relation(fields: [userId], references: [id])
@@ -81,7 +90,7 @@ model Clinic {
   updatedAt            DateTime         @updatedAt
   admins               ClinicAdmin[]
   doctors              DoctorClinic[]
-  Receptionist         Receptionist[]
+  receptionist         Receptionist?
   receptionists        Receptionist[]   @relation("ReceptionistsAtClinic")
   locations            ClinicLocation[]
   createdBy            String
@@ -94,7 +103,7 @@ model Clinic {
   currency             String?          @default("INR")
   language             String?          @default("en")
   settings             Json?
-  Appointment          Appointment[]
+  appointments         Appointment[]
 
   @@map("clinics")
 }
@@ -113,16 +122,17 @@ model ClinicLocation {
   isActive     Boolean        @default(true)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
-  clinicId     String
+  clinicId     String // Tenant isolation field
   clinic       Clinic         @relation(fields: [clinicId], references: [id])
   latitude     Float?
   longitude    Float?
   timezone     String?        @default("UTC")
   workingHours Json?
   settings     Json?
-  Appointment  Appointment[]
-  DoctorClinic DoctorClinic[]
+  appointments Appointment[]
+  doctorClinic DoctorClinic[]
 
+  @@index([clinicId])
   @@map("clinic_locations")
 }
 
@@ -136,11 +146,13 @@ model SuperAdmin {
 model ClinicAdmin {
   id        String   @id @default(uuid())
   userId    String   @unique
-  clinicId  String
+  clinicId  String // Tenant isolation field
   createdAt DateTime @default(now())
   clinic    Clinic   @relation(fields: [clinicId], references: [id])
   user      User     @relation(fields: [userId], references: [id])
   isOwner   Boolean  @default(false)
+
+  @@index([clinicId])
 }
 
 model Doctor {
@@ -156,7 +168,7 @@ model Doctor {
   createdAt       DateTime       @default(now())
   user            User           @relation(fields: [userId], references: [id])
   appointments    Appointment[]
-  clinics         DoctorClinic[]
+  clinics         DoctorClinic[] // M:M relationship with clinics, enforcing tenant isolation
   healthRecords   HealthRecord[]
   prescriptions   Prescription[]
   reviews         Review[]
@@ -181,7 +193,7 @@ model Appointment {
   doctorId    String
   patientId   String
   locationId  String
-  clinicId    String // Added for clinic-specific appointments
+  clinicId    String // Tenant isolation field
   date        DateTime
   time        String
   duration    Int
@@ -207,8 +219,7 @@ model Appointment {
   @@index([doctorId])
   @@index([patientId])
   @@index([locationId])
-  @@index([clinicId])
-  @@index([userId])
+  @@index([clinicId]) // Index on tenant field for performance
 }
 
 model Therapy {
@@ -217,7 +228,10 @@ model Therapy {
   description  String?
   duration     Int?
   createdAt    DateTime      @default(now())
+  clinicId     String // Tenant isolation field
   appointments Appointment[]
+
+  @@index([clinicId])
 }
 
 model Prescription {
@@ -226,9 +240,12 @@ model Prescription {
   doctorId  String
   date      DateTime           @default(now())
   notes     String?
+  clinicId  String // Tenant isolation field
   doctor    Doctor             @relation(fields: [doctorId], references: [id])
   patient   Patient            @relation(fields: [patientId], references: [id])
   items     PrescriptionItem[]
+
+  @@index([clinicId])
 }
 
 model PrescriptionItem {
@@ -238,8 +255,11 @@ model PrescriptionItem {
   dosage         String?
   frequency      String?
   duration       String?
+  clinicId       String // Tenant isolation field
   medicine       Medicine?    @relation(fields: [medicineId], references: [id])
   prescription   Prescription @relation(fields: [prescriptionId], references: [id])
+
+  @@index([clinicId])
 }
 
 model Medicine {
@@ -250,12 +270,15 @@ model Medicine {
   dosage            String?
   manufacturer      String?
   type              MedicineType
+  clinicId          String // Tenant isolation field
   prescriptionItems PrescriptionItem[]
+
+  @@index([clinicId])
 }
 
 model DoctorClinic {
   doctorId   String
-  clinicId   String
+  clinicId   String // Tenant isolation field
   startTime  DateTime?
   endTime    DateTime?
   clinic     Clinic          @relation(fields: [clinicId], references: [id])
@@ -264,6 +287,7 @@ model DoctorClinic {
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
 
   @@id([doctorId, clinicId])
+  @@index([clinicId])
 }
 
 model Payment {
@@ -273,11 +297,12 @@ model Payment {
   status        PaymentStatus  @default(PENDING)
   method        PaymentMethod?
   transactionId String?
+  clinicId      String // Tenant isolation field
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-  appointment   Appointment    @relation(fields: [appointmentId], references: [id], map: "payment_appointment_fkey")
+  appointment   Appointment    @relation(fields: [appointmentId], references: [id])
 
-  @@index([appointmentId], map: "payment_appointment_idx")
+  @@index([clinicId])
 }
 
 model Queue {
@@ -286,8 +311,11 @@ model Queue {
   queueNumber       Int
   estimatedWaitTime Int?
   status            QueueStatus @default(WAITING)
+  clinicId          String // Tenant isolation field
   updatedAt         DateTime    @updatedAt
   appointment       Appointment @relation(fields: [appointmentId], references: [id])
+
+  @@index([clinicId])
 }
 
 model Notification {
@@ -298,8 +326,11 @@ model Notification {
   read      Boolean            @default(false)
   sentAt    DateTime?
   status    NotificationStatus @default(PENDING)
+  clinicId  String? // Optional tenant isolation field
   createdAt DateTime           @default(now())
   user      User               @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
 }
 
 model HealthRecord {
@@ -309,9 +340,12 @@ model HealthRecord {
   recordType HealthRecordType
   report     String?
   fileUrl    String?
+  clinicId   String // Tenant isolation field
   createdAt  DateTime         @default(now())
   doctor     Doctor           @relation(fields: [doctorId], references: [id])
   patient    Patient          @relation(fields: [patientId], references: [id])
+
+  @@index([clinicId])
 }
 
 model AuditLog {
@@ -322,7 +356,10 @@ model AuditLog {
   ipAddress   String?
   device      String?
   description String   @default("")
+  clinicId    String? // Optional tenant isolation field
   user        User     @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
 }
 
 model Review {
@@ -331,9 +368,12 @@ model Review {
   comment   String?
   patientId String
   doctorId  String
+  clinicId  String // Tenant isolation field
   createdAt DateTime @default(now())
   doctor    Doctor   @relation(fields: [doctorId], references: [id])
   patient   Patient  @relation(fields: [patientId], references: [id])
+
+  @@index([clinicId])
 }
 
 model Product {
@@ -343,8 +383,11 @@ model Product {
   price       Float
   category    String
   stock       Int      @default(0)
+  clinicId    String // Tenant isolation field
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([clinicId])
 }
 
 model Log {
@@ -354,8 +397,10 @@ model Log {
   message   String
   context   String
   metadata  String?
+  clinicId  String? // Optional tenant isolation field
   timestamp DateTime @default(now())
 
+  @@index([clinicId])
   @@map("logs")
 }
 
@@ -381,6 +426,7 @@ enum AppointmentStatus {
   COMPLETED // After consultation
   CANCELLED // If cancelled
   NO_SHOW // If patient doesn't show up
+  PENDING // Initial pending status
 }
 
 enum PaymentStatus {

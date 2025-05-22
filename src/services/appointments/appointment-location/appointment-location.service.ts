@@ -118,18 +118,18 @@ export class AppointmentLocationService {
    */
   async getDoctorsByLocation(locationId: string) {
     try {
+      // Get the clinic location first
+      const location = await this.prisma.clinicLocation.findUnique({
+        where: { id: locationId }
+      });
+      
+      if (!location) {
+        throw new NotFoundException(`Location with ID ${locationId} not found`);
+      }
+      
+      // Get all doctors for this clinic
       const doctors = await this.prisma.doctor.findMany({
-        where: {
-          clinics: {
-            some: {
-              clinicId: locationId
-            }
-          },
-        },
-        select: {
-          id: true,
-          userId: true,
-          specialization: true,
+        include: {
           user: {
             select: {
               id: true,
@@ -137,9 +137,9 @@ export class AppointmentLocationService {
               lastName: true,
               email: true,
               profilePicture: true,
-            },
-          },
-        },
+            }
+          }
+        }
       });
 
       this.loggingService.log(

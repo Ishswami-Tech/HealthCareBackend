@@ -1,47 +1,49 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Logger, Request } from '@nestjs/common';
 import { AppointmentService } from './appointments.service';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from 'src/libs/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/libs/guards/roles.guard';
 import { Roles } from 'src/libs/decorators/roles.decorator';
+import { ClinicGuard } from '../../libs/guards/clinic.guard';
+import { ClinicRoute } from '../../libs/decorators/clinic-route.decorator';
+import { UseInterceptors } from '@nestjs/common';
+import { TenantContextInterceptor } from '../../shared/interceptors/tenant-context.interceptor';
 
-@ApiTags('Appointment')
-@Controller('api/appointments')
-export class AppointmentController {
-  private readonly logger = new Logger(AppointmentController.name);
+@ApiTags('appointments')
+@Controller('appointments')
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseInterceptors(TenantContextInterceptor)
+export class AppointmentsController {
+  private readonly logger = new Logger(AppointmentsController.name);
 
   constructor(
     private readonly appointmentService: AppointmentService,
   ) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST)
+  @ClinicRoute()
   @ApiOperation({
-    summary: 'Create new appointment',
+    summary: 'Create a new appointment',
     description: 'Create a new appointment with the specified details'
   })
   @ApiResponse({
     status: 201,
     description: 'Appointment created successfully'
   })
-  async createAppointment(
-    @Body() appointmentData: {
-      userId: string;
-      doctorId: string;
-      locationId: string;
-      date: string;
-      time: string;
-      duration: number;
-      type: string;
-      notes?: string;
-      clinicId: string;
-    }
-  ) {
+  @ApiResponse({ status: 400, description: 'Bad request' })
+  @ApiBearerAuth()
+  async createAppointment(@Body() appointmentData: any, @Request() req) {
     try {
-      return await this.appointmentService.createAppointment(appointmentData);
+      // Get clinic ID from the request context
+      const clinicId = req.clinicContext?.clinicId;
+      
+      return await this.appointmentService.createAppointment({
+        ...appointmentData,
+        userId: req.user.id,
+        clinicId: clinicId,
+      });
     } catch (error) {
       this.logger.error(`Failed to create appointment: ${error.message}`, error.stack);
       throw error;
@@ -49,29 +51,21 @@ export class AppointmentController {
   }
 
   @Get()
+  @ClinicRoute()
   @ApiOperation({
-    summary: 'Get appointments',
+    summary: 'Get all appointments',
     description: 'Get appointments with optional filtering'
   })
-  @ApiQuery({ name: 'userId', required: false, description: 'Filter by user ID' })
-  @ApiQuery({ name: 'doctorId', required: false, description: 'Filter by doctor ID' })
-  @ApiQuery({ name: 'status', required: false, description: 'Filter by appointment status' })
-  @ApiQuery({ name: 'locationId', required: false, description: 'Filter by location ID' })
-  @ApiQuery({ name: 'date', required: false, description: 'Filter by date' })
-  async getAppointments(
-    @Query('userId') userId?: string,
-    @Query('doctorId') doctorId?: string,
-    @Query('status') status?: string,
-    @Query('locationId') locationId?: string,
-    @Query('date') date?: string,
-  ) {
+  @ApiResponse({ status: 200, description: 'Return all appointments' })
+  @ApiBearerAuth()
+  async getAppointments(@Request() req) {
     try {
+      // Get clinic ID from the request context
+      const clinicId = req.clinicContext?.clinicId;
+      
       return await this.appointmentService.getAppointments({
-        userId,
-        doctorId,
-        status,
-        locationId,
-        date,
+        ...req.query,
+        clinicId: clinicId,
       });
     } catch (error) {
       this.logger.error(`Failed to get appointments: ${error.message}`, error.stack);
@@ -79,56 +73,63 @@ export class AppointmentController {
     }
   }
 
-  @Get(':appointmentId')
+  @Get(':id')
+  @ClinicRoute()
   @ApiOperation({
-    summary: 'Get appointment by ID',
+    summary: 'Get an appointment by ID',
     description: 'Get detailed information about a specific appointment'
   })
-  @ApiParam({ name: 'appointmentId', description: 'ID of the appointment to retrieve' })
-  async getAppointmentById(@Param('appointmentId') appointmentId: string) {
+  @ApiResponse({ status: 200, description: 'Return the appointment' })
+  @ApiResponse({ status: 404, description: 'Appointment not found' })
+  @ApiBearerAuth()
+  async getAppointmentById(@Param('id') id: string, @Request() req) {
     try {
-      return await this.appointmentService.getAppointmentById(appointmentId);
+      const clinicId = req.clinicContext?.clinicId;
+      return await this.appointmentService.getAppointmentById(id, clinicId);
     } catch (error) {
-      this.logger.error(`Failed to get appointment ${appointmentId}: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get appointment ${id}: ${error.message}`, error.stack);
       throw error;
     }
   }
 
-  @Put(':appointmentId')
+  @Put(':id')
+  @ClinicRoute()
   @ApiOperation({
-    summary: 'Update appointment',
+    summary: 'Update an appointment',
     description: 'Update an existing appointment\'s details'
   })
-  @ApiParam({ name: 'appointmentId', description: 'ID of the appointment to update' })
+  @ApiResponse({ status: 200, description: 'Appointment updated successfully' })
+  @ApiResponse({ status: 404, description: 'Appointment not found' })
+  @ApiBearerAuth()
   async updateAppointment(
-    @Param('appointmentId') appointmentId: string,
-    @Body() updateData: {
-      date?: string;
-      time?: string;
-      duration?: number;
-      status?: string;
-      notes?: string;
-    },
+    @Param('id') id: string,
+    @Body() updateData: any,
+    @Request() req
   ) {
     try {
-      return await this.appointmentService.updateAppointment(appointmentId, updateData);
+      const clinicId = req.clinicContext?.clinicId;
+      return await this.appointmentService.updateAppointment(id, updateData, clinicId);
     } catch (error) {
-      this.logger.error(`Failed to update appointment ${appointmentId}: ${error.message}`, error.stack);
+      this.logger.error(`Failed to update appointment ${id}: ${error.message}`, error.stack);
       throw error;
     }
   }
 
-  @Delete(':appointmentId')
+  @Delete(':id')
+  @ClinicRoute()
   @ApiOperation({
-    summary: 'Cancel appointment',
+    summary: 'Cancel an appointment',
     description: 'Cancel an existing appointment'
   })
-  @ApiParam({ name: 'appointmentId', description: 'ID of the appointment to cancel' })
-  async cancelAppointment(@Param('appointmentId') appointmentId: string) {
+  @ApiResponse({ status: 200, description: 'Appointment cancelled successfully' })
+  @ApiResponse({ status: 404, description: 'Appointment not found' })
+  @ApiBearerAuth()
+  async cancelAppointment(@Param('id') id: string, @Request() req) {
     try {
-      return await this.appointmentService.cancelAppointment(appointmentId);
+      const clinicId = req.clinicContext?.clinicId;
+      return await this.appointmentService.cancelAppointment(id, clinicId);
     } catch (error) {
-      this.logger.error(`Failed to cancel appointment ${appointmentId}: ${error.message}`, error.stack);
+      this.logger.error(`Failed to cancel appointment ${id}: ${error.message}`, error.stack);
       throw error;
     }
   }

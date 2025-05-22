@@ -38,7 +38,7 @@ export class ClinicUserService {
       const patients = await this.prisma.patient.findMany({
         where: {
           user: {
-            Clinic: {
+            clinics: {
               some: {
                 id: clinicId
               }
@@ -93,7 +93,7 @@ export class ClinicUserService {
           return await this.prisma.patient.findMany({
             where: {
               user: {
-                Clinic: {
+                clinics: {
                   some: {
                     id: clinicId
                   }

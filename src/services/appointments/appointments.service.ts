@@ -30,41 +30,43 @@ export class AppointmentService {
     clinicId: string;
   }) {
     try {
+      // Set tenant context for row-level isolation
+      this.prisma.setCurrentTenantId(data.clinicId);
+
       // Validate doctor exists and is available at the requested time
       const isAvailable = await this.checkDoctorAvailability(
         data.doctorId,
         data.date,
-        data.time,
+        data.time
       );
 
       if (!isAvailable) {
         throw new BadRequestException('Doctor is not available at the requested time');
       }
 
+      // First fetch the patient record for the user
+      const patient = await this.prisma.patient.findUnique({
+        where: { userId: data.userId }
+      });
+
+      if (!patient) {
+        throw new BadRequestException('User is not registered as a patient');
+      }
+
       // Create appointment in the database with appropriate type casting
       const appointment = await this.prisma.appointment.create({
         data: {
-          doctor: {
-            connect: { id: data.doctorId }
-          },
-          patient: {
-            connect: { id: data.userId }
-          },
-          location: {
-            connect: { id: data.locationId }
-          },
+          doctorId: data.doctorId,
+          patientId: patient.id,
+          locationId: data.locationId,
+          clinicId: data.clinicId,
+          userId: data.userId,
           date: new Date(data.date),
           time: data.time,
           duration: data.duration,
           type: data.type as AppointmentType,
           notes: data.notes,
-          status: AppointmentStatus.SCHEDULED,
-          clinic: {
-            connect: { id: data.clinicId }
-          },
-          user: {
-            connect: { id: data.userId }
-          }
+          status: AppointmentStatus.SCHEDULED
         },
         include: {
           doctor: {
@@ -77,8 +79,7 @@ export class AppointmentService {
               user: true
             }
           },
-          location: true,
-          user: true
+          location: true
         }
       });
 
@@ -140,6 +141,9 @@ export class AppointmentService {
         throw error;
       }
       throw new Error(`Failed to create appointment: ${error.message}`);
+    } finally {
+      // Clear tenant context
+      this.prisma.clearTenantId();
     }
   }
 
@@ -152,13 +156,17 @@ export class AppointmentService {
     status?: string;
     locationId?: string;
     date?: string;
+    clinicId: string; // Required for tenant isolation
   }) {
     try {
+      // Set tenant context for row-level isolation
+      this.prisma.setCurrentTenantId(filters.clinicId);
+
       // Build filter conditions
       const where: any = {};
 
       if (filters.userId) {
-        where.userId = filters.userId;
+        where.patientId = filters.userId; // Use patientId instead of userId
       }
 
       if (filters.doctorId) {
@@ -177,12 +185,16 @@ export class AppointmentService {
         where.date = new Date(filters.date);
       }
 
-      // Get appointments
+      // Get appointments (clinicId is automatically added by PrismaService middleware)
       const appointments = await this.prisma.appointment.findMany({
         where,
         include: {
-          user: true,
           doctor: {
+            include: {
+              user: true
+            }
+          },
+          patient: {
             include: {
               user: true
             }
@@ -204,41 +216,37 @@ export class AppointmentService {
         { filters, error: error.stack }
       );
       throw new Error(`Failed to get appointments: ${error.message}`);
+    } finally {
+      // Clear tenant context
+      this.prisma.clearTenantId();
     }
   }
 
   /**
    * Get appointment by ID
    */
-  async getAppointmentById(appointmentId: string) {
+  async getAppointmentById(appointmentId: string, clinicId: string) {
     try {
-      const appointment = await this.prisma.appointment.findUnique({
-        where: { id: appointmentId },
+      // Set tenant context for row-level isolation
+      this.prisma.setCurrentTenantId(clinicId);
+
+      // Get appointment (clinicId filter is automatically added by the middleware)
+      const appointment = await this.prisma.appointment.findFirst({
+        where: {
+          id: appointmentId
+        },
         include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
           doctor: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  profilePicture: true,
-                },
-              },
-              specialization: true,
+            include: {
+              user: true,
             },
           },
+          patient: {
+            include: {
+              user: true,
+            },
+          },
+          location: true,
         },
       });
 
@@ -260,11 +268,14 @@ export class AppointmentService {
         throw error;
       }
       throw new Error(`Failed to get appointment: ${error.message}`);
+    } finally {
+      // Clear tenant context
+      this.prisma.clearTenantId();
     }
   }
 
   /**
-   * Update an existing appointment
+   * Update appointment with tenant isolation
    */
   async updateAppointment(
     appointmentId: string,
@@ -275,11 +286,18 @@ export class AppointmentService {
       status?: string;
       notes?: string;
     },
+    clinicId: string
   ) {
     try {
-      // Check if appointment exists
-      const existingAppointment = await this.prisma.appointment.findUnique({
-        where: { id: appointmentId },
+      // Set tenant context for row-level isolation
+      this.prisma.setCurrentTenantId(clinicId);
+
+      // Check if appointment exists and belongs to this clinic
+      const existingAppointment = await this.prisma.appointment.findFirst({
+        where: {
+          id: appointmentId,
+          // clinicId filter is automatically added by the middleware
+        },
       });
 
       if (!existingAppointment) {
@@ -302,7 +320,7 @@ export class AppointmentService {
       }
 
       if (updateData.status) {
-        data.status = updateData.status;
+        data.status = updateData.status as AppointmentStatus;
       }
 
       if (updateData.notes) {
@@ -311,8 +329,23 @@ export class AppointmentService {
 
       // Update appointment
       const updatedAppointment = await this.prisma.appointment.update({
-        where: { id: appointmentId },
+        where: {
+          id: appointmentId,
+        },
         data,
+        include: {
+          doctor: {
+            include: {
+              user: true,
+            },
+          },
+          patient: {
+            include: {
+              user: true,
+            },
+          },
+          location: true,
+        },
       });
 
       // Add update job to queue
@@ -320,7 +353,7 @@ export class AppointmentService {
         JobType.UPDATE,
         {
           id: updatedAppointment.id,
-          userId: updatedAppointment.userId,
+          userId: updatedAppointment.patientId, // Use patientId
           resourceId: updatedAppointment.id,
           resourceType: 'appointment',
           locationId: updatedAppointment.locationId || '',
@@ -337,7 +370,7 @@ export class AppointmentService {
         JobType.NOTIFY,
         {
           id: updatedAppointment.id,
-          userId: updatedAppointment.userId,
+          userId: updatedAppointment.patientId, // Use patientId
           resourceId: updatedAppointment.id,
           resourceType: 'appointment',
           locationId: updatedAppointment.locationId || '',
@@ -374,17 +407,26 @@ export class AppointmentService {
         throw error;
       }
       throw new Error(`Failed to update appointment: ${error.message}`);
+    } finally {
+      // Clear tenant context
+      this.prisma.clearTenantId();
     }
   }
 
   /**
-   * Cancel an appointment
+   * Cancel appointment with tenant isolation
    */
-  async cancelAppointment(appointmentId: string) {
+  async cancelAppointment(appointmentId: string, clinicId: string) {
     try {
-      // Check if appointment exists
-      const existingAppointment = await this.prisma.appointment.findUnique({
-        where: { id: appointmentId },
+      // Set tenant context for row-level isolation
+      this.prisma.setCurrentTenantId(clinicId);
+
+      // Check if appointment exists and belongs to this clinic
+      const existingAppointment = await this.prisma.appointment.findFirst({
+        where: {
+          id: appointmentId,
+          // clinicId filter is automatically added by the middleware
+        },
       });
 
       if (!existingAppointment) {
@@ -398,8 +440,25 @@ export class AppointmentService {
 
       // Update appointment status to CANCELLED
       const cancelledAppointment = await this.prisma.appointment.update({
-        where: { id: appointmentId },
-        data: { status: 'CANCELLED' },
+        where: {
+          id: appointmentId,
+        },
+        data: {
+          status: AppointmentStatus.CANCELLED,
+        },
+        include: {
+          doctor: {
+            include: {
+              user: true,
+            },
+          },
+          patient: {
+            include: {
+              user: true,
+            },
+          },
+          location: true,
+        },
       });
 
       // Send notification about cancellation
@@ -407,7 +466,7 @@ export class AppointmentService {
         JobType.NOTIFY,
         {
           id: cancelledAppointment.id,
-          userId: cancelledAppointment.userId,
+          userId: cancelledAppointment.patientId, // Use patientId
           resourceId: cancelledAppointment.id,
           resourceType: 'appointment',
           locationId: cancelledAppointment.locationId || '',
@@ -428,6 +487,7 @@ export class AppointmentService {
       );
 
       return {
+        appointment: cancelledAppointment,
         message: 'Appointment cancelled successfully',
       };
     } catch (error) {
@@ -443,6 +503,9 @@ export class AppointmentService {
         throw error;
       }
       throw new Error(`Failed to cancel appointment: ${error.message}`);
+    } finally {
+      // Clear tenant context
+      this.prisma.clearTenantId();
     }
   }
 
@@ -452,9 +515,11 @@ export class AppointmentService {
   private async checkDoctorAvailability(
     doctorId: string,
     date: string,
-    time: string,
+    time: string
   ): Promise<boolean> {
     try {
+      // Note: tenant context should already be set by the calling method
+
       // Get doctor's working hours
       const doctor = await this.prisma.doctor.findUnique({
         where: { id: doctorId },
@@ -614,7 +679,7 @@ export class AppointmentService {
       
       const appointments = await this.prisma.appointment.findMany({
         where: {
-          userId,
+          patientId: userId, // Use patientId instead of userId
           OR: [
             {
               date: {

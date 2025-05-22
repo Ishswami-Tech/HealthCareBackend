@@ -6,6 +6,7 @@ import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { QrModule } from './QR/qr.module';
 import { ClinicModule } from '../services/clinic/clinic.module';
 import { SocketModule } from './socket/socket.module';
+import { TenantContextInterceptor } from './interceptors/tenant-context.interceptor';
 
 @Module({
   imports: [
@@ -17,6 +18,9 @@ import { SocketModule } from './socket/socket.module';
     forwardRef(() => ClinicModule),
     SocketModule,
   ],
+  providers: [
+    TenantContextInterceptor
+  ],
   exports: [
     PrismaModule,
     LoggingModule,
@@ -25,6 +29,7 @@ import { SocketModule } from './socket/socket.module';
     QrModule,
     forwardRef(() => ClinicModule),
     SocketModule,
+    TenantContextInterceptor
   ],
 })
 export class SharedModule {} 

@@ -1,28 +1,94 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Scope, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable({ scope: Scope.REQUEST })
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
-  private static clients: Map<string, PrismaClient> = new Map();
-  private currentClient: PrismaClient;
   private readonly logger = new Logger(PrismaService.name);
-  private static maxConnections = 10; // Maximum connections per client
+  private currentTenantId: string | null = null;
 
   constructor() {
     super({
-      datasources: {
-        db: {
-          url: process.env.DATABASE_URL,
-        },
-      },
-      log: ['query', 'info', 'warn', 'error'],
+      datasourceUrl: process.env.DATABASE_URL,
+      log: ['error', 'warn'],
     });
-    this.currentClient = this;
+
+    // Add middleware to enforce tenant isolation
+    this.$use(async (params, next) => {
+      // Only apply tenant filter to models that have clinicId field
+      const modelsWithTenantId = [
+        'Appointment', 'ClinicLocation', 'ClinicAdmin', 'Therapy', 
+        'Prescription', 'PrescriptionItem', 'Medicine', 'DoctorClinic',
+        'Payment', 'Queue', 'HealthRecord', 'Review', 'Product'
+      ];
+
+      // Skip tenant isolation for admin operations and models without tenant fields
+      if (!this.currentTenantId || !modelsWithTenantId.includes(params.model)) {
+        return next(params);
+      }
+
+      // Add clinicId filter for read operations
+      if (params.action === 'findUnique' || params.action === 'findFirst') {
+        // Add tenant isolation condition to where clause
+        if (params.args.where?.clinicId === undefined) {
+          params.args.where = {
+            ...params.args.where,
+            clinicId: this.currentTenantId
+          };
+        }
+      }
+      
+      // Add tenant filter for findMany
+      if (params.action === 'findMany') {
+        // Add tenant isolation condition to where clause
+        if (!params.args) params.args = {};
+        if (!params.args.where) params.args.where = {};
+        
+        if (params.args.where.clinicId === undefined) {
+          params.args.where.clinicId = this.currentTenantId;
+        }
+      }
+      
+      // Add tenant ID for create operations
+      if (params.action === 'create' || params.action === 'createMany') {
+        if (params.args.data) {
+          params.args.data = {
+            ...params.args.data,
+            clinicId: this.currentTenantId
+          };
+        }
+      }
+      
+      // Add tenant check for update and delete operations
+      if (params.action === 'update' || params.action === 'updateMany' || 
+          params.action === 'delete' || params.action === 'deleteMany') {
+        
+        if (!params.args.where) params.args.where = {};
+        
+        if (params.args.where.clinicId === undefined) {
+          params.args.where = {
+            ...params.args.where,
+            clinicId: this.currentTenantId
+          };
+        }
+      }
+      
+      return next(params);
+    });
   }
 
   async onModuleInit() {
     try {
-      await this.currentClient.$connect();
+      // Check if Prisma client already exists to avoid duplicate generation
+      const clientPath = path.join(process.cwd(), 'node_modules', '.prisma', 'client');
+      const clientExists = fs.existsSync(clientPath);
+      
+      if (clientExists) {
+        this.logger.log('Prisma client already exists, skipping generation');
+      }
+      
+      await this.$connect();
       this.logger.log('Connected to database successfully');
     } catch (error) {
       this.logger.error('Failed to connect to database:', error);
@@ -32,7 +98,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleDestroy() {
     try {
-      await this.currentClient.$disconnect();
+      await this.$disconnect();
       this.logger.log('Disconnected from database successfully');
     } catch (error) {
       this.logger.error('Error disconnecting from database:', error);
@@ -40,106 +106,46 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   /**
-   * Get a Prisma client for a specific clinic
+   * Set the current tenant ID for this request
+   * This will be used to automatically filter all database queries
+   * to only include data for this tenant
+   * @param tenantId The ID of the tenant
+   */
+  setCurrentTenantId(tenantId: string | null) {
+    if (tenantId) {
+      this.logger.debug(`Setting current tenant ID to ${tenantId}`);
+    } else {
+      this.logger.debug('Clearing tenant ID - using global scope');
+    }
+    this.currentTenantId = tenantId;
+  }
+
+  /**
+   * Get the current tenant ID
+   * @returns The current tenant ID or null if not set
+   */
+  getCurrentTenantId(): string | null {
+    return this.currentTenantId;
+  }
+
+  /**
+   * Clear the current tenant ID
+   * This is useful for operations that should access all data
+   * For example, administrative tasks
+   */
+  clearTenantId() {
+    this.currentTenantId = null;
+  }
+
+  /**
+   * Get a client instance for the specified clinic
+   * Note: This is just a wrapper that sets the tenant context, not an actual separate connection
    * @param clinicId The ID of the clinic
-   * @returns A Prisma client connected to the clinic's database
+   * @returns The Prisma client with tenant context set
    */
-  async getClinicClient(clinicId: string): Promise<PrismaClient> {
-    // If no clinic ID is provided, return the default client (global database)
-    if (!clinicId) {
-      return this;
-    }
-
-    // Check if we already have a client for this clinic
-    if (PrismaService.clients.has(clinicId)) {
-      this.currentClient = PrismaService.clients.get(clinicId);
-      return this.currentClient;
-    }
-
-    // Check if we've reached the maximum number of connections
-    if (PrismaService.clients.size >= PrismaService.maxConnections) {
-      this.logger.warn('Maximum number of database connections reached. Cleaning up inactive connections...');
-      await this.cleanupInactiveConnections();
-    }
-
-    try {
-      // Get the clinic's database connection string from the global database
-      const clinic = await this.$queryRaw<{ db_connection_string: string }[]>`
-        SELECT db_connection_string FROM "Clinic" WHERE id = ${clinicId}
-      `;
-
-      if (!clinic || clinic.length === 0) {
-        throw new Error(`Clinic with ID ${clinicId} not found`);
-      }
-
-      // Create a new Prisma client for the clinic
-      const clinicClient = new PrismaClient({
-        datasources: {
-          db: {
-            url: `${clinic[0].db_connection_string}?connection_limit=5&pool_timeout=30`, // Configure connection pool at URL level
-          },
-        },
-        log: ['query', 'info', 'warn', 'error'],
-      });
-
-      // Connect to the clinic's database
-      await clinicClient.$connect();
-
-      // Store the client for future use
-      PrismaService.clients.set(clinicId, clinicClient);
-      this.currentClient = clinicClient;
-
-      return clinicClient;
-    } catch (error) {
-      this.logger.error(`Failed to create client for clinic ${clinicId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Clean up inactive database connections
-   */
-  private async cleanupInactiveConnections(): Promise<void> {
-    try {
-      const promises: Promise<void>[] = [];
-      
-      // Disconnect clients that haven't been used recently
-      for (const [clinicId, client] of PrismaService.clients.entries()) {
-        promises.push(
-          client.$disconnect()
-            .then(() => {
-              PrismaService.clients.delete(clinicId);
-              this.logger.log(`Cleaned up connection for clinic ${clinicId}`);
-            })
-            .catch((error) => {
-              this.logger.error(`Error cleaning up connection for clinic ${clinicId}:`, error);
-            })
-        );
-      }
-
-      await Promise.all(promises);
-    } catch (error) {
-      this.logger.error('Error during connection cleanup:', error);
-    }
-  }
-
-  /**
-   * Close all clinic database connections
-   */
-  static async closeAllConnections() {
-    const promises: Promise<void>[] = [];
-    for (const [clinicId, client] of PrismaService.clients.entries()) {
-      promises.push(
-        client.$disconnect()
-          .then(() => {
-            PrismaService.clients.delete(clinicId);
-          })
-          .catch((error) => {
-            console.error(`Error disconnecting client for clinic ${clinicId}:`, error);
-          })
-      );
-    }
-    await Promise.all(promises);
-    PrismaService.clients.clear();
+  async getClinicClient(clinicId: string): Promise<PrismaService> {
+    // Set the tenant context
+    this.setCurrentTenantId(clinicId);
+    return this;
   }
 }

@@ -1,22 +1,11 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Res, HttpStatus, Redirect } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
 import { Public } from './libs/decorators/public.decorator';
-import { JwtService } from '@nestjs/jwt';
-import { PrismaService } from './shared/database/prisma/prisma.service';
-import { FastifyReply } from 'fastify';
 import { ConfigService } from '@nestjs/config';
+import { FastifyReply } from 'fastify';
 import { HealthController } from './services/health/health.controller';
 import { LoggingService } from './shared/logging/logging.service';
-import { LogType } from './shared/logging/types/logging.types';
-
-interface HealthStatus {
-  api?: { status: 'up' | 'down' };
-  queues?: { status: 'up' | 'down' };
-  redis?: { status: 'up' | 'down' };
-  database?: { status: 'up' | 'down' };
-  logger?: { status: 'up' | 'down' };
-}
 
 interface ServiceInfo {
   name: string;
@@ -33,26 +22,10 @@ interface ServiceInfo {
 export class AppController {
   constructor(
     private readonly appService: AppService,
-    private readonly jwtService: JwtService,
-    private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly healthController: HealthController,
     private readonly loggingService: LoggingService,
   ) {}
-
-  @Get('api-health')
-  @Public()
-  @ApiOperation({ 
-    summary: 'Health check',
-    description: 'Returns the health status of the API and its dependencies'
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Health check response'
-  })
-  async getHealth() {
-    return this.healthController.getServicesStatus();
-  }
 
   @Get()
   @Public()
@@ -72,68 +45,95 @@ export class AppController {
       const isProduction = process.env.NODE_ENV === 'production';
       
       // Get real-time service status from health controller
-      const healthStatus = await this.healthController.getServicesStatus() as HealthStatus;
+      const healthStatus = await this.healthController.getServicesStatus();
       
       // Only fetch logs in development mode to reduce DB load in production
       const recentLogs = isProduction ? [] : await this.getRecentLogs();
+      
+      // Check if services are actually running
+      const isApiRunning = healthStatus?.api?.status === 'up';
+      const isRedisRunning = healthStatus?.redis?.status === 'up';
+      const isDatabaseRunning = healthStatus?.database?.status === 'up';
+      const isQueueRunning = healthStatus?.queues?.status === 'up';
+      const isLoggerRunning = healthStatus?.logger?.status === 'up';
+      const isPrismaStudioRunning = healthStatus?.prismaStudio?.status === 'up';
+      const isRedisCommanderRunning = healthStatus?.redisCommander?.status === 'up';
+      const isPgAdminRunning = healthStatus?.pgAdmin?.status === 'up';
+      const isSocketRunning = healthStatus?.socket?.status === 'up';
       
       // Define all services
       const allServices: ServiceInfo[] = [
         {
           name: 'API Documentation',
           description: 'Swagger API documentation and testing interface.',
-          url: `${baseUrl}${this.configService.get('SWAGGER_URL')}`,
-          active: healthStatus?.api?.status === 'up',
+          url: `${baseUrl}${this.configService.get('SWAGGER_URL') || '/docs'}`,
+          active: isApiRunning,
           category: 'Documentation'
         },
         {
           name: 'Bull Board',
           description: 'Queue management and monitoring dashboard.',
-          url: `${baseUrl}${this.configService.get('BULL_BOARD_URL')}`,
-          active: healthStatus?.queues?.status === 'up',
+          url: `${baseUrl}${this.configService.get('BULL_BOARD_URL') || '/queue-dashboard'}`,
+          active: isQueueRunning,
           category: 'Monitoring'
         },
         {
           name: 'Logger',
           description: 'Application logs and monitoring interface.',
           url: `${baseUrl}/logger`,
-          active: healthStatus?.logger?.status === 'up',
+          active: isLoggerRunning,
           category: 'Monitoring'
         },
         {
           name: 'WebSocket',
           description: 'WebSocket endpoint for real-time communication.',
-          url: `${baseUrl}/socket`,
-          active: healthStatus?.api?.status === 'up',
+          url: `${baseUrl}/socket-test`,
+          active: isSocketRunning,
           category: 'API'
-        },
-        {
-          name: 'Redis Commander',
-          description: 'Redis database management interface.',
-          url: `${baseUrl}/redis-ui`,
-          active: healthStatus?.redis?.status === 'up',
-          category: 'Database',
-          credentials: 'Username: admin, Password: admin',
-          devOnly: true
-        },
-        {
-          name: 'Prisma Studio',
-          description: 'PostgreSQL database management through Prisma.',
-          url: `${baseUrl}/prisma`,
-          active: healthStatus?.database?.status === 'up',
-          category: 'Database',
-          devOnly: true
-        },
-        {
-          name: 'pgAdmin',
-          description: 'PostgreSQL database management interface.',
-          url: `${baseUrl}/pgadmin`,
-          active: healthStatus?.database?.status === 'up',
-          category: 'Database',
-          credentials: 'Email: admin@admin.com, Password: admin',
-          devOnly: true
         }
       ];
+      
+      // Add development-only services
+      if (!isProduction || isRedisCommanderRunning) {
+        allServices.push({
+          name: 'Redis Commander',
+          description: 'Redis database management interface.',
+          url: isProduction 
+            ? `${this.configService.get('REDIS_COMMANDER_URL', '/redis-ui')}`
+            : `${baseUrl}/redis-ui`,
+          active: isRedisRunning && isRedisCommanderRunning,
+          category: 'Database',
+          credentials: 'Username: admin, Password: admin',
+          devOnly: !isRedisCommanderRunning
+        });
+      }
+      
+      if (!isProduction || isPrismaStudioRunning) {
+        allServices.push({
+          name: 'Prisma Studio',
+          description: 'PostgreSQL database management through Prisma.',
+          url: isProduction 
+            ? `${this.configService.get('PRISMA_STUDIO_URL', '/prisma')}`
+            : `${baseUrl}/prisma`,
+          active: isDatabaseRunning && isPrismaStudioRunning,
+          category: 'Database',
+          devOnly: !isPrismaStudioRunning
+        });
+      }
+      
+      if (!isProduction || isPgAdminRunning) {
+        allServices.push({
+          name: 'pgAdmin',
+          description: 'PostgreSQL database management interface.',
+          url: isProduction 
+            ? `${this.configService.get('PGADMIN_URL', '/pgadmin')}`
+            : `${baseUrl}/pgadmin`,
+          active: isDatabaseRunning && isPgAdminRunning,
+          category: 'Database',
+          credentials: 'Email: admin@admin.com, Password: admin',
+          devOnly: !isPgAdminRunning
+        });
+        }
 
       // Filter services based on environment
       const services = isProduction 
@@ -151,73 +151,256 @@ export class AppController {
     }
   }
 
-  @Get('redis-ui')
+  @Get('socket-test')
   @Public()
   @ApiOperation({
-    summary: 'Redis Commander',
-    description: 'Redis management interface for monitoring and managing Redis data.'
+    summary: 'WebSocket Test Page',
+    description: 'A simple page to test WebSocket connectivity'
   })
   @ApiResponse({
-    status: 302,
-    description: 'Redirects to Redis Commander UI'
+    status: 200,
+    description: 'WebSocket test page HTML'
   })
-  @ApiResponse({
-    status: 404,
-    description: 'Not available in production'
-  })
-  async getRedisUI(@Res() res: FastifyReply) {
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(HttpStatus.NOT_FOUND)
-        .send({ 
-          message: 'Redis Commander is only available in development mode',
-          status: 'error'
+  async getSocketTestPage(@Res() res: FastifyReply) {
+    const baseUrl = this.configService.get('API_URL') || 'http://localhost:8088';
+    
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .status {
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-weight: 500;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        #messages {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            background-color: #f8f9fa;
+        }
+        .message {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .received {
+            background-color: #e2f0fd;
+        }
+        .sent {
+            background-color: #e2fdea;
+            text-align: right;
+        }
+        .timestamp {
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0069d9;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 70%;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Test Page</h1>
+    
+    <div class="card">
+        <h2>Connection Status</h2>
+        <div id="status" class="status disconnected">Disconnected</div>
+        <button id="connect">Connect</button>
+        <button id="disconnect" disabled>Disconnect</button>
+    </div>
+    
+    <div class="card">
+        <h2>Messages</h2>
+        <div id="messages"></div>
+        
+        <div>
+            <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+            <button id="sendBtn" disabled>Send</button>
+        </div>
+    </div>
+    
+    <script src="${baseUrl}/socket.io/socket.io.js"></script>
+    <script>
+        let socket;
+        const statusEl = document.getElementById('status');
+        const messagesEl = document.getElementById('messages');
+        const connectBtn = document.getElementById('connect');
+        const disconnectBtn = document.getElementById('disconnect');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        
+        function updateStatus(status, message) {
+            statusEl.className = 'status ' + status;
+            statusEl.textContent = message;
+            
+            if (status === 'connected') {
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                messageInput.disabled = false;
+                sendBtn.disabled = false;
+            } else {
+                connectBtn.disabled = status === 'connecting';
+                disconnectBtn.disabled = true;
+                messageInput.disabled = true;
+                sendBtn.disabled = true;
+            }
+        }
+        
+        function addMessage(text, type) {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message ' + type;
+            
+            const contentEl = document.createElement('div');
+            contentEl.textContent = text;
+            
+            const timestampEl = document.createElement('div');
+            timestampEl.className = 'timestamp';
+            timestampEl.textContent = new Date().toLocaleTimeString();
+            
+            messageEl.appendChild(contentEl);
+            messageEl.appendChild(timestampEl);
+            messagesEl.appendChild(messageEl);
+            
+            // Scroll to bottom
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        
+        connectBtn.addEventListener('click', () => {
+            try {
+                updateStatus('connecting', 'Connecting...');
+                
+                // Connect to the test namespace
+                socket = io('${baseUrl}/test', {
+                  transports: ['polling', 'websocket'],
+                  forceNew: true,
+                  reconnectionAttempts: 3,
+                  timeout: 5000
+                });
+                
+                socket.on('connect', () => {
+                    updateStatus('connected', 'Connected');
+                    addMessage('Connected to server', 'received');
+                });
+                
+                socket.on('disconnect', () => {
+                    updateStatus('disconnected', 'Disconnected');
+                    addMessage('Disconnected from server', 'received');
+                });
+                
+                socket.on('connect_error', (err) => {
+                    updateStatus('disconnected', 'Connection Error');
+                    addMessage('Connection error: ' + err.message, 'received');
+                });
+                
+                socket.on('message', (data) => {
+                    addMessage('Server: ' + data.text, 'received');
+                });
+                
+                socket.on('echo', (data) => {
+                    addMessage('Echo: ' + JSON.stringify(data.original), 'received');
+                });
+            } catch (e) {
+                updateStatus('disconnected', 'Error');
+                addMessage('Error: ' + e.message, 'received');
+            }
         });
-    }
-    const redisCommanderUrl = this.configService.get<string>('REDIS_COMMANDER_URL');
-    return res.redirect(redisCommanderUrl);
-  }
-
-  @Get('redis-commander')
-  @Public()
-  @ApiOperation({
-    summary: 'Redis Commander (Alternate Path)',
-    description: 'Redis management interface for monitoring and managing Redis data.'
-  })
-  @ApiResponse({
-    status: 302,
-    description: 'Redirects to Redis Commander UI'
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Not available in production'
-  })
-  async getRedisCommander(@Res() res: FastifyReply) {
-    if (process.env.NODE_ENV === 'production') {
-      return res.status(HttpStatus.NOT_FOUND)
-        .send({ 
-          message: 'Redis Commander is only available in development mode',
-          status: 'error'
+        
+        disconnectBtn.addEventListener('click', () => {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
         });
-    }
-    const redisCommanderUrl = this.configService.get<string>('REDIS_COMMANDER_URL');
-    return res.redirect(redisCommanderUrl);
+        
+        sendBtn.addEventListener('click', () => {
+            const message = messageInput.value.trim();
+            if (message && socket) {
+                socket.emit('message', { text: message });
+                addMessage('You: ' + message, 'sent');
+                messageInput.value = '';
+            }
+        });
+        
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendBtn.click();
+            }
+        });
+    </script>
+</body>
+</html>
+    `;
+    
+    res.header('Content-Type', 'text/html');
+    return res.send(html);
   }
 
   private async getRecentLogs(limit: number = 10) {
     try {
       // Use your logging service to get recent logs
-      const logs = await this.prisma.log.findMany({
-        take: limit,
-        orderBy: {
-          timestamp: 'desc'
-        }
-      });
+      const logs = await this.loggingService.getLogs();
       
-      return logs.map(log => ({
+      return logs.slice(0, limit).map(log => ({
         timestamp: log.timestamp,
         level: log.level,
         message: log.message,
-        source: log.context || 'Unknown',
+        source: log.type || 'Unknown',
         data: log.metadata || '{}'
       }));
     } catch (error) {
@@ -234,10 +417,8 @@ export class AppController {
   }
 
   private generateDashboardHtml(title: string, services: ServiceInfo[], recentLogs: any[], isProduction: boolean): string {
-    // In production, we use a more lightweight template with fewer features
-    const refreshInterval = isProduction ? 60000 : 30000; // Less frequent refresh in production
-    
-    return `<!DOCTYPE html>
+    // No auto-refresh - only refresh when button is clicked
+    return (`<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -245,47 +426,310 @@ export class AppController {
     <title>${title}</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
+        /* General styles */
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            color: #1a202c;
+            line-height: 1.5;
+            font-size: 14px;
+            background-color: #f8fafc;
+        }
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+        
+        /* Health Dashboard styles */
+        .health-dashboard {
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+            padding: 1.25rem;
+            transition: all 0.3s ease;
+        }
+        
+        .dashboard-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.25rem;
+            border-bottom: 1px solid #f1f5f9;
+            padding-bottom: 0.75rem;
+        }
+        
+        .dashboard-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #334155;
+            margin: 0;
+        }
+        
+        .refresh-button {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 0.4rem 0.75rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        
+        .refresh-button:hover {
+            background-color: #2563eb;
+        }
+        
+        .refresh-button:active {
+            background-color: #1d4ed8;
+        }
+        
+        /* Health Card Styles */
+        .health-card {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.25rem;
+            overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .health-card:hover {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        
+        .health-card-header {
+            padding: 0.75rem 1.25rem;
+            border-bottom: 1px solid #f1f5f9;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #f9fafb;
+        }
+        
+        .health-card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #334155;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        
+        .health-card-body {
+            padding: 1rem 1.25rem;
+        }
+        
+        .health-summary {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 1rem;
+            font-weight: 500;
+            margin-bottom: 0.75rem;
+        }
+        
+        .status-circle {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .status-healthy {
+            background-color: #22c55e;
+            box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+        }
+        
+        .status-unhealthy {
+            background-color: #ef4444;
+            box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+        }
+        
+        .status-warning {
+            background-color: #f59e0b;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+        }
+        
+        /* Service Section Styles */
+        .service-section {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            margin-bottom: 0.75rem;
+            padding: 0.875rem;
+            transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+            position: relative;
+        }
+        
+        .service-section.updating::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+            animation: loading 1.5s infinite;
+        }
+        
+        @keyframes loading {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        .service-section.healthy {
+            border-left-color: #22c55e;
+        }
+        
+        .service-section.unhealthy {
+            border-left-color: #ef4444;
+        }
+        
+        .service-section:hover {
+            box-shadow: 0 3px 5px rgba(0, 0, 0, 0.05);
+        }
+        
+        .service-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        
+        .service-title {
+            font-size: 0.94rem;
+            font-weight: 600;
+            color: #334155;
+            margin: 0;
+            margin-left: 0.4rem;
+        }
+        
+        .service-content {
+            padding-left: 1.25rem;
+        }
+        
+        /* Health Status Indicator */
+        .health-status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .indicator-healthy {
+            background: linear-gradient(145deg, #34d399, #22c55e);
+            box-shadow: 0 0 4px rgba(52, 211, 153, 0.5);
+            animation: pulse 2s infinite;
+        }
+        
+        .indicator-unhealthy {
+            background: linear-gradient(145deg, #f87171, #ef4444);
+            box-shadow: 0 0 4px rgba(248, 113, 113, 0.5);
+        }
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 4px rgba(52, 211, 153, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+            }
+        }
+        
+        /* Metrics Styles */
+        .health-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .metric {
+            display: flex;
+            flex-direction: column;
+            background-color: #f9fafb;
+            padding: 0.4rem 0.625rem;
+            border-radius: 6px;
+            font-size: 0.813rem;
+        }
+        
+        .metric-label {
+            color: #64748b;
+            margin-bottom: 0.125rem;
+            font-size: 0.75rem;
+        }
+        
+        .metric-value {
+            font-weight: 500;
+            color: #334155;
+        }
+        
+        /* Service Card Styles */
         .service-card {
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
             transition: transform 0.2s, box-shadow 0.2s;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            background-color: white;
         }
         .service-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        }
-        .log-row:nth-child(even) {
-            background-color: #f7fafc;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 15px -3px rgba(0, 0, 0, 0.1);
         }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto px-4 py-8">
-        <header class="text-center mb-12">
-            <h1 class="text-4xl font-bold text-gray-800 mb-4">${title}</h1>
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">${title}</h1>
             <p class="text-gray-600">System Status and Service Management${isProduction ? ' (Production Mode)' : ' (Development Mode)'}</p>
+            <p class="text-gray-500 mt-2">Last updated: <span id="lastUpdated">${new Date().toLocaleTimeString()}</span></p>
+            <div class="mt-4">
+                <button id="refreshButton" class="flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" onclick="refreshHealthStatus()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                    </svg>
+                    Refresh Status
+                    <span class="spinner" id="refreshSpinner"></span>
+                </button>
+            </div>
         </header>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+          <!-- Service Cards Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8" id="serviceCards">
             ${services.map(service => `
-                <div class="service-card bg-white rounded-lg shadow-md p-6 hover:shadow-lg">
-                    <div class="flex items-center justify-between mb-4">
-                        <h2 class="text-xl font-semibold text-gray-800">${service.name}</h2>
-                        <span class="px-3 py-1 rounded-full text-sm ${
-                            service.active 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-red-100 text-red-800'
-                        }">
+                <div class="service-card p-5 ${service.active ? 'border-t-4 border-green-500' : 'border-t-4 border-red-500'}" data-service="${service.name.toLowerCase().replace(/\s+/g, '-')}">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-base font-semibold text-gray-800">${service.name}</h2>
+                        <span class="px-2 py-1 rounded-full text-xs font-medium ${service.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
                             ${service.active ? 'Active' : 'Inactive'}
                         </span>
                     </div>
-                    <p class="text-gray-600 mb-4">${service.description}</p>
-                    <div class="space-y-2">
+                    <p class="text-gray-600 text-sm mb-4">${service.description}</p>
+                    <div class="mt-auto">
                         <a href="${service.url}" 
                            target="_blank" 
-                           class="inline-block w-full text-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
+                           class="inline-block w-full text-center px-3 py-2 text-sm ${service.active ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'} text-white rounded transition-colors">
                             Access Service
                         </a>
                         ${service.credentials ? `
-                            <div class="text-sm text-gray-500 mt-2">
+                            <div class="text-xs text-gray-500 mt-2">
                                 <span class="font-medium">Credentials:</span> ${service.credentials}
                             </div>
                         ` : ''}
@@ -293,6 +737,137 @@ export class AppController {
                 </div>
             `).join('')}
         </div>
+
+        <!-- Health Dashboard - Just the controls/header -->
+        <div class="health-dashboard">
+          <div class="dashboard-header">
+            <h2 class="dashboard-title">System Health Dashboard</h2>
+            <button id="refreshHealthBtn" class="refresh-button" onclick="refreshHealthStatus()">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh Status
+            </button>
+          </div>
+            <!-- Overall Health Status - Moved to the end -->
+        <div class="health-card mt-5">
+          <div id="overallHealthHeader" class="health-card-header healthy">
+            <h3 class="health-card-title">
+              <span id="overallHealthIndicator" class="status-circle status-healthy"></span>
+              Overall System Health
+            </h3>
+            <span id="lastChecked" class="text-xs text-gray-600">Last checked: Just now</span>
+          </div>
+          <div class="health-card-body">
+            <div id="overallHealthSummary" class="health-summary">
+              <span id="healthStatus" class="text-green-600 font-medium">All systems operational</span>
+            </div>
+            <p id="healthDetails" class="text-center text-gray-600 text-xs mb-3">All services are running properly and responding within expected time frames.</p>
+          </div>
+        </div>
+          
+          <!-- Core Services first -->
+          <div id="coreServices">
+            <!-- API Service -->
+            <div id="apiSection" class="service-section healthy">
+              <div class="service-header">
+                <div class="flex items-center">
+                  <div id="apiIndicator" class="health-status-indicator indicator-healthy"></div>
+                  <h3 class="service-title">API Service</h3>
+                </div>
+                <span id="apiStatus" class="text-sm text-green-600 font-medium">Healthy</span>
+              </div>
+              
+              <div class="service-content">
+                <p id="apiDetails" class="text-gray-600 mb-2 text-sm">API is responding to requests</p>
+                <div class="health-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Response Time:</span>
+                    <span id="apiResponseTime" class="metric-value">45 ms</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Last Checked:</span>
+                    <span id="apiLastChecked" class="metric-value">10:45:32 AM</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Database Service -->
+            <div id="dbSection" class="service-section healthy">
+              <div class="service-header">
+                <div class="flex items-center">
+                  <div id="dbIndicator" class="health-status-indicator indicator-healthy"></div>
+                  <h3 class="service-title">Database Service</h3>
+                </div>
+                <span id="dbStatus" class="text-sm text-green-600 font-medium">Healthy</span>
+              </div>
+              
+              <div class="service-content">
+                <p id="dbDetails" class="text-gray-600 mb-2 text-sm">Connected to PostgreSQL database</p>
+                <div class="health-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Query Time:</span>
+                    <span id="dbQueryTime" class="metric-value">12 ms</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Active Connections:</span>
+                    <span id="dbActiveConn" class="metric-value">3</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Max Connections:</span>
+                    <span id="dbMaxConn" class="metric-value">100</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Connection Utilization:</span>
+                    <span id="dbConnUtil" class="metric-value">3%</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Last Checked:</span>
+                    <span id="dbLastChecked" class="metric-value">10:45:32 AM</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Redis Service -->
+            <div id="redisSection" class="service-section healthy">
+              <div class="service-header">
+                <div class="flex items-center">
+                  <div id="redisIndicator" class="health-status-indicator indicator-healthy"></div>
+                  <h3 class="service-title">Redis Service</h3>
+                </div>
+                <span id="redisStatus" class="text-sm text-green-600 font-medium">Healthy</span>
+              </div>
+              
+              <div class="service-content">
+                <p id="redisDetails" class="text-gray-600 mb-2 text-sm">Connected to Redis server</p>
+                <div class="health-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Response Time:</span>
+                    <span id="redisResponseTime" class="metric-value">5 ms</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Connected Clients:</span>
+                    <span id="redisClients" class="metric-value">2</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Used Memory:</span>
+                    <span id="redisMemory" class="metric-value">2.5 MB</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Total Keys:</span>
+                    <span id="redisKeys" class="metric-value">126</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+          
+      
+          
+      
 
         ${!isProduction && recentLogs.length > 0 ? `
         <div class="bg-white rounded-lg shadow-md p-6 mb-10">
@@ -307,7 +882,7 @@ export class AppController {
                             <th class="px-4 py-2 text-left">Message</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="logsTable">
                         ${recentLogs.map(log => `
                             <tr class="log-row">
                                 <td class="px-4 py-2">${new Date(log.timestamp).toLocaleString()}</td>
@@ -337,12 +912,310 @@ export class AppController {
     </div>
 
     <script>
-        // Refresh status with environment-appropriate interval
-        setInterval(() => {
-            window.location.reload();
-        }, ${refreshInterval});
+        let refreshInterval;
+        let lastRefreshTime = new Date();
+        
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+          updateLastCheckedTime();
+          refreshHealthStatus();
+          
+          // Set up automatic refresh every 30 seconds
+          refreshInterval = setInterval(function() {
+            refreshHealthStatus();
+            updateLastCheckedTime();
+          }, 30000);
+          
+          // Set up main refresh button functionality
+          document.getElementById('refreshButton').addEventListener('click', function() {
+            refreshServicesList();
+          });
+          
+          // Clean up on page unload
+          window.addEventListener('beforeunload', function() {
+            if (refreshInterval) {
+              clearInterval(refreshInterval);
+            }
+          });
+          
+          // Set up timer to update the "last checked" time display
+          setInterval(updateLastCheckedTimeDisplay, 10000);
+        });
+        
+        // Function to update the last checked time display
+        function updateLastCheckedTimeDisplay() {
+          const now = new Date();
+          const diff = now - lastRefreshTime;
+          
+          // Calculate time difference
+          const seconds = Math.floor(diff / 1000);
+          const minutes = Math.floor(seconds / 60);
+          const hours = Math.floor(minutes / 60);
+          
+          let timeText;
+          if (seconds < 5) {
+            timeText = 'Just now';
+          } else if (seconds < 60) {
+            timeText = seconds + ' seconds ago';
+          } else if (minutes === 1) {
+            timeText = '1 minute ago';
+          } else if (minutes < 60) {
+            timeText = minutes + ' minutes ago';
+          } else if (hours === 1) {
+            timeText = '1 hour ago';
+          } else {
+            timeText = hours + ' hours ago';
+          }
+          
+          document.getElementById('lastChecked').textContent = 'Last checked: ' + timeText;
+        }
+        
+        // Function to update the last checked time
+        function updateLastCheckedTime() {
+          lastRefreshTime = new Date();
+          updateLastCheckedTimeDisplay();
+        }
+        
+        // Function to refresh the entire services list at the top
+        async function refreshServicesList() {
+          try {
+            const refreshBtn = document.getElementById('refreshButton');
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = 
+              '<svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">' +
+              '<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>' +
+              '<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>' +
+              '</svg>' +
+              'Refreshing...';
+              
+            // Get current host and protocol
+            const currentUrl = window.location.href;
+            const baseUrl = new URL(currentUrl).origin;
+            
+            // Use relative URL to work in both dev and prod
+            const response = await fetch('/api/health/services');
+            const serviceStatus = await response.json();
+            
+            if (serviceStatus) {
+              // Update service cards based on status
+              updateServiceCard('api-documentation', serviceStatus.api.status === 'up');
+              updateServiceCard('bull-board', serviceStatus.queues.status === 'up');
+              updateServiceCard('logger', serviceStatus.logger.status === 'up');
+              updateServiceCard('websocket', serviceStatus.socket.status === 'up');
+              updateServiceCard('redis-commander', serviceStatus.redisCommander.status === 'up');
+              updateServiceCard('prisma-studio', serviceStatus.prismaStudio.status === 'up');
+              updateServiceCard('pgadmin', serviceStatus.pgAdmin.status === 'up');
+            }
+            
+            // Update last updated timestamp at the top of the page
+            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            
+            // Re-enable refresh button
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = 
+              '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">' +
+              '<path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />' +
+              '</svg>' +
+              'Refresh Status' + 
+              '<span class="spinner" id="refreshSpinner"></span>';
+          } catch (error) {
+            console.error('Error refreshing services list:', error);
+            
+            // Re-enable refresh button
+            const refreshBtn = document.getElementById('refreshButton');
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = 
+              '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">' +
+              '<path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />' +
+              '</svg>' +
+              'Retry' +
+              '<span class="spinner" id="refreshSpinner"></span>';
+          }
+        }
+        
+        // Helper function to update a service card
+        function updateServiceCard(serviceName, isActive) {
+          const card = document.querySelector('[data-service="' + serviceName + '"]');
+          if (card) {
+            // Update card border
+            card.className = 'service-card p-5 ' + (isActive ? 'border-t-4 border-green-500' : 'border-t-4 border-red-500');
+            
+            // Update active status badge
+            const statusBadge = card.querySelector('.px-2');
+            if (statusBadge) {
+              statusBadge.className = isActive ? 
+                'px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800' : 
+                'px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800';
+              statusBadge.textContent = isActive ? 'Active' : 'Inactive';
+            }
+            
+            // Update access button
+            const accessBtn = card.querySelector('a');
+            if (accessBtn) {
+              accessBtn.className = 'inline-block w-full text-center px-3 py-2 text-sm ' + 
+                (isActive ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed') + 
+                ' text-white rounded transition-colors';
+            }
+          }
+        }
+        
+        // Function to refresh health status dashboard
+        async function refreshHealthStatus() {
+          try {
+            const refreshBtn = document.getElementById('refreshHealthBtn');
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = 
+              '<svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">' +
+              '<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>' +
+              '<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>' +
+              '</svg>' +
+              'Checking...';
+            
+            // Show updating indicator on all service sections
+            const serviceSections = document.querySelectorAll('.service-section');
+            serviceSections.forEach(section => {
+              section.classList.add('updating');
+            });
+            
+            // Use direct /health API with 127.0.0.1 to avoid DNS resolution errors with 'localhost'
+            const response = await fetch('/health');
+            const healthData = await response.json();
+            
+            // Update last refresh time
+            updateLastCheckedTime();
+            
+            // Update overall health status
+            const isHealthy = healthData.status === 'healthy';
+            document.getElementById('overallHealthHeader').className = 
+                'health-card-header ' + (isHealthy ? 'healthy' : 'unhealthy');
+            document.getElementById('overallHealthIndicator').className = 
+                'status-circle ' + (isHealthy ? 'status-healthy' : 'status-unhealthy');
+            document.getElementById('healthStatus').textContent = isHealthy ? 
+                'All systems operational' : 'System degraded';
+            document.getElementById('healthStatus').className = 
+                isHealthy ? 'text-green-600 font-medium' : 'text-red-600 font-medium';
+            
+            // Generate health details message
+            const healthyServices = Object.values(healthData.services).filter(s => s.status === 'healthy').length;
+            const totalServices = Object.values(healthData.services).length;
+            document.getElementById('healthDetails').textContent = 
+                healthyServices + ' of ' + totalServices + ' services are healthy and responding within expected time frames.';
+            
+            // Update API service details
+            const apiHealthy = healthData.services.api.status === 'healthy';
+            document.getElementById('apiIndicator').className = 
+                'health-status-indicator ' + (apiHealthy ? 'indicator-healthy' : 'indicator-unhealthy');
+            document.getElementById('apiStatus').textContent = apiHealthy ? 'Healthy' : 'Unhealthy';
+            document.getElementById('apiStatus').className = 'text-sm ' + (apiHealthy ? 'text-green-600' : 'text-red-600') + ' font-medium';
+            document.getElementById('apiDetails').textContent = apiHealthy ? 
+                'API is responding to requests' : 'API is not responding correctly';
+            document.getElementById('apiResponseTime').textContent = healthData.services.api.responseTime + ' ms';
+            // Update service section class
+            document.getElementById('apiSection').className = 'service-section ' + (apiHealthy ? 'healthy' : 'unhealthy');
+            // Update last checked time for API
+            if (healthData.services.api.lastChecked) {
+              const apiLastChecked = new Date(healthData.services.api.lastChecked);
+              document.getElementById('apiLastChecked').textContent = apiLastChecked.toLocaleTimeString();
+            }
+            
+            // Update Database service details
+            const dbHealthy = healthData.services.database.status === 'healthy';
+            document.getElementById('dbIndicator').className = 
+                'health-status-indicator ' + (dbHealthy ? 'indicator-healthy' : 'indicator-unhealthy');
+            document.getElementById('dbStatus').textContent = dbHealthy ? 'Healthy' : 'Unhealthy';
+            document.getElementById('dbStatus').className = 'text-sm ' + (dbHealthy ? 'text-green-600' : 'text-red-600') + ' font-medium';
+            document.getElementById('dbDetails').textContent = dbHealthy ? 
+                healthData.services.database.details : (healthData.services.database.error || 'Database connection failed');
+            // Update service section class
+            document.getElementById('dbSection').className = 'service-section ' + (dbHealthy ? 'healthy' : 'unhealthy');
+            
+            // Update DB metrics if available
+            if (dbHealthy && healthData.services.database.metrics) {
+                const dbMetrics = healthData.services.database.metrics;
+                document.getElementById('dbQueryTime').textContent = dbMetrics.queryResponseTime + ' ms';
+                document.getElementById('dbActiveConn').textContent = dbMetrics.activeConnections || '1';
+                document.getElementById('dbMaxConn').textContent = dbMetrics.maxConnections || '100';
+                document.getElementById('dbConnUtil').textContent = 
+                    Math.round(((dbMetrics.activeConnections || 1) / (dbMetrics.maxConnections || 100)) * 100) + '%';
+            }
+            // Update last checked time for DB
+            if (healthData.services.database.lastChecked) {
+              const dbLastChecked = new Date(healthData.services.database.lastChecked);
+              document.getElementById('dbLastChecked').textContent = dbLastChecked.toLocaleTimeString();
+            }
+            
+            // Update Redis service details
+            const redisHealthy = healthData.services.redis.status === 'healthy';
+            document.getElementById('redisIndicator').className = 
+                'health-status-indicator ' + (redisHealthy ? 'indicator-healthy' : 'indicator-unhealthy');
+            document.getElementById('redisStatus').textContent = redisHealthy ? 'Healthy' : 'Unhealthy';
+            document.getElementById('redisStatus').className = 'text-sm ' + (redisHealthy ? 'text-green-600' : 'text-red-600') + ' font-medium';
+            document.getElementById('redisDetails').textContent = redisHealthy ? 
+                healthData.services.redis.details : (healthData.services.redis.error || 'Redis connection failed');
+            // Update service section class
+            document.getElementById('redisSection').className = 'service-section ' + (redisHealthy ? 'healthy' : 'unhealthy');
+            
+            // Update Redis metrics if available
+            if (redisHealthy && healthData.services.redis.metrics) {
+                const redisMetrics = healthData.services.redis.metrics;
+                document.getElementById('redisResponseTime').textContent = healthData.services.redis.responseTime + ' ms';
+                document.getElementById('redisClients').textContent = redisMetrics.connectedClients || '1';
+                
+                // Format memory in a readable way
+                const memory = redisMetrics.usedMemory || 0;
+                let formattedMemory;
+                if (memory < 1024) {
+                    formattedMemory = memory + ' B';
+                } else if (memory < 1024 * 1024) {
+                    formattedMemory = (memory / 1024).toFixed(2) + ' KB';
+                } else {
+                    formattedMemory = (memory / (1024 * 1024)).toFixed(2) + ' MB';
+                }
+                
+                document.getElementById('redisMemory').textContent = formattedMemory;
+                document.getElementById('redisKeys').textContent = redisMetrics.totalKeys || '0';
+            }
+            
+            // Re-enable refresh button
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = 
+              '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">' +
+              '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />' +
+              '</svg>' +
+              'Refresh Status';
+            
+            // Remove updating indicators
+            serviceSections.forEach(section => {
+              section.classList.remove('updating');
+            });
+            
+          } catch (error) {
+            console.error('Error fetching health status:', error);
+            document.getElementById('healthStatus').textContent = 'Error checking health status';
+            document.getElementById('healthStatus').className = 'text-red-600 font-medium';
+            document.getElementById('healthDetails').textContent = 'Unable to fetch health information: ' + error.message;
+            
+            // Re-enable refresh button
+            const refreshBtn = document.getElementById('refreshHealthBtn');
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = 
+              '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">' +
+              '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />' +
+              '</svg>' +
+              'Retry';
+            
+            // Remove updating indicators
+            const serviceSections = document.querySelectorAll('.service-section');
+            serviceSections.forEach(section => {
+              section.classList.remove('updating');
+            });
+            
+            // Still update the last refresh time to show we attempted
+            updateLastCheckedTime();
+          }
+        }
     </script>
 </body>
-</html>`;
+</html>`) as string;
   }
 }
