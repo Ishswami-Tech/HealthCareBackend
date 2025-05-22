@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
-import { ClinicDatabaseService } from './clinic-database.service';
 import { Role } from '@prisma/client';
 import { EventService } from '../../shared/events/event.service';
 import { ClinicPermissionService } from './shared/permission.utils';
@@ -14,7 +13,6 @@ import { ClinicLocationService } from './services/clinic-location.service';
 export class ClinicService {
   constructor(
     private prisma: PrismaService,
-    private clinicDatabaseService: ClinicDatabaseService,
     private readonly eventService: EventService,
     private readonly permissionService: ClinicPermissionService,
     private readonly errorService: ClinicErrorService,
@@ -168,13 +166,7 @@ export class ClinicService {
         throw new ConflictException(errorMessage);
       }
 
-      // Create the clinic's database
-      const databaseName = `clinic_${data.subdomain.toLowerCase()}_db`;
-      const { connectionString, databaseName: dbName } = await this.clinicDatabaseService.createClinicDatabase(
-        data.subdomain
-      );
-
-      // Create the clinic record - use the prisma raw query to include databaseName field
+      // Create the clinic record
       const clinic = await this.prisma.clinic.create({
         data: {
           name: data.name,
@@ -182,10 +174,6 @@ export class ClinicService {
           phone: data.phone,
           email: data.email,
           app_name: data.subdomain,
-          db_connection_string: connectionString,
-          // The databaseName is included but will be ignored by typescript
-          // due to type limitations, but will work at runtime
-          databaseName: dbName,
           logo: data.logo,
           website: data.website,
           description: data.description,
@@ -196,9 +184,11 @@ export class ClinicService {
           createdByUser: {
             connect: { id: data.createdBy }
           },
-          databaseStatus: 'CREATING',
           subdomain: data.subdomain,
-        } as any, // Use type assertion to bypass TypeScript checking
+          clinicId: data.subdomain,
+          db_connection_string: process.env.DATABASE_URL,
+          databaseName: null,
+        },
       });
 
       // Assign the appropriate clinic admin
@@ -457,45 +447,45 @@ export class ClinicService {
   async getClinicById(id: string, userId: string) {
     try {
       // First check if the user exists
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        superAdmin: true,
-        clinicAdmin: true,
-      },
-    });
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          superAdmin: true,
+          clinicAdmin: true,
+        },
+      });
 
-    if (!user) {
+      if (!user) {
         await this.errorService.logError(
           { message: 'User not found' },
           'ClinicService',
           'find user',
           { userId }
         );
-      throw new NotFoundException('User not found');
-    }
+        throw new NotFoundException('User not found');
+      }
 
       // Then find the clinic
-    const clinic = await this.prisma.clinic.findUnique({
-      where: { id },
-      include: {
-        admins: {
-          include: {
-            user: true,
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id },
+        include: {
+          admins: {
+            include: {
+              user: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!clinic) {
+      if (!clinic) {
         await this.errorService.logError(
           { message: 'Clinic not found' },
           'ClinicService',
           'find clinic',
           { clinicId: id }
         );
-      throw new NotFoundException('Clinic not found');
-    }
+        throw new NotFoundException('Clinic not found');
+      }
 
       // Use the permission service to validate access
       const hasPermission = await this.permissionService.hasClinicPermission(userId, id);
@@ -540,26 +530,26 @@ export class ClinicService {
   })
   async getClinicByAppName(appName: string) {
     try {
-    const clinic = await this.prisma.clinic.findUnique({
+      const clinic = await this.prisma.clinic.findUnique({
         where: { email: appName },
-      include: {
-        admins: {
-          include: {
-            user: true,
+        include: {
+          admins: {
+            include: {
+              user: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!clinic) {
+      if (!clinic) {
         await this.errorService.logError(
           { message: 'Clinic not found' },
           'ClinicService',
           'find clinic by app name',
           { appName }
         );
-      throw new NotFoundException('Clinic not found');
-    }
+        throw new NotFoundException('Clinic not found');
+      }
 
       await this.errorService.logSuccess(
         'Clinic found by app name',
@@ -568,7 +558,7 @@ export class ClinicService {
         { clinicId: clinic.id, appName }
       );
 
-    return clinic;
+      return clinic;
     } catch (error) {
       await this.errorService.logError(
         error,
@@ -591,8 +581,8 @@ export class ClinicService {
     isOwner?: boolean;
   }) {
     try {
-    const assigner = await this.prisma.user.findUnique({
-      where: { id: data.assignedBy },
+      const assigner = await this.prisma.user.findUnique({
+        where: { id: data.assignedBy },
         include: { superAdmin: true, clinicAdmin: true }
       });
 
@@ -631,22 +621,22 @@ export class ClinicService {
         throw new ConflictException('Only ClinicAdmin role users can be assigned to clinics');
       }
 
-    const clinic = await this.prisma.clinic.findUnique({
-      where: { id: data.clinicId },
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id: data.clinicId },
         include: {
           admins: true
         }
-    });
+      });
 
-    if (!clinic) {
+      if (!clinic) {
         await this.errorService.logError(
           { message: 'Clinic not found' },
           'ClinicService',
           'find clinic',
           { clinicId: data.clinicId }
         );
-      throw new NotFoundException('Clinic not found');
-    }
+        throw new NotFoundException('Clinic not found');
+      }
 
       // Check if already assigned
       const isAlreadyAssigned = clinic.admins.some(
@@ -693,12 +683,12 @@ export class ClinicService {
 
       // Create the assignment
       const assignment = await this.prisma.clinicAdmin.create({
-      data: {
-        userId: data.userId,
-        clinicId: data.clinicId,
-      },
-      include: {
-        user: true,
+        data: {
+          userId: data.userId,
+          clinicId: data.clinicId,
+        },
+        include: {
+          user: true,
           clinic: true
         }
       });
@@ -949,6 +939,9 @@ export class ClinicService {
     return { success: true, message: 'Patient registered to clinic successfully' };
   }
 
+  /**
+   * Update clinic
+   */
   async updateClinic(id: string, data: {
     name?: string;
     address?: string;
@@ -1079,12 +1072,16 @@ export class ClinicService {
       }
 
       // Check if the clinic exists
-      // Use raw query to get the databaseName field
-      const clinic = await this.prisma.$queryRaw`
-        SELECT id, name, app_name, "databaseName" FROM clinics WHERE id = ${id}
-      ` as Array<{id: string, name: string, app_name: string, databaseName: string}>;
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          name: true,
+          app_name: true
+        }
+      });
 
-      if (!clinic || clinic.length === 0) {
+      if (!clinic) {
         await this.errorService.logError(
           { message: 'Clinic not found for deletion' },
           'ClinicService',
@@ -1094,18 +1091,7 @@ export class ClinicService {
         throw new NotFoundException('Clinic not found');
       }
 
-      const clinicData = clinic[0];
-
-      // Delete the clinic's database
-      if (clinicData.databaseName) {
-        await this.clinicDatabaseService.deleteClinicDatabase(clinicData.databaseName);
-      } else {
-        // Fallback to using app_name if databaseName is not available
-        const dbName = `clinic_${clinicData.app_name.toLowerCase()}_db`;
-        await this.clinicDatabaseService.deleteClinicDatabase(dbName);
-      }
-
-      // Delete the clinic record
+      // No need to delete database, simply delete the clinic record
       await this.prisma.clinic.delete({
         where: { id },
       });
@@ -1114,19 +1100,19 @@ export class ClinicService {
         'Clinic deleted successfully',
         'ClinicService',
         'delete clinic',
-        { clinicId: id, name: clinicData.name }
+        { clinicId: id, name: clinic.name }
       );
 
       await this.eventService.emit('clinic.deleted', {
         clinicId: id,
-        name: clinicData.name,
+        name: clinic.name,
         deletedBy: userId
       });
 
       // After successfully deleting clinic, invalidate all clinic-related caches
       await Promise.all([
         this.redis.invalidateCacheByPattern(`clinics:detail:${id}:*`),
-        this.redis.invalidateCacheByPattern(`clinics:appname:${clinicData.app_name}`),
+        this.redis.invalidateCacheByPattern(`clinics:appname:${clinic.app_name}`),
         this.redis.invalidateCacheByTag('clinics'),
         this.redis.invalidateCacheByTag(`clinic:${id}`),
         this.redis.invalidateCacheByTag('clinic-doctors'),
@@ -1205,7 +1191,7 @@ export class ClinicService {
       await this.prisma.user.update({
         where: { id: userId },
         data: {
-          Clinic: {
+          clinics: {
             connect: { id: clinicId }
           }
         }
@@ -1241,7 +1227,7 @@ export class ClinicService {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         include: {
-          Clinic: {
+          clinics: {
             where: { id: clinicId },
             select: { clinicId: true }
           }
@@ -1252,7 +1238,7 @@ export class ClinicService {
         throw new NotFoundException('User not found');
       }
 
-      if (!user.Clinic.length) {
+      if (!user.clinics.length) {
         throw new UnauthorizedException('User is not associated with this clinic');
       }
 
@@ -1262,7 +1248,7 @@ export class ClinicService {
         email: user.email,
         role: user.role,
         clinicId: clinicId,
-        clinicIdentifier: user.Clinic[0].clinicId
+        clinicIdentifier: user.clinics[0].clinicId
       });
 
       return token;

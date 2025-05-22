@@ -23,6 +23,15 @@ services:
       LOGGER_URL: /logger
       PRISMA_STUDIO_URL: /prisma
       PGADMIN_URL: /pgadmin
+      # Docker-specific environment overrides
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+      REDIS_HOST: redis
+      PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
+      # Add NODE_OPTIONS for more efficient Docker development
+      NODE_OPTIONS: "--max-old-space-size=2048"
+      # Add watch options to prevent excessive rebuilds
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "5000"
     volumes:
       - .:/app
       - /app/node_modules
@@ -36,10 +45,20 @@ services:
     restart: unless-stopped
     command: >
       sh -c "
-        npx prisma migrate deploy --schema=src/shared/database/prisma/schema.prisma &&
-        npm run start:dev &
-        sleep 10 &&
-        npx prisma studio --schema=src/shared/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
+        echo 'Setting up NestJS application...' &&
+        mkdir -p /app/dist/shared/database/prisma &&
+        cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/ &&
+        npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
+        npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma &&
+        echo 'Starting NestJS in development mode...' &&
+        cd /app &&
+        export PRISMA_SCHEMA_PATH='/app/src/shared/database/prisma/schema.prisma' &&
+        export DATABASE_URL='postgresql://postgres:postgres@postgres:5432/userdb?schema=public' &&
+        export REDIS_HOST='redis' &&
+        npx nest start --watch --watchOptions.ignored='node_modules/**/*,.git/**/*' --watchOptions.usePolling=true --watchOptions.interval=5000 &
+        echo 'Starting Prisma Studio...' &&
+        sleep 5 &&
+        npx prisma studio --schema=/app/src/shared/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
       "
 
   postgres:

@@ -58,36 +58,137 @@ async function main() {
     // ===== CLINIC CREATION =====
     console.log('Creating clinics...');
     
-    // Ayurveda Wellness Center
+    // Aadesh Ayurvedalay
     const clinic1 = await prisma.clinic.create({
       data: {
-        name: 'Ayurveda Wellness Center',
-        address: '123 Health Street',
+        name: 'Aadesh Ayurvedalay',
+        address: 'Pune, Maharashtra',
         phone: '+91-9876543210',
-        email: 'contact@ayurvedawellness.com',
-        app_name: 'ayurveda_wellness',
-        db_connection_string: 'postgresql://user:pass@localhost:5432/ayurveda_wellness',
-        databaseName: 'ayurveda_wellness_db',
+        email: 'contact@aadesh.com',
+        app_name: 'aadesh_ayurvedalay',
+        db_connection_string: process.env.DATABASE_URL,
+        databaseName: 'aadesh_ayurvedalay_db',
         createdBy: superAdminUser.id,
-        clinicId: 'CL0001'
+        clinicId: 'CL0001',
+        subdomain: 'aadesh',
+        isActive: true
+      }
+    });
+
+    // Shri Vishwamurthi Ayurvedalay
+    const clinic2 = await prisma.clinic.create({
+      data: {
+        name: 'Shri Vishwamurthi Ayurvedalay',
+        address: 'Mumbai, Maharashtra',
+        phone: '+91-8765432109',
+        email: 'contact@vishwamurthi.com',
+        app_name: 'vishwamurthi_ayurvedalay',
+        db_connection_string: process.env.DATABASE_URL,
+        databaseName: 'vishwamurthi_ayurvedalay_db',
+        createdBy: superAdminUser.id,
+        clinicId: 'CL0002',
+        subdomain: 'vishwamurthi',
+        isActive: true
       }
     });
 
     // Create clinic locations
+    console.log('Creating clinic locations...');
+    // Aadesh Ayurvedalay Locations
     const location1 = await prisma.clinicLocation.create({
       data: {
-        name: 'Main Branch',
-        address: '123 Health Street',
+        name: 'Aadesh Main Branch',
+        address: 'Koregaon Park, Pune',
+        city: 'Pune',
+        state: 'Maharashtra',
+        country: 'India',
+        zipCode: '411001',
+        phone: '+91-9876543210',
+        email: 'main@aadesh.com',
+        clinicId: clinic1.id,
+        locationId: generateLocationId()
+      }
+    });
+
+    const location2 = await prisma.clinicLocation.create({
+      data: {
+        name: 'Aadesh North Branch',
+        address: 'Baner Road, Pune',
+        city: 'Pune',
+        state: 'Maharashtra',
+        country: 'India',
+        zipCode: '411045',
+        phone: '+91-9876543211',
+        email: 'north@aadesh.com',
+        clinicId: clinic1.id,
+        locationId: generateLocationId()
+      }
+    });
+
+    const location3 = await prisma.clinicLocation.create({
+      data: {
+        name: 'Aadesh South Branch',
+        address: 'Sinhagad Road, Pune',
+        city: 'Pune',
+        state: 'Maharashtra',
+        country: 'India',
+        zipCode: '411041',
+        phone: '+91-9876543212',
+        email: 'south@aadesh.com',
+        clinicId: clinic1.id,
+        locationId: generateLocationId()
+      }
+    });
+
+    // Vishwamurthi Ayurvedalay Locations
+    const location4 = await prisma.clinicLocation.create({
+      data: {
+        name: 'Vishwamurthi Main Branch',
+        address: 'Juhu, Mumbai',
         city: 'Mumbai',
         state: 'Maharashtra',
         country: 'India',
-        zipCode: '400001',
-        phone: '+91-9876543210',
-        email: 'main@ayurvedawellness.com',
-        clinicId: clinic1.id,
-        locationId: 'LOC0001'
+        zipCode: '400049',
+        phone: '+91-8765432109',
+        email: 'main@vishwamurthi.com',
+        clinicId: clinic2.id,
+        locationId: generateLocationId()
       }
     });
+
+    const location5 = await prisma.clinicLocation.create({
+      data: {
+        name: 'Vishwamurthi Andheri Branch',
+        address: 'Andheri East, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        zipCode: '400069',
+        phone: '+91-8765432108',
+        email: 'andheri@vishwamurthi.com',
+        clinicId: clinic2.id,
+        locationId: generateLocationId()
+      }
+    });
+
+    const location6 = await prisma.clinicLocation.create({
+      data: {
+        name: 'Vishwamurthi Powai Branch',
+        address: 'Powai, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        zipCode: '400076',
+        phone: '+91-8765432107',
+        email: 'powai@vishwamurthi.com',
+        clinicId: clinic2.id,
+        locationId: generateLocationId()
+      }
+    });
+
+    // Group locations by clinic for later use
+    const clinic1Locations = [location1, location2, location3];
+    const clinic2Locations = [location4, location5, location6];
 
     // Create Users with different roles
     console.log('Creating users...');
@@ -174,11 +275,11 @@ async function main() {
     const clinicAdminUsers = users.filter(u => u.role === Role.CLINIC_ADMIN);
     await Promise.all(
       clinicAdminUsers.map((user, index) => {
-        const clinic = index % 2 === 0 ? clinic1 : clinic1;
+        const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
         return prisma.clinicAdmin.create({
           data: {
             userId: user.id,
-            clinicId: clinic.id,
+            clinicId: clinicId,
             isOwner: index < 2 // First admin for each clinic is owner
           }
         });
@@ -208,30 +309,44 @@ async function main() {
     // Create DoctorClinic relationships with locations
     console.log('Creating doctor-clinic relationships...');
     await Promise.all(
-      doctors.map(doctor => 
-        prisma.doctorClinic.create({
-          data: {
-            doctorId: doctor.id,
-            clinicId: clinic1.id,
-            locationId: location1.id,
-            startTime: faker.date.future(),
-            endTime: faker.date.future()
-          }
-        })
-      )
+      doctors.flatMap(doctor => [
+        // Connect doctor to all Aadesh locations
+        ...clinic1Locations.map(location => 
+          prisma.doctorClinic.create({
+            data: {
+              doctorId: doctor.id,
+              clinicId: clinic1.id,
+              locationId: location.id,
+              startTime: faker.date.future(),
+              endTime: faker.date.future()
+            }
+          })
+        ),
+        // Connect doctor to all Vishwamurthi locations
+        ...clinic2Locations.map(location => 
+          prisma.doctorClinic.create({
+            data: {
+              doctorId: doctor.id,
+              clinicId: clinic2.id,
+              locationId: location.id,
+              startTime: faker.date.future(),
+              endTime: faker.date.future()
+            }
+          })
+        )
+      ])
     );
 
     // Create Receptionists with clinic associations
     console.log('Creating receptionists...');
     const receptionistUsers = users.filter(u => u.role === Role.RECEPTIONIST);
     await Promise.all(
-      receptionistUsers.map(user => {
-        const clinic = clinic1;
-        
+      receptionistUsers.map((user, index) => {
+        const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
         return prisma.receptionist.create({
           data: {
             userId: user.id,
-            clinicId: clinic.id
+            clinicId: clinicId
           }
         });
       })
@@ -258,22 +373,30 @@ async function main() {
 
     // After creating patients, connect them to clinics
     await Promise.all(
-      patients.map(patient =>
+      patients.flatMap(patient => [
         prisma.user.update({
           where: { id: patient.userId },
           data: {
-            Clinic: {
+            clinics: {
               connect: { id: clinic1.id }
             }
           }
+        }),
+        prisma.user.update({
+          where: { id: patient.userId },
+          data: {
+            clinics: {
+              connect: { id: clinic2.id }
+            }
+          }
         })
-      )
+      ])
     );
 
     // Create Medicines
     console.log('Creating medicines...');
-    const medicines = await Promise.all(
-      Array(SEED_COUNT * 3).fill(null).map(() => 
+    const medicines1 = await Promise.all(
+      Array(SEED_COUNT).fill(null).map(() => 
         prisma.medicine.create({
           data: {
             name: faker.commerce.productName(),
@@ -281,21 +404,54 @@ async function main() {
             properties: faker.commerce.productDescription(),
             dosage: faker.number.int({ min: 1, max: 3 }) + " times daily",
             manufacturer: faker.company.name(),
-            type: faker.helpers.arrayElement(Object.values(MedicineType))
+            type: faker.helpers.arrayElement(Object.values(MedicineType)),
+            clinicId: clinic1.id
           }
         })
       )
     );
 
+    const medicines2 = await Promise.all(
+      Array(SEED_COUNT).fill(null).map(() => 
+        prisma.medicine.create({
+          data: {
+            name: faker.commerce.productName(),
+            ingredients: faker.commerce.productMaterial(),
+            properties: faker.commerce.productDescription(),
+            dosage: faker.number.int({ min: 1, max: 3 }) + " times daily",
+            manufacturer: faker.company.name(),
+            type: faker.helpers.arrayElement(Object.values(MedicineType)),
+            clinicId: clinic2.id
+          }
+        })
+      )
+    );
+
+    const medicines = [...medicines1, ...medicines2];
+
     // Create Therapies
     console.log('Creating therapies...');
-    const therapies = await Promise.all(
+    const therapies1 = await Promise.all(
       Array(SEED_COUNT).fill(null).map(() => 
         prisma.therapy.create({
           data: {
             name: faker.commerce.productName(),
             description: faker.commerce.productDescription(),
-            duration: faker.number.int({ min: 30, max: 120 })
+            duration: faker.number.int({ min: 30, max: 120 }),
+            clinicId: clinic1.id
+          }
+        })
+      )
+    );
+
+    const therapies2 = await Promise.all(
+      Array(SEED_COUNT).fill(null).map(() => 
+        prisma.therapy.create({
+          data: {
+            name: faker.commerce.productName(),
+            description: faker.commerce.productDescription(),
+            duration: faker.number.int({ min: 30, max: 120 }),
+            clinicId: clinic2.id
           }
         })
       )
@@ -304,7 +460,7 @@ async function main() {
     // Create Appointments
     console.log('Creating appointments...');
     const appointments = await Promise.all(
-      Array.from({ length: 5 }).map(async (_, index) => {
+      Array.from({ length: 10 }).map(async (_, index) => {
         const appointmentDate = faker.date.future();
         const timeString = appointmentDate.toLocaleTimeString('en-US', { 
           hour12: false, 
@@ -315,30 +471,27 @@ async function main() {
         // Select random doctor and patient from arrays
         const doctor = doctors[Math.floor(Math.random() * doctors.length)];
         const patient = patients[Math.floor(Math.random() * patients.length)];
+        const isFirstClinic = index % 2 === 0;
+        const clinicId = isFirstClinic ? clinic1.id : clinic2.id;
+        
+        // Select random location from the appropriate clinic
+        const clinicLocations = isFirstClinic ? clinic1Locations : clinic2Locations;
+        const randomLocationIndex = Math.floor(Math.random() * clinicLocations.length);
+        const locationId = clinicLocations[randomLocationIndex].id;
         
         return prisma.appointment.create({
           data: {
-            doctor: {
-              connect: { id: doctor.id }
-            },
-            patient: {
-              connect: { id: patient.id }
-            },
-            location: {
-              connect: { id: location1.id }
-            },
-            clinic: {
-              connect: { id: clinic1.id }
-            },
+            doctorId: doctor.id,
+            patientId: patient.id,
+            locationId: locationId,
+            clinicId: clinicId,
             date: appointmentDate,
             time: timeString,
             duration: faker.number.int({ min: 15, max: 60 }),
             type: AppointmentType.IN_PERSON,
             status: AppointmentStatus.SCHEDULED,
             notes: faker.lorem.sentence(),
-            user: {
-              connect: { id: patient.userId }
-            }
+            userId: patient.userId
           }
         });
       })
@@ -350,11 +503,12 @@ async function main() {
       appointments.map(appointment => 
         prisma.payment.create({
           data: {
-            appointmentId: appointment.id,
             amount: faker.number.float({ min: 500, max: 5000 }),
             status: faker.helpers.arrayElement(Object.values(PaymentStatus)),
             method: faker.helpers.arrayElement(Object.values(PaymentMethod)),
-            transactionId: faker.string.uuid()
+            transactionId: faker.string.uuid(),
+            clinicId: appointment.clinicId,
+            appointmentId: appointment.id
           }
         })
       )
@@ -366,10 +520,11 @@ async function main() {
       appointments.map((appointment, index) => 
         prisma.queue.create({
           data: {
-            appointmentId: appointment.id,
             queueNumber: index + 1,
             estimatedWaitTime: faker.number.int({ min: 5, max: 60 }),
-            status: faker.helpers.arrayElement(Object.values(QueueStatus))
+            status: faker.helpers.arrayElement(Object.values(QueueStatus)),
+            clinicId: appointment.clinicId,
+            appointmentId: appointment.id
           }
         })
       )
@@ -378,71 +533,101 @@ async function main() {
     // Create Prescriptions and PrescriptionItems
     console.log('Creating prescriptions...');
     await Promise.all(
-      Array(SEED_COUNT).fill(null).map(() => 
-        prisma.prescription.create({
+      Array(SEED_COUNT).fill(null).map(() => {
+        const patient = faker.helpers.arrayElement(patients);
+        const doctor = faker.helpers.arrayElement(doctors);
+        const clinic = faker.helpers.arrayElement([clinic1, clinic2]);
+        const clinicMedicines = medicines.filter(m => m.clinicId === clinic.id);
+        
+        return prisma.prescription.create({
           data: {
-            patientId: faker.helpers.arrayElement(patients).id,
-            doctorId: faker.helpers.arrayElement(doctors).id,
+            patientId: patient.id,
+            doctorId: doctor.id,
             notes: faker.lorem.paragraph(),
+            clinicId: clinic.id,
             items: {
               create: Array(3).fill(null).map(() => ({
-                medicineId: faker.helpers.arrayElement(medicines).id,
+                medicineId: faker.helpers.arrayElement(clinicMedicines).id,
                 dosage: faker.number.int({ min: 1, max: 3 }) + " times daily",
                 frequency: "Every " + faker.number.int({ min: 4, max: 12 }) + " hours",
-                duration: faker.number.int({ min: 3, max: 30 }) + " days"
+                duration: faker.number.int({ min: 3, max: 30 }) + " days",
+                clinicId: clinic.id
               }))
             }
           }
-        })
-      )
+        });
+      })
     );
 
     // Create HealthRecords
     console.log('Creating health records...');
     await Promise.all(
-      Array(SEED_COUNT).fill(null).map(() => 
-        prisma.healthRecord.create({
+      Array(SEED_COUNT).fill(null).map(() => {
+        const patient = faker.helpers.arrayElement(patients);
+        const doctor = faker.helpers.arrayElement(doctors);
+        const clinic = faker.helpers.arrayElement([clinic1, clinic2]);
+        
+        return prisma.healthRecord.create({
           data: {
-            patientId: faker.helpers.arrayElement(patients).id,
-            doctorId: faker.helpers.arrayElement(doctors).id,
             recordType: faker.helpers.arrayElement(Object.values(HealthRecordType)),
             report: faker.lorem.paragraph(),
-            fileUrl: faker.internet.url()
+            fileUrl: faker.internet.url(),
+            clinicId: clinic.id,
+            patientId: patient.id,
+            doctorId: doctor.id
           }
-        })
-      )
+        });
+      })
     );
 
     // Create Reviews
     console.log('Creating reviews...');
     await Promise.all(
-      Array(SEED_COUNT).fill(null).map(() => 
-        prisma.review.create({
+      Array(SEED_COUNT).fill(null).map(() => {
+        const patient = faker.helpers.arrayElement(patients);
+        const doctor = faker.helpers.arrayElement(doctors);
+        const clinic = faker.helpers.arrayElement([clinic1, clinic2]);
+        
+        return prisma.review.create({
           data: {
-            patientId: faker.helpers.arrayElement(patients).id,
-            doctorId: faker.helpers.arrayElement(doctors).id,
             rating: faker.number.int({ min: 1, max: 5 }),
-            comment: faker.lorem.paragraph()
+            comment: faker.lorem.paragraph(),
+            clinicId: clinic.id,
+            patientId: patient.id,
+            doctorId: doctor.id
           }
-        })
-      )
+        });
+      })
     );
 
     // Create Products
     console.log('Creating products...');
-    await Promise.all(
-      Array(SEED_COUNT).fill(null).map(() => 
+    await Promise.all([
+      ...Array(SEED_COUNT).fill(null).map(() => 
         prisma.product.create({
           data: {
             name: faker.commerce.productName(),
             description: faker.commerce.productDescription(),
             price: parseFloat(faker.commerce.price()),
             category: faker.commerce.department(),
-            stock: faker.number.int({ min: 0, max: 100 })
+            stock: faker.number.int({ min: 0, max: 100 }),
+            clinicId: clinic1.id
+          }
+        })
+      ),
+      ...Array(SEED_COUNT).fill(null).map(() => 
+        prisma.product.create({
+          data: {
+            name: faker.commerce.productName(),
+            description: faker.commerce.productDescription(),
+            price: parseFloat(faker.commerce.price()),
+            category: faker.commerce.department(),
+            stock: faker.number.int({ min: 0, max: 100 }),
+            clinicId: clinic2.id
           }
         })
       )
-    );
+    ]);
 
     // Create Notifications
     console.log('Creating notifications...');
@@ -453,7 +638,8 @@ async function main() {
             userId: faker.helpers.arrayElement(users).id,
             type: faker.helpers.arrayElement(Object.values(NotificationType)),
             message: faker.lorem.sentence(),
-            status: faker.helpers.arrayElement(Object.values(NotificationStatus))
+            status: faker.helpers.arrayElement(Object.values(NotificationStatus)),
+            clinicId: faker.helpers.arrayElement([clinic1.id, clinic2.id])
           }
         })
       )
@@ -468,56 +654,78 @@ async function main() {
             userId: faker.helpers.arrayElement(users).id,
             action: faker.helpers.arrayElement(['LOGIN', 'LOGOUT', 'CREATE', 'UPDATE', 'DELETE']),
             ipAddress: faker.internet.ip(),
-            device: faker.helpers.arrayElement(['Web', 'Mobile', 'Tablet'])
+            device: faker.helpers.arrayElement(['Web', 'Mobile', 'Tablet']),
+            clinicId: faker.helpers.arrayElement([clinic1.id, clinic2.id])
           }
         })
       )
     );
 
-    console.log('Database seeding completed successfully!');
+    console.log('Seeding complete!');
     console.log('SuperAdmin credentials: admin@example.com / admin123');
     console.log('Created clinics:');
-    console.log('1. Ayurveda Wellness Center');
-
+    console.log('1. Aadesh Ayurvedalay');
+    console.log('2. Shri Vishwamurthi Ayurvedalay');
   } catch (error) {
-    console.error('Error during database seeding:', error);
-    process.exit(1);
+    console.error('Error during seeding:', error);
   } finally {
     await prisma.$disconnect();
   }
 }
 
+// Function to wait for database to be ready
 async function waitForDatabase() {
   let retries = 5;
   while (retries > 0) {
     try {
       await prisma.$connect();
+      console.log('Database connection established.');
       return;
-    } catch (err) {
-      console.log(`Database connection failed. ${retries} retries remaining...`);
-      retries--;
-      await new Promise(res => setTimeout(res, 2000)); // Wait 2 seconds
+    } catch (error) {
+      console.log(`Database not ready yet, retrying... (${retries} attempts left)`);
+      retries -= 1;
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
-  throw new Error('Unable to connect to database');
+  throw new Error('Failed to connect to database after multiple attempts');
 }
 
+// Function to clean up database
 async function cleanDatabase() {
-  const tablenames = await prisma.$queryRaw<
-    Array<{ tablename: string }>
-  >`SELECT tablename FROM pg_tables WHERE schemaname='public'`;
-
-  const tables = tablenames
-    .map(({ tablename }) => tablename)
-    .filter((name) => name !== '_prisma_migrations')
-    .map((name) => `"public"."${name}"`)
-    .join(', ');
-
   try {
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} CASCADE;`);
+    // Delete records in reverse order of dependencies
+    await prisma.auditLog.deleteMany({});
+    await prisma.notification.deleteMany({});
+    await prisma.prescriptionItem.deleteMany({});
+    await prisma.prescription.deleteMany({});
+    await prisma.review.deleteMany({});
+    await prisma.healthRecord.deleteMany({});
+    await prisma.queue.deleteMany({});
+    await prisma.payment.deleteMany({});
+    await prisma.appointment.deleteMany({});
+    await prisma.product.deleteMany({});
+    await prisma.medicine.deleteMany({});
+    await prisma.therapy.deleteMany({});
+    await prisma.doctorClinic.deleteMany({});
+    await prisma.doctor.deleteMany({});
+    await prisma.receptionist.deleteMany({});
+    await prisma.patient.deleteMany({});
+    await prisma.clinicAdmin.deleteMany({});
+    await prisma.clinicLocation.deleteMany({});
+    await prisma.superAdmin.deleteMany({});
+    await prisma.user.deleteMany({});
+    await prisma.clinic.deleteMany({});
   } catch (error) {
-    console.log('Error cleaning database:', error);
+    console.error('Error cleaning database:', error);
+    throw error;
   }
 }
 
-main();
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

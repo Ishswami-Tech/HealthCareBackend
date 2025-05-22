@@ -29,7 +29,7 @@ A comprehensive API system providing seamless integration for healthcare service
   .addTag('auth', 'Authentication & User Management - Complete user authentication flow including social logins and OTP verification')
   .addTag('user', 'User profile and preferences management')
   // Business Logic Tags
-  .addTag('Appointment', 'Appointment Scheduling And Management')
+  .addTag('appointments', 'Appointment Scheduling And Management')
   .addTag('AppointmentConfirmation', 'Appointment Confirmation And Validation')
   .addTag('AppointmentLocation', 'Location-Based Appointment Management')
   .addTag('clinic', 'Healthcare facility and service management')
