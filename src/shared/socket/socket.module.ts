@@ -1,11 +1,13 @@
 import { Global, Module } from '@nestjs/common';
 import { SocketService } from './socket.service';
+import { AppGateway } from './app.gateway';
 
 @Global()
 @Module({
   imports: [],
   providers: [
     SocketService,
+    AppGateway,
     {
       provide: 'SOCKET_SERVICE',
       useFactory: (socketService: SocketService) => {
@@ -23,6 +25,7 @@ import { SocketService } from './socket.service';
   exports: [
     SocketService,
     'SOCKET_SERVICE',
+    AppGateway,
     'WEBSOCKET_SERVER',
   ],
 })

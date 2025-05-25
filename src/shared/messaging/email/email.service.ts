@@ -1,20 +1,23 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailTemplate, EmailOptions } from '../../../libs/types/email.types';
 import * as nodemailer from 'nodemailer';
 
 @Injectable()
-export class EmailService {
+export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter;
+  private isInitialized = false;
 
   constructor(
     private configService: ConfigService,
-  ) {
-    this.initializeTransporter();
+  ) {}
+
+  async onModuleInit() {
+    await this.initializeTransporter();
   }
 
-  private initializeTransporter() {
+  private async initializeTransporter() {
     try {
       const emailConfig = this.configService.get('email');
       if (!emailConfig) {
@@ -36,17 +39,19 @@ export class EmailService {
       });
 
       // Verify connection
-      this.transporter.verify((error, success) => {
-        if (error) {
-          this.logger.error('Email transporter verification failed:', error);
-        } else {
-          this.logger.log('Email server is ready to send messages');
-        }
-      });
+      await this.transporter.verify();
+      this.isInitialized = true;
+      this.logger.log('Email server is ready to send messages');
 
     } catch (error) {
       this.logger.error('Failed to initialize email transporter:', error);
+      this.isInitialized = false;
+      throw error;
     }
+  }
+
+  isHealthy(): boolean {
+    return this.isInitialized && !!this.transporter;
   }
 
   async sendEmail(options: EmailOptions): Promise<boolean> {

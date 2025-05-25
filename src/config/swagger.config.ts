@@ -1,4 +1,37 @@
 import { DocumentBuilder, SwaggerCustomOptions } from '@nestjs/swagger';
+import developmentConfig from './environment/development.config';
+import productionConfig from './environment/production.config';
+
+const getEnvironmentConfig = () => {
+  return process.env.NODE_ENV === 'production' ? productionConfig() : developmentConfig();
+};
+
+// Helper function to get API servers based on environment
+const getApiServers = () => {
+  const config = getEnvironmentConfig();
+  const servers = [];
+  
+  if (config.app.environment === 'production') {
+    servers.push(
+      { url: config.app.baseUrl, description: 'Production API Server' },
+      { url: `${config.app.baseUrl}${config.urls.bullBoard}`, description: 'Queue Dashboard' }
+    );
+  } else {
+    const devConfig = config as typeof developmentConfig extends () => infer R ? R : never;
+    // Docker-first development configuration
+    servers.push(
+      // Primary Docker network URLs
+      { url: `http://localhost:8088`, description: 'Development API Server' },
+      { url: `http://localhost:8088${config.urls.bullBoard}`, description: 'Queue Dashboard' },
+      // Development services with Docker network URLs
+      { url: 'http://localhost:8082', description: 'Redis Commander' },
+      { url: 'http://localhost:5555', description: 'Prisma Studio' },
+      { url: 'http://localhost:5050', description: 'PgAdmin' }
+    );
+  }
+  
+  return servers;
+};
 
 export const swaggerConfig = new DocumentBuilder()
   .setTitle('Healthcare API')
@@ -6,6 +39,20 @@ export const swaggerConfig = new DocumentBuilder()
 ## Modern Healthcare Management System
 
 A comprehensive API system providing seamless integration for healthcare services.
+
+### Environment: ${getEnvironmentConfig().app.environment}
+${getEnvironmentConfig().app.environment === 'production' ? `
+### Production URLs
+- Frontend: ${getEnvironmentConfig().urls.frontend}
+- API: ${getEnvironmentConfig().app.apiUrl}
+` : `
+### Development URLs (Docker)
+- API: http://localhost:8088
+- Frontend: ${getEnvironmentConfig().urls.frontend}
+- Redis Commander: http://localhost:8082
+- Prisma Studio: http://localhost:5555
+- PgAdmin: http://localhost:5050
+`}
 
 ### Core Features
 ✨ Authentication & Authorization
@@ -16,32 +63,39 @@ A comprehensive API system providing seamless integration for healthcare service
 
 ### Authentication Steps
 1. First, use the \`/auth/login\` endpoint to get your access token
-2. Copy the \`access_token\` value from the response (it starts with "eyJhbGciOiJIUzI1NiIsInR5cCI...")
+2. Copy the \`access_token\` value from the response
 3. Click the "Authorize" button at the top
-4 . Click "Authorize"
-5. You can now access protected endpoints
+4. Enter the token in the format: Bearer <your_token>
+5. Click "Authorize"
 
+### Available Endpoints
+- API Documentation: ${getEnvironmentConfig().urls.swagger}
+- Health Check: /health
+- Queue Dashboard: ${getEnvironmentConfig().urls.bullBoard}
+${getEnvironmentConfig().app.environment !== 'production' ? `
+### Development Tools (Docker)
+- Redis Commander: http://localhost:8082
+- Prisma Studio: http://localhost:5555
+- PgAdmin: http://localhost:5050` : ''}
   `)
   .setVersion('1.0')
-  // Core System Tags
   .addTag('root', 'Root endpoints and health checks')
   .addTag('health', 'System health checks and monitoring')
-  .addTag('auth', 'Authentication & User Management - Complete user authentication flow including social logins and OTP verification')
+  .addTag('auth', 'Authentication & User Management')
   .addTag('user', 'User profile and preferences management')
-  // Business Logic Tags
   .addTag('appointments', 'Appointment Scheduling And Management')
-  .addTag('AppointmentConfirmation', 'Appointment Confirmation And Validation')
-  .addTag('AppointmentLocation', 'Location-Based Appointment Management')
   .addTag('clinic', 'Healthcare facility and service management')
   .addTag('Clinic Locations', 'Geographical management of clinic locations')
-  // Infrastructure Tags
-  .addTag('cache', 'Redis-based caching system for optimized performance')
+  .addTag('cache', 'Redis-based caching system')
   .addTag('Logging', 'System Logging And Monitoring')
-  .addServer('http://localhost:8088', 'Local API Server')
-  .addServer('/queue-dashboard', 'Bull Queue Dashboard')
   .addSecurityRequirements('JWT-auth')
   .addBearerAuth()
   .build();
+
+// Add servers after building the config
+getApiServers().forEach(server => {
+  swaggerConfig.servers.push(server);
+});
 
 export const swaggerCustomOptions: SwaggerCustomOptions = {
   swaggerOptions: {
@@ -49,7 +103,7 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     docExpansion: 'none',
     filter: true,
     showRequestDuration: true,
-    tryItOutEnabled: true,
+    tryItOutEnabled: getEnvironmentConfig().app.environment !== 'production',
     syntaxHighlight: {
       theme: 'monokai',
     },
@@ -62,6 +116,8 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     layout: 'BaseLayout',
     deepLinking: true,
     tagsSorter: 'alpha',
+    // Add support for both localhost and Docker URLs
+    urls: getApiServers()
   },
   customCss: `
     .swagger-ui {
@@ -72,7 +128,7 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     
     .swagger-ui .info {
       margin: 15px 0;
-      background: #f8f9fa;
+      background: ${getEnvironmentConfig().app.environment === 'production' ? '#f8f9fa' : '#e3f2fd'};
       padding: 15px;
       border-radius: 6px;
     }
@@ -88,6 +144,25 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
       color: #34495e;
       line-height: 1.5;
     }
+    
+    /* Environment Indicator */
+    .swagger-ui .info::before {
+      content: '${getEnvironmentConfig().app.environment.toUpperCase()} ENVIRONMENT';
+      display: inline-block;
+      padding: 4px 8px;
+      background: ${getEnvironmentConfig().app.environment === 'production' ? '#dc3545' : '#28a745'};
+      color: white;
+      border-radius: 4px;
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+    
+    /* Production-specific styles */
+    ${getEnvironmentConfig().app.environment === 'production' ? `
+    .swagger-ui .try-out { display: none }
+    .swagger-ui .auth-wrapper { background: #dc3545; padding: 8px; border-radius: 4px; }
+    .swagger-ui .auth-wrapper .authorize { color: white; }
+    ` : ''}
     
     .swagger-ui .opblock-tag {
       font-size: 1.2em;
@@ -217,5 +292,5 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
       color: #2c3e50;
     }
   `,
-  customSiteTitle: 'Healthcare API Documentation',
+  customSiteTitle: `Healthcare API Documentation (${getEnvironmentConfig().app.environment})`,
 }; 

@@ -37,7 +37,6 @@ services:
       SWAGGER_URL: /docs
       BULL_BOARD_URL: /queue-dashboard
       SOCKET_URL: /socket.io
-      REDIS_UI_URL: /redis-ui
       LOGGER_URL: /logger
     expose:
       - "${API_PORT:-8088}"
