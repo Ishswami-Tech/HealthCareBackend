@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-slim AS builder
+FROM node:20-slim as builder
 
 # Label the builder stage
 LABEL stage=builder
@@ -21,7 +21,7 @@ COPY package.json package-lock.json ./
 # Install dependencies
 RUN npm install --legacy-peer-deps --no-audit --no-progress
 
-# Copy the rest of the application
+# Copy source code
 COPY . .
 
 # Generate Prisma client
@@ -30,19 +30,17 @@ RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
 # Build the application
 RUN npm run build
 
-# Ensure schema is copied to the dist folder
+# Create prisma directory in dist
 RUN mkdir -p /app/dist/shared/database/prisma
 RUN cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/
 
 # Production stage
-FROM node:20-slim AS production
+FROM node:20-slim as production
 
 # Label the production image
 LABEL app.component=backend
 LABEL app.stage=production
 LABEL com.docker.compose.service=api
-
-WORKDIR /app
 
 # Install production dependencies
 RUN apt-get update && apt-get install -y \
@@ -51,6 +49,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
 # Copy package files
 COPY package*.json ./
 
@@ -58,9 +58,9 @@ COPY package*.json ./
 RUN npm ci --omit=dev --legacy-peer-deps --no-audit --no-progress && \
     npm cache clean --force
 
-# Copy built application
-COPY --from=builder /app/dist ./dist
+# Copy built files from builder
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/shared/database/prisma/schema.prisma ./src/shared/database/prisma/schema.prisma
 COPY --from=builder /app/dist/shared/database/prisma/schema.prisma ./dist/shared/database/prisma/schema.prisma
 
@@ -84,12 +84,8 @@ EXPOSE 8088
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
-# Start script with environment handling
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["node", "dist/main"]
+# Start the application
+CMD ["node", "dist/main.js"]
 
 # Development stage
 FROM node:20-alpine AS development

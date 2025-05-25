@@ -399,14 +399,14 @@ async function bootstrap() {
       
       // Only handle Redis Commander and PgAdmin in development mode
       if (process.env.NODE_ENV === 'development') {
-        if (url.startsWith('/redis-ui') || url.startsWith('/redis-commander')) {
-          // Redirect to Redis Commander if it's running
-          reply.header('Location', 'http://localhost:8082');
-          reply.status(302).send();
-          return;
-        }
-        
-        if (url.startsWith('/pgadmin')) {
+      if (url.startsWith('/redis-ui') || url.startsWith('/redis-commander')) {
+        // Redirect to Redis Commander if it's running
+        reply.header('Location', 'http://localhost:8082');
+        reply.status(302).send();
+        return;
+      }
+      
+      if (url.startsWith('/pgadmin')) {
           // Redirect to PgAdmin if it's running
           reply.header('Location', 'http://localhost:5050');
           reply.status(302).send();
