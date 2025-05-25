@@ -27,7 +27,6 @@ env:
   API_CONTAINER: latest-api
   POSTGRES_CONTAINER: latest-postgres
   REDIS_CONTAINER: latest-redis
-  REDIS_COMMANDER_CONTAINER: latest-redis-commander
   NETWORK_NAME: app-network
 
 jobs:
@@ -644,6 +643,11 @@ jobs:
                 sleep 10
             done
 
+            # Setting environment variables directly to API container
+            docker exec -e SOCKET_URL=/socket.io \
+                       -e LOGGER_URL=/logger \
+                       latest-api sh -c 'echo "Environment variables updated via Docker exec"'
+
             # Configure firewall to allow traffic on ports
             echo "Configuring firewall..."
             sudo ufw allow 80/tcp
@@ -740,13 +744,6 @@ jobs:
             curl -v http://localhost:8088/health
 
             echo "All services are deployed!"
-
-            # Setting environment variables directly to API container
-            docker exec -e REDIS_COMMANDER_URL=/redis-ui \
-                       -e SOCKET_URL=/socket.io \
-                       -e REDIS_UI_URL=/redis-ui \
-                       -e LOGGER_URL=/logger \
-                       latest-api sh -c 'echo "Environment variables updated via Docker exec"'
 
             # Restart Nginx to apply configuration changes
             echo "Restarting Nginx service..."

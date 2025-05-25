@@ -35,22 +35,26 @@ import { AppointmentSocketModule } from './services/appointments/appointment-soc
       expandVariables: true,
       cache: true,
       validate: (config) => {
-        // Add required environment variables here
+        // Core required environment variables
         const required = [
           'API_URL',
           'SWAGGER_URL',
           'BULL_BOARD_URL',
           'SOCKET_URL',
-          'REDIS_COMMANDER_URL',
-          'PRISMA_STUDIO_URL',
         ];
         
-        // In production, pgAdmin is not used, so set a dummy value
-        // In development, require the actual pgAdmin URL
-        if (process.env.NODE_ENV === 'production') {
-          config['PGADMIN_URL'] = 'not-used-in-production';
-        } else if (!config['PGADMIN_URL']) {
-          throw new Error(`Missing required environment variable: PGADMIN_URL`);
+        // Development-only services
+        if (process.env.NODE_ENV !== 'production') {
+          required.push('REDIS_COMMANDER_URL');
+          required.push('PRISMA_STUDIO_URL');
+          required.push('PGADMIN_URL');
+        } else {
+          // Set only Prisma Studio URL for production (needed for some internal routes)
+          config['PRISMA_STUDIO_URL'] = '/prisma';
+          config['PGADMIN_URL'] = '/pgadmin';
+          // Explicitly delete Redis Commander config in production
+          delete config['REDIS_COMMANDER_URL'];
+          delete config['REDIS_UI_URL'];
         }
         
         for (const key of required) {
