@@ -103,7 +103,7 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     docExpansion: 'none',
     filter: true,
     showRequestDuration: true,
-    tryItOutEnabled: getEnvironmentConfig().app.environment !== 'production',
+    tryItOutEnabled: 'true',
     syntaxHighlight: {
       theme: 'monokai',
     },
