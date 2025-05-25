@@ -64,8 +64,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/shared/database/prisma/schema.prisma ./src/shared/database/prisma/schema.prisma
 COPY --from=builder /app/dist/shared/database/prisma/schema.prisma ./dist/shared/database/prisma/schema.prisma
 
-# Copy environment files
-COPY .env.production .env.development ./
+# Copy only production environment file
+COPY .env.production ./.env
 
 # Environment-specific configurations
 ARG NODE_ENV=production
