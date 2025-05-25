@@ -900,10 +900,10 @@ export class AppController {
                 <div class="flex items-center">
                   <div id="queueIndicator" class="health-status-indicator indicator-healthy"></div>
                   <h3 class="service-title">Queue Service</h3>
-                </div>
+          </div>
                 <span id="queueStatus" class="text-sm text-green-600 font-medium">Healthy</span>
-              </div>
-              
+        </div>
+          
               <div class="service-content">
                 <p id="queueDetails" class="text-gray-600 mb-2 text-sm">Queue service is running</p>
                 <div class="health-metrics">
@@ -1366,7 +1366,7 @@ export class AppController {
                 // Re-enable button and hide spinner
                 button.disabled = false;
                 spinner.classList.add('hidden');
-            }
+          }
         }
     </script>
 </body>
