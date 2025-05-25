@@ -341,7 +341,8 @@ async function bootstrap() {
     }
 
     // Security headers
-    await app.register(fastifyHelmet, {
+    const fastifyInstance = app.getHttpAdapter().getInstance();
+    await fastifyInstance.register(fastifyHelmet, {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
@@ -359,7 +360,6 @@ async function bootstrap() {
     });
 
     // Configure route handling for admin paths
-    const fastifyInstance = app.getHttpAdapter().getInstance();
     fastifyInstance.addHook('onRequest', (request, reply, done) => {
       const url = request.url;
       const isAdminPath = url.startsWith('/docs') || 
