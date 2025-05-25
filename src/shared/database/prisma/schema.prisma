@@ -1,4 +1,3 @@
-// This is the single schema file for both global and tenant-specific models
 generator client {
   provider      = "prisma-client-js"
   output        = "../../../../node_modules/.prisma/client"
@@ -6,19 +5,11 @@ generator client {
   engineType    = "binary"
 }
 
-// // Generate Entity Relationship Diagram
-// generator erd {
-//   provider = "prisma-erd-generator"
-//   output   = "../../../../docs/ERD.svg"
-//   theme    = "forest"
-// }
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// Core shared models
 model User {
   id                String         @id @default(uuid())
   email             String         @unique
@@ -43,74 +34,74 @@ model User {
   lastLoginDevice   String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
-  auditLogs         AuditLog[]
-  notifications     Notification[]
-  doctor            Doctor?
-  patient           Patient?
-  receptionist      Receptionist?
-  clinicAdmin       ClinicAdmin?
-  superAdmin        SuperAdmin?
   passwordChangedAt DateTime?
-  appointments      Appointment[]
   googleId          String?
   facebookId        String?
   appleId           String?
-  clinics           Clinic[] // User's associated clinics
   appName           String?
   medicalConditions String?
+  appointments      Appointment[]
+  auditLogs         AuditLog[]
+  clinicAdmin       ClinicAdmin?
+  doctor            Doctor?
+  notifications     Notification[]
+  patient           Patient?
+  receptionist      Receptionist?
+  superAdmin        SuperAdmin?
+  clinics           Clinic[]
 
   @@map("users")
 }
 
 model Receptionist {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  clinicId  String?  @unique
-  createdAt DateTime @default(now())
-  clinic    Clinic?  @relation(fields: [clinicId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
-  clinics   Clinic[] @relation("ReceptionistsAtClinic")
+  id                    String                  @id @default(uuid())
+  userId                String                  @unique
+  clinicId              String?                 @unique
+  createdAt             DateTime                @default(now())
+  clinic                Clinic?                 @relation(fields: [clinicId], references: [id])
+  user                  User                    @relation(fields: [userId], references: [id])
+  ReceptionistsAtClinic ReceptionistsAtClinic[]
 }
 
 model Clinic {
-  id                   String           @id @default(uuid())
-  clinicId             String           @unique // Format: CL0001
-  name                 String
-  address              String
-  phone                String
-  email                String           @unique
-  app_name             String           @unique
-  db_connection_string String           @unique
-  databaseName         String           @unique
-  databaseStatus       DatabaseStatus   @default(CREATING)
-  databaseCreatedAt    DateTime?
-  databaseLastSync     DateTime?
-  isActive             Boolean          @default(true)
-  createdAt            DateTime         @default(now())
-  updatedAt            DateTime         @updatedAt
-  admins               ClinicAdmin[]
-  doctors              DoctorClinic[]
-  receptionist         Receptionist?
-  receptionists        Receptionist[]   @relation("ReceptionistsAtClinic")
-  locations            ClinicLocation[]
-  createdBy            String
-  createdByUser        User             @relation(fields: [createdBy], references: [id])
-  subdomain            String?          @unique
-  logo                 String?
-  website              String?
-  description          String?
-  timezone             String?          @default("UTC")
-  currency             String?          @default("INR")
-  language             String?          @default("en")
-  settings             Json?
-  appointments         Appointment[]
+  id                    String                  @id @default(uuid())
+  clinicId              String                  @unique
+  name                  String
+  address               String
+  phone                 String
+  email                 String                  @unique
+  app_name              String                  @unique
+  db_connection_string  String
+  databaseName          String?
+  databaseStatus        DatabaseStatus          @default(CREATING)
+  databaseCreatedAt     DateTime?
+  databaseLastSync      DateTime?
+  isActive              Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  createdBy             String
+  subdomain             String?                 @unique
+  logo                  String?
+  website               String?
+  description           String?
+  timezone              String?                 @default("UTC")
+  currency              String?                 @default("INR")
+  language              String?                 @default("en")
+  settings              Json?
+  appointments          Appointment[]
+  admins                ClinicAdmin[]
+  doctors               DoctorClinic[]
+  receptionist          Receptionist?
+  ReceptionistsAtClinic ReceptionistsAtClinic[]
+  locations             ClinicLocation[]
+  createdByUser         User                    @relation(fields: [createdBy], references: [id])
 
   @@map("clinics")
 }
 
 model ClinicLocation {
   id           String         @id @default(uuid())
-  locationId   String         @unique // Format: LOC0001
+  locationId   String         @unique
   name         String
   address      String
   city         String
@@ -122,8 +113,7 @@ model ClinicLocation {
   isActive     Boolean        @default(true)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
-  clinicId     String // Tenant isolation field
-  clinic       Clinic         @relation(fields: [clinicId], references: [id])
+  clinicId     String
   latitude     Float?
   longitude    Float?
   timezone     String?        @default("UTC")
@@ -131,6 +121,7 @@ model ClinicLocation {
   settings     Json?
   appointments Appointment[]
   doctorClinic DoctorClinic[]
+  clinic       Clinic         @relation(fields: [clinicId], references: [id])
 
   @@index([clinicId])
   @@map("clinic_locations")
@@ -146,11 +137,11 @@ model SuperAdmin {
 model ClinicAdmin {
   id        String   @id @default(uuid())
   userId    String   @unique
-  clinicId  String // Tenant isolation field
+  clinicId  String
   createdAt DateTime @default(now())
+  isOwner   Boolean  @default(false)
   clinic    Clinic   @relation(fields: [clinicId], references: [id])
   user      User     @relation(fields: [userId], references: [id])
-  isOwner   Boolean  @default(false)
 
   @@index([clinicId])
 }
@@ -166,9 +157,9 @@ model Doctor {
   isAvailable     Boolean        @default(true)
   workingHours    Json?
   createdAt       DateTime       @default(now())
-  user            User           @relation(fields: [userId], references: [id])
   appointments    Appointment[]
-  clinics         DoctorClinic[] // M:M relationship with clinics, enforcing tenant isolation
+  user            User           @relation(fields: [userId], references: [id])
+  clinics         DoctorClinic[]
   healthRecords   HealthRecord[]
   prescriptions   Prescription[]
   reviews         Review[]
@@ -180,9 +171,9 @@ model Patient {
   prakriti      Prakriti?
   dosha         Dosha?
   createdAt     DateTime       @default(now())
-  user          User           @relation(fields: [userId], references: [id])
   appointments  Appointment[]
   healthRecords HealthRecord[]
+  user          User           @relation(fields: [userId], references: [id])
   prescriptions Prescription[]
   reviews       Review[]
 }
@@ -193,7 +184,7 @@ model Appointment {
   doctorId    String
   patientId   String
   locationId  String
-  clinicId    String // Tenant isolation field
+  clinicId    String
   date        DateTime
   time        String
   duration    Int
@@ -203,23 +194,22 @@ model Appointment {
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   therapyId   String?
-  startedAt   DateTime? // When doctor starts the appointment
-  checkedInAt DateTime? // When patient checks in
-  completedAt DateTime? // When appointment is completed
-
-  doctor   Doctor         @relation(fields: [doctorId], references: [id])
-  patient  Patient        @relation(fields: [patientId], references: [id])
-  location ClinicLocation @relation(fields: [locationId], references: [id])
-  clinic   Clinic         @relation(fields: [clinicId], references: [id])
-  user     User           @relation(fields: [userId], references: [id])
-  therapy  Therapy?       @relation(fields: [therapyId], references: [id])
-  payment  Payment?
-  queue    Queue?
+  startedAt   DateTime?
+  checkedInAt DateTime?
+  completedAt DateTime?
+  clinic      Clinic            @relation(fields: [clinicId], references: [id])
+  doctor      Doctor            @relation(fields: [doctorId], references: [id])
+  location    ClinicLocation    @relation(fields: [locationId], references: [id])
+  patient     Patient           @relation(fields: [patientId], references: [id])
+  therapy     Therapy?          @relation(fields: [therapyId], references: [id])
+  user        User              @relation(fields: [userId], references: [id])
+  payment     Payment?
+  queue       Queue?
 
   @@index([doctorId])
   @@index([patientId])
   @@index([locationId])
-  @@index([clinicId]) // Index on tenant field for performance
+  @@index([clinicId])
 }
 
 model Therapy {
@@ -228,7 +218,7 @@ model Therapy {
   description  String?
   duration     Int?
   createdAt    DateTime      @default(now())
-  clinicId     String // Tenant isolation field
+  clinicId     String
   appointments Appointment[]
 
   @@index([clinicId])
@@ -240,7 +230,7 @@ model Prescription {
   doctorId  String
   date      DateTime           @default(now())
   notes     String?
-  clinicId  String // Tenant isolation field
+  clinicId  String
   doctor    Doctor             @relation(fields: [doctorId], references: [id])
   patient   Patient            @relation(fields: [patientId], references: [id])
   items     PrescriptionItem[]
@@ -255,7 +245,7 @@ model PrescriptionItem {
   dosage         String?
   frequency      String?
   duration       String?
-  clinicId       String // Tenant isolation field
+  clinicId       String
   medicine       Medicine?    @relation(fields: [medicineId], references: [id])
   prescription   Prescription @relation(fields: [prescriptionId], references: [id])
 
@@ -270,7 +260,7 @@ model Medicine {
   dosage            String?
   manufacturer      String?
   type              MedicineType
-  clinicId          String // Tenant isolation field
+  clinicId          String
   prescriptionItems PrescriptionItem[]
 
   @@index([clinicId])
@@ -278,12 +268,12 @@ model Medicine {
 
 model DoctorClinic {
   doctorId   String
-  clinicId   String // Tenant isolation field
+  clinicId   String
   startTime  DateTime?
   endTime    DateTime?
+  locationId String?
   clinic     Clinic          @relation(fields: [clinicId], references: [id])
   doctor     Doctor          @relation(fields: [doctorId], references: [id])
-  locationId String?
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
 
   @@id([doctorId, clinicId])
@@ -297,7 +287,7 @@ model Payment {
   status        PaymentStatus  @default(PENDING)
   method        PaymentMethod?
   transactionId String?
-  clinicId      String // Tenant isolation field
+  clinicId      String
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   appointment   Appointment    @relation(fields: [appointmentId], references: [id])
@@ -311,7 +301,7 @@ model Queue {
   queueNumber       Int
   estimatedWaitTime Int?
   status            QueueStatus @default(WAITING)
-  clinicId          String // Tenant isolation field
+  clinicId          String
   updatedAt         DateTime    @updatedAt
   appointment       Appointment @relation(fields: [appointmentId], references: [id])
 
@@ -326,7 +316,7 @@ model Notification {
   read      Boolean            @default(false)
   sentAt    DateTime?
   status    NotificationStatus @default(PENDING)
-  clinicId  String? // Optional tenant isolation field
+  clinicId  String?
   createdAt DateTime           @default(now())
   user      User               @relation(fields: [userId], references: [id])
 
@@ -340,7 +330,7 @@ model HealthRecord {
   recordType HealthRecordType
   report     String?
   fileUrl    String?
-  clinicId   String // Tenant isolation field
+  clinicId   String
   createdAt  DateTime         @default(now())
   doctor     Doctor           @relation(fields: [doctorId], references: [id])
   patient    Patient          @relation(fields: [patientId], references: [id])
@@ -356,7 +346,7 @@ model AuditLog {
   ipAddress   String?
   device      String?
   description String   @default("")
-  clinicId    String? // Optional tenant isolation field
+  clinicId    String?
   user        User     @relation(fields: [userId], references: [id])
 
   @@index([clinicId])
@@ -368,7 +358,7 @@ model Review {
   comment   String?
   patientId String
   doctorId  String
-  clinicId  String // Tenant isolation field
+  clinicId  String
   createdAt DateTime @default(now())
   doctor    Doctor   @relation(fields: [doctorId], references: [id])
   patient   Patient  @relation(fields: [patientId], references: [id])
@@ -383,7 +373,7 @@ model Product {
   price       Float
   category    String
   stock       Int      @default(0)
-  clinicId    String // Tenant isolation field
+  clinicId    String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -397,11 +387,22 @@ model Log {
   message   String
   context   String
   metadata  String?
-  clinicId  String? // Optional tenant isolation field
+  clinicId  String?
   timestamp DateTime @default(now())
 
   @@index([clinicId])
   @@map("logs")
+}
+
+model ReceptionistsAtClinic {
+  A            String
+  B            String
+  clinics      Clinic       @relation(fields: [A], references: [id], onDelete: Cascade)
+  Receptionist Receptionist @relation(fields: [B], references: [id], onDelete: Cascade)
+
+  @@id([A, B], map: "_ReceptionistsAtClinic_AB_pkey")
+  @@index([B], map: "_ReceptionistsAtClinic_B_index")
+  @@map("_ReceptionistsAtClinic")
 }
 
 enum Role {
@@ -419,14 +420,14 @@ enum Gender {
 }
 
 enum AppointmentStatus {
-  SCHEDULED // Initial state when appointment is booked
-  CHECKED_IN // When user scans QR code
-  CONFIRMED // After check-in is verified
-  IN_PROGRESS // When doctor starts consultation
-  COMPLETED // After consultation
-  CANCELLED // If cancelled
-  NO_SHOW // If patient doesn't show up
-  PENDING // Initial pending status
+  SCHEDULED
+  CHECKED_IN
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  PENDING
 }
 
 enum PaymentStatus {

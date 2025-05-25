@@ -186,8 +186,10 @@ export class ClinicService {
           },
           subdomain: data.subdomain,
           clinicId: data.subdomain,
-          db_connection_string: process.env.DATABASE_URL,
-          databaseName: null,
+          // Use shared database connection for multi-tenancy
+          db_connection_string: process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+          databaseName: 'userdb', // All clinics share the same database in multi-tenant setup
+          databaseStatus: 'ACTIVE',
         },
       });
 

@@ -66,9 +66,11 @@ async function main() {
         phone: '+91-9876543210',
         email: 'contact@aadesh.com',
         app_name: 'aadesh_ayurvedalay',
-        db_connection_string: process.env.DATABASE_URL,
-        databaseName: 'aadesh_ayurvedalay_db',
-        createdBy: superAdminUser.id,
+        db_connection_string: process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+        databaseName: 'userdb',
+        createdByUser: {
+          connect: { id: superAdminUser.id }
+        },
         clinicId: 'CL0001',
         subdomain: 'aadesh',
         isActive: true
@@ -83,9 +85,11 @@ async function main() {
         phone: '+91-8765432109',
         email: 'contact@vishwamurthi.com',
         app_name: 'vishwamurthi_ayurvedalay',
-        db_connection_string: process.env.DATABASE_URL,
-        databaseName: 'vishwamurthi_ayurvedalay_db',
-        createdBy: superAdminUser.id,
+        db_connection_string: process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+        databaseName: 'userdb',
+        createdByUser: {
+          connect: { id: superAdminUser.id }
+        },
         clinicId: 'CL0002',
         subdomain: 'vishwamurthi',
         isActive: true
@@ -308,45 +312,65 @@ async function main() {
 
     // Create DoctorClinic relationships with locations
     console.log('Creating doctor-clinic relationships...');
-    await Promise.all(
-      doctors.flatMap(doctor => [
-        // Connect doctor to all Aadesh locations
-        ...clinic1Locations.map(location => 
-          prisma.doctorClinic.create({
-            data: {
-              doctorId: doctor.id,
-              clinicId: clinic1.id,
-              locationId: location.id,
-              startTime: faker.date.future(),
-              endTime: faker.date.future()
-            }
-          })
-        ),
-        // Connect doctor to all Vishwamurthi locations
-        ...clinic2Locations.map(location => 
-          prisma.doctorClinic.create({
-            data: {
-              doctorId: doctor.id,
-              clinicId: clinic2.id,
-              locationId: location.id,
-              startTime: faker.date.future(),
-              endTime: faker.date.future()
-            }
-          })
-        )
-      ])
-    );
+    
+    // Prepare doctor-clinic relationships data - one relationship per doctor per clinic
+    const doctorClinicData = doctors.flatMap(doctor => [
+      // Connect doctor to Aadesh clinic with a random location
+      {
+        doctorId: doctor.id,
+        clinicId: clinic1.id,
+        locationId: clinic1Locations[Math.floor(Math.random() * clinic1Locations.length)].id,
+        startTime: faker.date.future(),
+        endTime: faker.date.future()
+      },
+      // Connect doctor to Vishwamurthi clinic with a random location
+      {
+        doctorId: doctor.id,
+        clinicId: clinic2.id,
+        locationId: clinic2Locations[Math.floor(Math.random() * clinic2Locations.length)].id,
+        startTime: faker.date.future(),
+        endTime: faker.date.future()
+      }
+    ]);
+
+    // Create doctor-clinic relationships in batches to handle duplicates
+    for (const data of doctorClinicData) {
+      try {
+        await prisma.doctorClinic.create({
+          data
+        });
+      } catch (error) {
+        // Skip if relationship already exists
+        if (error.code !== 'P2002') {
+          throw error;
+        }
+      }
+    }
 
     // Create Receptionists with clinic associations
     console.log('Creating receptionists...');
     const receptionistUsers = users.filter(u => u.role === Role.RECEPTIONIST);
-    await Promise.all(
-      receptionistUsers.map((user, index) => {
-        const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
+    
+    // First create receptionists without clinic association
+    const receptionists = await Promise.all(
+      receptionistUsers.map((user) => {
         return prisma.receptionist.create({
           data: {
             userId: user.id,
-            clinicId: clinicId
+          }
+        });
+      })
+    );
+
+    // Then create the many-to-many relationships
+    console.log('Creating receptionist-clinic relationships...');
+    await Promise.all(
+      receptionists.map((receptionist, index) => {
+        const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
+        return prisma.receptionistsAtClinic.create({
+          data: {
+            A: clinicId, // clinic id
+            B: receptionist.id // receptionist id
           }
         });
       })
@@ -712,9 +736,9 @@ async function cleanDatabase() {
     await prisma.patient.deleteMany({});
     await prisma.clinicAdmin.deleteMany({});
     await prisma.clinicLocation.deleteMany({});
+    await prisma.clinic.deleteMany({}); // Delete clinics before users due to createdBy foreign key
     await prisma.superAdmin.deleteMany({});
     await prisma.user.deleteMany({});
-    await prisma.clinic.deleteMany({});
   } catch (error) {
     console.error('Error cleaning database:', error);
     throw error;

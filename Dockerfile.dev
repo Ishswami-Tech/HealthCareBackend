@@ -3,10 +3,19 @@ FROM node:20-alpine
 # Label the development image
 LABEL app.component=backend
 LABEL app.stage=development
+LABEL app.type=api
 
 # Install necessary tools in a single layer
-RUN apk add --no-cache postgresql-client redis busybox-extras python3 make g++ && \
-    rm -rf /var/cache/apk/*
+RUN apk add --no-cache \
+    postgresql-client \
+    redis \
+    busybox-extras \
+    python3 \
+    make \
+    g++ \
+    wget \
+    curl \
+    && rm -rf /var/cache/apk/*
 
 WORKDIR /app
 
@@ -19,28 +28,30 @@ RUN npm install --legacy-peer-deps --no-audit --no-progress && \
 # Copy application files
 COPY . .
 
-# Ensure dist directory exists and has proper permissions
-RUN mkdir -p /app/dist && chmod -R 777 /app/dist
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/dist/shared/database/prisma && \
+    mkdir -p /app/logs && \
+    chmod -R 777 /app/dist && \
+    chmod -R 777 /app/logs
 
-# Environment-specific configurations will be passed from docker-compose.yml
-# This allows using different schema paths based on environment
-# but we do need to set a default (will be overridden by docker-compose)
-ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+# Environment-specific configurations
+ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
+    NODE_ENV=development \
+    HOST=0.0.0.0 \
+    PORT=8088
 
-# Validate and properly set up Prisma
+# Validate and set up Prisma
 RUN if [ -f "$PRISMA_SCHEMA_PATH" ]; then \
     echo "Using Prisma schema at $PRISMA_SCHEMA_PATH"; \
     npx prisma generate --schema="$PRISMA_SCHEMA_PATH"; \
-    mkdir -p /app/dist/shared/database/prisma && \
     cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/; \
     else \
     echo "Prisma schema not found at $PRISMA_SCHEMA_PATH, using fallback path"; \
-    mkdir -p /app/dist/shared/database/prisma && \
     cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/; \
     npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma; \
     fi
 
-# Make the script executable if it exists
+# Make scripts executable
 RUN if [ -f "/app/src/shared/database/prisma/wait-for-postgres.sh" ]; then chmod +x /app/src/shared/database/prisma/wait-for-postgres.sh; fi
 
 # Set proper permissions for hot reloading
@@ -53,5 +64,10 @@ EXPOSE 8088 5555
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
-# Entry point that ensures Prisma schema exists in both source and dist
-CMD ["sh", "-c", "mkdir -p /app/dist/shared/database/prisma && cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/ && npm run start:dev"] 
+# Entry point with improved startup sequence
+CMD ["sh", "-c", "\
+    echo 'Setting up development environment...' && \
+    mkdir -p /app/dist/shared/database/prisma && \
+    cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/ && \
+    echo 'Starting development server...' && \
+    npm run start:dev"] 

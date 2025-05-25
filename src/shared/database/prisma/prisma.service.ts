@@ -3,16 +3,53 @@ import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Define global type for Prisma
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
 @Injectable({ scope: Scope.REQUEST })
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
   private currentTenantId: string | null = null;
+  private static connectionCount = 0;
+  private static readonly MAX_CONNECTIONS = 90; // Leave some margin for other operations
+  private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
 
   constructor() {
+    // If we already have a Prisma instance, return it
+    if (globalForPrisma.prisma) {
+      return globalForPrisma.prisma as PrismaService;
+    }
+
     super({
       datasourceUrl: process.env.DATABASE_URL,
       log: ['error', 'warn'],
+      transactionOptions: {
+        maxWait: 5000, // 5 seconds max wait time
+        timeout: 5000, // 5 seconds timeout
+      },
     });
+
+    // Configure connection events
+    this.$on('beforeExit', async () => {
+      this.logger.log('Prisma Client beforeExit event');
+    });
+
+    // Handle query errors
+    this.$use(async (params, next) => {
+      try {
+        return await next(params);
+      } catch (error) {
+        this.logger.error('Prisma query error:', error);
+        throw error;
+      }
+    });
+
+    // Store the instance globally in development
+    if (process.env.NODE_ENV !== 'production') {
+      globalForPrisma.prisma = this;
+    }
 
     // Add middleware to enforce tenant isolation
     this.$use(async (params, next) => {
@@ -80,16 +117,14 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleInit() {
     try {
-      // Check if Prisma client already exists to avoid duplicate generation
-      const clientPath = path.join(process.cwd(), 'node_modules', '.prisma', 'client');
-      const clientExists = fs.existsSync(clientPath);
-      
-      if (clientExists) {
-        this.logger.log('Prisma client already exists, skipping generation');
+      // Only connect if we haven't exceeded max connections
+      if (PrismaService.connectionCount < PrismaService.MAX_CONNECTIONS) {
+        await this.connectWithTimeout();
+        PrismaService.connectionCount++;
+        this.logger.log(`Connected to database successfully. Active connections: ${PrismaService.connectionCount}`);
+      } else {
+        this.logger.warn(`Max connections (${PrismaService.MAX_CONNECTIONS}) reached. Reusing existing connection.`);
       }
-      
-      await this.$connect();
-      this.logger.log('Connected to database successfully');
     } catch (error) {
       this.logger.error('Failed to connect to database:', error);
       throw error;
@@ -98,11 +133,46 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleDestroy() {
     try {
-      await this.$disconnect();
-      this.logger.log('Disconnected from database successfully');
+      if (PrismaService.connectionCount > 0) {
+        await this.$disconnect();
+        PrismaService.connectionCount--;
+        this.logger.log(`Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`);
+      }
     } catch (error) {
       this.logger.error('Error disconnecting from database:', error);
     }
+  }
+
+  private async connectWithTimeout(): Promise<void> {
+    try {
+      await Promise.race([
+        this.$connect(),
+        new Promise((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`Database connection timeout after ${PrismaService.CONNECTION_TIMEOUT}ms`));
+          }, PrismaService.CONNECTION_TIMEOUT);
+        }),
+      ]);
+    } catch (error) {
+      this.logger.error('Connection timeout or error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the current connection count
+   * @returns The number of active database connections
+   */
+  static getConnectionCount(): number {
+    return PrismaService.connectionCount;
+  }
+
+  /**
+   * Check if we can create a new connection
+   * @returns boolean indicating if a new connection can be created
+   */
+  static canCreateNewConnection(): boolean {
+    return PrismaService.connectionCount < PrismaService.MAX_CONNECTIONS;
   }
 
   /**

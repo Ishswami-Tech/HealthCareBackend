@@ -44,22 +44,38 @@ export class AppController {
       const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
       const isProduction = process.env.NODE_ENV === 'production';
       
-      // Get real-time service status from health controller
-      const healthStatus = await this.healthController.getServicesStatus();
+      // Get real-time service status from health controller using the detailed endpoint
+      const healthData = await this.healthController.getDetailedHealth();
+      
+      // Map health data to service status format
+      const healthStatus = {
+        api: { status: healthData.services.api.status === 'healthy' ? 'up' : 'down' },
+        redis: { status: healthData.services.redis.status === 'healthy' ? 'up' : 'down' },
+        database: { status: healthData.services.database.status === 'healthy' ? 'up' : 'down' },
+        queues: { status: healthData.services.queues.status === 'healthy' ? 'up' : 'down' },
+        logger: { status: healthData.services.logger.status === 'healthy' ? 'up' : 'down' },
+        socket: { status: healthData.services.socket.status === 'healthy' ? 'up' : 'down' },
+        email: { status: healthData.services.email.status === 'healthy' ? 'up' : 'down' },
+        prismaStudio: { status: healthData.services.prismaStudio?.status === 'healthy' ? 'up' : 'down' },
+        redisCommander: { status: healthData.services.redisCommander?.status === 'healthy' ? 'up' : 'down' },
+        pgAdmin: { status: healthData.services.pgAdmin?.status === 'healthy' ? 'up' : 'down' },
+        lastUpdated: new Date()
+      };
       
       // Only fetch logs in development mode to reduce DB load in production
       const recentLogs = isProduction ? [] : await this.getRecentLogs();
       
-      // Check if services are actually running
-      const isApiRunning = healthStatus?.api?.status === 'up';
-      const isRedisRunning = healthStatus?.redis?.status === 'up';
-      const isDatabaseRunning = healthStatus?.database?.status === 'up';
-      const isQueueRunning = healthStatus?.queues?.status === 'up';
-      const isLoggerRunning = healthStatus?.logger?.status === 'up';
-      const isPrismaStudioRunning = healthStatus?.prismaStudio?.status === 'up';
-      const isRedisCommanderRunning = healthStatus?.redisCommander?.status === 'up';
-      const isPgAdminRunning = healthStatus?.pgAdmin?.status === 'up';
-      const isSocketRunning = healthStatus?.socket?.status === 'up';
+      // Check if services are actually running based on mapped health status
+      const isApiRunning = healthStatus.api.status === 'up';
+      const isRedisRunning = healthStatus.redis.status === 'up';
+      const isDatabaseRunning = healthStatus.database.status === 'up';
+      const isQueueRunning = healthStatus.queues.status === 'up';
+      const isLoggerRunning = healthStatus.logger.status === 'up';
+      const isSocketRunning = healthStatus.socket.status === 'up';
+      const isEmailRunning = healthStatus.email.status === 'up';
+      const isPrismaStudioRunning = healthStatus.prismaStudio.status === 'up';
+      const isRedisCommanderRunning = healthStatus.redisCommander.status === 'up';
+      const isPgAdminRunning = healthStatus.pgAdmin.status === 'up';
       
       // Define all services
       const allServices: ServiceInfo[] = [
@@ -71,7 +87,7 @@ export class AppController {
           category: 'Documentation'
         },
         {
-          name: 'Bull Board',
+          name: 'Queue Dashboard',
           description: 'Queue management and monitoring dashboard.',
           url: `${baseUrl}${this.configService.get('BULL_BOARD_URL') || '/queue-dashboard'}`,
           active: isQueueRunning,
@@ -90,6 +106,13 @@ export class AppController {
           url: `${baseUrl}/socket-test`,
           active: isSocketRunning,
           category: 'API'
+        },
+        {
+          name: 'Email Service',
+          description: 'Email sending and template management.',
+          url: `${baseUrl}/email-status`,
+          active: isEmailRunning,
+          category: 'Services'
         }
       ];
       
@@ -417,8 +440,7 @@ export class AppController {
   }
 
   private generateDashboardHtml(title: string, services: ServiceInfo[], recentLogs: any[], isProduction: boolean): string {
-    // No auto-refresh - only refresh when button is clicked
-    return (`<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -700,14 +722,23 @@ export class AppController {
         <header class="text-center mb-8">
             <h1 class="text-4xl font-bold text-gray-800 mb-2">${title}</h1>
             <p class="text-gray-600">System Status and Service Management${isProduction ? ' (Production Mode)' : ' (Development Mode)'}</p>
-            <p class="text-gray-500 mt-2">Last updated: <span id="lastUpdated">${new Date().toLocaleTimeString()}</span></p>
-            <div class="mt-4">
-                <button id="refreshButton" class="flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" onclick="refreshHealthStatus()">
+            <div class="flex flex-col items-center justify-center gap-2 mt-4">
+                <p class="text-gray-500">Last updated: <time id="lastUpdated" datetime="${new Date().toISOString()}">${new Date().toLocaleTimeString()}</time></p>
+                <button 
+                    id="refreshButton" 
+                    class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    onclick="refreshDashboard()"
+                >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
                     </svg>
-                    Refresh Status
-                    <span class="spinner" id="refreshSpinner"></span>
+                    <span>Refresh Dashboard</span>
+                    <span id="refreshSpinner" class="hidden ml-2">
+                        <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </span>
                 </button>
             </div>
         </header>
@@ -858,6 +889,106 @@ export class AppController {
                   <div class="metric">
                     <span class="metric-label">Total Keys:</span>
                     <span id="redisKeys" class="metric-value">126</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Queue Service -->
+            <div id="queueSection" class="service-section healthy">
+              <div class="service-header">
+                <div class="flex items-center">
+                  <div id="queueIndicator" class="health-status-indicator indicator-healthy"></div>
+                  <h3 class="service-title">Queue Service</h3>
+                </div>
+                <span id="queueStatus" class="text-sm text-green-600 font-medium">Healthy</span>
+              </div>
+              
+              <div class="service-content">
+                <p id="queueDetails" class="text-gray-600 mb-2 text-sm">Queue service is running</p>
+                <div class="health-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Response Time:</span>
+                    <span id="queueResponseTime" class="metric-value">0 ms</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Last Checked:</span>
+                    <span id="queueLastChecked" class="metric-value">10:45:32 AM</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Logger Service -->
+            <div id="loggerSection" class="service-section healthy">
+              <div class="service-header">
+                <div class="flex items-center">
+                  <div id="loggerIndicator" class="health-status-indicator indicator-healthy"></div>
+                  <h3 class="service-title">Logger Service</h3>
+                </div>
+                <span id="loggerStatus" class="text-sm text-green-600 font-medium">Healthy</span>
+              </div>
+              
+              <div class="service-content">
+                <p id="loggerDetails" class="text-gray-600 mb-2 text-sm">Logging service is active</p>
+                <div class="health-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Response Time:</span>
+                    <span id="loggerResponseTime" class="metric-value">0 ms</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Last Checked:</span>
+                    <span id="loggerLastChecked" class="metric-value">10:45:32 AM</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Socket Service -->
+            <div id="socketSection" class="service-section healthy">
+              <div class="service-header">
+                <div class="flex items-center">
+                  <div id="socketIndicator" class="health-status-indicator indicator-healthy"></div>
+                  <h3 class="service-title">WebSocket Service</h3>
+                </div>
+                <span id="socketStatus" class="text-sm text-green-600 font-medium">Healthy</span>
+              </div>
+              
+              <div class="service-content">
+                <p id="socketDetails" class="text-gray-600 mb-2 text-sm">WebSocket server is running</p>
+                <div class="health-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Response Time:</span>
+                    <span id="socketResponseTime" class="metric-value">0 ms</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Last Checked:</span>
+                    <span id="socketLastChecked" class="metric-value">10:45:32 AM</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Email Service -->
+            <div id="emailSection" class="service-section healthy">
+              <div class="service-header">
+                <div class="flex items-center">
+                  <div id="emailIndicator" class="health-status-indicator indicator-healthy"></div>
+                  <h3 class="service-title">Email Service</h3>
+                </div>
+                <span id="emailStatus" class="text-sm text-green-600 font-medium">Healthy</span>
+              </div>
+              
+              <div class="service-content">
+                <p id="emailDetails" class="text-gray-600 mb-2 text-sm">Email service is configured and connected</p>
+                <div class="health-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Response Time:</span>
+                    <span id="emailResponseTime" class="metric-value">0 ms</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Last Checked:</span>
+                    <span id="emailLastChecked" class="metric-value">10:45:32 AM</span>
                   </div>
                 </div>
               </div>
@@ -1078,7 +1209,7 @@ export class AppController {
             });
             
             // Use direct /health API with 127.0.0.1 to avoid DNS resolution errors with 'localhost'
-            const response = await fetch('/health');
+            const response = await fetch('/health/detailed');
             const healthData = await response.json();
             
             // Update last refresh time
@@ -1101,80 +1232,14 @@ export class AppController {
             document.getElementById('healthDetails').textContent = 
                 healthyServices + ' of ' + totalServices + ' services are healthy and responding within expected time frames.';
             
-            // Update API service details
-            const apiHealthy = healthData.services.api.status === 'healthy';
-            document.getElementById('apiIndicator').className = 
-                'health-status-indicator ' + (apiHealthy ? 'indicator-healthy' : 'indicator-unhealthy');
-            document.getElementById('apiStatus').textContent = apiHealthy ? 'Healthy' : 'Unhealthy';
-            document.getElementById('apiStatus').className = 'text-sm ' + (apiHealthy ? 'text-green-600' : 'text-red-600') + ' font-medium';
-            document.getElementById('apiDetails').textContent = apiHealthy ? 
-                'API is responding to requests' : 'API is not responding correctly';
-            document.getElementById('apiResponseTime').textContent = healthData.services.api.responseTime + ' ms';
-            // Update service section class
-            document.getElementById('apiSection').className = 'service-section ' + (apiHealthy ? 'healthy' : 'unhealthy');
-            // Update last checked time for API
-            if (healthData.services.api.lastChecked) {
-              const apiLastChecked = new Date(healthData.services.api.lastChecked);
-              document.getElementById('apiLastChecked').textContent = apiLastChecked.toLocaleTimeString();
-            }
-            
-            // Update Database service details
-            const dbHealthy = healthData.services.database.status === 'healthy';
-            document.getElementById('dbIndicator').className = 
-                'health-status-indicator ' + (dbHealthy ? 'indicator-healthy' : 'indicator-unhealthy');
-            document.getElementById('dbStatus').textContent = dbHealthy ? 'Healthy' : 'Unhealthy';
-            document.getElementById('dbStatus').className = 'text-sm ' + (dbHealthy ? 'text-green-600' : 'text-red-600') + ' font-medium';
-            document.getElementById('dbDetails').textContent = dbHealthy ? 
-                healthData.services.database.details : (healthData.services.database.error || 'Database connection failed');
-            // Update service section class
-            document.getElementById('dbSection').className = 'service-section ' + (dbHealthy ? 'healthy' : 'unhealthy');
-            
-            // Update DB metrics if available
-            if (dbHealthy && healthData.services.database.metrics) {
-                const dbMetrics = healthData.services.database.metrics;
-                document.getElementById('dbQueryTime').textContent = dbMetrics.queryResponseTime + ' ms';
-                document.getElementById('dbActiveConn').textContent = dbMetrics.activeConnections || '1';
-                document.getElementById('dbMaxConn').textContent = dbMetrics.maxConnections || '100';
-                document.getElementById('dbConnUtil').textContent = 
-                    Math.round(((dbMetrics.activeConnections || 1) / (dbMetrics.maxConnections || 100)) * 100) + '%';
-            }
-            // Update last checked time for DB
-            if (healthData.services.database.lastChecked) {
-              const dbLastChecked = new Date(healthData.services.database.lastChecked);
-              document.getElementById('dbLastChecked').textContent = dbLastChecked.toLocaleTimeString();
-            }
-            
-            // Update Redis service details
-            const redisHealthy = healthData.services.redis.status === 'healthy';
-            document.getElementById('redisIndicator').className = 
-                'health-status-indicator ' + (redisHealthy ? 'indicator-healthy' : 'indicator-unhealthy');
-            document.getElementById('redisStatus').textContent = redisHealthy ? 'Healthy' : 'Unhealthy';
-            document.getElementById('redisStatus').className = 'text-sm ' + (redisHealthy ? 'text-green-600' : 'text-red-600') + ' font-medium';
-            document.getElementById('redisDetails').textContent = redisHealthy ? 
-                healthData.services.redis.details : (healthData.services.redis.error || 'Redis connection failed');
-            // Update service section class
-            document.getElementById('redisSection').className = 'service-section ' + (redisHealthy ? 'healthy' : 'unhealthy');
-            
-            // Update Redis metrics if available
-            if (redisHealthy && healthData.services.redis.metrics) {
-                const redisMetrics = healthData.services.redis.metrics;
-                document.getElementById('redisResponseTime').textContent = healthData.services.redis.responseTime + ' ms';
-                document.getElementById('redisClients').textContent = redisMetrics.connectedClients || '1';
-                
-                // Format memory in a readable way
-                const memory = redisMetrics.usedMemory || 0;
-                let formattedMemory;
-                if (memory < 1024) {
-                    formattedMemory = memory + ' B';
-                } else if (memory < 1024 * 1024) {
-                    formattedMemory = (memory / 1024).toFixed(2) + ' KB';
-                } else {
-                    formattedMemory = (memory / (1024 * 1024)).toFixed(2) + ' MB';
-                }
-                
-                document.getElementById('redisMemory').textContent = formattedMemory;
-                document.getElementById('redisKeys').textContent = redisMetrics.totalKeys || '0';
-            }
+            // Update service statuses
+            updateServiceStatus('api', healthData.services.api);
+            updateServiceStatus('db', healthData.services.database);
+            updateServiceStatus('redis', healthData.services.redis);
+            updateServiceStatus('queue', healthData.services.queues);
+            updateServiceStatus('logger', healthData.services.logger);
+            updateServiceStatus('socket', healthData.services.socket);
+            updateServiceStatus('email', healthData.services.email);
             
             // Re-enable refresh button
             refreshBtn.disabled = false;
@@ -1214,8 +1279,97 @@ export class AppController {
             updateLastCheckedTime();
           }
         }
+
+        function updateServiceStatus(serviceId, serviceData) {
+          const section = document.getElementById(serviceId + 'Section');
+          const indicator = document.getElementById(serviceId + 'Indicator');
+          const status = document.getElementById(serviceId + 'Status');
+          const details = document.getElementById(serviceId + 'Details');
+          const responseTime = document.getElementById(serviceId + 'ResponseTime');
+          const lastChecked = document.getElementById(serviceId + 'LastChecked');
+          
+          if (!section || !indicator || !status || !details || !responseTime || !lastChecked) return;
+          
+          const isHealthy = serviceData.status === 'healthy';
+          
+          // Update section class
+          section.className = 'service-section ' + (isHealthy ? 'healthy' : 'unhealthy');
+          
+          // Update indicator
+          indicator.className = 'health-status-indicator ' + (isHealthy ? 'indicator-healthy' : 'indicator-unhealthy');
+          
+          // Update status text and class
+          status.textContent = isHealthy ? 'Healthy' : 'Unhealthy';
+          status.className = 'text-sm ' + (isHealthy ? 'text-green-600' : 'text-red-600') + ' font-medium';
+          
+          // Update details
+          details.textContent = serviceData.details || (isHealthy ? 'Service is running' : 'Service is not responding');
+          
+          // Update response time
+          responseTime.textContent = serviceData.responseTime + ' ms';
+          
+          // Update last checked time
+          if (serviceData.lastChecked) {
+            const lastCheckedDate = new Date(serviceData.lastChecked);
+            lastChecked.textContent = lastCheckedDate.toLocaleTimeString();
+          }
+          
+          // Update metrics if available
+          if (serviceData.metrics) {
+            if (serviceId === 'db') {
+              document.getElementById('dbQueryTime').textContent = serviceData.metrics.queryResponseTime + ' ms';
+              document.getElementById('dbActiveConn').textContent = serviceData.metrics.activeConnections;
+              document.getElementById('dbMaxConn').textContent = serviceData.metrics.maxConnections;
+              document.getElementById('dbConnUtil').textContent = 
+                Math.round((serviceData.metrics.activeConnections / serviceData.metrics.maxConnections) * 100) + '%';
+            } else if (serviceId === 'redis') {
+              document.getElementById('redisClients').textContent = serviceData.metrics.connectedClients;
+              const memory = serviceData.metrics.usedMemory;
+              let formattedMemory;
+              if (memory < 1024) {
+                formattedMemory = memory + ' B';
+              } else if (memory < 1024 * 1024) {
+                formattedMemory = (memory / 1024).toFixed(2) + ' KB';
+              } else {
+                formattedMemory = (memory / (1024 * 1024)).toFixed(2) + ' MB';
+              }
+              document.getElementById('redisMemory').textContent = formattedMemory;
+              document.getElementById('redisKeys').textContent = serviceData.metrics.totalKeys;
+            }
+          }
+        }
+
+        async function refreshDashboard() {
+            const button = document.getElementById('refreshButton');
+            const spinner = document.getElementById('refreshSpinner');
+            const timestamp = document.getElementById('lastUpdated');
+            
+            try {
+                // Disable button and show spinner
+                button.disabled = true;
+                spinner.classList.remove('hidden');
+                
+                // Refresh both health status and services list
+                await Promise.all([
+                    refreshHealthStatus(),
+                    refreshServicesList()
+                ]);
+                
+                // Update timestamp
+                const now = new Date();
+                timestamp.textContent = now.toLocaleTimeString();
+                timestamp.setAttribute('datetime', now.toISOString());
+                
+            } catch (error) {
+                console.error('Error refreshing dashboard:', error);
+            } finally {
+                // Re-enable button and hide spinner
+                button.disabled = false;
+                spinner.classList.add('hidden');
+            }
+        }
     </script>
 </body>
-</html>`) as string;
+</html>`;
   }
 }

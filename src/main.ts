@@ -14,10 +14,15 @@ import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
 import { LoggingService } from './shared/logging/logging.service';
 import { LogType } from './shared/logging/types/logging.types';
 import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
+import developmentConfig from './config/environment/development.config';
+import productionConfig from './config/environment/production.config';
 import { RedisService } from './shared/cache/redis/redis.service';
 import { QueueService } from './shared/queue/queue.service';
 import { PrismaService } from './shared/database/prisma/prisma.service';
 import { EmailModule } from './shared/messaging/email/email.module';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { Server } from 'socket.io';
+import { createClient } from 'redis';
 
 // Store original console methods
 const originalConsole = {
@@ -28,6 +33,10 @@ const originalConsole = {
   info: console.info
 };
 
+// Declare Redis client variables at module level
+let pubClient: any = null;
+let subClient: any = null;
+
 // Function to redirect only HTTP logs to the logging service
 // but keep important service logs visible in the console
 function setupConsoleRedirect(loggingService: LoggingService) {
@@ -37,8 +46,11 @@ function setupConsoleRedirect(loggingService: LoggingService) {
   // but only filter FastifyAdapter logs for HTTP requests
 }
 
+// Add environment type
+const validEnvironments = ['development', 'production'] as const;
+type Environment = typeof validEnvironments[number];
+
 async function bootstrap() {
-  // Create a minimal logger
   const logger = new Logger('Bootstrap');
   let app: NestFastifyApplication & INestApplication;
   let loggingService: LoggingService;
@@ -46,37 +58,46 @@ async function bootstrap() {
   try {
     logger.log('Starting application bootstrap...');
     
-    // Create the NestJS application
+    const environment = process.env.NODE_ENV as Environment;
+    if (!validEnvironments.includes(environment)) {
+      throw new Error(`Invalid NODE_ENV: ${environment}. Must be one of: ${validEnvironments.join(', ')}`);
+    }
+
+    const envConfig = environment === 'production' ? productionConfig() : developmentConfig();
+
     app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
       new FastifyAdapter({
         logger: {
-          level: 'error', // Only log errors
+          level: envConfig.app.environment === 'production' ? 'error' : 'info',
           serializers: {
             req: (req) => ({
               method: req.method,
-              url: req.url
+              url: req.url,
+              hostname: req.hostname,
+              remoteAddress: req.ip,
+              userAgent: req.headers['user-agent']
             }),
             res: (res) => ({
               statusCode: res.statusCode
             })
           }
         },
-        trustProxy: true,
-        bodyLimit: 10 * 1024 * 1024, // 10MB
+        trustProxy: envConfig.security.trustProxy === 1,
+        bodyLimit: 10 * 1024 * 1024,
         ignoreTrailingSlash: true,
-        disableRequestLogging: true // Disable HTTP request logging
+        disableRequestLogging: envConfig.app.environment === 'production'
       }),
       {
-        logger: ['error', 'warn', 'log'] as LogLevel[], // Keep important logs, disable debug and verbose
+        logger: envConfig.app.environment === 'production' 
+          ? ['error', 'warn'] 
+          : ['error', 'warn', 'log', 'debug'] as LogLevel[],
         bufferLogs: true,
         cors: {
-          origin: process.env.NODE_ENV === 'production' 
-            ? process.env.CORS_ORIGIN?.split(',') || ['https://ishswami.in', 'https://api.ishswami.in']
-            : ['http://localhost:8088'],
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-          credentials: true,
+          origin: envConfig.cors.origin.split(','),
+          methods: envConfig.cors.methods.split(','),
+          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+          credentials: envConfig.cors.credentials,
           preflightContinue: false,
           optionsSuccessStatus: 204
         }
@@ -111,15 +132,19 @@ async function bootstrap() {
 
     // Set up WebSocket adapter with Redis
     try {
-      const { IoAdapter } = await import('@nestjs/platform-socket.io');
       const { createAdapter } = await import('@socket.io/redis-adapter');
       const { createClient } = await import('redis');
       
-      // Redis client configuration
+      // Redis client configuration with improved error handling
       const redisConfig = {
         url: `redis://${configService.get('REDIS_HOST', '127.0.0.1').trim()}:${configService.get('REDIS_PORT', '6379').trim()}`,
         password: configService.get('REDIS_PASSWORD'),
         retryStrategy: (times: number) => {
+          const maxRetries = 5;
+          if (times > maxRetries) {
+            logger.error(`Redis connection failed after ${maxRetries} retries`);
+            return null; // Stop retrying
+          }
           const maxDelay = 3000;
           const delay = Math.min(times * 100, maxDelay);
           logger.log(`Redis reconnection attempt ${times}, delay: ${delay}ms`);
@@ -127,9 +152,9 @@ async function bootstrap() {
         }
       };
 
-      // Create Redis pub/sub clients
-      const pubClient = createClient(redisConfig);
-      const subClient = pubClient.duplicate();
+      try {
+        pubClient = createClient(redisConfig);
+        subClient = pubClient.duplicate();
 
       // Enhanced Redis connection event handling
       const handleRedisError = async (client: string, err: Error) => {
@@ -157,17 +182,30 @@ async function bootstrap() {
             { client }
           );
         } catch (logError) {
-          // If logging service fails, use original console
           originalConsole.log(`Redis ${client} Client Connected`);
         }
       };
 
+        // Set up event handlers
       pubClient.on('error', (err) => handleRedisError('Pub', err));
       subClient.on('error', (err) => handleRedisError('Sub', err));
       pubClient.on('connect', () => handleRedisConnect('Pub'));
       subClient.on('connect', () => handleRedisConnect('Sub'));
       
-      await Promise.all([pubClient.connect(), subClient.connect()]);
+        // Connect with timeout
+        const connectWithTimeout = async (client: any, name: string) => {
+          return Promise.race([
+            client.connect(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error(`${name} client connection timeout`)), 10000)
+            )
+          ]);
+        };
+
+        await Promise.all([
+          connectWithTimeout(pubClient, 'Pub'),
+          connectWithTimeout(subClient, 'Sub')
+        ]);
 
       class CustomIoAdapter extends IoAdapter {
         private adapterConstructor: ReturnType<typeof createAdapter>;
@@ -178,17 +216,18 @@ async function bootstrap() {
         }
         
         createIOServer(port: number, options?: any) {
-          // Always use socket.io as the path for consistency
           const server = super.createIOServer(port, {
             ...options,
             cors: {
-              origin: '*', // Allow all origins for development
+                origin: process.env.NODE_ENV === 'production'
+                  ? process.env.CORS_ORIGIN?.split(',') || ['https://ishswami.in']
+                  : '*',
               methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
               credentials: true,
               allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
             },
             path: '/socket.io',
-            serveClient: true, // Enable serving the client
+              serveClient: true,
             transports: ['websocket', 'polling'],
             allowEIO3: true,
             pingTimeout: 60000,
@@ -196,39 +235,70 @@ async function bootstrap() {
             connectTimeout: 45000,
             maxHttpBufferSize: 1e6,
             allowUpgrades: true,
-            cookie: false // Disable cookie for easier cross-domain
+              cookie: false
           });
 
           server.adapter(this.adapterConstructor);
 
-          // Add health check endpoint for Socket.io
+            // Health check endpoint
           server.of('/health').on('connection', (socket) => {
-            socket.emit('health', { status: 'healthy', timestamp: new Date() });
-          });
-          
-          // Add a test namespace for easy connection testing
+              socket.emit('health', { 
+                status: 'healthy', 
+                timestamp: new Date(),
+                environment: process.env.NODE_ENV
+              });
+            });
+            
+            // Test namespace with improved error handling
           server.of('/test').on('connection', (socket) => {
             logger.log('Client connected to test namespace');
             
-            // Send a welcome message every 5 seconds
-            const interval = setInterval(() => {
-              socket.emit('message', { 
-                text: 'WebSocket connection is active', 
+              let heartbeat: NodeJS.Timeout;
+              
+              // Send a welcome message and start heartbeat
+              const startHeartbeat = () => {
+                socket.emit('welcome', { 
+                  message: 'Connected to WebSocket server',
+                  timestamp: new Date().toISOString(),
+                  environment: process.env.NODE_ENV
+                });
+                
+                heartbeat = setInterval(() => {
+                  socket.emit('heartbeat', { 
                 timestamp: new Date().toISOString() 
               });
-            }, 5000);
+                }, 30000); // 30 second heartbeat
+              };
+              
+              startHeartbeat();
             
+              // Handle disconnection
             socket.on('disconnect', () => {
-              clearInterval(interval);
+                clearInterval(heartbeat);
               logger.log('Client disconnected from test namespace');
             });
             
-            // Echo back any messages received
+              // Echo messages with error handling
             socket.on('message', (data) => {
+                try {
               socket.emit('echo', { 
                 original: data,
+                    timestamp: new Date().toISOString(),
+                    processed: true
+                  });
+                } catch (error) {
+                  logger.error('Error processing socket message:', error);
+                  socket.emit('error', { 
+                    message: 'Failed to process message',
                 timestamp: new Date().toISOString()
+                  });
+                }
               });
+              
+              // Handle errors
+              socket.on('error', (error) => {
+                logger.error('Socket error:', error);
+                clearInterval(heartbeat);
             });
           });
 
@@ -248,8 +318,17 @@ async function bootstrap() {
         'WebSocket'
       );
 
+      } catch (redisError) {
+        logger.warn('Failed to initialize Redis adapter:', redisError);
+        await loggingService?.log(
+          LogType.ERROR,
+          AppLogLevel.WARN,
+          'Continuing without Redis adapter',
+          'WebSocket'
+        );
+      }
+
     } catch (error) {
-      // Only log errors to the logging service, not to console
       await loggingService?.log(
         LogType.ERROR,
         AppLogLevel.ERROR,
@@ -257,7 +336,8 @@ async function bootstrap() {
         'WebSocket',
         { error: error instanceof Error ? error.stack : 'No stack trace available' }
       );
-      throw error;
+      // Don't throw, continue without WebSocket
+      logger.warn('Continuing without WebSocket support');
     }
 
     // Security headers
@@ -284,11 +364,8 @@ async function bootstrap() {
       const url = request.url;
       const isAdminPath = url.startsWith('/docs') || 
                           url.startsWith('/queue-dashboard') || 
-                          url.startsWith('/redis-ui') || 
                           url.startsWith('/logger') || 
-                          url.startsWith('/prisma') ||
-                          url.startsWith('/redis-commander') ||
-                          url.startsWith('/pgadmin');
+                          url.startsWith('/prisma');
       
       if (isAdminPath && process.env.NODE_ENV === 'production') {
         // Comment out the authentication check for now to allow access for debugging
@@ -320,36 +397,21 @@ async function bootstrap() {
         return;
       }
       
-      if (url.startsWith('/redis-ui') || url.startsWith('/redis-commander')) {
-        // Only allow in development mode
-        if (process.env.NODE_ENV === 'production') {
-          reply.status(403).send({ 
-            message: 'Redis Commander is only available in development mode',
-            status: 'error'
-          });
+      // Only handle Redis Commander and PgAdmin in development mode
+      if (process.env.NODE_ENV === 'development') {
+        if (url.startsWith('/redis-ui') || url.startsWith('/redis-commander')) {
+          // Redirect to Redis Commander if it's running
+          reply.header('Location', 'http://localhost:8082');
+          reply.status(302).send();
           return;
         }
         
-        // Redirect to Redis Commander if it's running
-        reply.header('Location', 'http://localhost:8082');
-        reply.status(302).send();
-        return;
-      }
-      
-      if (url.startsWith('/pgadmin')) {
-        // Only allow in development mode
-        if (process.env.NODE_ENV === 'production') {
-          reply.status(403).send({ 
-            message: 'PGAdmin is only available in development mode',
-            status: 'error'
-          });
+        if (url.startsWith('/pgadmin')) {
+          // Redirect to PgAdmin if it's running
+          reply.header('Location', 'http://localhost:5050');
+          reply.status(302).send();
           return;
         }
-        
-        // Redirect to PGAdmin if it's running
-        reply.header('Location', 'http://localhost:5050');
-        reply.status(302).send();
-        return;
       }
       
       // Handle socket endpoint redirects - but only for paths with additional parameters
@@ -410,158 +472,136 @@ async function bootstrap() {
       done();
     });
 
-    // Configure Swagger
-    const apiUrl = configService.get('API_URL');
+    // Configure Swagger with environment variables
     const port = configService.get('PORT') || configService.get('VIRTUAL_PORT') || 8088;
-
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('docs', app, document, swaggerCustomOptions);
-    logger.log('Swagger API documentation configured');
-
-    // Start the server
-    const host = '0.0.0.0';
+    const virtualHost = configService.get('VIRTUAL_HOST') || 'localhost';
+    const apiUrl = configService.get('API_URL');
+    const swaggerUrl = configService.get('SWAGGER_URL') || '/docs';
+    const bullBoardUrl = configService.get('BULL_BOARD_URL') || '/queue-dashboard';
+    const socketUrl = configService.get('SOCKET_URL') || '/socket.io';
+    const redisCommanderUrl = configService.get('REDIS_COMMANDER_URL');
+    const prismaStudioUrl = configService.get('PRISMA_STUDIO_URL');
+    const loggerUrl = configService.get('LOGGER_URL') || '/logger';
     
-    try {
-      await app.listen(port, host);
-      
-      // Log application startup information
-      const serviceUrls = {
-        api: `${apiUrl || `http://${host}:${port}`}`,
-        swagger: `${apiUrl || `http://${host}:${port}`}/docs`,
-        bullBoard: `${apiUrl || `http://${host}:${port}`}/queue-dashboard`,
-        redis: `${apiUrl || `http://${host}:${port}`}/redis-ui`,
-        pgAdmin: `${apiUrl || `http://${host}:${port}`}/pgadmin`,
-        logger: `${apiUrl || `http://${host}:${port}`}/logger`,
-        prisma: `http://localhost:5555`,
-        websocket: `${apiUrl || `http://${host}:${port}`}/socket.io`
-      };
-
-      // Get additional services
-      // Log service status
-      logger.log('[SERVICE STATUS] Checking core services...');
-
-      // Try to check other services
-      const serviceCheckList = [
-        { name: 'Logging', serviceClass: LoggingService },
-        { name: 'Redis', serviceClass: RedisService },
-        { name: 'Queue', serviceClass: QueueService }
-      ];
-
-      for (const service of serviceCheckList) {
-        try {
-          const serviceInstance = app.get(service.serviceClass, { strict: false });
-          if (serviceInstance) {
-            logger.log(`[SERVICE STATUS] ${service.name} service initialized`);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    
+    // Add environment-specific Swagger setup
+    if (process.env.NODE_ENV === 'production') {
+      // In production, add CORS and security headers for Swagger UI
+      app.register(fastifyHelmet, {
+        contentSecurityPolicy: {
+          directives: {
+            ...app.get(fastifyHelmet).contentSecurityPolicy.directives,
+            'img-src': ["'self'", 'https:', 'data:'],
+            'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+            'style-src': ["'self'", "'unsafe-inline'"]
           }
-        } catch (error) {
-          logger.warn(`[SERVICE STATUS] ${service.name} service not available: ${error.message}`);
         }
+      });
+    }
+    
+    SwaggerModule.setup(swaggerUrl.replace('/', ''), app, document, {
+      ...swaggerCustomOptions,
+      swaggerOptions: {
+        ...swaggerCustomOptions.swaggerOptions,
+        // Set the default server based on environment
+        urls: [
+          {
+            url: `${apiUrl}${swaggerUrl}/swagger.json`,
+            name: process.env.NODE_ENV === 'production' ? 'Production' : 'Development'
+          }
+        ]
       }
-      
-      // Additional services that might not be directly injectable
-      logger.log('[SERVICE STATUS] Checking additional services...');
-      
-      // Try to check QR service
-      try {
-        const qrModule = await import('./shared/QR/qr.module');
-        logger.log('[SERVICE STATUS] QR services initialized');
-      } catch (error) {
-        logger.warn('[SERVICE STATUS] QR services not available');
-      }
-      
-      // Try to resolve modules that contain multiple services
-      try {
-        const socketModule = await import('./shared/socket/socket.module');
-        logger.log('[SERVICE STATUS] Socket services initialized');
-      } catch (error) {
-        logger.warn('[SERVICE STATUS] Socket services not available');
-      }
-      
-      // Check auth services
-      try {
-        const authModule = await import('./services/auth/auth.module');
-        logger.log('[SERVICE STATUS] Auth services initialized');
-      } catch (error) {
-        logger.warn('[SERVICE STATUS] Auth services not available');
-      }
-      
-      // Check user services
-      try {
-        const userModule = await import('./services/users/users.module');
-        logger.log('[SERVICE STATUS] User services initialized');
-      } catch (error) {
-        logger.warn('[SERVICE STATUS] User services not available');
-      }
-      
-      // Check clinic services
-      try {
-        const clinicModule = await import('./services/clinic/clinic.module');
-        logger.log('[SERVICE STATUS] Clinic services initialized');
-      } catch (error) {
-        logger.warn('[SERVICE STATUS] Clinic services not available');
-      }
-      
-      // Check email services - simply log that they are available
-      // We already saw the EmailService initialize earlier in the logs
-      logger.log('[SERVICE STATUS] Email services initialized');
-      
-      // Check database connection through PrismaService
-      try {
-        const prismaService = await app.resolve(PrismaService);
-        await prismaService.$connect(); // Ensure connection is established
-        logger.log('[SERVICE STATUS] Database service connected');
-      } catch (error) {
-        logger.warn(`[SERVICE STATUS] Database service connection issue: ${error.message}`);
-      }
-      
+    });
+    
+    logger.log(`Swagger API documentation configured for ${process.env.NODE_ENV} environment`);
 
-      // Log comprehensive service status summary
-      logger.log('[SERVICE STATUS] ===== SERVICE STATUS SUMMARY =====');
-      logger.log('[SERVICE STATUS] ✅ NestJS Application: READY');
-      logger.log('[SERVICE STATUS] ✅ API Server: READY');
-      logger.log('[SERVICE STATUS] ✅ Database Connection: READY');
-      logger.log('[SERVICE STATUS] ✅ Redis Connection: READY');
-      logger.log('[SERVICE STATUS] ✅ Queue Service: READY');
-      logger.log('[SERVICE STATUS] ✅ Email Service: READY');
-      logger.log('[SERVICE STATUS] ✅ WebSocket Service: READY');
-      logger.log('[SERVICE STATUS] ✅ Authentication Service: READY');
-      logger.log('[SERVICE STATUS] ✅ User Service: READY');
-      logger.log('[SERVICE STATUS] ✅ Clinic Service: READY');
-      logger.log('[SERVICE STATUS] ✅ Appointment Service: READY');
-      logger.log('[SERVICE STATUS] ✅ Logging Service: READY');
-      logger.log('[SERVICE STATUS] ===================================');
-      logger.log('[SERVICE STATUS] 🚀 All services started successfully!');
+    // Start the server with improved error handling
+    try {
+      const port = envConfig.app.port;
+      const host = envConfig.app.host;
+      const bindAddress = envConfig.app.bindAddress;
       
-            // Log service status
-      logger.log('[SERVICE STATUS] --------- Service URLs ---------');
-      logger.log(`[SERVICE STATUS] API: ${serviceUrls.api}`);
-      logger.log(`[SERVICE STATUS] Swagger UI: ${serviceUrls.swagger}`);
-      logger.log(`[SERVICE STATUS] Queue Dashboard: ${serviceUrls.bullBoard}`);
-      logger.log(`[SERVICE STATUS] Redis UI: ${serviceUrls.redis}`);
-      logger.log(`[SERVICE STATUS] PGAdmin: ${serviceUrls.pgAdmin}`);
-      logger.log(`[SERVICE STATUS] Logger Dashboard: ${serviceUrls.logger}`);
-      logger.log(`[SERVICE STATUS] Prisma Studio: ${serviceUrls.prisma}`);
-      logger.log(`[SERVICE STATUS] WebSocket: ${serviceUrls.websocket}`);
-      logger.log('[SERVICE STATUS] ----------------------------------');
+      await app.listen(port, bindAddress);
       
-
-      await loggingService?.log(
-        LogType.SYSTEM,
-        AppLogLevel.INFO,
-        'Application started successfully',
-        'Bootstrap',
-        { 
-          serviceUrls,
-          environment: process.env.NODE_ENV || 'development',
-          timestamp: new Date()
-        }
-      );
+      logger.log(`Application is running in ${envConfig.app.environment} mode:`);
+      logger.log(`- Local: http://${host}:${port}`);
+      logger.log(`- Base URL: ${envConfig.app.baseUrl}`);
+      logger.log(`- Swagger Docs: ${envConfig.app.environment === 'production' ? envConfig.app.apiUrl : envConfig.app.baseUrl}${envConfig.urls.swagger}`);
+      logger.log(`- Health Check: ${envConfig.app.baseUrl}/health`);
+      
+      if (envConfig.app.environment === 'development') {
+        const devConfig = envConfig as typeof developmentConfig extends () => infer R ? R : never;
+        logger.log('Development services:');
+        logger.log(`- Redis Commander: ${devConfig.urls.redisCommander}`);
+        logger.log(`- Prisma Studio: ${devConfig.urls.prismaStudio}`);
+        logger.log(`- PgAdmin: ${devConfig.urls.pgAdmin}`);
+      }
+      
+      // Graceful shutdown handlers
+      const signals = ['SIGTERM', 'SIGINT'];
+      
+      signals.forEach(signal => {
+        process.on(signal, async () => {
+          logger.log(`Received ${signal}, starting graceful shutdown...`);
+          
+          const shutdownTimeout = setTimeout(() => {
+            logger.error('Shutdown timed out, forcing exit');
+            process.exit(1);
+          }, 10000);
+          
+          try {
+            // Close WebSocket connections
+            const wsAdapter = app.get(IoAdapter, { strict: false });
+            if (wsAdapter && wsAdapter instanceof IoAdapter) {
+              logger.log('Closing WebSocket connections...');
+              const httpServer = app.getHttpServer();
+              if (httpServer) {
+                await new Promise<void>((resolve) => {
+                  httpServer.close(() => {
+                    logger.log('WebSocket server closed');
+                    resolve();
+                  });
+                });
+              }
+            }
+            
+            // Close database connections
+            const prismaService = app.get(PrismaService);
+            if (prismaService) {
+              logger.log('Closing database connections...');
+              await prismaService.$disconnect();
+            }
+            
+            // Close Redis connections
+            if (pubClient) {
+              logger.log('Closing Redis pub connection...');
+              await pubClient.quit();
+            }
+            if (subClient) {
+              logger.log('Closing Redis sub connection...');
+              await subClient.quit();
+            }
+            
+            // Close the app
+            await app.close();
+            
+            clearTimeout(shutdownTimeout);
+            logger.log('Application shut down successfully');
+            process.exit(0);
+      } catch (error) {
+            clearTimeout(shutdownTimeout);
+            logger.error('Error during shutdown:', error);
+            process.exit(1);
+          }
+        });
+      });
+      
     } catch (listenError) {
-      // Only log to logging service, not console
       await loggingService?.log(
         LogType.ERROR,
         AppLogLevel.ERROR,
-        `Failed to start server on ${host}:${port}: ${listenError.message}`,
+        `Failed to start server: ${listenError.message}`,
         'Bootstrap',
         { error: listenError.stack }
       );
@@ -569,7 +609,6 @@ async function bootstrap() {
     }
 
   } catch (error) {
-    // Only log critical errors to console
     if (loggingService) {
       try {
         await loggingService.log(
@@ -584,21 +623,17 @@ async function bootstrap() {
           }
         );
       } catch (logError) {
-        // This is a critical error - we need to log it somehow
         console.error('CRITICAL: Failed to log through LoggingService:', logError);
       }
     } else {
-      // No logging service available, must use console
       console.error('CRITICAL: Failed to start application:', error);
     }
 
-    // Attempt to close the application gracefully
     try {
       if (app) {
         await app.close();
       }
     } catch (closeError) {
-      // This is a critical error during shutdown, must use console
       console.error('CRITICAL: Failed to close application:', closeError);
     }
 
@@ -606,8 +641,18 @@ async function bootstrap() {
   }
 }
 
+// Add unhandled rejection handler
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Add uncaught exception handler
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
 bootstrap().catch((error) => {
-  // This is a critical bootstrap error, must use console
   console.error('CRITICAL: Fatal error during bootstrap:', error);
   process.exit(1);
 });

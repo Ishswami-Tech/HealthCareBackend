@@ -4,6 +4,22 @@ export default () => ({
     apiPrefix: process.env.API_PREFIX || '/api/v1',
     environment: 'production',
     isDev: false,
+    host: process.env.HOST || 'api.ishswami.in',
+    bindAddress: process.env.BIND_ADDRESS || '0.0.0.0',
+    baseUrl: process.env.BASE_URL || 'http://api.ishswami.in',
+    apiUrl: process.env.API_URL || 'http://api.ishswami.in',
+  },
+  domains: {
+    main: process.env.MAIN_DOMAIN || 'ishswami.in',
+    api: process.env.API_DOMAIN || 'api.ishswami.in',
+    frontend: process.env.FRONTEND_DOMAIN || 'ishswami.in',
+  },
+  urls: {
+    swagger: process.env.SWAGGER_URL || '/docs',
+    bullBoard: process.env.BULL_BOARD_URL || '/queue-dashboard',
+    socket: process.env.SOCKET_URL || '/socket.io',
+    prismaStudio: process.env.PRISMA_STUDIO_URL || '/prisma',
+    frontend: process.env.FRONTEND_URL || 'http://ishswami.in',
   },
   database: {
     url: process.env.DATABASE_URL_PROD || process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
