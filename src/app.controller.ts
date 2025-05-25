@@ -446,8 +446,33 @@ export class AppController {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${title}</title>
+    <!-- Primary CDN -->
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- Backup CDN -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <!-- Fallback styles in case CDNs fail -->
     <style>
+        /* Critical styles that should work even if Tailwind fails */
+        .container { width: 100%; max-width: 1200px; margin: 0 auto; padding: 1rem; }
+        .grid { display: grid; }
+        .flex { display: flex; }
+        .hidden { display: none; }
+        .text-center { text-align: center; }
+        .mb-8 { margin-bottom: 2rem; }
+        .p-5 { padding: 1.25rem; }
+        .rounded { border-radius: 0.25rem; }
+        .bg-white { background-color: #ffffff; }
+        .text-gray-800 { color: #1a202c; }
+        .font-semibold { font-weight: 600; }
+        
+        /* Responsive grid fallbacks */
+        @media (min-width: 768px) {
+            .md\\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (min-width: 1024px) {
+            .lg\\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+        
         /* General styles */
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -455,11 +480,6 @@ export class AppController {
             line-height: 1.5;
             font-size: 14px;
             background-color: #f8fafc;
-        }
-        .container {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 1rem;
         }
         
         /* Health Dashboard styles */
@@ -709,7 +729,10 @@ export class AppController {
             height: 100%;
             display: flex;
             flex-direction: column;
-            background-color: white;
+            background-color: #ffffff;
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 1rem;
         }
         .service-card:hover {
             transform: translateY(-2px);
@@ -745,7 +768,7 @@ export class AppController {
           <!-- Service Cards Section -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8" id="serviceCards">
             ${services.map(service => `
-                <div class="service-card p-5 ${service.active ? 'border-t-4 border-green-500' : 'border-t-4 border-red-500'}" data-service="${service.name.toLowerCase().replace(/\s+/g, '-')}">
+                <div class="service-card p-5 ${service.active ? 'border-t-4 border-green-500' : 'border-t-4 border-red-500'} bg-white shadow-sm" data-service="${service.name.toLowerCase().replace(/\s+/g, '-')}">
                     <div class="flex items-center justify-between mb-3">
                         <h2 class="text-base font-semibold text-gray-800">${service.name}</h2>
                         <span class="px-2 py-1 rounded-full text-xs font-medium ${service.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
@@ -900,10 +923,10 @@ export class AppController {
                 <div class="flex items-center">
                   <div id="queueIndicator" class="health-status-indicator indicator-healthy"></div>
                   <h3 class="service-title">Queue Service</h3>
-          </div>
+                </div>
                 <span id="queueStatus" class="text-sm text-green-600 font-medium">Healthy</span>
-        </div>
-          
+              </div>
+              
               <div class="service-content">
                 <p id="queueDetails" class="text-gray-600 mb-2 text-sm">Queue service is running</p>
                 <div class="health-metrics">
