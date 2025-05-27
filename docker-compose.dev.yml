@@ -58,10 +58,7 @@ services:
         cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/ &&
         echo 'Generating Prisma Client...' &&
         npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
-        echo 'Creating initial migration...' &&
-        npx prisma migrate dev --name init --schema=/app/src/shared/database/prisma/schema.prisma --create-only &&
-        echo 'Applying migrations...' &&
-        npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma &&
+       
         echo 'Seeding database...' &&
         npx prisma db seed &&
         echo 'Starting NestJS in development mode...' &&
