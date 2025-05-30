@@ -1,7 +1,8 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Scope, Logger } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
+import { connectionManagementMiddleware } from './middleware/connection-management.middleware';
 
 // Define global type for Prisma
 const globalForPrisma = globalThis as unknown as {
@@ -15,6 +16,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private static connectionCount = 0;
   private static readonly MAX_CONNECTIONS = 90; // Leave some margin for other operations
   private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
+  private static instance: PrismaService;
+  private readonly maxRetries = 3;
+  private readonly retryDelay = 1000; // 1 second
 
   constructor() {
     // If we already have a Prisma instance, return it
@@ -23,28 +27,40 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
 
     super({
-      datasourceUrl: process.env.DATABASE_URL,
-      log: ['error', 'warn'],
-      transactionOptions: {
-        maxWait: 5000, // 5 seconds max wait time
-        timeout: 5000, // 5 seconds timeout
-      },
+      log: [
+        { emit: 'stdout', level: 'query' },
+        { emit: 'stdout', level: 'error' },
+        { emit: 'stdout', level: 'info' },
+        { emit: 'stdout', level: 'warn' },
+      ],
+      errorFormat: 'minimal',
     });
 
-    // Configure connection events
+    // Apply connection management middleware
+    this.$use(connectionManagementMiddleware);
+
+    // Monitor database events
     this.$on('beforeExit', async () => {
-      this.logger.log('Prisma Client beforeExit event');
+      console.log('Prisma Client beforeExit event');
     });
 
-    // Handle query errors
-    this.$use(async (params, next) => {
-      try {
-        return await next(params);
-      } catch (error) {
-        this.logger.error('Prisma query error:', error);
-        throw error;
-      }
-    });
+    // Monitor queries
+    if (process.env.NODE_ENV !== 'production') {
+      this.$use(async (params, next) => {
+        const startTime = Date.now();
+        const result = await next(params);
+        const duration = Date.now() - startTime;
+        
+        if (duration > 1000) {
+          console.warn('Slow Query:', {
+            model: params.model,
+            action: params.action,
+            duration: `${duration}ms`,
+          });
+        }
+        return result;
+      });
+    }
 
     // Store the instance globally in development
     if (process.env.NODE_ENV !== 'production') {
@@ -116,19 +132,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    try {
-      // Only connect if we haven't exceeded max connections
-      if (PrismaService.connectionCount < PrismaService.MAX_CONNECTIONS) {
-        await this.connectWithTimeout();
-        PrismaService.connectionCount++;
-        this.logger.log(`Connected to database successfully. Active connections: ${PrismaService.connectionCount}`);
-      } else {
-        this.logger.warn(`Max connections (${PrismaService.MAX_CONNECTIONS}) reached. Reusing existing connection.`);
-      }
-    } catch (error) {
-      this.logger.error('Failed to connect to database:', error);
-      throw error;
-    }
+    await this.connectWithRetry();
   }
 
   async onModuleDestroy() {
@@ -143,19 +147,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
   }
 
-  private async connectWithTimeout(): Promise<void> {
+  private async connectWithRetry(retryCount = 0): Promise<void> {
     try {
-      await Promise.race([
-        this.$connect(),
-        new Promise((_, reject) => {
-          setTimeout(() => {
-            reject(new Error(`Database connection timeout after ${PrismaService.CONNECTION_TIMEOUT}ms`));
-          }, PrismaService.CONNECTION_TIMEOUT);
-        }),
-      ]);
+      await this.$connect();
+      console.log('Successfully connected to database');
     } catch (error) {
-      this.logger.error('Connection timeout or error:', error);
-      throw error;
+      if (retryCount < this.maxRetries) {
+        console.warn(`Failed to connect to database. Retrying in ${this.retryDelay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        await this.connectWithRetry(retryCount + 1);
+      } else {
+        console.error('Failed to connect to database after maximum retries');
+        throw error;
+      }
     }
   }
 
@@ -217,5 +221,46 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // Set the tenant context
     this.setCurrentTenantId(clinicId);
     return this;
+  }
+
+  // Method to handle transactions with retries
+  async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    retryCount = 0,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (retryCount < this.maxRetries && this.isRetryableError(error)) {
+        console.warn(`Operation failed. Retrying in ${this.retryDelay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        return this.executeWithRetry(operation, retryCount + 1);
+      }
+      throw error;
+    }
+  }
+
+  // Helper method to determine if an error is retryable
+  private isRetryableError(error: any): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === 'P2024' || // Connection pool timeout
+       error.code === 'P2028' || // Transaction timeout
+       error.code === 'P2034' || // Transaction failed
+       error.code === 'P2037')   // Connection lost
+    );
+  }
+
+  // Method to get tenant-specific prisma instance
+  async withTenant(tenantId: string) {
+    return this.$extends({
+      query: {
+        $allOperations({ args, query }) {
+          // Add tenant context to all queries
+          args.where = { ...args.where, tenantId };
+          return query(args);
+        },
+      },
+    });
   }
 }

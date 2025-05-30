@@ -22,7 +22,7 @@ services:
       NODE_ENV: production
       CORS_ORIGIN: "*"
       FRONTEND_URL: https://ishswami.in
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=20&pool_timeout=30
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TRUST_PROXY: 1
@@ -38,6 +38,22 @@ services:
       BULL_BOARD_URL: /queue-dashboard
       SOCKET_URL: /socket.io
       LOGGER_URL: /logger
+      BASE_URL: https://api.ishswami.in
+      API_PREFIX: /api/v1
+      MAIN_DOMAIN: ishswami.in
+      API_DOMAIN: api.ishswami.in
+      FRONTEND_DOMAIN: ishswami.in
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
+      JWT_EXPIRATION: 24h
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: "true"
+      SECURITY_RATE_LIMIT: "true"
+      SECURITY_RATE_LIMIT_MAX: 1000
+      SECURITY_RATE_LIMIT_WINDOW_MS: 150
+      REDIS_TTL: 3600
+      REDIS_PREFIX: "healthcare:"
+      RATE_LIMIT_TTL: 60
+      RATE_LIMIT_MAX: 100
     expose:
       - "${API_PORT:-8088}"
     networks:
@@ -90,8 +106,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
-      POSTGRES_MAX_CONNECTIONS: 100
-      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_MAX_CONNECTIONS: 200
+      POSTGRES_SHARED_BUFFERS: 512MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -106,15 +122,33 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 1G
+          cpus: '2'
+          memory: 2G
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.5'
+          memory: 512M
     restart: unless-stopped
     shm_size: 128mb
     command: >
-      postgres -c max_connections=100 -c shared_buffers=256MB -c effective_cache_size=768MB -c maintenance_work_mem=64MB -c checkpoint_completion_target=0.9 -c wal_buffers=16MB -c default_statistics_target=100 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c work_mem=4MB -c min_wal_size=1GB -c max_wal_size=4GB -c max_worker_processes=4 -c max_parallel_workers_per_gather=2 -c max_parallel_workers=4 -c max_parallel_maintenance_workers=2
+      postgres -c max_connections=200 
+      -c shared_buffers=512MB 
+      -c effective_cache_size=1536MB 
+      -c maintenance_work_mem=128MB 
+      -c checkpoint_completion_target=0.9 
+      -c wal_buffers=16MB 
+      -c default_statistics_target=100 
+      -c random_page_cost=1.1 
+      -c effective_io_concurrency=200 
+      -c work_mem=8MB 
+      -c min_wal_size=2GB 
+      -c max_wal_size=8GB 
+      -c max_worker_processes=8 
+      -c max_parallel_workers_per_gather=4 
+      -c max_parallel_workers=8 
+      -c max_parallel_maintenance_workers=4
+      -c idle_in_transaction_session_timeout=60000
+      -c statement_timeout=60000
+      -c lock_timeout=60000
     labels:
       - "com.docker.compose.service=postgres"
       - "app.component=database"
@@ -174,4 +208,4 @@ volumes:
 networks:
   app-network:
     name: app-network
-    external: true
+   
