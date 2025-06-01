@@ -4,11 +4,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { connectionManagementMiddleware } from './middleware/connection-management.middleware';
 
-// Define global type for Prisma
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
-
 @Injectable({ scope: Scope.REQUEST })
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
@@ -16,14 +11,14 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private static connectionCount = 0;
   private static readonly MAX_CONNECTIONS = 90; // Leave some margin for other operations
   private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
-  private static instance: PrismaService;
+  private static instance: PrismaService | null = null;
   private readonly maxRetries = 3;
   private readonly retryDelay = 1000; // 1 second
 
   constructor() {
     // If we already have a Prisma instance, return it
-    if (globalForPrisma.prisma) {
-      return globalForPrisma.prisma as PrismaService;
+    if (PrismaService.instance) {
+      return PrismaService.instance;
     }
 
     super({
@@ -62,10 +57,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       });
     }
 
-    // Store the instance globally in development
-    if (process.env.NODE_ENV !== 'production') {
-      globalForPrisma.prisma = this;
-    }
+    // Store the instance
+    PrismaService.instance = this;
 
     // Add middleware to enforce tenant isolation
     this.$use(async (params, next) => {
@@ -145,6 +138,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       if (PrismaService.connectionCount > 0) {
         await this.$disconnect();
         PrismaService.connectionCount--;
+        PrismaService.instance = null; // Clear the singleton instance
         this.logger.log(`Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`);
       }
     } catch (error) {
