@@ -69,6 +69,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     // Add middleware to enforce tenant isolation
     this.$use(async (params, next) => {
+      // Skip tenant isolation for health checks and system operations
+      if (params.action === 'executeRaw' || params.action === 'queryRaw' || !params.model) {
+        return next(params);
+      }
+
       // Only apply tenant filter to models that have clinicId field
       const modelsWithTenantId = [
         'Appointment', 'ClinicLocation', 'ClinicAdmin', 'Therapy', 
