@@ -196,11 +196,8 @@ export class HealthService {
     }
 
     try {
-      // Ensure we're using the system tenant
-      this.prisma.setCurrentTenantId(this.SYSTEM_TENANT_ID);
-      
-      // Perform a simple query
-      await this.prisma.$queryRaw`SELECT 1`;
+      // Use a simple raw query that doesn't involve the middleware
+      await this.prisma.$executeRawUnsafe('SELECT 1');
       
       this.databaseStatus = 'healthy';
       this.lastDatabaseCheck = now;
