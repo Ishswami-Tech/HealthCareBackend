@@ -87,10 +87,8 @@ services:
           cpus: '0.5'
           memory: 512M
     command: >
-      sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
-             npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma &&
-             mkdir -p /app/logs &&  npx prisma db seed &&
-             node dist/main.js"
+      sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&   npx prisma db seed &&
+      node dist/main.js"
     labels:
       - "com.docker.compose.service=api"
       - "app.component=backend"
