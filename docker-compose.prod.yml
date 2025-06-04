@@ -17,7 +17,7 @@ services:
       - .env.production
     volumes:
       - ./logs:/app/logs
-      - /etc/letsencrypt:/etc/letsencrypt:ro  # Add read-only access to Let's Encrypt certificates
+      - /etc/letsencrypt:/etc/letsencrypt:ro # Add read-only access to Let's Encrypt certificates
     environment:
       NODE_ENV: production
       CORS_ORIGIN: "*"
@@ -73,7 +73,14 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:${API_PORT:-8088}/health" ]
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:${API_PORT:-8088}/health",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -81,14 +88,17 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
+          cpus: "1.5"
           memory: 1.5G
         reservations:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 512M
     command: >
-      sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
-      node dist/main.js"
+      sh -c "
+        npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
+        npx prisma db push --schema=/app/src/shared/database/prisma/schema.prisma --accept-data-loss &&
+        node dist/main.js
+      "
     labels:
       - "com.docker.compose.service=api"
       - "app.component=backend"
@@ -112,7 +122,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.2
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -120,10 +130,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: "2"
           memory: 2G
         reservations:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 512M
     restart: unless-stopped
     shm_size: 128mb
@@ -164,7 +174,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.3
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -172,10 +182,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 384M
         reservations:
-          cpus: '0.1'
+          cpus: "0.1"
           memory: 128M
     restart: unless-stopped
     sysctls:
@@ -207,4 +217,3 @@ networks:
   app-network:
     name: app-network
     external: true
-   
