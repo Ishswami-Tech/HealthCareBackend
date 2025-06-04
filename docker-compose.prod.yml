@@ -110,14 +110,15 @@ services:
     hostname: postgres
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
       POSTGRES_MAX_CONNECTIONS: 200
       POSTGRES_SHARED_BUFFERS: 512MB
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     networks:
       app-network:
         ipv4_address: 172.18.0.2
@@ -157,6 +158,13 @@ services:
       -c idle_in_transaction_session_timeout=60000
       -c statement_timeout=60000
       -c lock_timeout=60000
+      -c listen_addresses='*'
+      -c log_connections=on
+      -c log_disconnections=on
+      -c tcp_keepalives_idle=60
+      -c tcp_keepalives_interval=10
+      -c tcp_keepalives_count=3
+      -c client_min_messages=notice
     labels:
       - "com.docker.compose.service=postgres"
       - "app.component=database"
