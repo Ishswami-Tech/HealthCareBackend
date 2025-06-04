@@ -1,5 +1,5 @@
 import { Controller, Post, Get, Body, Param, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { CheckInService } from './check-in.service';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
@@ -7,11 +7,15 @@ import { Roles } from '../../../libs/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { Clinic } from '../../../libs/decorators/clinic.decorator';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
+import { UseInterceptors } from '@nestjs/common';
+import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 
 @ApiTags('Check-in')
 @Controller('api/check-in')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
+@ApiSecurity('session-id')
 export class CheckInController {
   constructor(private readonly checkInService: CheckInService) {}
 

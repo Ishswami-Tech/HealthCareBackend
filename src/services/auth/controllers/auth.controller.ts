@@ -125,7 +125,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Login with password or OTP',
-    description: 'Authenticate using either password or OTP'
+    description: 'Authenticate using either password or OTP. Returns access token, session ID, and user information.'
   })
   @ApiBody({
     schema: {
@@ -144,8 +144,10 @@ export class AuthController {
     schema: {
       type: 'object',
       properties: {
-        accessToken: { type: 'string' },
-        refreshToken: { type: 'string' },
+        access_token: { type: 'string', description: 'JWT access token' },
+        session_id: { type: 'string', description: 'Session ID required for all authenticated requests' },
+        token_type: { type: 'string', example: 'Bearer' },
+        expires_in: { type: 'number', description: 'Token expiration time in seconds', example: 86400 },
         user: { 
           type: 'object',
           properties: {

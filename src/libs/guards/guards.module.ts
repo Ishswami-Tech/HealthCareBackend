@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
@@ -10,16 +9,12 @@ import { LoggingModule } from '../../shared/logging/logging.module';
 
 @Module({
   imports: [
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'your-secret-key',
-      signOptions: { expiresIn: '24h' },
-    }),
     RedisModule,
     RateLimitModule,
     PrismaModule,
     LoggingModule,
   ],
   providers: [JwtAuthGuard, RolesGuard, ClinicGuard],
-  exports: [JwtAuthGuard, RolesGuard, ClinicGuard, JwtModule],
+  exports: [JwtAuthGuard, RolesGuard, ClinicGuard],
 })
 export class GuardsModule {} 

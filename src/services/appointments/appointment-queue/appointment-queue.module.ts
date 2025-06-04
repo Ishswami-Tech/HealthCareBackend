@@ -7,12 +7,18 @@ import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { SocketModule } from '../../../shared/socket/socket.module';
+import { AuthModule } from '../../../services/auth/auth.module';
+import { RedisModule } from '../../../shared/cache/redis/redis.module';
+import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 
 @Module({
   imports: [
     PrismaModule,
     LoggingModule,
     SocketModule,
+    AuthModule,
+    RedisModule,
+    RateLimitModule,
     BullModule.registerQueueAsync({
       name: 'appointment-queue',
       imports: [ConfigModule],
