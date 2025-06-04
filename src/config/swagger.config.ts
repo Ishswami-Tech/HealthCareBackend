@@ -62,11 +62,12 @@ ${getEnvironmentConfig().app.environment === 'production' ? `
 💉 Clinic Management
 
 ### Authentication Steps
-1. First, use the \`/auth/login\` endpoint to get your access token
-2. Copy the \`access_token\` value from the response
+1. First, use the \`/auth/login\` endpoint to get your access token and session ID
+2. Copy both the \`access_token\` and \`sessionId\` values from the response
 3. Click the "Authorize" button at the top
 4. Enter the token in the format: Bearer <your_token>
-5. Click "Authorize"
+5. Enter the session ID in the x-session-id field
+6. Click "Authorize"
 
 ### Available Endpoints
 - API Documentation: ${getEnvironmentConfig().urls.swagger}
@@ -90,6 +91,7 @@ ${getEnvironmentConfig().app.environment !== 'production' ? `
   .addTag('Logging', 'System Logging And Monitoring')
   .addSecurityRequirements('JWT-auth')
   .addBearerAuth()
+  .addApiKey({ type: 'apiKey', in: 'header', name: 'x-session-id' }, 'session-id')
   .build();
 
 // Add servers after building the config
@@ -117,8 +119,17 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     deepLinking: true,
     tagsSorter: 'alpha',
     // Add support for both localhost and Docker URLs
-    urls: getApiServers()
+    urls: getApiServers(),
+    securityDefinitions: {
+      'session-id': {
+        type: 'apiKey',
+        in: 'header',
+        name: 'x-session-id',
+        description: 'Session ID obtained from login response'
+      }
+    }
   },
+  customSiteTitle: `Healthcare API Documentation (${getEnvironmentConfig().app.environment})`,
   customCss: `
     .swagger-ui {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
@@ -291,6 +302,15 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
       font-size: 1em;
       color: #2c3e50;
     }
-  `,
-  customSiteTitle: `Healthcare API Documentation (${getEnvironmentConfig().app.environment})`,
+
+    /* Session ID Authorization Styles */
+    .swagger-ui .auth-wrapper .authorize.session-id {
+      border-color: #28a745;
+      background-color: #28a745;
+    }
+
+    .swagger-ui .auth-wrapper .authorize.session-id svg {
+      fill: white;
+    }
+  `
 }; 

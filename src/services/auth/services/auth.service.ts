@@ -236,7 +236,14 @@ export class AuthService {
         access_token: accessToken,
         refresh_token: refreshToken,
         session_id: sessionId,
-        user: userWithoutPassword,
+    
+        token_type: 'Bearer',
+        expires_in: 24 * 60 * 60, // 24 hours in seconds
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role
+        },
         redirectPath: this.getRedirectPathForRole(user.role),
         permissions: this.getRolePermissions(user.role)
       };
