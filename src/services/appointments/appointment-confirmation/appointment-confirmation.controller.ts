@@ -1,7 +1,18 @@
-import { Controller, Get, Post, Body, Param, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Logger, UseGuards } from '@nestjs/common';
 import { AppointmentConfirmationService } from './appointment-confirmation.service';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../libs/guards/roles.guard';
+import { ClinicGuard } from '../../../libs/guards/clinic.guard';
+import { UseInterceptors } from '@nestjs/common';
+import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 
+@ApiTags('Appointment Confirmation')
 @Controller('api/appointments/confirmation')
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseInterceptors(TenantContextInterceptor)
+@ApiBearerAuth()
+@ApiSecurity('session-id')
 export class AppointmentConfirmationController {
   private readonly logger = new Logger(AppointmentConfirmationController.name);
 

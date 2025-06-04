@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../libs/guards/roles.guard';
 import { Roles } from '../../libs/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity } from '@nestjs/swagger';
 import { CreateClinicDto } from './dto/create-clinic.dto';
 import { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
 import { RegisterPatientDto } from './dto/register-patient.dto';
@@ -15,6 +15,7 @@ import { FastifyRequest } from 'fastify';
 
 @ApiTags('clinic')
 @ApiBearerAuth()
+@ApiSecurity('session-id')
 @Controller('clinics')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ClinicController {
@@ -32,7 +33,7 @@ export class ClinicController {
   })
   @ApiResponse({ 
     status: 401, 
-    description: 'Unauthorized - Only Super Admins and Clinic Admins can create clinics.'
+    description: 'Unauthorized - Invalid token or missing session ID'
   })
   @ApiResponse({ 
     status: 409, 
@@ -61,7 +62,7 @@ export class ClinicController {
   })
   @ApiResponse({ 
     status: 401, 
-    description: 'Unauthorized - User does not have permission to view clinics.'
+    description: 'Unauthorized - Invalid token or missing session ID'
   })
   async getAllClinics(@Req() req: AuthenticatedRequest) {
     return this.clinicService.getAllClinics(req.user.sub);

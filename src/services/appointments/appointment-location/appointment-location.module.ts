@@ -8,12 +8,14 @@ import { JwtModule } from '@nestjs/jwt';
 import { RedisModule } from '../../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 import { GuardsModule } from '../../../libs/guards/guards.module';
+import { AuthModule } from '../../../services/auth/auth.module';
 
 @Module({
   imports: [
     PrismaModule,
     CacheModule,
     LoggingModule,
+    AuthModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },

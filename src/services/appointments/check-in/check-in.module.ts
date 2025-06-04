@@ -9,6 +9,8 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { JwtModule } from '@nestjs/jwt';
 import { GuardsModule } from '../../../libs/guards/guards.module';
 import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
+import { AuthModule } from '../../../services/auth/auth.module';
+import { RedisModule } from '../../../shared/cache/redis/redis.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
     SocketModule,
     GuardsModule,
     RateLimitModule,
+    AuthModule,
+    RedisModule,
     EventEmitterModule.forRoot(),
   ],
   controllers: [CheckInController],

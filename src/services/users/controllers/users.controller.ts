@@ -9,7 +9,7 @@ import {
   Request,
   Put,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiSecurity } from '@nestjs/swagger';
 import { UsersService } from '../services/users.service';
 import { UpdateUserDto, UserResponseDto, CreateUserDto } from '../../../libs/dtos/user.dto';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
@@ -20,6 +20,7 @@ import { RolesGuard } from '../../../libs/guards/roles.guard';
 @ApiTags('user')
 @Controller('user')
 @ApiBearerAuth()
+@ApiSecurity('session-id')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(
@@ -39,6 +40,7 @@ export class UsersController {
     type: [UserResponseDto] 
   })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid token or missing session ID' })
   async findAll(): Promise<UserResponseDto[]> {
     return this.usersService.findAll();
   }

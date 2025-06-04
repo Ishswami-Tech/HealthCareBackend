@@ -1,7 +1,18 @@
-import { Controller, Get, Param, Logger } from '@nestjs/common';
+import { Controller, Get, Param, Logger, UseGuards } from '@nestjs/common';
 import { AppointmentLocationService } from './appointment-location.service';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../libs/guards/roles.guard';
+import { ClinicGuard } from '../../../libs/guards/clinic.guard';
+import { UseInterceptors } from '@nestjs/common';
+import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 
+@ApiTags('Appointment Locations')
 @Controller('api/appointments/locations')
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseInterceptors(TenantContextInterceptor)
+@ApiBearerAuth()
+@ApiSecurity('session-id')
 export class AppointmentLocationController {
   private readonly logger = new Logger(AppointmentLocationController.name);
 
