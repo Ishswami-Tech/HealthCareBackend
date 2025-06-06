@@ -111,19 +111,19 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      - postgres_data:/var/lib/postgresql/data/pgdata
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
       POSTGRES_MAX_CONNECTIONS: 200
       POSTGRES_SHARED_BUFFERS: 512MB
+      PGDATA: /var/lib/postgresql/data/pgdata
     networks:
       app-network:
         ipv4_address: 172.18.0.2
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -138,6 +138,7 @@ services:
           memory: 512M
     restart: unless-stopped
     shm_size: 128mb
+    stop_grace_period: 1m
     command: >
       postgres -c max_connections=200 
       -c shared_buffers=512MB 
@@ -169,6 +170,8 @@ services:
       - "com.docker.compose.service=postgres"
       - "app.component=database"
       - "app.type=postgres"
+      - "app.healthcheck=enabled"
+      - "app.persist=true"
 
   redis:
     image: redis:7
@@ -211,15 +214,16 @@ services:
 volumes:
   postgres_data:
     name: healthcare_postgres_data
-    # Add labels to ensure volume persistence even during prune operations
     labels:
       - "app.component=database"
       - "app.persist=true"
+      - "app.type=postgres"
   redis_data:
     name: healthcare_redis_data
     labels:
       - "app.component=cache"
       - "app.persist=true"
+      - "app.type=redis"
 
 networks:
   app-network:
