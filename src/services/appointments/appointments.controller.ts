@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, Logger, Request } from '@nestjs/common';
 import { AppointmentService } from './appointments.service';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from 'src/libs/guards/jwt-auth.guard';
@@ -13,6 +13,8 @@ import { TenantContextInterceptor } from '../../shared/interceptors/tenant-conte
 
 @ApiTags('appointments')
 @Controller('appointments')
+@ApiBearerAuth()
+@ApiSecurity('session-id')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
 @UseInterceptors(TenantContextInterceptor)
 export class AppointmentsController {

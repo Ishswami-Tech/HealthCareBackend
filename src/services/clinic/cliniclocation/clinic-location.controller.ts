@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Param, Delete, Put, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
@@ -10,6 +10,7 @@ import { UpdateClinicLocationDto } from '../dto/update-clinic-location.dto';
 
 @ApiTags('Clinic Locations')
 @ApiBearerAuth()
+@ApiSecurity('session-id')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('clinics/:clinicId/locations')
 export class ClinicLocationController {
