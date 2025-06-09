@@ -67,59 +67,55 @@ async function bootstrap() {
 
     const envConfig = environment === 'production' ? productionConfig() : developmentConfig();
 
+    // Configure Fastify logger based on environment
+    const loggerConfig = {
+      level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+      serializers: {
+        req: (req) => {
+          // Skip detailed logging for health check endpoints
+          if (req.url === '/health' || req.url === '/api-health') {
+            return { method: req.method, url: req.url };
+          }
+          return {
+            method: req.method,
+            url: req.url,
+            headers: req.headers
+          };
+        },
+        res: (res) => ({ statusCode: res.statusCode }),
+        err: (err) => ({
+          type: 'ERROR',
+          message: err.message,
+          stack: err.stack || 'No stack trace'
+        })
+      }
+    };
+
+    // Add pretty printing only in development
+    if (process.env.NODE_ENV !== 'production') {
+      loggerConfig['transport'] = {
+        target: 'pino-pretty',
+        options: {
+          translateTime: false,
+          ignore: 'pid,hostname',
+          messageFormat: '{msg}',
+          colorize: true
+        }
+      };
+    }
+
     app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
       new FastifyAdapter({
-        logger: {
-          level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
-          serializers: {
-            req: (req) => {
-              // Skip detailed logging for health check endpoints
-              if (req.url === '/health' || req.url === '/api-health') {
-                return { method: '', url: '' }; // Return empty object instead of false
-              }
-              return {
-                method: req.method,
-                url: req.url
-              };
-            },
-            res: (res) => ({ statusCode: res.statusCode }), // Return minimal response info
-            err: (err) => ({
-              type: 'ERROR',
-              message: err.message,
-              stack: err.stack || 'No stack trace'
-            })
-          },
-          transport: {
-            target: 'pino-pretty',
-            options: {
-              translateTime: false,
-              ignore: 'pid,hostname,req,res,responseTime,reqId',
-              messageFormat: '{msg}',
-              colorize: true,
-              minimumLevel: 'info',
-              singleLine: true
-            }
-          }
-        },
-        disableRequestLogging: true, // Disable Fastify's default request logging
+        logger: loggerConfig,
+        disableRequestLogging: true,
         requestIdLogLabel: 'requestId',
         requestIdHeader: 'x-request-id',
-        trustProxy: envConfig.security.trustProxy === 1,
-        bodyLimit: 10 * 1024 * 1024,
-        ignoreTrailingSlash: true
+        trustProxy: envConfig.security.trustProxy === 1
       }),
       {
-        logger: ['error', 'warn', 'log', 'debug', 'verbose'] as LogLevel[], // Enable all log levels
-        bufferLogs: true,
-        cors: {
-          origin: envConfig.cors.origin.split(','),
-          methods: envConfig.cors.methods.split(','),
-          allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-          credentials: envConfig.cors.credentials,
-          preflightContinue: false,
-          optionsSuccessStatus: 204
-        }
+        logger: ['error', 'warn', 'log', 'debug', 'verbose'] as LogLevel[],
+        bufferLogs: true
       }
     );
 
