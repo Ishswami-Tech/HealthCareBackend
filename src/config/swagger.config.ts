@@ -105,7 +105,7 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     docExpansion: 'none',
     filter: true,
     showRequestDuration: true,
-    tryItOutEnabled: 'true',
+    tryItOutEnabled: true,
     syntaxHighlight: {
       theme: 'monokai',
     },
@@ -118,7 +118,6 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     layout: 'BaseLayout',
     deepLinking: true,
     tagsSorter: 'alpha',
-    // Add support for both localhost and Docker URLs
     urls: getApiServers(),
     securityDefinitions: {
       'session-id': {
@@ -168,12 +167,14 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
       font-weight: bold;
     }
     
-    /* Production-specific styles */
-    ${getEnvironmentConfig().app.environment === 'production' ? `
-    .swagger-ui .try-out { display: none }
-    .swagger-ui .auth-wrapper { background: #dc3545; padding: 8px; border-radius: 4px; }
+    /* Remove production restrictions */
+    .swagger-ui .try-out { display: block !important }
+    .swagger-ui .auth-wrapper { 
+      background: #28a745; 
+      padding: 8px; 
+      border-radius: 4px; 
+    }
     .swagger-ui .auth-wrapper .authorize { color: white; }
-    ` : ''}
     
     .swagger-ui .opblock-tag {
       font-size: 1.2em;

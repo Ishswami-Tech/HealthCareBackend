@@ -23,6 +23,8 @@ import { EmailModule } from './shared/messaging/email/email.module';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { Server } from 'socket.io';
 import { createClient } from 'redis';
+import { LoggingInterceptor } from './shared/logging/logging.interceptor';
+import { FastifyRequest, FastifyReply } from 'fastify';
 
 // Store original console methods
 const originalConsole = {
@@ -69,29 +71,46 @@ async function bootstrap() {
       AppModule,
       new FastifyAdapter({
         logger: {
-          level: envConfig.app.environment === 'production' ? 'error' : 'info',
+          level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
           serializers: {
-            req: (req) => ({
-              method: req.method,
-              url: req.url,
-              hostname: req.hostname,
-              remoteAddress: req.ip,
-              userAgent: req.headers['user-agent']
-            }),
-            res: (res) => ({
-              statusCode: res.statusCode
+            req: (req) => {
+              // Skip detailed logging for health check endpoints
+              if (req.url === '/health' || req.url === '/api-health') {
+                return { method: '', url: '' }; // Return empty object instead of false
+              }
+              return {
+                method: req.method,
+                url: req.url
+              };
+            },
+            res: (res) => ({ statusCode: res.statusCode }), // Return minimal response info
+            err: (err) => ({
+              type: 'ERROR',
+              message: err.message,
+              stack: err.stack || 'No stack trace'
             })
+          },
+          transport: {
+            target: 'pino-pretty',
+            options: {
+              translateTime: false,
+              ignore: 'pid,hostname,req,res,responseTime,reqId',
+              messageFormat: '{msg}',
+              colorize: true,
+              minimumLevel: 'info',
+              singleLine: true
+            }
           }
         },
+        disableRequestLogging: true, // Disable Fastify's default request logging
+        requestIdLogLabel: 'requestId',
+        requestIdHeader: 'x-request-id',
         trustProxy: envConfig.security.trustProxy === 1,
         bodyLimit: 10 * 1024 * 1024,
-        ignoreTrailingSlash: true,
-        disableRequestLogging: envConfig.app.environment === 'production'
+        ignoreTrailingSlash: true
       }),
       {
-        logger: envConfig.app.environment === 'production' 
-          ? ['error', 'warn'] 
-          : ['error', 'warn', 'log', 'debug'] as LogLevel[],
+        logger: ['error', 'warn', 'log', 'debug', 'verbose'] as LogLevel[], // Enable all log levels
         bufferLogs: true,
         cors: {
           origin: envConfig.cors.origin.split(','),
@@ -113,10 +132,34 @@ async function bootstrap() {
     // Set up console redirection to the logging service
     setupConsoleRedirect(loggingService);
 
-    // Apply global pipes and filters
+    // Apply global interceptor for logging
+    app.useGlobalInterceptors(new LoggingInterceptor(loggingService));
+
+    // Apply global pipes and filters with error logging
     app.useGlobalPipes(new ValidationPipe({
       transform: true,
       whitelist: true,
+      exceptionFactory: (errors) => {
+        const formattedErrors = errors.map(error => ({
+          field: error.property,
+          constraints: error.constraints
+        }));
+        
+        loggingService.log(
+          LogType.ERROR,
+          AppLogLevel.ERROR,
+          'Validation failed',
+          'ValidationPipe',
+          { errors: formattedErrors }
+        );
+        
+        return {
+          type: 'VALIDATION_ERROR',
+          message: 'Validation failed',
+          stack: new Error().stack,
+          errors: formattedErrors
+        };
+      }
     }));
     app.useGlobalFilters(new HttpExceptionFilter());
     logger.log('Global pipes and filters configured');
@@ -608,6 +651,42 @@ async function bootstrap() {
       throw new Error(`Server startup failed: ${listenError.message}`);
     }
 
+    // Enhanced error handling for uncaught exceptions
+    process.on('uncaughtException', async (error) => {
+      try {
+        await loggingService?.log(
+          LogType.ERROR,
+          AppLogLevel.ERROR,
+          `Uncaught Exception: ${error.message}`,
+          'Process',
+          { error: error.stack }
+        );
+      } catch (logError) {
+        console.error('Failed to log uncaught exception:', logError);
+        console.error('Original error:', error);
+      }
+      process.exit(1);
+    });
+
+    // Enhanced error handling for unhandled rejections
+    process.on('unhandledRejection', async (reason, promise) => {
+      try {
+        await loggingService?.log(
+          LogType.ERROR,
+          AppLogLevel.ERROR,
+          'Unhandled Rejection',
+          'Process',
+          { 
+            reason: reason instanceof Error ? reason.stack : reason,
+            promise: promise
+          }
+        );
+      } catch (logError) {
+        console.error('Failed to log unhandled rejection:', logError);
+        console.error('Original rejection:', reason);
+      }
+    });
+
   } catch (error) {
     if (loggingService) {
       try {
@@ -640,17 +719,6 @@ async function bootstrap() {
     process.exit(1);
   }
 }
-
-// Add unhandled rejection handler
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-// Add uncaught exception handler
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  process.exit(1);
-});
 
 bootstrap().catch((error) => {
   console.error('CRITICAL: Fatal error during bootstrap:', error);

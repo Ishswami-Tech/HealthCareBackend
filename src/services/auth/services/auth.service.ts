@@ -304,15 +304,15 @@ export class AuthService {
   public getRedirectPathForRole(role: Role): string {
     switch (role) {
       case 'SUPER_ADMIN':
-        return '/admin/dashboard';
+        return '/super-admin/dashboard';
       case 'DOCTOR':
         return '/doctor/dashboard';
       case 'PATIENT':
         return '/patient/dashboard';
       case 'CLINIC_ADMIN':
-        return '/clinic/dashboard';
+        return '/clinic-admin/dashboard';
       case 'RECEPTIONIST':
-        return '/reception/dashboard';
+        return '/receptionist/dashboard';
       default:
         return '/dashboard';
     }
