@@ -1,17 +1,28 @@
 export enum LogLevel {
-  DEBUG = 'DEBUG',
-  INFO = 'INFO',
-  WARN = 'WARN',
   ERROR = 'ERROR',
+  WARN = 'WARN',
+  INFO = 'INFO',
+  DEBUG = 'DEBUG',
+  VERBOSE = 'VERBOSE'
 }
 
 export enum LogType {
-  AUTH = 'AUTH',
-  APPOINTMENT = 'APPOINTMENT',
-  USER = 'USER',
   SYSTEM = 'SYSTEM',
-  SECURITY = 'SECURITY',
+  AUTH = 'AUTH',
   ERROR = 'ERROR',
+  REQUEST = 'REQUEST',
+  RESPONSE = 'RESPONSE',
+  WEBSOCKET = 'WEBSOCKET',
+  DATABASE = 'DATABASE',
+  CACHE = 'CACHE',
+  QUEUE = 'QUEUE',
+  EMAIL = 'EMAIL',
+  SMS = 'SMS',
+  NOTIFICATION = 'NOTIFICATION',
+  AUDIT = 'AUDIT',
+  PERFORMANCE = 'PERFORMANCE',
+  SECURITY = 'SECURITY',
+  APPOINTMENT = 'APPOINTMENT'
 }
 
 export interface LogEntry {
