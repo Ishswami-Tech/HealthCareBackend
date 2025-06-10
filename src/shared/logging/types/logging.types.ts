@@ -22,10 +22,7 @@ export enum LogType {
   AUDIT = 'AUDIT',
   PERFORMANCE = 'PERFORMANCE',
   SECURITY = 'SECURITY',
-  APPOINTMENT = 'APPOINTMENT',
-  USER = 'USER',
-  CLINIC = 'CLINIC',
-  EVENT = 'EVENT'
+  APPOINTMENT = 'APPOINTMENT'
 }
 
 export interface LogEntry {

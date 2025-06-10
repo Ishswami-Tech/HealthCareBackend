@@ -21,6 +21,7 @@ export class LoggingService {
       }
     } catch (error) {
       console.error('Failed to initialize logger:', error);
+      // Fallback to basic logger
       this.logger = {
         log: (message: string) => console.log(message),
         error: (message: string) => console.error(message),
@@ -64,35 +65,65 @@ export class LoggingService {
     };
 
     try {
-      // Store in Redis for real-time access
-      await this.redis?.rPush('logs', JSON.stringify(logEntry));
-      await this.redis?.lTrim('logs', -10000, -1); // Keep last 10000 logs
-
-      // Store in database for persistence
-      await this.prisma?.log.create({
-        data: {
-          id,
-          type,
-          level,
-          message,
-          context,
-          metadata: JSON.stringify(logEntry.metadata),
-          timestamp,
-        },
-      });
-
-      // Only log errors and warnings to console
-      if (level === LogLevel.ERROR || level === LogLevel.WARN) {
-        const levelColor = this.getLevelColor(level);
-        const contextColor = '\x1b[36m'; // Cyan
-        const resetColor = '\x1b[0m';
-        const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`;
-        console.log(coloredMessage);
+      // Log to console with colors and formatting
+      const levelColor = this.getLevelColor(level);
+      const contextColor = '\x1b[36m'; // Cyan
+      const resetColor = '\x1b[0m';
+      
+      // Use console.log for colored output
+      const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`;
+      console.log(coloredMessage);
+      
+      // Use NestJS Logger for standard logging if available
+      try {
+        switch (level) {
+          case LogLevel.ERROR:
+            this.logger?.error?.(message, context);
+            break;
+          case LogLevel.WARN:
+            this.logger?.warn?.(message, context);
+            break;
+          case LogLevel.DEBUG:
+            this.logger?.debug?.(message, context);
+            break;
+          default:
+            this.logger?.log?.(message, context);
+        }
+        
+        if (Object.keys(metadata).length > 0) {
+          this.logger?.debug?.('Metadata:', metadata);
+        }
+      } catch (logError) {
+        console.error('Failed to use NestJS logger:', logError);
       }
 
+      // Store in Redis for real-time access
+      try {
+        await this.redis?.rPush('logs', JSON.stringify(logEntry));
+        await this.redis?.lTrim('logs', -1000, -1);
+      } catch (redisError) {
+        console.error('Failed to store log in Redis:', redisError);
+      }
+
+      // Store in database for persistence
+      try {
+        await this.prisma?.log.create({
+          data: {
+            id,
+            type,
+            level,
+            message,
+            context,
+            metadata: JSON.stringify(logEntry.metadata),
+            timestamp,
+          },
+        });
+      } catch (dbError) {
+        console.error('Failed to store log in database:', dbError);
+      }
     } catch (error) {
-      // Log storage errors to console
-      console.error('Failed to store log:', error);
+      // Fallback to basic console logging if everything else fails
+      console.error('Logging failed:', error);
       console.log(`FALLBACK LOG: [${level}] [${context}] ${message}`);
     }
   }
@@ -121,32 +152,9 @@ export class LoggingService {
     this.ensureLogger();
     
     try {
-      // First try to get logs from Redis
+      // Get logs from Redis
       const redisLogs = await this.redis?.lRange('logs', 0, -1) || [];
       let logs = redisLogs.map(log => JSON.parse(log));
-
-      // If Redis is empty or fails, get from database
-      if (!logs.length) {
-        const dbLogs = await this.prisma?.log.findMany({
-          where: {
-            type: type ? type : undefined,
-            level: level ? level : undefined,
-            timestamp: {
-              gte: startTime,
-              lte: endTime,
-            },
-          },
-          orderBy: {
-            timestamp: 'desc',
-          },
-          take: 1000, // Limit to last 1000 logs
-        }) || [];
-
-        logs = dbLogs.map(log => ({
-          ...log,
-          metadata: JSON.parse(log.metadata),
-        }));
-      }
 
       // Apply filters
       if (type || startTime || endTime || level) {
@@ -166,7 +174,26 @@ export class LoggingService {
       );
     } catch (error) {
       console.error('Failed to retrieve logs:', error);
-      return [];
+      
+      // Fallback to database if Redis fails
+      try {
+        return await this.prisma?.log.findMany({
+          where: {
+            type: type ? type : undefined,
+            level: level ? level : undefined,
+            timestamp: {
+              gte: startTime,
+              lte: endTime,
+            },
+          },
+          orderBy: {
+            timestamp: 'desc',
+          },
+        }) || [];
+      } catch (dbError) {
+        console.error('Failed to retrieve logs from database:', dbError);
+        return [];
+      }
     }
   }
 
