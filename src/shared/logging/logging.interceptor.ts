@@ -16,24 +16,24 @@ export class LoggingInterceptor implements NestInterceptor {
     const { method, url, body, headers, ip } = request;
     const userAgent = headers['user-agent'] || 'unknown';
     const startTime = Date.now();
-
-    // Skip detailed logging for health checks
     const isHealthCheck = this.HEALTH_CHECK_PATHS.includes(url);
-    
+
+    // Log all requests except health checks
     if (!isHealthCheck) {
-      // Log the incoming request
+      const logType = this.getLogType(url);
       this.loggingService.log(
-        LogType.REQUEST,
+        logType,
         LogLevel.INFO,
-        `Incoming ${method} request to ${url}`,
-        'LoggingInterceptor',
+        `${method} ${url}`,
+        'API',
         {
           method,
           url,
-          body,
+          body: this.sanitizeBody(body),
           ip,
           userAgent,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          headers: this.sanitizeHeaders(headers)
         }
       );
     }
@@ -45,12 +45,12 @@ export class LoggingInterceptor implements NestInterceptor {
           const duration = endTime - startTime;
 
           if (!isHealthCheck) {
-            // Log the successful response
+            const logType = this.getLogType(url);
             this.loggingService.log(
-              LogType.RESPONSE,
+              logType,
               LogLevel.INFO,
-              `Response sent for ${method} ${url}`,
-              'LoggingInterceptor',
+              `${method} ${url} completed in ${duration}ms`,
+              'API',
               {
                 method,
                 url,
@@ -66,12 +66,12 @@ export class LoggingInterceptor implements NestInterceptor {
           const endTime = Date.now();
           const duration = endTime - startTime;
 
-          // Always log errors, even for health checks
+          // Always log errors
           this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
-            `Error in ${method} ${url}: ${error.message}`,
-            'LoggingInterceptor',
+            `${method} ${url} failed: ${error.message}`,
+            'API',
             {
               method,
               url,
@@ -90,31 +90,60 @@ export class LoggingInterceptor implements NestInterceptor {
     );
   }
 
+  private getLogType(url: string): LogType {
+    if (url.includes('/auth')) return LogType.AUTH;
+    if (url.includes('/users')) return LogType.USER;
+    if (url.includes('/appointments')) return LogType.APPOINTMENT;
+    if (url.includes('/clinics')) return LogType.CLINIC;
+    if (url.includes('/events')) return LogType.EVENT;
+    return LogType.REQUEST;
+  }
+
+  private sanitizeBody(body: any): any {
+    if (!body) return undefined;
+    
+    const sanitized = JSON.parse(JSON.stringify(body));
+    const sensitiveFields = ['password', 'token', 'secret', 'authorization', 'currentPassword', 'newPassword'];
+    
+    this.sanitizeObject(sanitized, sensitiveFields);
+    return sanitized;
+  }
+
+  private sanitizeHeaders(headers: any): any {
+    if (!headers) return undefined;
+    
+    const sanitized = { ...headers };
+    const sensitiveHeaders = ['authorization', 'cookie', 'x-auth-token'];
+    
+    sensitiveHeaders.forEach(header => {
+      if (sanitized[header]) {
+        sanitized[header] = '[REDACTED]';
+      }
+    });
+    
+    return sanitized;
+  }
+
   private sanitizeResponse(response: any): any {
-    // Skip sanitization for health checks to avoid unnecessary processing
-    if (response?.status === 'healthy') {
-      return { status: response.status };
-    }
+    if (!response) return undefined;
+    if (response?.status === 'healthy') return { status: response.status };
 
-    // Deep clone the response to avoid modifying the original
-    const sanitized = JSON.parse(JSON.stringify(response || {}));
-
-    // Remove sensitive fields
+    const sanitized = JSON.parse(JSON.stringify(response));
     const sensitiveFields = ['password', 'token', 'secret', 'authorization'];
     
-    const sanitizeObject = (obj: any) => {
-      if (!obj || typeof obj !== 'object') return;
-
-      Object.keys(obj).forEach(key => {
-        if (sensitiveFields.includes(key.toLowerCase())) {
-          obj[key] = '[REDACTED]';
-        } else if (typeof obj[key] === 'object') {
-          sanitizeObject(obj[key]);
-        }
-      });
-    };
-
-    sanitizeObject(sanitized);
+    this.sanitizeObject(sanitized, sensitiveFields);
     return sanitized;
+  }
+
+  private sanitizeObject(obj: any, sensitiveFields: string[]): void {
+    if (!obj || typeof obj !== 'object') return;
+
+    Object.keys(obj).forEach(key => {
+      if (sensitiveFields.includes(key.toLowerCase())) {
+        obj[key] = '[REDACTED]';
+      } else if (typeof obj[key] === 'object') {
+        this.sanitizeObject(obj[key], sensitiveFields);
+      }
+    });
   }
 } 
