@@ -11,44 +11,62 @@ datasource db {
 }
 
 model User {
-  id                String         @id @default(uuid())
-  email             String         @unique
-  password          String
-  name              String
-  age               Int
-  firstName         String?
-  lastName          String?
-  phone             String?
-  role              Role           @default(PATIENT)
-  profilePicture    String?
-  gender            String?
-  dateOfBirth       DateTime?
-  address           String?
-  city              String?
-  state             String?
-  country           String?
-  zipCode           String?
-  isVerified        Boolean        @default(false)
-  lastLogin         DateTime?
-  lastLoginIP       String?
-  lastLoginDevice   String?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  passwordChangedAt DateTime?
-  googleId          String?
-  facebookId        String?
-  appleId           String?
-  appName           String?
-  medicalConditions String?
-  appointments      Appointment[]
-  auditLogs         AuditLog[]
-  clinicAdmin       ClinicAdmin?
-  doctor            Doctor?
-  notifications     Notification[]
-  patient           Patient?
-  receptionist      Receptionist?
-  superAdmin        SuperAdmin?
-  clinics           Clinic[]
+  id                     String                  @id @default(uuid())
+  email                  String                  @unique
+  password               String
+  name                   String
+  age                    Int
+  firstName              String?
+  lastName               String?
+  phone                  String?
+  role                   Role                    @default(PATIENT)
+  profilePicture         String?
+  gender                 String?
+  dateOfBirth            DateTime?
+  address                String?
+  city                   String?
+  state                  String?
+  country                String?
+  zipCode                String?
+  isVerified             Boolean                 @default(false)
+  lastLogin              DateTime?
+  lastLoginIP            String?
+  lastLoginDevice        String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  passwordChangedAt      DateTime?
+  googleId               String?
+  facebookId             String?
+  appleId                String?
+  appName                String?
+  medicalConditions      String?
+  appointments           Appointment[]
+  auditLogs              AuditLog[]
+  clinicAdmin            ClinicAdmin?
+  doctor                 Doctor?
+  notifications          Notification[]
+  patient                Patient?
+  receptionist           Receptionist?
+  superAdmin             SuperAdmin?
+  clinics                Clinic[]
+  medicalHistories       MedicalHistory[]
+  labReports             LabReport[]
+  radiologyReports       RadiologyReport[]
+  surgicalRecords        SurgicalRecord[]
+  mentalHealthNotes      MentalHealthNote[]
+  vitals                 Vital[]
+  ayurvedicTherapies     AyurvedicTherapy[]
+  nadiParikshas          NadiPariksha[]
+  ayurvedicPrescriptions AyurvedicPrescription[]
+  prakritiAnalyses       PrakritiAnalysis[]
+  immunizations          Immunization[]
+  allergies              Allergy[]
+  familyHistories        FamilyHistory[]
+  lifestyleAssessments   LifestyleAssessment[]
+  emergencyContacts      EmergencyContact[]
+  insurances             Insurance[]
+  medications            Medication[]
+  dietaryRestrictions    DietaryRestriction[]
 
   @@map("users")
 }
@@ -505,4 +523,277 @@ enum DatabaseStatus {
   ERROR
   MIGRATING
   DISABLED
+}
+
+model MedicalHistory {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  condition String
+  notes     String?
+  date      DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model LabReport {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  testName    String
+  result      String
+  unit        String?
+  normalRange String?
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model RadiologyReport {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  imageType  String
+  findings   String
+  conclusion String
+  date       DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SurgicalRecord {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  surgeryName String
+  surgeon     String
+  notes       String?
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model MentalHealthNote {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  therapist   String
+  sessionNote String
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Vital {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  type       String
+  value      String
+  recordedAt DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model AyurvedicTherapy {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  therapyType String
+  description String?
+  date        DateTime
+  therapist   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model NadiPariksha {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  diagnosis    String
+  pulseType    String
+  notes        String?
+  date         DateTime
+  practitioner String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model AyurvedicPrescription {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  formulation  String
+  dosage       String
+  duration     String
+  instructions String?
+  prescribedAt DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model PrakritiAnalysis {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  vataLevel    Int
+  pittaLevel   Int
+  kaphaLevel   Int
+  dominantType String
+  notes        String?
+  assessedAt   DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Immunization {
+  id               String    @id @default(uuid())
+  user             User      @relation(fields: [userId], references: [id])
+  userId           String
+  vaccineName      String
+  dateAdministered DateTime
+  nextDueDate      DateTime?
+  batchNumber      String?
+  administrator    String?
+  location         String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Allergy {
+  id            String   @id @default(uuid())
+  user          User     @relation(fields: [userId], references: [id])
+  userId        String
+  allergen      String
+  severity      String // Mild, Moderate, Severe
+  reaction      String
+  diagnosedDate DateTime
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model FamilyHistory {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  relation     String // Father, Mother, Sibling, etc.
+  condition    String
+  diagnosedAge Int?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model LifestyleAssessment {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  diet       String?
+  exercise   String?
+  smoking    String? // Never, Former, Current
+  alcohol    String? // Never, Occasional, Regular
+  sleep      String?
+  stress     String?
+  occupation String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model EmergencyContact {
+  id             String   @id @default(uuid())
+  user           User     @relation(fields: [userId], references: [id])
+  userId         String
+  name           String
+  relationship   String
+  phone          String
+  alternatePhone String?
+  address        String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Insurance {
+  id                String    @id @default(uuid())
+  user              User      @relation(fields: [userId], references: [id])
+  userId            String
+  provider          String
+  policyNumber      String
+  groupNumber       String?
+  primaryHolder     String
+  coverageStartDate DateTime
+  coverageEndDate   DateTime?
+  coverageType      String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Medication {
+  id           String    @id @default(uuid())
+  user         User      @relation(fields: [userId], references: [id])
+  userId       String
+  name         String
+  dosage       String
+  frequency    String
+  startDate    DateTime
+  endDate      DateTime?
+  prescribedBy String
+  purpose      String?
+  sideEffects  String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model DietaryRestriction {
+  id           String    @id @default(uuid())
+  user         User      @relation(fields: [userId], references: [id])
+  userId       String
+  restriction  String
+  reason       String?
+  startDate    DateTime
+  endDate      DateTime?
+  prescribedBy String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
 }

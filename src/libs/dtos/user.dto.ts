@@ -104,11 +104,65 @@ export class SimpleCreateUserDto {
   @IsString()
   zipCode?: string;
 
-  @ApiProperty({ example: ['allergies', 'diabetes'], description: 'User medical conditions', required: false })
+  @ApiProperty({ 
+    example: ['Diabetes', 'Hypertension'], 
+    description: 'List of medical conditions', 
+    required: false,
+    isArray: true
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   medicalConditions?: string[];
+
+  @ApiProperty({ 
+    example: ['Insulin', 'Metformin'], 
+    description: 'Current medications', 
+    required: false,
+    isArray: true
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  currentMedications?: string[];
+
+  @ApiProperty({ 
+    example: ['Penicillin'], 
+    description: 'Known allergies', 
+    required: false,
+    isArray: true
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allergies?: string[];
+
+  @ApiProperty({ 
+    example: 'O+', 
+    description: 'Blood group', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  bloodGroup?: string;
+
+  @ApiProperty({ 
+    example: 'Mother has diabetes', 
+    description: 'Family medical history', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  familyHistory?: string;
+
+  @ApiProperty({ 
+    example: 'None', 
+    description: 'Emergency contact information', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  emergencyContact?: string;
 }
 
 export class CreateUserDto implements CreateUserFields {
