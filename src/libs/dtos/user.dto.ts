@@ -34,6 +34,83 @@ type CreateUserFields = BaseUserFields & RoleSpecificFields;
 // For update operations - all fields optional
 type UpdateUserFields = Partial<BaseUserFields>;
 
+// Simple registration DTO with minimal required fields
+export class SimpleCreateUserDto {
+  @ApiProperty({ example: 'john.doe@example.com', description: 'User email address' })
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: 'password123', description: 'User password' })
+  @IsString()
+  @MinLength(8)
+  password: string;
+
+  @ApiProperty({ example: 'John', description: 'User first name' })
+  @IsString()
+  @IsNotEmpty()
+  firstName: string;
+
+  @ApiProperty({ example: 'Doe', description: 'User last name' })
+  @IsString()
+  @IsNotEmpty()
+  lastName: string;
+
+  @ApiProperty({ example: '+1234567890', description: 'User phone number' })
+  @IsString()
+  phone: string;
+
+  @ApiProperty({ example: 'MALE', description: 'User gender', enum: Gender, required: false })
+  @IsEnum(Gender)
+  @IsOptional()
+  gender?: Gender;
+
+  @ApiProperty({ example: 30, description: 'User age', required: false })
+  @IsOptional()
+  @IsNumber()
+  age?: number;
+
+  @ApiProperty({ example: 'profile.jpg', description: 'User profile picture URL', required: false })
+  @IsOptional()
+  @IsString()
+  profilePicture?: string;
+
+  @ApiProperty({ example: '1990-01-01', description: 'User date of birth', required: false })
+  @IsOptional()
+  @IsString()
+  dateOfBirth?: string;
+
+  @ApiProperty({ example: '123 Main St', description: 'User address', required: false })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiProperty({ example: 'New York', description: 'User city', required: false })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiProperty({ example: 'NY', description: 'User state', required: false })
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @ApiProperty({ example: 'USA', description: 'User country', required: false })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiProperty({ example: '10001', description: 'User zip code', required: false })
+  @IsOptional()
+  @IsString()
+  zipCode?: string;
+
+  @ApiProperty({ example: ['allergies', 'diabetes'], description: 'User medical conditions', required: false })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  medicalConditions?: string[];
+}
+
 export class CreateUserDto implements CreateUserFields {
   @ApiProperty({ example: 'john.doe@example.com', description: 'User email address' })
   @IsEmail()
@@ -54,9 +131,10 @@ export class CreateUserDto implements CreateUserFields {
   @IsNotEmpty()
   lastName: string;
 
-  @ApiProperty({ example: 'MALE', description: 'User gender', enum: Gender })
+  @ApiProperty({ example: 'MALE', description: 'User gender', enum: Gender, required: false })
   @IsEnum(Gender)
-  gender: Gender;
+  @IsOptional()
+  gender?: Gender;
 
   @ApiProperty({ example: 'PATIENT', description: 'User role', enum: Role })
   @IsEnum(Role)

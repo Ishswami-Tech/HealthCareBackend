@@ -15,13 +15,14 @@ import {
   HttpException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
-import { CreateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
+import { CreateUserDto, UserResponseDto, SimpleCreateUserDto } from '../../../libs/dtos/user.dto';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { Public } from '../../../libs/decorators/public.decorator';
 import { AuthService } from '../services/auth.service';
 import { EmailService } from '../../../shared/messaging/email/email.service';
 import { Logger } from '@nestjs/common';
 import { LoginDto, LogoutDto, PasswordResetDto, AuthResponse } from '../../../libs/dtos/auth.dtos';
+import { Role } from '@prisma/client';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -38,7 +39,7 @@ export class AuthController {
   @Post('register')
   @ApiOperation({ 
     summary: 'Register a new user',
-    description: 'Create a new user account with role-specific details'
+    description: 'Create a new user account with basic details and default PATIENT role'
   })
   @ApiResponse({ 
     status: 201, 
@@ -53,9 +54,16 @@ export class AuthController {
     status: 500, 
     description: 'Internal server error'
   })
-  async register(@Body() createUserDto: CreateUserDto): Promise<UserResponseDto> {
+  async register(@Body() createUserDto: SimpleCreateUserDto): Promise<UserResponseDto> {
     try {
-      return await this.authService.register(createUserDto);
+      // Convert SimpleCreateUserDto to CreateUserDto with default role
+      const fullCreateUserDto = {
+        ...createUserDto,
+        role: Role.PATIENT,
+        gender: undefined // Make gender optional
+      };
+      
+      return await this.authService.register(fullCreateUserDto);
     } catch (error) {
       this.logger.error(`Registration failed: ${error.message}`, error.stack);
       
