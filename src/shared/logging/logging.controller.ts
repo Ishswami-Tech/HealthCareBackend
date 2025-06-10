@@ -1,7 +1,7 @@
 import { Controller, Get, Query, Res, Post } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { LoggingService } from './logging.service';
-import { LogType } from './types/logging.types';
+import { LogType, LogLevel } from './types/logging.types';
 import { ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Logging')
@@ -39,12 +39,15 @@ export class LoggingController {
         .level.WARN { background: #FFF3E0; color: #F57C00; }
         .level.ERROR { background: #FFEBEE; color: #D32F2F; }
         .level.DEBUG { background: #E8F5E9; color: #388E3C; }
+        .level.VERBOSE { background: #F3E5F5; color: #7B1FA2; }
         .type { display: inline-block; padding: 2px 6px; background: #f0f0f0; border-radius: 3px; font-size: 12px; margin-left: 8px; }
-        .message { margin: 10px 0; }
-        .metadata { background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+        .message { margin: 10px 0; font-weight: 500; }
+        .context { color: #666; font-size: 12px; margin-top: 5px; }
+        .metadata { background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px; white-space: pre-wrap; margin-top: 10px; }
         .empty-state { text-align: center; padding: 40px; color: #666; }
         .refresh-status { font-size: 12px; color: #666; margin-left: 10px; }
         .button-group { display: flex; gap: 10px; }
+        .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
@@ -71,21 +74,38 @@ export class LoggingController {
         
         <div id="logs" class="tab-content ${activeTab === 'logs' ? 'active' : ''}">
           <div class="controls">
-            <select id="logType">
-              <option value="">All Types</option>
-              <option value="SYSTEM">System</option>
-              <option value="USER">User</option>
-              <option value="AUTH">Auth</option>
-              <option value="SECURITY">Security</option>
-              <option value="ERROR">Error</option>
-            </select>
-            <select id="logLevel">
-              <option value="">All Levels</option>
-              <option value="INFO">Info</option>
-              <option value="WARN">Warning</option>
-              <option value="ERROR">Error</option>
-              <option value="DEBUG">Debug</option>
-            </select>
+            <div class="filters">
+              <select id="logType">
+                <option value="">All Types</option>
+                <option value="SYSTEM">System</option>
+                <option value="AUTH">Authentication</option>
+                <option value="USER">User</option>
+                <option value="CLINIC">Clinic</option>
+                <option value="APPOINTMENT">Appointment</option>
+                <option value="ERROR">Error</option>
+                <option value="REQUEST">Request</option>
+                <option value="RESPONSE">Response</option>
+                <option value="WEBSOCKET">WebSocket</option>
+                <option value="DATABASE">Database</option>
+                <option value="CACHE">Cache</option>
+                <option value="QUEUE">Queue</option>
+                <option value="EMAIL">Email</option>
+                <option value="SMS">SMS</option>
+                <option value="NOTIFICATION">Notification</option>
+                <option value="AUDIT">Audit</option>
+                <option value="PERFORMANCE">Performance</option>
+                <option value="SECURITY">Security</option>
+                <option value="EVENT">Event</option>
+              </select>
+              <select id="logLevel">
+                <option value="">All Levels</option>
+                <option value="ERROR">Error</option>
+                <option value="WARN">Warning</option>
+                <option value="INFO">Info</option>
+                <option value="DEBUG">Debug</option>
+                <option value="VERBOSE">Verbose</option>
+              </select>
+            </div>
             <div class="button-group">
               <button id="refreshButton" onclick="manualRefresh()">Refresh</button>
               <button id="clearLogsButton" class="danger" onclick="clearLogs()">Clear Logs</button>
@@ -98,12 +118,23 @@ export class LoggingController {
         <div id="events" class="tab-content ${activeTab === 'events' ? 'active' : ''}">
           <div class="controls">
             <select id="eventType">
-              <option value="">All Types</option>
-              <option value="user.loggedIn">User Logged In</option>
-              <option value="user.registered">User Registered</option>
-              <option value="clinic.created">Clinic Created</option>
-              <option value="clinic.updated">Clinic Updated</option>
-              <option value="clinic.deleted">Clinic Deleted</option>
+              <option value="">All Events</option>
+              <option value="user.login">User Login</option>
+              <option value="user.logout">User Logout</option>
+              <option value="user.register">User Registration</option>
+              <option value="user.update">User Update</option>
+              <option value="clinic.create">Clinic Created</option>
+              <option value="clinic.update">Clinic Updated</option>
+              <option value="clinic.delete">Clinic Deleted</option>
+              <option value="appointment.create">Appointment Created</option>
+              <option value="appointment.update">Appointment Updated</option>
+              <option value="appointment.cancel">Appointment Cancelled</option>
+              <option value="appointment.complete">Appointment Completed</option>
+              <option value="security.suspicious">Suspicious Activity</option>
+              <option value="security.blocked">Access Blocked</option>
+              <option value="email.sent">Email Sent</option>
+              <option value="sms.sent">SMS Sent</option>
+              <option value="notification.sent">Notification Sent</option>
             </select>
             <div class="button-group">
               <button id="eventRefreshButton" onclick="manualRefresh()">Refresh</button>
@@ -203,6 +234,7 @@ export class LoggingController {
                   <span class="level \${log.level}">\${log.level}</span>
                   <span class="type">\${log.type}</span>
                   <div class="message">\${log.message}</div>
+                  <div class="context">Context: \${log.context}</div>
                   <div class="metadata">\${JSON.stringify(log.metadata, null, 2)}</div>
                 </div>
               \`).join('');
@@ -211,6 +243,7 @@ export class LoggingController {
                 <div class="entry">
                   <span class="timestamp">\${new Date(event.timestamp).toLocaleString()}</span>
                   <span class="type">\${event.type}</span>
+                  <div class="message">\${event.message || ''}</div>
                   <div class="metadata">\${JSON.stringify(event.payload, null, 2)}</div>
                 </div>
               \`).join('');
@@ -248,30 +281,7 @@ export class LoggingController {
           }
         });
 
-        // Add click handlers for tabs
-        document.querySelectorAll('.tab').forEach(tab => {
-          tab.addEventListener('click', (e) => {
-            e.preventDefault();
-            const isLogs = e.target.href.includes('logs');
-            currentTab = isLogs ? 'logs' : 'events';
-            
-            // Update tab active states
-            document.querySelectorAll('.tab').forEach(t => {
-              t.classList.remove('active');
-            });
-            e.target.classList.add('active');
-            
-            // Update content visibility
-            document.querySelectorAll('.tab-content').forEach(content => {
-              content.classList.remove('active');
-            });
-            document.getElementById(currentTab).classList.add('active');
-            
-            refreshContent();
-          });
-        });
-
-        // Add change handlers for filters
+        // Add event listeners for filters
         document.getElementById('logType').addEventListener('change', manualRefresh);
         document.getElementById('logLevel').addEventListener('change', manualRefresh);
         document.getElementById('eventType').addEventListener('change', manualRefresh);
@@ -282,20 +292,17 @@ export class LoggingController {
 
   @Get()
   async getUI(@Res() reply: FastifyReply) {
-    reply.header('Content-Type', 'text/html');
-    return reply.send(this.getHtmlTemplate('logs'));
+    return reply.type('text/html').send(this.getHtmlTemplate('logs'));
   }
 
   @Get('logs')
   async getLogsPage(@Res() reply: FastifyReply) {
-    reply.header('Content-Type', 'text/html');
-    return reply.send(this.getHtmlTemplate('logs'));
+    return reply.type('text/html').send(this.getHtmlTemplate('logs'));
   }
 
   @Get('events')
   async getEventsPage(@Res() reply: FastifyReply) {
-    reply.header('Content-Type', 'text/html');
-    return reply.send(this.getHtmlTemplate('events'));
+    return reply.type('text/html').send(this.getHtmlTemplate('events'));
   }
 
   @Get('logs/data')
