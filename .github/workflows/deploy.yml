@@ -249,176 +249,19 @@ jobs:
           cp -r src nginx deploy_temp/
           cp docker-compose.prod.yml .env.production Dockerfile package*.json tsconfig*.json deploy_temp/
 
-          # Also copy scripts directory to ensure all scripts are available
+          # Copy scripts directory and set permissions
+          echo "Copying and setting up scripts..."
           mkdir -p deploy_temp/scripts
-          if [ -d "scripts" ]; then
-            cp -r scripts/* deploy_temp/scripts/
-            # Ensure all scripts are executable
-            chmod +x deploy_temp/scripts/*.sh
-            echo "Scripts copied and made executable:"
-            ls -la deploy_temp/scripts/
-          else
-            # Create scripts directory if it doesn't exist
-            mkdir -p scripts
-            echo "No scripts directory found in source"
-            
-            # Create essential scripts directly in the deployment
-            echo "Creating essential scripts for deployment..."
-            
-            # Create offsite backup script
-            echo "Creating offsite-backup.sh..."
-            mkdir -p deploy_temp/scripts
-            
-            # Create script with individual echo statements to avoid YAML heredoc issues
-            echo '#!/bin/bash' > deploy_temp/scripts/offsite-backup.sh
-            echo '# Healthcare App Offsite Backup Script' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# This script syncs backups to Google Drive or other remote storage' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'set -e' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'APP_DIR="/var/www/healthcare/backend"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'BACKUP_DIR="$APP_DIR/backups"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'DB_BACKUP_DIR="/var/backups/postgres"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'LOG_FILE="/var/log/healthcare/offsite-backup.log"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'DEBUG_LOG_FILE="/var/log/healthcare/offsite-backup-debug.log"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Ensure log directory exists' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'mkdir -p "$(dirname "$LOG_FILE")"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'mkdir -p "$(dirname "$DEBUG_LOG_FILE")"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Function to log messages' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_message() {' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  echo "[$(date '"'"'+%Y-%m-%d %H:%M:%S'"'"')] $1" | tee -a "$LOG_FILE"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '}' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Function for error logging' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_error() {' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  echo "[$(date '"'"'+%Y-%m-%d %H:%M:%S'"'"')] ERROR: $1" | tee -a "$LOG_FILE" | tee -a "$DEBUG_LOG_FILE"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '}' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Function to log debug information' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_debug() {' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  echo "[$(date '"'"'+%Y-%m-%d %H:%M:%S'"'"')] DEBUG: $1" >> "$DEBUG_LOG_FILE"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '}' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Error handler function' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'error_handler() {' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  LINE=$1' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  ERR=$2' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  CMD=$3' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_error "Error occurred in command '"'"'$CMD'"'"' at line $LINE (Exit code: $ERR)"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  # Continue script execution instead of exiting' >> deploy_temp/scripts/offsite-backup.sh
-            echo '}' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Set up the error trap' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'trap '"'"'error_handler ${LINENO} $? "$BASH_COMMAND"'"'"' ERR' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Function to check if a command exists' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'command_exists() {' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  command -v "$1" >/dev/null 2>&1' >> deploy_temp/scripts/offsite-backup.sh
-            echo '}' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Get system diagnostic information' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_system_diagnostics() {' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "======= SYSTEM DIAGNOSTICS ======="' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "Disk Space:"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  df -h >> "$DEBUG_LOG_FILE" 2>&1' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "Memory Info:"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  free -m >> "$DEBUG_LOG_FILE" 2>&1' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "Network connections:"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  netstat -tulpn >> "$DEBUG_LOG_FILE" 2>&1 || log_debug "netstat not available"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "Process Status:"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  ps aux | grep -E "rclone|backup" >> "$DEBUG_LOG_FILE" 2>&1' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "Docker Status:"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  docker ps >> "$DEBUG_LOG_FILE" 2>&1 || log_debug "Docker command failed"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "=============================="' >> deploy_temp/scripts/offsite-backup.sh
-            echo '}' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Main execution' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_message "====================== OFFSITE BACKUP PROCESS STARTED ======================"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_system_diagnostics' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Override set -e to continue on errors but log them' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'set +e' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Check for rclone' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'if ! command_exists rclone; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_message "Installing rclone..."' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  curl -s https://rclone.org/install.sh | sudo bash > "$DEBUG_LOG_FILE" 2>&1' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  if command_exists rclone; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    log_message "Rclone installed successfully"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  else' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    log_error "Rclone installation failed. Check debug log for details."' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    cat "$DEBUG_LOG_FILE" >> "$LOG_FILE"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'else' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_message "rclone is already installed (version: $(rclone --version | head -n 1))"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Verify directory structure' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_debug "Verifying directory structure..."' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'if [ ! -d "$APP_DIR" ]; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_error "Application directory $APP_DIR does not exist"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_debug "APP_DIR: $(ls -la $APP_DIR 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Find and backup latest application backup' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_message "Checking for application backups..."' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'if [ -d "$BACKUP_DIR" ]; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "BACKUP_DIR contents: $(ls -la $BACKUP_DIR 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  if [ -f "$BACKUP_DIR/latest_backup" ]; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    BACKUP_ID=$(cat "$BACKUP_DIR/latest_backup")' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    log_message "Found backup: $BACKUP_ID"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    if [ -d "$BACKUP_DIR/$BACKUP_ID" ]; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '      log_message "Backup directory exists and will be backed up in future implementation"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '      log_debug "Backup directory content: $(ls -la $BACKUP_DIR/$BACKUP_ID 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    else' >> deploy_temp/scripts/offsite-backup.sh
-            echo '      log_error "Backup ID $BACKUP_ID found in latest_backup file, but directory does not exist"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  else' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    log_error "No latest_backup marker found in $BACKUP_DIR"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'else' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_error "Backup directory $BACKUP_DIR does not exist"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Find and backup database backups' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_message "Checking for database backups..."' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'if [ -d "$DB_BACKUP_DIR" ]; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_debug "DB_BACKUP_DIR contents: $(ls -la $DB_BACKUP_DIR 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  DB_BACKUP=$(find "$DB_BACKUP_DIR" -type f -name "*.sql.gz" -o -name "*.dump" 2>/dev/null | sort -r | head -n 1)' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  if [ -n "$DB_BACKUP" ]; then' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    log_message "Found database backup: $DB_BACKUP"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    log_message "Database backup will be stored in future implementation"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  else' >> deploy_temp/scripts/offsite-backup.sh
-            echo '    log_error "No database backup files found in $DB_BACKUP_DIR"' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'else' >> deploy_temp/scripts/offsite-backup.sh
-            echo '  log_error "Database backup directory $DB_BACKUP_DIR does not exist"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'fi' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo '# Final diagnostics' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_system_diagnostics' >> deploy_temp/scripts/offsite-backup.sh
-            echo '' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_message "✅ Offsite backup diagnostics completed successfully. See debug logs for details."' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'log_message "Debug log location: $DEBUG_LOG_FILE"' >> deploy_temp/scripts/offsite-backup.sh
-            echo 'exit 0' >> deploy_temp/scripts/offsite-backup.sh
-            
-            chmod +x deploy_temp/scripts/offsite-backup.sh
-            echo "Offsite backup script created successfully"
-          fi
+          cp -r scripts/* deploy_temp/scripts/
+          chmod +x deploy_temp/scripts/*.sh
+          echo "Scripts copied and made executable:"
+          ls -la deploy_temp/scripts/
 
-      - name: Copy deployment files
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key: ${{ env.SERVER_SSH_KEY }}
-          source: "deploy_temp/*"
-          target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
-          strip_components: 1
-          overwrite: true
-          rm: false
+          # Also copy scripts to standalone directory
+          echo "Setting up standalone scripts directory..."
+          mkdir -p /var/www/healthcare/backend/scripts
+          cp -r scripts/* /var/www/healthcare/backend/scripts/
+          chmod +x /var/www/healthcare/backend/scripts/*.sh
 
       - name: Deploy to server
         id: deploy_to_server
@@ -595,6 +438,23 @@ jobs:
             # Manually generate Prisma client in the API container to ensure it's available
             echo "Generating Prisma client in API container..."
             docker exec latest-api sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma" || true
+
+            # Run database migrations
+            echo "Running database migrations..."
+            docker exec latest-api sh -c "npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma" || {
+              echo "Warning: Migration failed, but continuing deployment..."
+            }
+
+            # Set up maintenance scripts
+            echo "Setting up maintenance scripts..."
+            mkdir -p /var/www/healthcare/backend/scripts
+            mkdir -p /var/log/healthcare
+            mkdir -p /var/backups/postgres
+
+            # Copy scripts and set permissions
+            cp -r scripts/* /var/www/healthcare/backend/scripts/
+            chmod +x /var/www/healthcare/backend/scripts/*.sh
+            chown -R www-data:www-data /var/log/healthcare /var/backups/postgres
 
             # Test database connection with fixed syntax
             echo "Testing database connection..."

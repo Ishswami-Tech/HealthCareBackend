@@ -4,8 +4,20 @@
 
 set -e
 
-# Source shared configuration
-source "$(dirname "$0")/backup-config.sh"
+# Try to source shared configuration, but continue if not available
+CONFIG_FILE="$(dirname "$0")/backup-config.sh"
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    # Define essential variables if config is not available
+    APP_DIR="/var/www/healthcare/backend"
+    RELEASES_DIR="$APP_DIR/releases"
+    CURRENT_LINK="$APP_DIR/current"
+    SUCCESSFUL_DEPLOYMENTS_FILE="$APP_DIR/successful_deployments.txt"
+    LOG_FILE="/var/log/healthcare/rollback.log"
+    BACKUP_DIR="$APP_DIR/backups"
+    RETENTION_COUNT=5
+fi
 
 APP_DIR="/var/www/healthcare/backend"
 RELEASES_DIR="$APP_DIR/releases"
