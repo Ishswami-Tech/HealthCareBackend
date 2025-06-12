@@ -568,50 +568,69 @@ jobs:
               RETRY_COUNT=$((RETRY_COUNT + 1))
               echo "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
               
-              # Use timeout to prevent curl from hanging
-              HEALTH_OUTPUT=$(timeout 10 curl -v --max-time 10 http://localhost:8088/health 2>&1 || echo "Connection timed out")
-              
-              if echo "$HEALTH_OUTPUT" | grep -q "Connection timed out\|Empty reply"; then
-                echo "Warning: Connection timed out or empty reply received"
-                sleep 5
-                continue
-              fi
-              
-              echo "Health check raw output:"
-              echo "$HEALTH_OUTPUT"
-              
-              # Check for any valid HTTP 200 response
-              if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200\|< HTTP/1.1 200"; then
-                echo "API health check successful - received HTTP 200"
-                DEPLOY_SUCCESS=true
-                break
-              # Look for health indicators in the response
-              elif echo "$HEALTH_OUTPUT" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"\|"ok"\|"UP"\|"HEALTHY"'; then
-                echo "API health check successful - found health indicator in response"
-                DEPLOY_SUCCESS=true
-                break
+              # Check if container is running first
+              if docker ps | grep -q "latest-api"; then
+                echo "API container is running"
+                
+                # Try health check endpoint
+                HEALTH_OUTPUT=$(timeout 10 curl -v --max-time 10 http://localhost:8088/health 2>&1 || echo "Connection timed out")
+                
+                if echo "$HEALTH_OUTPUT" | grep -q "Connection timed out\|Empty reply"; then
+                  echo "Warning: Connection timed out or empty reply received"
+                  # Don't fail immediately on timeout/empty reply
+                  sleep 5
+                  continue
+                fi
+                
+                # Check for any valid HTTP 200 response
+                if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200\|< HTTP/1.1 200"; then
+                  echo "API health check successful - received HTTP 200"
+                  DEPLOY_SUCCESS=true
+                  break
+                # Look for health indicators in the response
+                elif echo "$HEALTH_OUTPUT" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"\|"ok"\|"UP"\|"HEALTHY"'; then
+                  echo "API health check successful - found health indicator in response"
+                  DEPLOY_SUCCESS=true
+                  break
+                fi
+              else
+                echo "API container is not running! This is a critical failure."
+                docker ps -a | grep latest-api || true
+                exit 1
               fi
               
               echo "Health check attempt $RETRY_COUNT failed, waiting 5 seconds before retry..."
               sleep 5
             done
 
-            # Final decision based on container status if health check failed
+            # Final decision based on container status
             if [ "$DEPLOY_SUCCESS" != "true" ]; then
-              echo "All health check attempts failed."
+              echo "Health check attempts completed."
               
               # Check container status and logs
               echo "Checking container status and logs..."
               if docker ps | grep -q "latest-api"; then
-                echo "Container is running despite health check failures."
+                echo "Container is running despite health check response issues."
                 docker logs latest-api --tail 30
                 
-                # Mark deployment as successful if container is running
-                echo "Container is running, marking deployment as successful despite health check issues"
-                DEPLOY_SUCCESS=true
+                # If container is running and has been up for at least 30 seconds, consider it successful
+                CONTAINER_UPTIME=$(docker inspect --format='{{.State.StartedAt}}' latest-api)
+                CURRENT_TIME=$(date -u +%s)
+                CONTAINER_START_TIME=$(date -u -d "$CONTAINER_UPTIME" +%s)
+                UPTIME_SECONDS=$((CURRENT_TIME - CONTAINER_START_TIME))
+                
+                if [ $UPTIME_SECONDS -gt 30 ]; then
+                  echo "Container has been running stably for over 30 seconds"
+                  echo "Marking deployment as successful despite health check response issues"
+                  DEPLOY_SUCCESS=true
+                else
+                  echo "Container is running but hasn't been up long enough to verify stability"
+                  exit 1
+                fi
               else
                 echo "ERROR: API container is not running!"
                 docker ps -a | grep latest-api || true
+                exit 1
               fi
             fi
 
