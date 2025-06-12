@@ -263,6 +263,18 @@ jobs:
           cp -r scripts/* /var/www/healthcare/backend/scripts/
           chmod +x /var/www/healthcare/backend/scripts/*.sh
 
+      - name: Copy deployment files
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          source: "deploy_temp/*"
+          target: "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}"
+          strip_components: 1
+          overwrite: true
+          rm: false
+
       - name: Deploy to server
         id: deploy_to_server
         uses: appleboy/ssh-action@master
@@ -276,6 +288,32 @@ jobs:
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+
+            # Set up required directories with sudo
+            echo "Setting up required directories..."
+            sudo mkdir -p /var/www/healthcare/backend/scripts
+            sudo mkdir -p /var/log/healthcare
+            sudo mkdir -p /var/backups/postgres
+            sudo mkdir -p ${{ env.DEPLOY_PATH }}/scripts
+
+            # Copy scripts to both locations and set permissions
+            echo "Setting up scripts..."
+            sudo cp -r scripts/* /var/www/healthcare/backend/scripts/
+            sudo cp -r scripts/* ${{ env.DEPLOY_PATH }}/scripts/
+            sudo chmod +x /var/www/healthcare/backend/scripts/*.sh
+            sudo chmod +x ${{ env.DEPLOY_PATH }}/scripts/*.sh
+
+            # Set proper ownership
+            sudo chown -R ${{ env.SERVER_USER }}:docker /var/www/healthcare/backend/scripts
+            sudo chown -R ${{ env.SERVER_USER }}:docker ${{ env.DEPLOY_PATH }}/scripts
+            sudo chown -R www-data:www-data /var/log/healthcare
+            sudo chown -R www-data:www-data /var/backups/postgres
+
+            # Set proper permissions
+            sudo chmod 755 /var/www/healthcare/backend/scripts
+            sudo chmod 755 ${{ env.DEPLOY_PATH }}/scripts
+            sudo chmod 755 /var/log/healthcare
+            sudo chmod 700 /var/backups/postgres
 
             # Make scripts executable
             if [ -d "scripts" ]; then

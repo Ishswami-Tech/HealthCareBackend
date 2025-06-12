@@ -4,11 +4,26 @@
 
 set -e
 
-# Try to source shared configuration, but continue if not available
-CONFIG_FILE="$(dirname "$0")/backup-config.sh"
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-else
+# Try to find and source the backup config file
+CONFIG_LOCATIONS=(
+    "$(dirname "$0")/backup-config.sh"
+    "/var/www/healthcare/backend/scripts/backup-config.sh"
+    "/var/www/healthcare/backend/current/scripts/backup-config.sh"
+    "../scripts/backup-config.sh"
+)
+
+CONFIG_FOUND=false
+for config_file in "${CONFIG_LOCATIONS[@]}"; do
+    if [ -f "$config_file" ]; then
+        echo "Found config file at: $config_file"
+        source "$config_file"
+        CONFIG_FOUND=true
+        break
+    fi
+done
+
+if [ "$CONFIG_FOUND" = false ]; then
+    echo "Warning: backup-config.sh not found in any standard location, using default values"
     # Define essential variables if config is not available
     APP_DIR="/var/www/healthcare/backend"
     RELEASES_DIR="$APP_DIR/releases"
