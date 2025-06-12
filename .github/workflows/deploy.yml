@@ -240,28 +240,22 @@ jobs:
           echo "Current directory: $PWD"
           echo "GitHub workspace: $GITHUB_WORKSPACE"
 
-          # Create a temporary deployment directory
+          # Create temporary deployment directory
           rm -rf deploy_temp
           mkdir -p deploy_temp
 
-          # Copy required directories and files
+          # Copy required files
           echo "Copying deployment files..."
           cp -r src nginx deploy_temp/
           cp docker-compose.prod.yml .env.production Dockerfile package*.json tsconfig*.json deploy_temp/
 
-          # Copy scripts directory and set permissions
-          echo "Copying and setting up scripts..."
+          # Copy scripts directory
+          echo "Copying scripts..."
           mkdir -p deploy_temp/scripts
           cp -r scripts/* deploy_temp/scripts/
           chmod +x deploy_temp/scripts/*.sh
-          echo "Scripts copied and made executable:"
+          echo "Scripts prepared for deployment:"
           ls -la deploy_temp/scripts/
-
-          # Also copy scripts to standalone directory
-          echo "Setting up standalone scripts directory..."
-          mkdir -p /var/www/healthcare/backend/scripts
-          cp -r scripts/* /var/www/healthcare/backend/scripts/
-          chmod +x /var/www/healthcare/backend/scripts/*.sh
 
       - name: Copy deployment files
         uses: appleboy/scp-action@master
@@ -274,6 +268,42 @@ jobs:
           strip_components: 1
           overwrite: true
           rm: false
+
+      - name: Set up scripts and directories
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            echo "Setting up required directories and scripts..."
+
+            # Create required directories with sudo
+            sudo mkdir -p /var/www/healthcare/backend/scripts
+            sudo mkdir -p /var/log/healthcare
+            sudo mkdir -p /var/backups/postgres
+
+            # Copy scripts from the new release
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            if [ -d "scripts" ]; then
+              echo "Copying scripts to system locations..."
+              sudo cp -r scripts/* /var/www/healthcare/backend/scripts/
+              sudo chmod +x /var/www/healthcare/backend/scripts/*.sh
+              
+              # Set proper ownership
+              sudo chown -R ${{ env.SERVER_USER }}:docker /var/www/healthcare/backend/scripts
+              sudo chown -R www-data:www-data /var/log/healthcare
+              sudo chown -R www-data:www-data /var/backups/postgres
+              
+              # Set proper permissions
+              sudo chmod 755 /var/www/healthcare/backend/scripts
+              sudo chmod 755 /var/log/healthcare
+              sudo chmod 700 /var/backups/postgres
+              
+              echo "Scripts setup completed successfully"
+            else
+              echo "Warning: No scripts directory found in deployment"
+            fi
 
       - name: Deploy to server
         id: deploy_to_server
@@ -289,33 +319,7 @@ jobs:
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
 
-            # Set up required directories with sudo
-            echo "Setting up required directories..."
-            sudo mkdir -p /var/www/healthcare/backend/scripts
-            sudo mkdir -p /var/log/healthcare
-            sudo mkdir -p /var/backups/postgres
-            sudo mkdir -p ${{ env.DEPLOY_PATH }}/scripts
-
-            # Copy scripts to both locations and set permissions
-            echo "Setting up scripts..."
-            sudo cp -r scripts/* /var/www/healthcare/backend/scripts/
-            sudo cp -r scripts/* ${{ env.DEPLOY_PATH }}/scripts/
-            sudo chmod +x /var/www/healthcare/backend/scripts/*.sh
-            sudo chmod +x ${{ env.DEPLOY_PATH }}/scripts/*.sh
-
-            # Set proper ownership
-            sudo chown -R ${{ env.SERVER_USER }}:docker /var/www/healthcare/backend/scripts
-            sudo chown -R ${{ env.SERVER_USER }}:docker ${{ env.DEPLOY_PATH }}/scripts
-            sudo chown -R www-data:www-data /var/log/healthcare
-            sudo chown -R www-data:www-data /var/backups/postgres
-
-            # Set proper permissions
-            sudo chmod 755 /var/www/healthcare/backend/scripts
-            sudo chmod 755 ${{ env.DEPLOY_PATH }}/scripts
-            sudo chmod 755 /var/log/healthcare
-            sudo chmod 700 /var/backups/postgres
-
-            # Make scripts executable
+            # Make scripts executable in the release directory
             if [ -d "scripts" ]; then
               chmod +x scripts/*.sh
             fi
