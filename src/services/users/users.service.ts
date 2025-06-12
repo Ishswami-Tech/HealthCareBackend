@@ -23,6 +23,30 @@ export class UsersService {
     private readonly redis: RedisService,
   ) {}
 
+  private async generateNextUID(): Promise<string> {
+    // Get the last user with a UID
+    const lastUser = await this.prisma.user.findFirst({
+      where: {
+        userid: {
+          startsWith: 'UID'
+        }
+      },
+      orderBy: {
+        userid: 'desc'
+      }
+    });
+
+    let nextNumber = 1;
+    if (lastUser && lastUser.userid) {
+      // Extract the number from the last UID and increment it
+      const lastNumber = parseInt(lastUser.userid.replace('UID', ''));
+      nextNumber = lastNumber + 1;
+    }
+
+    // Format the new UID with leading zeros (6 digits)
+    return `UID${nextNumber.toString().padStart(6, '0')}`;
+  }
+
   async createUser(data: {
     email: string;
     password: string;
@@ -62,6 +86,9 @@ export class UsersService {
         throw new ConflictException('Email already exists');
       }
 
+      // Generate the next UID
+      const userid = await this.generateNextUID();
+
       const user = await this.prisma.user.create({
         data: {
           email: data.email,
@@ -71,7 +98,8 @@ export class UsersService {
           age: 0,
           isVerified: false,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          userid: userid
         },
       });
 
@@ -80,11 +108,12 @@ export class UsersService {
         LogLevel.INFO,
         'User created successfully',
         'UsersService',
-        { userId: user.id, email: data.email, role: data.role }
+        { userId: user.id, userid: user.userid, email: data.email, role: data.role }
       );
 
       await this.eventService.emit('user.created', {
         userId: user.id,
+        userid: user.userid,
         email: data.email,
         role: data.role,
         createdBy: data.createdBy

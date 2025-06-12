@@ -58,6 +58,7 @@ export class AuthService {
 
       if (!existingSuperAdmin) {
         const hashedPassword = await bcrypt.hash('superadmin123', this.SALT_ROUNDS);
+        const userid = await this.generateNextUID();
         const superAdmin = await this.prisma.user.create({
           data: {
             email: superAdminEmail,
@@ -69,6 +70,7 @@ export class AuthService {
             role: Role.SUPER_ADMIN,
             age: 30,
             isVerified: true,
+            userid: userid
           }
         });
 
@@ -393,6 +395,9 @@ export class AuthService {
         throw new BadRequestException('Email already registered');
       }
 
+      // Generate the next UID
+      const userid = await this.generateNextUID();
+
       const hashedPassword = await bcrypt.hash(createUserDto.password, this.SALT_ROUNDS);
       
       const userData: any = { ...createUserDto };
@@ -406,6 +411,7 @@ export class AuthService {
       const user = await this.prisma.user.create({
         data: {
           ...userData,
+          userid: userid,
           password: hashedPassword,
           name: fullName,
           isVerified: false,
@@ -478,6 +484,25 @@ export class AuthService {
       );
       throw error;
     }
+  }
+
+  private async generateNextUID(): Promise<string> {
+    // Get the last user with a UID
+    const lastUser = await this.prisma.user.findFirst({
+      orderBy: {
+        userid: 'desc'
+      }
+    });
+
+    let nextNumber = 1;
+    if (lastUser && lastUser.userid) {
+      // Extract the number from the last UID and increment it
+      const lastNumber = parseInt(lastUser.userid.replace('UID', ''));
+      nextNumber = lastNumber + 1;
+    }
+
+    // Format the new UID with leading zeros (6 digits)
+    return `UID${nextNumber.toString().padStart(6, '0')}`;
   }
 
   /**
@@ -1329,6 +1354,9 @@ export class AuthService {
       let user = await this.findUserByEmail(email);
       
       if (!user) {
+        // Generate userid for new user
+        const userid = await this.generateNextUID();
+        
         // Create new user if not exists
         user = await this.prisma.user.create({
           data: {
@@ -1343,7 +1371,8 @@ export class AuthService {
             age: 0, // Default age, can be updated later
             phone: '', // Default empty phone
             gender: 'UNSPECIFIED', // Default gender
-            dateOfBirth: new Date() // Default date, can be updated later
+            dateOfBirth: new Date(), // Default date, can be updated later
+            userid: userid
           }
         });
         
@@ -1380,6 +1409,9 @@ export class AuthService {
       let user = await this.findUserByEmail(email);
       
       if (!user) {
+        // Generate userid for new user
+        const userid = await this.generateNextUID();
+        
         // Create new user if not exists
         user = await this.prisma.user.create({
           data: {
@@ -1394,7 +1426,8 @@ export class AuthService {
             age: 0, // Default age, can be updated later
             phone: '', // Default empty phone
             gender: 'UNSPECIFIED', // Default gender
-            dateOfBirth: new Date() // Default date, can be updated later
+            dateOfBirth: new Date(), // Default date, can be updated later
+            userid: userid
           }
         });
         
@@ -1475,6 +1508,9 @@ export class AuthService {
       let user = await this.findUserByEmail(email);
       
       if (!user) {
+        // Generate userid for new user
+        const userid = await this.generateNextUID();
+        
         // Create new user if not exists
         user = await this.prisma.user.create({
           data: {
@@ -1489,7 +1525,8 @@ export class AuthService {
             phone: '', // Default empty phone
             gender: 'UNSPECIFIED', // Default gender
             dateOfBirth: new Date(), // Default date, can be updated later
-            profilePicture: '' // Default empty profile picture
+            profilePicture: '', // Default empty profile picture
+            userid: userid
           }
         });
         
