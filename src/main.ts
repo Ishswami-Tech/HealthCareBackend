@@ -561,6 +561,18 @@ async function bootstrap() {
       const host = envConfig.app.host;
       const bindAddress = envConfig.app.bindAddress;
       
+      // Enable CORS with specific configuration
+      app.enableCors({
+        origin: [
+          'http://localhost:3000',  // Development
+          'https://ishswami.in',    // Production
+          /\.ishswami\.in$/        // All subdomains
+        ],
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+        credentials: true,
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'Origin'],
+      });
+
       await app.listen(port, bindAddress);
       
       logger.log(`Application is running in ${envConfig.app.environment} mode:`);
