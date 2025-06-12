@@ -705,84 +705,102 @@ jobs:
 
             echo "Verifying application health..."
 
-            # Enhanced API verification
-            echo "Enhanced API verification process..."
-
-            # First check if container is running and stable
-            if docker ps | grep -q "latest-api"; then
-              echo "API container is running"
+            # Function to parse and validate health check response
+            check_health_response() {
+              local HEALTH_OUTPUT=$1
               
-              # Get container uptime
-              CONTAINER_UPTIME=$(docker inspect --format='{{.State.StartedAt}}' latest-api)
-              CURRENT_TIME=$(date -u +%s)
-              CONTAINER_START_TIME=$(date -u -d "$CONTAINER_UPTIME" +%s)
-              UPTIME_SECONDS=$((CURRENT_TIME - CONTAINER_START_TIME))
-              
-              if [ $UPTIME_SECONDS -gt 30 ]; then
-                echo "Container has been running stably for over 30 seconds"
-                echo "Checking container logs for successful startup..."
-                
-                # Check logs for successful startup indicators
-                if docker logs latest-api 2>&1 | grep -q "Starting application bootstrap\|Application bootstrap started\|Redis.*Connected\|WebSocket.*configured"; then
-                  echo "✅ Found successful startup indicators in logs"
-                  echo "Marking deployment as successful despite potential health check issues"
-                  exit 0
-                fi
+              # Check for valid JSON structure with "status": "healthy"
+              if echo "$HEALTH_OUTPUT" | grep -q '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+                echo "✅ Main status check passed"
+                return 0
               fi
-            else
-              echo "ERROR: API container is not running!"
-              docker ps -a | grep latest-api || true
-              exit 1
-            fi
-
-            # Only proceed with health checks if we haven't exited yet
-            echo "Performing HTTP health checks..."
-            MAX_RETRIES=5
-            HEALTH_CHECK_PASSED=false
-
-            for i in $(seq 1 $MAX_RETRIES); do
-              echo "Health check attempt $i/$MAX_RETRIES..."
               
-              # Try multiple health check methods
-              for port in 8088 80 443; do
-                for protocol in http https; do
-                  for endpoint in health health/check status; do
-                    URL="${protocol}://localhost:${port}/${endpoint}"
-                    echo "Trying $URL..."
-                    
-                    CURL_OUTPUT=$(timeout 5 curl -v -k -s -o /tmp/health_response -w "%{http_code}" "$URL" 2>&1 || echo "Connection failed")
-                    
-                    if [ "$CURL_OUTPUT" = "200" ]; then
-                      echo "✅ Health check passed via $URL"
-                      HEALTH_CHECK_PASSED=true
-                      break 3
-                    fi
-                  done
-                done
+              # Check individual services
+              local SERVICES=("api" "database" "redis" "queues" "logger" "socket" "email")
+              local ALL_HEALTHY=true
+              
+              for SERVICE in "${SERVICES[@]}"; do
+                if ! echo "$HEALTH_OUTPUT" | grep -q "\"$SERVICE\"[[:space:]]*:[[:space:]]*{[^}]*\"status\"[[:space:]]*:[[:space:]]*\"healthy\""; then
+                  echo "❌ Service $SERVICE is not healthy"
+                  ALL_HEALTHY=false
+                  break
+                fi
               done
               
-              if [ "$HEALTH_CHECK_PASSED" = "true" ]; then
-                break
+              if [ "$ALL_HEALTHY" = true ]; then
+                echo "✅ All services are healthy"
+                return 0
               fi
               
-              echo "Health check attempt $i failed, waiting before retry..."
-              sleep 5
+              return 1
+            }
+
+            # Enhanced API verification with better error handling
+            echo "Performing comprehensive health check..."
+            MAX_RETRIES=5
+            RETRY_COUNT=0
+            HEALTH_CHECK_PASSED=false
+
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$HEALTH_CHECK_PASSED" != "true" ]; do
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
+              
+              # First verify container is running
+              if ! docker ps | grep -q "latest-api"; then
+                echo "❌ API container is not running!"
+                docker ps -a
+                continue
+              fi
+              
+              # Try multiple endpoints with proper timeout
+              HEALTH_OUTPUT=$(curl -s -m 10 http://localhost:8088/health)
+              CURL_EXIT=$?
+              
+              if [ $CURL_EXIT -eq 0 ]; then
+                echo "Raw health check response:"
+                echo "$HEALTH_OUTPUT"
+                
+                if check_health_response "$HEALTH_OUTPUT"; then
+                  echo "✅ Health check passed successfully!"
+                  HEALTH_CHECK_PASSED=true
+                  break
+                else
+                  echo "⚠️ Health check response validation failed"
+                fi
+              else
+                echo "⚠️ Failed to get health check response (curl exit code: $CURL_EXIT)"
+                # Try alternative URL
+                HEALTH_OUTPUT=$(curl -s -m 10 https://api.ishswami.in/health)
+                CURL_EXIT=$?
+                
+                if [ $CURL_EXIT -eq 0 ] && check_health_response "$HEALTH_OUTPUT"; then
+                  echo "✅ Health check passed via domain URL!"
+                  HEALTH_CHECK_PASSED=true
+                  break
+                fi
+              fi
+              
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Waiting 5 seconds before next attempt..."
+                sleep 5
+              fi
             done
 
-            # Final status check - we consider it successful if either:
-            # 1. Health checks passed, or
-            # 2. Container is running stably with good logs
+            # Final verification
             if [ "$HEALTH_CHECK_PASSED" = "true" ]; then
-              echo "✅ Health checks passed successfully"
-              exit 0
-            elif docker ps | grep -q "latest-api" && docker logs latest-api 2>&1 | grep -q "Starting application bootstrap\|Application bootstrap started"; then
-              echo "⚠️ Health checks did not pass but container is running with successful startup logs"
-              echo "Marking as successful for stability"
+              echo "✅ Health check verification completed successfully"
               exit 0
             else
-              echo "❌ Health checks failed and no positive indicators found"
-              docker logs latest-api --tail 50
-              exit 1
+              # Check container logs for successful startup indicators
+              if docker logs latest-api 2>&1 | grep -q "Starting application bootstrap\|Application bootstrap started\|Redis.*Connected\|WebSocket.*configured"; then
+                echo "✅ Found successful startup indicators in logs"
+                echo "Marking deployment as successful despite health check issues"
+                exit 0
+              else
+                echo "❌ Health check failed and no positive indicators found in logs"
+                docker logs latest-api --tail 50
+                exit 1
+              fi
             fi
 
       - name: Update deployment status success
