@@ -54,8 +54,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies
+# Install production dependencies and @faker-js/faker
 RUN npm ci --omit=dev --legacy-peer-deps --no-audit --no-progress && \
+    npm install @faker-js/faker && \
     npm cache clean --force
 
 # Copy built files from builder
