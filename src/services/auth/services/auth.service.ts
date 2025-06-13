@@ -233,18 +233,33 @@ export class AuthService {
 
       const { password: _, ...userWithoutPassword } = updatedUser;
 
-      // Get basic login response
+      // Get basic login response with expanded user details
       const loginResponse = {
         access_token: accessToken,
         refresh_token: refreshToken,
         session_id: sessionId,
-    
         token_type: 'Bearer',
         expires_in: 24 * 60 * 60, // 24 hours in seconds
         user: {
           id: user.id,
           email: user.email,
-          role: user.role
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isVerified: user.isVerified,
+          profilePicture: user.profilePicture,
+          phone: user.phone,
+          address: user.address,
+          city: user.city,
+          state: user.state,
+          country: user.country,
+          zipCode: user.zipCode,
+          dateOfBirth: user.dateOfBirth,
+          age: user.age,
+          gender: user.gender,
+          medicalConditions: this.parseMedicalConditions(user.medicalConditions),
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
         },
         redirectPath: this.getRedirectPathForRole(user.role),
         permissions: this.getRolePermissions(user.role)
@@ -274,12 +289,15 @@ export class AuthService {
               // Add clinic information to response
               return {
                 ...loginResponse,
-                clinicToken,
-                clinic: {
-                  id: clinic.id,
-                  name: clinic.name,
-                  role: userRole,
-                  locations: await this.clinicService.getActiveLocations(clinic.id)
+                user: {
+                  ...loginResponse.user,
+                  clinicToken,
+                  clinic: {
+                    id: clinic.id,
+                    name: clinic.name,
+                    role: userRole,
+                    locations: await this.clinicService.getActiveLocations(clinic.id)
+                  }
                 }
               };
             }
