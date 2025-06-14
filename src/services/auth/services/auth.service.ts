@@ -1577,16 +1577,19 @@ export class AuthService {
   
   async verifyGoogleToken(token: string) {
     try {
-      this.logger.debug('Verifying Google token');
+      this.logger.debug('Starting Google token verification');
+      this.logger.debug(`Using Google Client ID: `);
       const ticket = await this.googleClient.verifyIdToken({
         idToken: token,
         audience: this.GOOGLE_CLIENT_ID
       });
-      
+      const payload = ticket.getPayload();
       this.logger.debug('Google token verified successfully');
+      this.logger.debug('Token payload:', payload);
       return ticket;
     } catch (error) {
       this.logger.error(`Google token verification failed: ${error.message}`);
+      this.logger.error('Full error:', error);
       throw new UnauthorizedException('Invalid Google token');
     }
   }
