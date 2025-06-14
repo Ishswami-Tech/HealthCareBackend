@@ -59,43 +59,104 @@ export class LoggingController {
           margin-right: 8px;
           vertical-align: middle;
         }
+        .filters {
+          margin: 10px 0;
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .time-range {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .entry {
+          background: #f5f5f5;
+          padding: 10px;
+          margin: 5px 0;
+          border-radius: 4px;
+        }
+        .entry .timestamp {
+          color: #666;
+          font-size: 0.9em;
+        }
+        .entry .level {
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-size: 0.9em;
+          font-weight: bold;
+        }
+        .entry .level.ERROR { background: #ffebee; color: #d32f2f; }
+        .entry .level.WARN { background: #fff3e0; color: #f57c00; }
+        .entry .level.INFO { background: #e8f5e9; color: #388e3c; }
+        .entry .level.DEBUG { background: #e3f2fd; color: #1976d2; }
+        .entry .type {
+          font-weight: bold;
+          margin-left: 10px;
+        }
+        .entry .message {
+          margin: 5px 0;
+          font-family: monospace;
+        }
+        .entry .metadata {
+          font-family: monospace;
+          font-size: 0.9em;
+          color: #666;
+          white-space: pre-wrap;
+        }
       </style>
     </head>
     <body>
       <div class="container">
         <h1>Logging Dashboard</h1>
         <div class="tabs">
-          <a href="/logger/logs" class="tab ${activeTab === 'logs' ? 'active' : ''}">Logs</a>
-          <a href="/logger/events" class="tab ${activeTab === 'events' ? 'active' : ''}">Events</a>
+          <button class="tab ${activeTab === 'logs' ? 'active' : ''}" onclick="switchTab('logs')">Logs</button>
+          <button class="tab ${activeTab === 'events' ? 'active' : ''}" onclick="switchTab('events')">Events</button>
         </div>
         
-        <div id="logs" class="tab-content ${activeTab === 'logs' ? 'active' : ''}">
-          <div class="controls">
+        <div id="logsPanel" style="display: ${activeTab === 'logs' ? 'block' : 'none'}">
+          <div class="filters">
             <select id="logType">
               <option value="">All Types</option>
               <option value="SYSTEM">System</option>
-              <option value="USER">User</option>
               <option value="AUTH">Auth</option>
-              <option value="SECURITY">Security</option>
               <option value="ERROR">Error</option>
+              <option value="REQUEST">Request</option>
+              <option value="RESPONSE">Response</option>
+              <option value="DATABASE">Database</option>
+              <option value="CACHE">Cache</option>
+              <option value="QUEUE">Queue</option>
+              <option value="EMAIL">Email</option>
+              <option value="AUDIT">Audit</option>
             </select>
             <select id="logLevel">
               <option value="">All Levels</option>
-              <option value="INFO">Info</option>
-              <option value="WARN">Warning</option>
               <option value="ERROR">Error</option>
+              <option value="WARN">Warning</option>
+              <option value="INFO">Info</option>
               <option value="DEBUG">Debug</option>
             </select>
-            <div class="button-group">
-              <button id="refreshButton" onclick="manualRefresh()">Refresh</button>
-              <button id="clearLogsButton" class="danger" onclick="clearLogs()">Clear Logs</button>
+            <div class="time-range">
+              <select id="timeRange" onchange="handleTimeRangeChange()">
+                <option value="1">Last 1 hour</option>
+                <option value="6">Last 6 hours</option>
+                <option value="12">Last 12 hours</option>
+                <option value="24" selected>Last 24 hours</option>
+                <option value="custom">Custom Range</option>
+              </select>
+              <div id="customRange" style="display: none;">
+                <input type="datetime-local" id="startTime" />
+                <input type="datetime-local" id="endTime" />
+              </div>
             </div>
-            <span id="refreshStatus" class="refresh-status"></span>
+            <button onclick="refreshContent()">Refresh</button>
+            <button onclick="clearLogs()">Clear Logs</button>
+            <span id="refreshStatus"></span>
           </div>
           <div id="logsContent"></div>
         </div>
         
-        <div id="events" class="tab-content ${activeTab === 'events' ? 'active' : ''}">
+        <div id="eventsPanel" style="display: ${activeTab === 'events' ? 'block' : 'none'}">
           <div class="controls">
             <select id="eventType">
               <option value="">All Types</option>
@@ -161,6 +222,16 @@ export class LoggingController {
           }
         }
 
+        function handleTimeRangeChange() {
+          const range = document.getElementById('timeRange').value;
+          const customRange = document.getElementById('customRange');
+          customRange.style.display = range === 'custom' ? 'block' : 'none';
+          
+          if (range !== 'custom') {
+            refreshContent();
+          }
+        }
+
         async function refreshContent() {
           if (isRefreshing) return;
           isRefreshing = true;
@@ -176,8 +247,21 @@ export class LoggingController {
             if (currentTab === 'logs') {
               const type = document.getElementById('logType').value;
               const level = document.getElementById('logLevel').value;
+              const timeRange = document.getElementById('timeRange').value;
+              
               if (type) params.append('type', type);
               if (level) params.append('level', level);
+              
+              if (timeRange === 'custom') {
+                const startTime = document.getElementById('startTime').value;
+                const endTime = document.getElementById('endTime').value;
+                if (startTime) params.append('startTime', new Date(startTime).toISOString());
+                if (endTime) params.append('endTime', new Date(endTime).toISOString());
+              } else {
+                const hours = parseInt(timeRange);
+                const startTime = new Date(Date.now() - hours * 60 * 60 * 1000);
+                params.append('startTime', startTime.toISOString());
+              }
             } else {
               const type = document.getElementById('eventType').value;
               if (type) params.append('type', type);
@@ -196,28 +280,18 @@ export class LoggingController {
               return;
             }
 
-            if (currentTab === 'logs') {
-              container.innerHTML = data.map(log => \`
-                <div class="entry">
-                  <span class="timestamp">\${new Date(log.timestamp).toLocaleString()}</span>
-                  <span class="level \${log.level}">\${log.level}</span>
-                  <span class="type">\${log.type}</span>
-                  <div class="message">\${log.message}</div>
-                  <div class="metadata">\${JSON.stringify(log.metadata, null, 2)}</div>
-                </div>
-              \`).join('');
-            } else {
-              container.innerHTML = data.map(event => \`
-                <div class="entry">
-                  <span class="timestamp">\${new Date(event.timestamp).toLocaleString()}</span>
-                  <span class="type">\${event.type}</span>
-                  <div class="metadata">\${JSON.stringify(event.payload, null, 2)}</div>
-                </div>
-              \`).join('');
-            }
+            container.innerHTML = data.map(log => \`
+              <div class="entry">
+                <span class="timestamp">\${new Date(log.timestamp).toLocaleString()}</span>
+                <span class="level \${log.level}">\${log.level}</span>
+                <span class="type">\${log.type}</span>
+                <div class="message">\${log.message}</div>
+                <div class="metadata">\${JSON.stringify(log.metadata, null, 2)}</div>
+              </div>
+            \`).join('');
           } catch (error) {
-            console.error('Error:', error);
-            container.innerHTML = '<div class="empty-state">Error loading data</div>';
+            console.error('Error fetching data:', error);
+            container.innerHTML = '<div class="error">Failed to fetch data</div>';
           } finally {
             isRefreshing = false;
             updateRefreshStatus(false);
@@ -302,8 +376,15 @@ export class LoggingController {
   async getLogs(
     @Query('type') type?: LogType,
     @Query('level') level?: string,
+    @Query('startTime') startTime?: string,
+    @Query('endTime') endTime?: string,
   ) {
-    return this.loggingService.getLogs(type, undefined, undefined, level);
+    return this.loggingService.getLogs(
+      type,
+      startTime ? new Date(startTime) : undefined,
+      endTime ? new Date(endTime) : undefined,
+      level
+    );
   }
 
   @Get('events/data')
