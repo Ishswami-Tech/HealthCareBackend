@@ -379,135 +379,83 @@ async function bootstrap() {
       logger.warn('Continuing without WebSocket support');
     }
 
-    // Security headers
-    const fastifyInstance = app.getHttpAdapter().getInstance();
-    await fastifyInstance.register(fastifyHelmet, {
+    // Enable CORS with specific configuration
+    app.enableCors({
+      origin: [
+        'http://localhost:3000',  // Development
+        'https://ishswami.in',    // Production
+        /\.ishswami\.in$/,        // All subdomains
+        'https://accounts.google.com', // Google authentication
+        'https://oauth2.googleapis.com' // Google OAuth
+      ],
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      credentials: true,
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Session-ID',
+        'Origin',
+        'Accept',
+        'X-Requested-With',
+        'Access-Control-Request-Method',
+        'Access-Control-Request-Headers'
+      ],
+      exposedHeaders: ['Set-Cookie', 'Authorization'],
+      maxAge: 86400 // 24 hours
+    });
+
+    // Configure Fastify security headers
+    await app.register(fastifyHelmet, {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-          imgSrc: ["'self'", "data:", "https:"],
-          connectSrc: ["'self'", "https://api.ishswami.in", "wss://api.ishswami.in"],
-          fontSrc: ["'self'", "https://cdn.jsdelivr.net"],
+          scriptSrc: [
+            "'self'",
+            "'unsafe-inline'",
+            "'unsafe-eval'",
+            "https://accounts.google.com",
+            "https://apis.google.com"
+          ],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          imgSrc: ["'self'", "data:", "https:", "blob:"],
+          connectSrc: [
+            "'self'",
+            "https://api.ishswami.in",
+            "wss://api.ishswami.in",
+            "https://accounts.google.com",
+            "https://oauth2.googleapis.com"
+          ],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          frameSrc: ["'self'", "https://accounts.google.com"],
           objectSrc: ["'none'"],
-          frameSrc: ["'self'"],
-          formAction: ["'self'"],
           baseUri: ["'self'"]
         }
-      }
+      },
+      crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+      crossOriginResourcePolicy: { policy: "cross-origin" }
     });
 
-    // Configure route handling for admin paths
+    // Add specific route handling for authentication endpoints
+    const fastifyInstance = app.getHttpAdapter().getInstance();
     fastifyInstance.addHook('onRequest', (request, reply, done) => {
-      const url = request.url;
-      const isAdminPath = url.startsWith('/docs') || 
-                          url.startsWith('/queue-dashboard') || 
-                          url.startsWith('/logger') || 
-                          url.startsWith('/prisma');
-      
-      if (isAdminPath && process.env.NODE_ENV === 'production') {
-        // Comment out the authentication check for now to allow access for debugging
-        // Add additional security checks for admin paths in production
-        // This is just a placeholder for your actual security implementation
-        /*
-        const auth = request.headers.authorization;
-        if (!auth) {
-          reply.status(401).send({ message: 'Authentication required for admin paths' });
-          return;
-        }
-        */
-      }
-      
-      // Handle direct redirects for external services
-      if (url.startsWith('/prisma')) {
-        // Only allow in development mode
-        if (process.env.NODE_ENV === 'production') {
-          reply.status(403).send({ 
-            message: 'Prisma Studio is only available in development mode',
-            status: 'error'
-          });
-          return;
-        }
-        
-        // Redirect to Prisma Studio running on port 5555
-        reply.header('Location', 'http://localhost:5555');
-        reply.status(302).send();
+      // Handle preflight requests
+      if (request.method === 'OPTIONS') {
+        reply.header('Access-Control-Allow-Origin', request.headers.origin || '*');
+        reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+        reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-ID');
+        reply.header('Access-Control-Allow-Credentials', 'true');
+        reply.header('Access-Control-Max-Age', '86400');
+        reply.send();
         return;
       }
-      
-      // Only handle Redis Commander and PgAdmin in development mode
-      if (process.env.NODE_ENV === 'development') {
-      if (url.startsWith('/redis-ui') || url.startsWith('/redis-commander')) {
-        // Redirect to Redis Commander if it's running
-        reply.header('Location', 'http://localhost:8082');
-        reply.status(302).send();
-        return;
-      }
-      
-      if (url.startsWith('/pgadmin')) {
-          // Redirect to PgAdmin if it's running
-          reply.header('Location', 'http://localhost:5050');
-          reply.status(302).send();
-          return;
-        }
-      }
-      
-      // Handle socket endpoint redirects - but only for paths with additional parameters
-      // since the base /socket path is handled by the AppController
-      if (url.startsWith('/socket/') || url.includes('/socket?')) {
-        // Redirect /socket to /socket.io for compatibility
-        const redirectUrl = url.replace('/socket', '/socket.io');
-        reply.header('Location', redirectUrl);
-        reply.status(302).send();
-        return;
-      }
-      
-      done();
-    });
 
-    // Disable direct port access redirects to avoid redirect loops
-    // Handle health check requests specially
-    fastifyInstance.addHook('onRequest', (request, reply, done) => {
-      if (request.url === '/health' || request.url === '/api-health') {
-        // Don't redirect health check requests
-        return done();
+      // Handle authentication endpoints specially
+      if (request.url.startsWith('/auth/') || request.url.includes('google')) {
+        reply.header('Access-Control-Allow-Origin', request.headers.origin || '*');
+        reply.header('Access-Control-Allow-Credentials', 'true');
       }
-      
-      const host = request.headers.host;
-      if (host && process.env.NODE_ENV === 'production') {
-        // Check if accessing via direct port
-        if (host.includes(':8088')) {
-          reply.header('Location', 'https://api.ishswami.in/');
-          reply.status(301).send();
-          return;
-        } else if (host.includes(':8088/docs')) {
-          reply.header('Location', 'https://api.ishswami.in/docs/');
-          reply.status(301).send();
-          return;
-        } else if (host.includes(':8088/queue-dashboard')) {
-          reply.header('Location', 'https://api.ishswami.in/queue-dashboard/');
-          reply.status(301).send();
-          return;
-        } else if (host.includes(':8088/redis-ui')) {
-          reply.header('Location', 'https://api.ishswami.in/redis-ui/');
-          reply.status(301).send();
-          return;
-        } else if (host.includes(':5555')) {
-          reply.header('Location', 'https://api.ishswami.in/prisma/');
-          reply.status(301).send();
-          return;
-        } else if (host.includes(':8081')) {
-          reply.header('Location', 'https://api.ishswami.in/redis-commander/');
-          reply.status(301).send();
-          return;
-        } else if (host.includes(':5050')) {
-          reply.header('Location', 'https://api.ishswami.in/pgadmin/');
-          reply.status(301).send();
-          return;
-        }
-      }
-      
+
       done();
     });
 
@@ -561,18 +509,6 @@ async function bootstrap() {
       const host = envConfig.app.host;
       const bindAddress = envConfig.app.bindAddress;
       
-      // Enable CORS with specific configuration
-      app.enableCors({
-        origin: [
-          'http://localhost:3000',  // Development
-          'https://ishswami.in',    // Production
-          /\.ishswami\.in$/        // All subdomains
-        ],
-        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-        credentials: true,
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'Origin'],
-      });
-
       await app.listen(port, bindAddress);
       
       logger.log(`Application is running in ${envConfig.app.environment} mode:`);

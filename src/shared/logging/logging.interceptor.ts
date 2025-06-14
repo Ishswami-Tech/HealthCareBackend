@@ -7,7 +7,8 @@ import { LogType, LogLevel } from './types/logging.types';
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(LoggingInterceptor.name);
-  private readonly HEALTH_CHECK_PATHS = ['/health', '/api-health'];
+  private readonly HEALTH_CHECK_PATHS = ['/health', '/api-health', '/socket.io/socket.io.js'];
+  private readonly MINIMAL_LOG_PATHS = ['/logger/logs/data', '/logger/events/data'];
 
   constructor(private readonly loggingService: LoggingService) {}
 
@@ -17,23 +18,28 @@ export class LoggingInterceptor implements NestInterceptor {
     const userAgent = headers['user-agent'] || 'unknown';
     const startTime = Date.now();
 
-    // Skip detailed logging for health checks
-    const isHealthCheck = this.HEALTH_CHECK_PATHS.includes(url);
+    // Skip logging for health checks completely
+    const isHealthCheck = this.HEALTH_CHECK_PATHS.some(path => url.includes(path));
+    if (isHealthCheck) {
+      return next.handle();
+    }
+
+    // Minimal logging for frequent endpoints
+    const isMinimalLog = this.MINIMAL_LOG_PATHS.some(path => url === path);
     
-    if (!isHealthCheck) {
+    if (!isMinimalLog) {
       // Log the incoming request
       this.loggingService.log(
         LogType.REQUEST,
         LogLevel.INFO,
-        `Incoming ${method} request to ${url}`,
-        'LoggingInterceptor',
+        `${method} ${url}`,
+        'API',
         {
           method,
           url,
-          body,
+          body: this.sanitizeBody(body),
           ip,
-          userAgent,
-          timestamp: new Date().toISOString()
+          userAgent
         }
       );
     }
@@ -44,20 +50,18 @@ export class LoggingInterceptor implements NestInterceptor {
           const endTime = Date.now();
           const duration = endTime - startTime;
 
-          if (!isHealthCheck) {
+          if (!isMinimalLog) {
             // Log the successful response
             this.loggingService.log(
               LogType.RESPONSE,
               LogLevel.INFO,
-              `Response sent for ${method} ${url}`,
-              'LoggingInterceptor',
+              `${method} ${url} [${duration}ms]`,
+              'API',
               {
                 method,
                 url,
                 duration: `${duration}ms`,
-                statusCode: context.switchToHttp().getResponse().statusCode,
-                response: this.sanitizeResponse(response),
-                timestamp: new Date().toISOString()
+                statusCode: context.switchToHttp().getResponse().statusCode
               }
             );
           }
@@ -66,23 +70,21 @@ export class LoggingInterceptor implements NestInterceptor {
           const endTime = Date.now();
           const duration = endTime - startTime;
 
-          // Always log errors, even for health checks
+          // Always log errors
           this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
-            `Error in ${method} ${url}: ${error.message}`,
-            'LoggingInterceptor',
+            `${method} ${url} failed: ${error.message}`,
+            'API',
             {
               method,
               url,
               duration: `${duration}ms`,
               error: {
                 message: error.message,
-                stack: error.stack,
                 code: error.code || 'UNKNOWN_ERROR',
                 statusCode: error.status || 500
-              },
-              timestamp: new Date().toISOString()
+              }
             }
           );
         }
@@ -90,31 +92,20 @@ export class LoggingInterceptor implements NestInterceptor {
     );
   }
 
-  private sanitizeResponse(response: any): any {
-    // Skip sanitization for health checks to avoid unnecessary processing
-    if (response?.status === 'healthy') {
-      return { status: response.status };
-    }
-
-    // Deep clone the response to avoid modifying the original
-    const sanitized = JSON.parse(JSON.stringify(response || {}));
-
-    // Remove sensitive fields
-    const sensitiveFields = ['password', 'token', 'secret', 'authorization'];
+  private sanitizeBody(body: any): any {
+    if (!body) return undefined;
     
-    const sanitizeObject = (obj: any) => {
-      if (!obj || typeof obj !== 'object') return;
-
-      Object.keys(obj).forEach(key => {
-        if (sensitiveFields.includes(key.toLowerCase())) {
-          obj[key] = '[REDACTED]';
-        } else if (typeof obj[key] === 'object') {
-          sanitizeObject(obj[key]);
-        }
-      });
-    };
-
-    sanitizeObject(sanitized);
+    // Create a copy to avoid modifying the original
+    const sanitized = { ...body };
+    
+    // Remove sensitive fields
+    const sensitiveFields = ['password', 'token', 'secret', 'apiKey', 'authorization'];
+    sensitiveFields.forEach(field => {
+      if (field in sanitized) {
+        sanitized[field] = '***';
+      }
+    });
+    
     return sanitized;
   }
 } 

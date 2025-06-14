@@ -152,35 +152,32 @@ export class LoggingService {
     this.ensureLogger();
     
     try {
-      // Get logs from Redis
+      // Default to last 24 hours if no time range specified
+      const now = new Date();
+      const defaultStartTime = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // 24 hours ago
+      
+      startTime = startTime || defaultStartTime;
+      endTime = endTime || now;
+
+      // First try to get logs from Redis
       const redisLogs = await this.redis?.lRange('logs', 0, -1) || [];
       let logs = redisLogs.map(log => JSON.parse(log));
 
       // Apply filters
-      if (type || startTime || endTime || level) {
-        logs = logs.filter(log => {
-          const logTime = new Date(log.timestamp);
-          const matchesType = !type || log.type === type;
-          const matchesLevel = !level || log.level === level;
-          const matchesStartTime = !startTime || logTime >= startTime;
-          const matchesEndTime = !endTime || logTime <= endTime;
-          return matchesType && matchesLevel && matchesStartTime && matchesEndTime;
-        });
-      }
+      logs = logs.filter(log => {
+        const logTime = new Date(log.timestamp);
+        const matchesType = !type || log.type === type;
+        const matchesLevel = !level || log.level === level;
+        const matchesTimeRange = logTime >= startTime && logTime <= endTime;
+        return matchesType && matchesLevel && matchesTimeRange;
+      });
 
-      // Sort by timestamp descending
-      return logs.sort((a, b) => 
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-    } catch (error) {
-      console.error('Failed to retrieve logs:', error);
-      
-      // Fallback to database if Redis fails
-      try {
-        return await this.prisma?.log.findMany({
+      // If no logs in Redis or Redis fails, fallback to database
+      if (logs.length === 0) {
+        const dbLogs = await this.prisma?.log.findMany({
           where: {
-            type: type ? type : undefined,
-            level: level ? level : undefined,
+            type: type || undefined,
+            level: level || undefined,
             timestamp: {
               gte: startTime,
               lte: endTime,
@@ -190,10 +187,20 @@ export class LoggingService {
             timestamp: 'desc',
           },
         }) || [];
-      } catch (dbError) {
-        console.error('Failed to retrieve logs from database:', dbError);
-        return [];
+
+        logs = dbLogs.map(log => ({
+          ...log,
+          metadata: JSON.parse(log.metadata),
+        }));
       }
+
+      // Sort by timestamp descending
+      return logs.sort((a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+    } catch (error) {
+      console.error('Failed to retrieve logs:', error);
+      return [];
     }
   }
 
