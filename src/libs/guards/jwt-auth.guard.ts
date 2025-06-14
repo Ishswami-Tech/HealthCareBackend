@@ -4,9 +4,13 @@ import { AuthGuard } from '@nestjs/passport';
 import { JwtService } from '@nestjs/jwt';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { RedisService } from '../../shared/cache/redis/redis.service';
-import { RateLimitService } from '../../shared/rate-limit/rate-limit.service';
+import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
+import { LoggingService } from '../../shared/logging/logging.service';
+import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
+import { Logger } from '@nestjs/common';
 
 @Injectable()
+
 export class JwtAuthGuard extends AuthGuard('jwt') {
   // Progressive lockout intervals in minutes
   private readonly LOCKOUT_INTERVALS = [
@@ -27,7 +31,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     private reflector: Reflector, 
     private jwtService: JwtService,
     private redisService: RedisService,
-    private rateLimitService: RateLimitService
+    private rateLimitService: RateLimitService,
+    private loggingService: LoggingService
   ) {
     super();
   }
@@ -205,7 +210,32 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       });
     }
 
-    // Verify device fingerprint
+    // For logout operations, be more lenient with device validation
+    const isLogoutRequest = request.path === '/auth/logout';
+    if (isLogoutRequest) {
+      // During logout, only validate the user-agent as it's the most stable component
+      const currentUserAgent = request.headers['user-agent'];
+      const storedUserAgent = sessionData.userAgent;
+      
+      if (currentUserAgent && storedUserAgent && currentUserAgent !== storedUserAgent) {
+        await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH_LOGOUT', {
+          sessionId,
+          expectedUserAgent: storedUserAgent,
+          receivedUserAgent: currentUserAgent
+        });
+        // Log the mismatch but don't block logout
+        this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Device mismatch during logout',
+          'JwtAuthGuard',
+          { userId, sessionId, expectedUserAgent: storedUserAgent, receivedUserAgent: currentUserAgent }
+        );
+      }
+      return sessionData;
+    }
+
+    // For non-logout operations, perform strict device validation
     if (sessionData.deviceFingerprint !== deviceFingerprint) {
       await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH', {
         sessionId,
