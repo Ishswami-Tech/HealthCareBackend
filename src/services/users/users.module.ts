@@ -5,6 +5,7 @@ import { PrismaModule } from "../../shared/database/prisma/prisma.module";
 import { RedisModule } from "../../shared/cache/redis/redis.module";
 import { GuardsModule } from "../../libs/guards/guards.module";
 import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
+import { LoggingModule } from "../../shared/logging/logging.module";
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
     RedisModule,
     GuardsModule,
     RateLimitModule,
+    LoggingModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],
