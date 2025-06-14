@@ -33,8 +33,8 @@ export class AuthService {
   private readonly SMS_PROVIDER_URL = process.env.SMS_PROVIDER_URL || 'https://api.sms-provider.com/send';
   private readonly SMS_SENDER_ID = process.env.SMS_SENDER_ID || 'HealthApp';
   private readonly MAGIC_LINK_TTL = 900; // 15 minutes
+  private readonly GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '616510725595-icnj6ql0qie97dp4voi3u9uafbnmhend.apps.googleusercontent.com';
   private readonly googleClient: OAuth2Client;
-  private readonly GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '616510725595-icnj6ql0qie97dp4vol3u9uafbnmhend.apps.googleusercontent.com';
 
   constructor(
     private readonly prisma: PrismaService,
