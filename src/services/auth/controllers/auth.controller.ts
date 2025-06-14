@@ -526,14 +526,33 @@ export class AuthController {
     @Req() request: any
   ): Promise<any> {
     try {
+      this.logger.debug('Starting Google login process');
+      this.logger.debug('Received token:', token.substring(0, 10) + '...');
+
       // Verify Google token
       const ticket = await this.authService.verifyGoogleToken(token);
       const payload = ticket.getPayload();
       
+      if (!payload) {
+        this.logger.error('No payload received from Google token verification');
+        throw new UnauthorizedException('Invalid Google token: No payload');
+      }
+
+      this.logger.debug('Google token verified successfully');
+      this.logger.debug('Token payload email:', payload.email);
+      
       // Handle Google login
-      return this.authService.handleGoogleLogin(payload, request);
+      const response = await this.authService.handleGoogleLogin(payload, request);
+      this.logger.debug('Google login handled successfully');
+      
+      return response;
     } catch (error) {
-      throw new UnauthorizedException('Invalid Google token');
+      this.logger.error('Google login failed:', error);
+      throw new UnauthorizedException(
+        error instanceof Error 
+          ? `Invalid Google token: ${error.message}`
+          : 'Invalid Google token'
+      );
     }
   }
 

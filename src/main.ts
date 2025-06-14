@@ -384,9 +384,11 @@ async function bootstrap() {
       origin: [
         'http://localhost:3000',  // Development
         'https://ishswami.in',    // Production
+        'https://www.ishswami.in', // Production with www
         /\.ishswami\.in$/,        // All subdomains
         'https://accounts.google.com', // Google authentication
-        'https://oauth2.googleapis.com' // Google OAuth
+        'https://oauth2.googleapis.com', // Google OAuth
+        'https://www.googleapis.com' // Google APIs
       ],
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       credentials: true,
@@ -398,7 +400,11 @@ async function bootstrap() {
         'Accept',
         'X-Requested-With',
         'Access-Control-Request-Method',
-        'Access-Control-Request-Headers'
+        'Access-Control-Request-Headers',
+        'X-Client-Data',
+        'Sec-Fetch-Site',
+        'Sec-Fetch-Mode',
+        'Sec-Fetch-Dest'
       ],
       exposedHeaders: ['Set-Cookie', 'Authorization'],
       maxAge: 86400 // 24 hours
@@ -414,21 +420,28 @@ async function bootstrap() {
             "'unsafe-inline'",
             "'unsafe-eval'",
             "https://accounts.google.com",
-            "https://apis.google.com"
+            "https://apis.google.com",
+            "https://www.googleapis.com"
           ],
           styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           imgSrc: ["'self'", "data:", "https:", "blob:"],
           connectSrc: [
             "'self'",
+            "http://localhost:3000",
+            "https://ishswami.in",
+            "https://www.ishswami.in",
             "https://api.ishswami.in",
             "wss://api.ishswami.in",
             "https://accounts.google.com",
-            "https://oauth2.googleapis.com"
+            "https://oauth2.googleapis.com",
+            "https://www.googleapis.com"
           ],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           frameSrc: ["'self'", "https://accounts.google.com"],
           objectSrc: ["'none'"],
-          baseUri: ["'self'"]
+          baseUri: ["'self'"],
+          formAction: ["'self'", "https://accounts.google.com"],
+          frameAncestors: ["'none'"]
         }
       },
       crossOriginEmbedderPolicy: false,
