@@ -16,6 +16,7 @@ import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
 import { RedisCache } from '../../../shared/cache/decorators/redis-cache.decorator';
 import { ClinicService } from '../../clinic/clinic.service';
 import { ClinicUserService } from '../../clinic/services/clinic-user.service';
+import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
 export class AuthService {
@@ -32,6 +33,8 @@ export class AuthService {
   private readonly SMS_PROVIDER_URL = process.env.SMS_PROVIDER_URL || 'https://api.sms-provider.com/send';
   private readonly SMS_SENDER_ID = process.env.SMS_SENDER_ID || 'HealthApp';
   private readonly MAGIC_LINK_TTL = 900; // 15 minutes
+  private readonly googleClient: OAuth2Client;
+  private readonly GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '616510725595-icnj6ql0qie97dp4vol3u9uafbnmhend.apps.googleusercontent.com';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -44,6 +47,7 @@ export class AuthService {
     private readonly clinicService: ClinicService,
     private readonly clinicUserService: ClinicUserService,
   ) {
+    this.googleClient = new OAuth2Client(this.GOOGLE_CLIENT_ID);
     this.ensureSuperAdmin();
   }
 
@@ -1420,7 +1424,7 @@ export class AuthService {
   }
   
   async handleFacebookLogin(facebookUser: any, request: any): Promise<any> {
-    const { email, first_name, last_name, picture, id: facebookId } = facebookUser;
+    const { email, first_name, last_name, picture } = facebookUser;
     
     try {
       // Check if user exists
@@ -1438,35 +1442,32 @@ export class AuthService {
             lastName: last_name,
             name: `${first_name} ${last_name}`,
             profilePicture: picture?.data?.url,
-            role: 'PATIENT', // Default role
-            isVerified: true, // Facebook emails are verified
-            password: await this.hashPassword(uuidv4()), // Random password
-            age: 0, // Default age, can be updated later
-            phone: '', // Default empty phone
-            gender: 'UNSPECIFIED', // Default gender
-            dateOfBirth: new Date(), // Default date, can be updated later
+            role: 'PATIENT',
+            isVerified: true,
+            password: await this.hashPassword(uuidv4()),
+            age: 0,
+            phone: '',
+            gender: 'UNSPECIFIED',
+            dateOfBirth: new Date(),
             userid: userid
           }
         });
         
-        // Log new user creation
         this.logger.debug(`New user created: ${user.email}`);
-      } else if (!user.facebookId) {
-        // Update existing user with Facebook ID if not already set
-        user = await this.prisma.user.update({
-          where: { id: user.id },
-          data: {
-            facebookId,
-            isVerified: true,
-            profilePicture: user.profilePicture || picture?.data?.url
-          }
-        });
+      } else {
+        // Update existing user's profile picture if available
+        if (picture?.data?.url) {
+          user = await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+              isVerified: true,
+              profilePicture: picture.data.url
+            }
+          });
+        }
       }
       
-      // Log successful Facebook login
       this.logger.debug(`Facebook login successful for user ${user.email}`);
-      
-      // Generate tokens and return login response
       return this.login(user, request);
     } catch (error) {
       this.logger.error(`Facebook login failed: ${error.message}`);
@@ -1574,23 +1575,16 @@ export class AuthService {
   
   // Social login token verification methods
   
-  async verifyGoogleToken(token: string): Promise<any> {
+  async verifyGoogleToken(token: string) {
     try {
-      // This is a placeholder for actual Google token verification
-      // In a real implementation, you would use the Google Auth Library
-      // Example: const ticket = await client.verifyIdToken({ idToken: token, audience: CLIENT_ID });
+      this.logger.debug('Verifying Google token');
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken: token,
+        audience: this.GOOGLE_CLIENT_ID
+      });
       
-      // For now, we'll simulate a successful verification with mock data
-      return {
-        getPayload: () => ({
-          email: 'user@example.com',
-          sub: 'google-user-id',
-          name: 'John Doe',
-          given_name: 'John',
-          family_name: 'Doe',
-          picture: 'https://example.com/profile.jpg'
-        })
-      };
+      this.logger.debug('Google token verified successfully');
+      return ticket;
     } catch (error) {
       this.logger.error(`Google token verification failed: ${error.message}`);
       throw new UnauthorizedException('Invalid Google token');
