@@ -381,15 +381,25 @@ async function bootstrap() {
 
     // Enable CORS with specific configuration
     app.enableCors({
-      origin: [
-        'http://localhost:3000',  // Development
-        'https://ishswami.in',    // Production
-        'https://www.ishswami.in', // Production with www
-        /\.ishswami\.in$/,        // All subdomains
-        'https://accounts.google.com', // Google authentication
-        'https://oauth2.googleapis.com', // Google OAuth
-        'https://www.googleapis.com' // Google APIs
-      ],
+      origin: process.env.NODE_ENV === 'production' 
+        ? [
+            'https://ishswami.in',
+            'https://www.ishswami.in',
+            /\.ishswami\.in$/,
+            'http://localhost:3000',  // Allow local development frontend
+            'https://accounts.google.com',
+            'https://oauth2.googleapis.com',
+            'https://www.googleapis.com'
+          ]
+        : [
+            'http://localhost:3000',
+            'http://localhost:8088',
+            'http://localhost:5050',
+            'http://localhost:8082',
+            'https://accounts.google.com',
+            'https://oauth2.googleapis.com',
+            'https://www.googleapis.com'
+          ],
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       credentials: true,
       allowedHeaders: [
@@ -408,6 +418,31 @@ async function bootstrap() {
       ],
       exposedHeaders: ['Set-Cookie', 'Authorization'],
       maxAge: 86400 // 24 hours
+    });
+
+    // Add preflight handler for all routes
+    const fastifyInstance = app.getHttpAdapter().getInstance();
+    fastifyInstance.addHook('onRequest', (request, reply, done) => {
+      // Handle preflight requests
+      if (request.method === 'OPTIONS') {
+        const origin = request.headers.origin;
+        if (origin) {
+          const allowedOrigins = process.env.NODE_ENV === 'production'
+            ? ['https://ishswami.in', 'https://www.ishswami.in', 'http://localhost:3000']  // Allow local development frontend
+            : ['http://localhost:3000', 'http://localhost:8088', 'http://localhost:5050', 'http://localhost:8082'];
+          
+          if (allowedOrigins.includes(origin) || /\.ishswami\.in$/.test(origin)) {
+            reply.header('Access-Control-Allow-Origin', origin);
+            reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+            reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-ID');
+            reply.header('Access-Control-Allow-Credentials', 'true');
+            reply.header('Access-Control-Max-Age', '86400');
+            reply.send();
+            return;
+          }
+        }
+      }
+      done();
     });
 
     // Configure Fastify security headers
@@ -440,36 +475,13 @@ async function bootstrap() {
           frameSrc: ["'self'", "https://accounts.google.com"],
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
-          formAction: ["'self'", "https://accounts.google.com"],
+          formAction: ["'self'", "https://accounts.google.com", "http://localhost:3000"],
           frameAncestors: ["'none'"]
         }
       },
       crossOriginEmbedderPolicy: false,
       crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
       crossOriginResourcePolicy: { policy: "cross-origin" }
-    });
-
-    // Add specific route handling for authentication endpoints
-    const fastifyInstance = app.getHttpAdapter().getInstance();
-    fastifyInstance.addHook('onRequest', (request, reply, done) => {
-      // Handle preflight requests
-      if (request.method === 'OPTIONS') {
-        reply.header('Access-Control-Allow-Origin', request.headers.origin || '*');
-        reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-        reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-ID');
-        reply.header('Access-Control-Allow-Credentials', 'true');
-        reply.header('Access-Control-Max-Age', '86400');
-        reply.send();
-        return;
-      }
-
-      // Handle authentication endpoints specially
-      if (request.url.startsWith('/auth/') || request.url.includes('google')) {
-        reply.header('Access-Control-Allow-Origin', request.headers.origin || '*');
-        reply.header('Access-Control-Allow-Credentials', 'true');
-      }
-
-      done();
     });
 
     // Configure Swagger with environment variables

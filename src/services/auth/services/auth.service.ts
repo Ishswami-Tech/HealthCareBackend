@@ -33,7 +33,8 @@ export class AuthService {
   private readonly SMS_PROVIDER_URL = process.env.SMS_PROVIDER_URL || 'https://api.sms-provider.com/send';
   private readonly SMS_SENDER_ID = process.env.SMS_SENDER_ID || 'HealthApp';
   private readonly MAGIC_LINK_TTL = 900; // 15 minutes
-  private readonly GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '616510725595-icnj6ql0qie97dp4voi3u9uafbnmhend.apps.googleusercontent.com';
+  private readonly GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+  private readonly GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
   private readonly googleClient: OAuth2Client;
 
   constructor(
@@ -47,7 +48,13 @@ export class AuthService {
     private readonly clinicService: ClinicService,
     private readonly clinicUserService: ClinicUserService,
   ) {
-    this.googleClient = new OAuth2Client(this.GOOGLE_CLIENT_ID);
+    if (!this.GOOGLE_CLIENT_ID) {
+      throw new Error('GOOGLE_CLIENT_ID environment variable is not set');
+    }
+    this.googleClient = new OAuth2Client({
+      clientId: this.GOOGLE_CLIENT_ID,
+      clientSecret: this.GOOGLE_CLIENT_SECRET
+    });
     this.ensureSuperAdmin();
   }
 
