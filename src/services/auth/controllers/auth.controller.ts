@@ -509,14 +509,22 @@ export class AuthController {
       properties: {
         access_token: { type: 'string' },
         refresh_token: { type: 'string' },
+        session_id: { type: 'string' },
         user: { 
           type: 'object',
           properties: {
             id: { type: 'string' },
             email: { type: 'string' },
-            role: { type: 'string' }
+            role: { type: 'string' },
+            firstName: { type: 'string' },
+            lastName: { type: 'string' },
+            isVerified: { type: 'boolean' },
+            googleId: { type: 'string' },
+            profileComplete: { type: 'boolean' }
           }
-        }
+        },
+        isNew: { type: 'boolean' },
+        redirectUrl: { type: 'string' }
       }
     }
   })
@@ -526,6 +534,10 @@ export class AuthController {
     @Req() request: any
   ): Promise<any> {
     try {
+      if (!token) {
+        throw new BadRequestException('Google token is required');
+      }
+
       this.logger.debug('Starting Google login process');
       this.logger.debug('Received token:', token.substring(0, 10) + '...');
 
@@ -545,9 +557,16 @@ export class AuthController {
       const response = await this.authService.handleGoogleLogin(payload, request);
       this.logger.debug('Google login handled successfully');
       
-      return response;
+      return {
+        ...response,
+        isNew: !response.user.googleId, // Indicate if this is a new Google login
+        redirectUrl: this.authService.getRedirectPathForRole(response.user.role)
+      };
     } catch (error) {
       this.logger.error('Google login failed:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new UnauthorizedException(
         error instanceof Error 
           ? `Invalid Google token: ${error.message}`
