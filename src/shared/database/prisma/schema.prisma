@@ -75,11 +75,13 @@ model User {
 model Receptionist {
   id                    String                  @id @default(uuid())
   userId                String                  @unique
-  clinicId              String?                 @unique
+  clinicId              String?
   createdAt             DateTime                @default(now())
   clinic                Clinic?                 @relation(fields: [clinicId], references: [id])
   user                  User                    @relation(fields: [userId], references: [id])
   ReceptionistsAtClinic ReceptionistsAtClinic[]
+
+  @@index([clinicId])
 }
 
 model Clinic {
@@ -110,7 +112,7 @@ model Clinic {
   appointments          Appointment[]
   admins                ClinicAdmin[]
   doctors               DoctorClinic[]
-  receptionist          Receptionist?
+  receptionists         Receptionist[]
   ReceptionistsAtClinic ReceptionistsAtClinic[]
   locations             ClinicLocation[]
   createdByUser         User                    @relation(fields: [createdBy], references: [id])
