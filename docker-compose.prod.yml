@@ -22,6 +22,8 @@ services:
       NODE_ENV: production
       CORS_ORIGIN: "*"
       FRONTEND_URL: https://ishswami.in
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
       REDIS_HOST: redis
       REDIS_PORT: 6379

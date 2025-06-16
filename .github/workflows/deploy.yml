@@ -28,6 +28,8 @@ env:
   POSTGRES_CONTAINER: latest-postgres
   REDIS_CONTAINER: latest-redis
   NETWORK_NAME: app-network
+  GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+  GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
 
 jobs:
   pre-deployment-check:
@@ -315,9 +317,14 @@ jobs:
           command_timeout: "30m"
           timeout: 120s
           proxy_timeout: 120s
+          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+
+            # Export the environment variables
+            export GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID}"
+            export GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET}"
 
             # Make scripts executable in the release directory
             if [ -d "scripts" ]; then
@@ -1400,10 +1407,35 @@ jobs:
                     exit 1
                   fi
                   
+                  # Create temporary env file for deployment
+                  echo "Setting up environment variables..."
+                  echo "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}" > .env.deploy
+                  echo "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}" >> .env.deploy
+                  
                   # Using --no-deps ensures database containers are not touched
-                  echo "Starting API container..."
-                  docker-compose -f docker-compose.prod.yml up -d --build --no-deps api
-                
+                  echo "Starting API container with environment variables..."
+                  docker compose --env-file .env.deploy -f docker-compose.prod.yml up -d --build --no-deps api
+                  
+                  # Verify deployment
+                  echo "Verifying deployment..."
+                  if docker exec latest-api env | grep -q "GOOGLE_CLIENT"; then
+                    echo "✅ Environment variables verified in container"
+                  else
+                    echo "❌ WARNING: Google environment variables not found in container"
+                    docker logs latest-api --tail 50
+                  fi
+                  
+                  # Cleanup
+                  rm -f .env.deploy
+                  
+                  # Verify the environment variables are set in the container
+                  echo "Verifying environment variables in the container..."
+                  docker exec latest-api env | grep GOOGLE || echo "❌ Google environment variables not found in container"
+
+                  # Check container logs for any startup issues
+                  echo "Checking container logs for startup issues..."
+                  docker logs latest-api --tail 50
+                  
                   # Verify database containers are still running
                   echo "Verifying database containers are still running..."
                   
