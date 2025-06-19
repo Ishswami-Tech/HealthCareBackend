@@ -23,9 +23,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     super({
       log: [
-        { emit: 'stdout', level: 'query' },
         { emit: 'stdout', level: 'error' },
-        { emit: 'stdout', level: 'info' },
         { emit: 'stdout', level: 'warn' },
       ],
       errorFormat: 'minimal',
@@ -39,7 +37,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       console.log('Prisma Client beforeExit event');
     });
 
-    // Monitor queries
+    // Monitor queries only in development
     if (process.env.NODE_ENV !== 'production') {
       this.$use(async (params, next) => {
         const startTime = Date.now();

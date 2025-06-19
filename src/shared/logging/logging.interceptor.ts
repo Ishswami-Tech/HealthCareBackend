@@ -7,8 +7,15 @@ import { LogType, LogLevel } from './types/logging.types';
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(LoggingInterceptor.name);
-  private readonly HEALTH_CHECK_PATHS = ['/health', '/api-health', '/socket.io/socket.io.js'];
-  private readonly MINIMAL_LOG_PATHS = ['/logger/logs/data', '/logger/events/data'];
+  private readonly SKIP_LOG_PATHS = [
+    '/health',
+    '/api-health',
+    '/socket.io/socket.io.js',
+    '/logger/logs/data',
+    '/logger/events/data',
+    '/metrics',
+    '/status'
+  ];
 
   constructor(private readonly loggingService: LoggingService) {}
 
@@ -18,17 +25,13 @@ export class LoggingInterceptor implements NestInterceptor {
     const userAgent = headers['user-agent'] || 'unknown';
     const startTime = Date.now();
 
-    // Skip logging for health checks completely
-    const isHealthCheck = this.HEALTH_CHECK_PATHS.some(path => url.includes(path));
-    if (isHealthCheck) {
+    // Skip logging for health checks and other frequent endpoints
+    if (this.SKIP_LOG_PATHS.some(path => url.includes(path))) {
       return next.handle();
     }
 
-    // Minimal logging for frequent endpoints
-    const isMinimalLog = this.MINIMAL_LOG_PATHS.some(path => url === path);
-    
-    if (!isMinimalLog) {
-      // Log the incoming request
+    // Log the incoming request (only in non-production)
+    if (process.env.NODE_ENV !== 'production') {
       this.loggingService.log(
         LogType.REQUEST,
         LogLevel.INFO,
@@ -50,18 +53,19 @@ export class LoggingInterceptor implements NestInterceptor {
           const endTime = Date.now();
           const duration = endTime - startTime;
 
-          if (!isMinimalLog) {
-            // Log the successful response
+          // Only log slow responses or non-200 status codes
+          const statusCode = context.switchToHttp().getResponse().statusCode;
+          if (duration > 1000 || statusCode !== 200) {
             this.loggingService.log(
               LogType.RESPONSE,
               LogLevel.INFO,
-              `${method} ${url} [${duration}ms]`,
+              `${method} ${url} [${duration}ms] ${statusCode}`,
               'API',
               {
                 method,
                 url,
                 duration: `${duration}ms`,
-                statusCode: context.switchToHttp().getResponse().statusCode
+                statusCode
               }
             );
           }
