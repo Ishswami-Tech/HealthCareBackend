@@ -69,12 +69,12 @@ async function bootstrap() {
 
     // Configure Fastify logger based on environment
     const loggerConfig = {
-      level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+      level: process.env.NODE_ENV === 'production' ? 'warn' : 'info',
       serializers: {
         req: (req) => {
-          // Skip detailed logging for health check endpoints
-          if (req.url === '/health' || req.url === '/api-health') {
-            return { method: req.method, url: req.url };
+          // Skip detailed logging for health check and common endpoints
+          if (req.url === '/health' || req.url === '/api-health' || req.url.includes('socket.io') || req.url.includes('/logs/')) {
+            return { method: req.method, url: req.url, skip: true }; // Return minimal info but mark for skipping
           }
           return {
             method: req.method,
@@ -114,7 +114,7 @@ async function bootstrap() {
         trustProxy: envConfig.security.trustProxy === 1
       }),
       {
-        logger: ['error', 'warn', 'log', 'debug', 'verbose'] as LogLevel[],
+        logger: process.env.NODE_ENV === 'production' ? ['error', 'warn'] : ['error', 'warn', 'log'] as LogLevel[],
         bufferLogs: true
       }
     );

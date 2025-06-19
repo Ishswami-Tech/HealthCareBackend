@@ -180,18 +180,28 @@ export class LoggingController {
         let currentTab = '${activeTab}';
         let refreshInterval;
         let isRefreshing = false;
-        const REFRESH_INTERVAL = 5000; // 5 seconds
+        let lastRefreshTime = new Date();
+        const REFRESH_INTERVAL = 30000; // 30 seconds instead of 5 seconds
+        let failedAttempts = 0;
+        const MAX_FAILED_ATTEMPTS = 3;
 
-        function updateRefreshStatus(isLoading) {
+        function updateRefreshStatus(isLoading, error = null) {
           const statusElement = document.getElementById(currentTab === 'logs' ? 'refreshStatus' : 'eventRefreshStatus');
           const refreshButton = document.getElementById(currentTab === 'logs' ? 'refreshButton' : 'eventRefreshButton');
+          
+          if (error) {
+            statusElement.innerHTML = '<span style="color: red;">Error: ' + error + '</span>';
+            refreshButton.disabled = false;
+            return;
+          }
           
           if (isLoading) {
             statusElement.innerHTML = '<span class="loading"></span>Refreshing...';
             refreshButton.disabled = true;
           } else {
-            const currentTime = new Date().toLocaleTimeString();
-            statusElement.innerHTML = 'Last updated: ' + currentTime;
+            lastRefreshTime = new Date();
+            const timeString = lastRefreshTime.toLocaleTimeString();
+            statusElement.innerHTML = 'Last updated: ' + timeString;
             refreshButton.disabled = false;
           }
         }
@@ -232,15 +242,16 @@ export class LoggingController {
           }
         }
 
-        async function refreshContent() {
+        async function refreshContent(manual = false) {
           if (isRefreshing) return;
-          isRefreshing = true;
-          
-          updateRefreshStatus(true);
-          const contentId = currentTab === 'logs' ? 'logsContent' : 'eventsContent';
-          const container = document.getElementById(contentId);
           
           try {
+            isRefreshing = true;
+            updateRefreshStatus(true);
+            
+            const contentId = currentTab === 'logs' ? 'logsContent' : 'eventsContent';
+            const container = document.getElementById(contentId);
+            
             let url = '/logger/' + currentTab + '/data';
             const params = new URLSearchParams();
             
@@ -272,30 +283,70 @@ export class LoggingController {
             }
 
             const response = await fetch(url);
-            if (!response.ok) throw new Error('Failed to fetch data');
+            if (!response.ok) {
+              throw new Error('Failed to fetch data');
+            }
             
             const data = await response.json();
+            
             if (!data || data.length === 0) {
               container.innerHTML = '<div class="empty-state">No data found</div>';
+              failedAttempts = 0;
               return;
             }
 
-            container.innerHTML = data.map(log => \`
-              <div class="entry">
-                <span class="timestamp">\${new Date(log.timestamp).toLocaleString()}</span>
-                <span class="level \${log.level}">\${log.level}</span>
-                <span class="type">\${log.type}</span>
-                <div class="message">\${log.message}</div>
-                <div class="metadata">\${JSON.stringify(log.metadata, null, 2)}</div>
-              </div>
-            \`).join('');
+            container.innerHTML = data.map(log => {
+              const metadata = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
+              return '<div class="entry">' +
+                '<span class="timestamp">' + new Date(log.timestamp).toLocaleString() + '</span>' +
+                '<span class="level ' + log.level + '">' + log.level + '</span>' +
+                '<span class="type">' + log.type + '</span>' +
+                '<div class="message">' + log.message + '</div>' +
+                '<div class="metadata">' + JSON.stringify(metadata, null, 2) + '</div>' +
+                '</div>';
+            }).join('');
+            
+            failedAttempts = 0;
+            updateRefreshStatus(false);
+            
           } catch (error) {
-            console.error('Error fetching data:', error);
-            container.innerHTML = '<div class="error">Failed to fetch data</div>';
+            console.error('Error refreshing content:', error);
+            failedAttempts++;
+            
+            if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+              clearInterval(refreshInterval);
+              updateRefreshStatus(false, 'Auto-refresh stopped due to errors. Click Refresh to try again.');
+            } else {
+              updateRefreshStatus(false, error.message);
+            }
           } finally {
             isRefreshing = false;
-            updateRefreshStatus(false);
           }
+        }
+
+        function startAutoRefresh() {
+          if (refreshInterval) {
+            clearInterval(refreshInterval);
+          }
+          refreshInterval = setInterval(refreshContent, REFRESH_INTERVAL);
+          refreshContent(); // Initial load
+        }
+
+        function stopAutoRefresh() {
+          if (refreshInterval) {
+            clearInterval(refreshInterval);
+            refreshInterval = null;
+          }
+        }
+
+        function switchTab(tab) {
+          currentTab = tab;
+          document.getElementById('logsPanel').style.display = tab === 'logs' ? 'block' : 'none';
+          document.getElementById('eventsPanel').style.display = tab === 'events' ? 'block' : 'none';
+          
+          // Reset refresh state
+          stopAutoRefresh();
+          startAutoRefresh();
         }
 
         function manualRefresh() {
@@ -304,45 +355,18 @@ export class LoggingController {
           startAutoRefresh();
         }
 
-        function startAutoRefresh() {
-          if (refreshInterval) {
-            clearInterval(refreshInterval);
-          }
-          refreshInterval = setInterval(refreshContent, REFRESH_INTERVAL);
-        }
-
-        // Initial load
-        refreshContent();
-        startAutoRefresh();
-
-        // Cleanup on page unload
-        window.addEventListener('unload', () => {
-          if (refreshInterval) {
-            clearInterval(refreshInterval);
-          }
+        // Start auto-refresh when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+          startAutoRefresh();
         });
 
-        // Add click handlers for tabs
-        document.querySelectorAll('.tab').forEach(tab => {
-          tab.addEventListener('click', (e) => {
-            e.preventDefault();
-            const isLogs = e.target.href.includes('logs');
-            currentTab = isLogs ? 'logs' : 'events';
-            
-            // Update tab active states
-            document.querySelectorAll('.tab').forEach(t => {
-              t.classList.remove('active');
-            });
-            e.target.classList.add('active');
-            
-            // Update content visibility
-            document.querySelectorAll('.tab-content').forEach(content => {
-              content.classList.remove('active');
-            });
-            document.getElementById(currentTab).classList.add('active');
-            
-            refreshContent();
-          });
+        // Stop auto-refresh when page is hidden
+        document.addEventListener('visibilitychange', function() {
+          if (document.hidden) {
+            stopAutoRefresh();
+          } else {
+            startAutoRefresh();
+          }
         });
 
         // Add change handlers for filters
