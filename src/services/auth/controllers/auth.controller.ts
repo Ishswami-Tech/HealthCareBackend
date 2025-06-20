@@ -13,6 +13,8 @@ import {
   BadRequestException,
   InternalServerErrorException,
   HttpException,
+  Delete,
+  Param,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { CreateUserDto, UserResponseDto, SimpleCreateUserDto } from '../../../libs/dtos/user.dto';
@@ -21,8 +23,10 @@ import { Public } from '../../../libs/decorators/public.decorator';
 import { AuthService } from '../services/auth.service';
 import { EmailService } from '../../../shared/messaging/email/email.service';
 import { Logger } from '@nestjs/common';
-import { LoginDto, LogoutDto, PasswordResetDto, AuthResponse } from '../../../libs/dtos/auth.dtos';
+import { LoginDto, LogoutDto, PasswordResetDto, AuthResponse, LoginRequestDto, ForgotPasswordRequestDto, VerifyOtpRequestDto, RequestOtpDto, InvalidateOtpDto, CheckOtpStatusDto } from '../../../libs/dtos/auth.dtos';
 import { Role } from '@prisma/client';
+import * as crypto from 'crypto';
+import { SessionService } from '../services/session.service';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -32,7 +36,8 @@ export class AuthController {
 
   constructor(
     private readonly authService: AuthService,
-    private readonly emailService: EmailService
+    private readonly emailService: EmailService,
+    private readonly sessionService: SessionService
   ) {}
 
   @Public()
@@ -134,6 +139,7 @@ export class AuthController {
     summary: 'Login with password or OTP',
     description: 'Authenticate using either password or OTP'
   })
+  @ApiBody({ type: LoginRequestDto })
   @ApiResponse({ 
     status: 200, 
     description: 'Login successful',
@@ -141,17 +147,14 @@ export class AuthController {
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async login(
-    @Body('email') email: string,
-    @Body('password') password?: string,
-    @Body('otp') otp?: string,
+    @Body() body: LoginRequestDto,
     @Req() request?: any
   ): Promise<any> {
+    const { email, password, otp } = body;
     if (!password && !otp) {
       throw new BadRequestException('Either password or OTP must be provided');
     }
-    
     let user: any;
-    
     if (password) {
       user = await this.authService.validateUser(email, password);
       if (!user) {
@@ -166,8 +169,10 @@ export class AuthController {
       if (!user) {
         throw new UnauthorizedException('User not found');
       }
+      if (!user.isVerified) {
+        user = await this.authService.markUserAsVerified(user.id);
+      }
     }
-    
     return this.authService.login(user, request);
   }
 
@@ -177,6 +182,7 @@ export class AuthController {
     summary: 'Logout user',
     description: 'Logs out the user from the current session or all devices'
   })
+  @ApiBody({ type: LogoutDto })
   @ApiResponse({
     status: 200,
     description: 'User logged out successfully'
@@ -188,14 +194,12 @@ export class AuthController {
   ): Promise<{ message: string }> {
     const userId = req.user.sub;
     const token = req.headers.authorization?.split(' ')[1];
-    
     await this.authService.logout(
       userId,
       logoutDto.sessionId,
       logoutDto.allDevices,
       token,
     );
-    
     return { message: 'Logged out successfully' };
   }
 
@@ -212,7 +216,17 @@ export class AuthController {
   })
   @ApiResponse({ status: 401, description: 'Invalid refresh token' })
   async refresh(@Request() req) {
-    return this.authService.refreshToken(req.user.sub);
+    const deviceFingerprint = crypto
+      .createHash('sha256')
+      .update(JSON.stringify({
+        userAgent: req.headers['user-agent'],
+        acceptLanguage: req.headers['accept-language'],
+        secChUa: req.headers['sec-ch-ua'],
+        platform: req.headers['sec-ch-ua-platform'],
+        ipAddress: req.ip || req.headers['x-forwarded-for']
+      }))
+      .digest('hex');
+    return this.authService.refreshToken(req.user.sub, deviceFingerprint);
   }
 
   @Get('verify')
@@ -244,12 +258,13 @@ export class AuthController {
     summary: 'Forgot password',
     description: 'Initiates the password reset process'
   })
+  @ApiBody({ type: ForgotPasswordRequestDto })
   @ApiResponse({ 
     status: 200, 
     description: 'Password reset email sent'
   })
-  async forgotPassword(@Body('email') email: string): Promise<{ message: string }> {
-    await this.authService.forgotPassword(email);
+  async forgotPassword(@Body() body: ForgotPasswordRequestDto): Promise<{ message: string }> {
+    await this.authService.forgotPassword(body.email);
     return { message: 'Password reset instructions sent to your email' };
   }
 
@@ -281,14 +296,15 @@ export class AuthController {
     summary: 'Request OTP for login',
     description: 'Sends an OTP through available channels'
   })
+  @ApiBody({ type: RequestOtpDto })
   @ApiResponse({
     status: 200,
     description: 'OTP sent successfully'
   })
   async requestOTP(
-    @Body('identifier') identifier: string,
+    @Body() body: RequestOtpDto,
   ): Promise<{ success: boolean; message: string }> {
-    return this.authService.requestLoginOTP(identifier);
+    return this.authService.requestLoginOTP(body.identifier);
   }
 
   @Public()
@@ -298,32 +314,29 @@ export class AuthController {
     summary: 'Verify OTP and login',
     description: 'Verify the OTP and log the user in'
   })
+  @ApiBody({ type: VerifyOtpRequestDto })
   @ApiResponse({
     status: 200,
     description: 'Login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid OTP' })
   async verifyOTP(
-    @Body('email') email: string,
-    @Body('otp') otp: string,
+    @Body() body: VerifyOtpRequestDto,
     @Req() request: any
   ): Promise<any> {
+    const { email, otp } = body;
     try {
       const isOtpValid = await this.authService.verifyOTP(email, otp);
       if (!isOtpValid) {
         throw new UnauthorizedException('Invalid or expired OTP');
       }
-      
       const user = await this.authService.findUserByEmail(email);
       if (!user) {
         throw new UnauthorizedException('User not found');
       }
-      
       const loginData = await this.authService.login(user, request);
-      
       const redirectUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       const redirectPath = this.authService.getRedirectPathForRole(user.role);
-      
       return {
         ...loginData,
         redirectUrl: `${redirectUrl}${redirectPath}`
@@ -344,17 +357,18 @@ export class AuthController {
     summary: 'Check if user has an active OTP',
     description: 'Check if a user has an active OTP'
   })
+  @ApiBody({ type: CheckOtpStatusDto })
   @ApiResponse({ 
     status: 200, 
     description: 'OTP status retrieved'
   })
-  async checkOTPStatus(@Body('email') email: string): Promise<{ hasActiveOTP: boolean }> {
+  async checkOTPStatus(@Body() body: CheckOtpStatusDto): Promise<{ hasActiveOTP: boolean }> {
+    const { email } = body;
     try {
       const user = await this.authService.findUserByEmail(email);
       if (!user) {
         throw new BadRequestException('User not found');
       }
-      
       const hasActiveOTP = await this.authService.hasActiveOTP(user.id);
       return { hasActiveOTP };
     } catch (error) {
@@ -372,17 +386,18 @@ export class AuthController {
     summary: 'Invalidate active OTP',
     description: 'Invalidate any active OTP for a user'
   })
+  @ApiBody({ type: InvalidateOtpDto })
   @ApiResponse({ 
     status: 200, 
     description: 'OTP invalidated successfully'
   })
-  async invalidateOTP(@Body('email') email: string): Promise<{ message: string }> {
+  async invalidateOTP(@Body() body: InvalidateOtpDto): Promise<{ message: string }> {
+    const { email } = body;
     try {
       const user = await this.authService.findUserByEmail(email);
       if (!user) {
         throw new BadRequestException('User not found');
       }
-      
       await this.authService.invalidateOTP(user.id);
       return { message: 'OTP invalidated successfully' };
     } catch (error) {
@@ -515,12 +530,13 @@ export class AuthController {
           properties: {
             id: { type: 'string' },
             email: { type: 'string' },
-            role: { type: 'string' },
             firstName: { type: 'string' },
             lastName: { type: 'string' },
+            role: { type: 'string' },
             isVerified: { type: 'boolean' },
             googleId: { type: 'string' },
-            profileComplete: { type: 'boolean' }
+            profileComplete: { type: 'boolean' },
+            profilePicture: { type: 'string' }
           }
         },
         isNew: { type: 'boolean' },
@@ -557,11 +573,21 @@ export class AuthController {
       const response = await this.authService.handleGoogleLogin(payload, request);
       this.logger.debug('Google login handled successfully');
       
-      return {
+      // Ensure response includes name fields
+      const enhancedResponse = {
         ...response,
+        user: {
+          ...response.user,
+          firstName: response.user.firstName || payload.given_name,
+          lastName: response.user.lastName || payload.family_name,
+          name: response.user.name || `${payload.given_name} ${payload.family_name}`.trim(),
+          profilePicture: response.user.profilePicture || payload.picture
+        },
         isNew: !response.user.googleId, // Indicate if this is a new Google login
         redirectUrl: this.authService.getRedirectPathForRole(response.user.role)
       };
+      
+      return enhancedResponse;
     } catch (error) {
       this.logger.error('Google login failed:', error);
       if (error instanceof BadRequestException) {
@@ -681,5 +707,38 @@ export class AuthController {
     } catch (error) {
       throw new UnauthorizedException('Invalid Apple token');
     }
+  }
+
+  @Get('sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'List all active sessions for the current user' })
+  @ApiResponse({ status: 200, description: 'List of active sessions' })
+  async getActiveSessions(@Request() req) {
+    const userId = req.user.sub;
+    return this.sessionService.getActiveSessions(userId);
+  }
+
+  @Delete('sessions/:sessionId')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Terminate a specific session by sessionId' })
+  @ApiResponse({ status: 200, description: 'Session terminated' })
+  @ApiResponse({ status: 404, description: 'Session not found' })
+  async terminateSession(@Request() req, @Param('sessionId') sessionId: string) {
+    const userId = req.user.sub;
+    await this.sessionService.terminateSession(userId, sessionId);
+    return { message: 'Session terminated' };
+  }
+
+  @Delete('sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Terminate all sessions except the current one' })
+  @ApiResponse({ status: 200, description: 'All other sessions terminated' })
+  async terminateAllOtherSessions(@Request() req) {
+    const userId = req.user.sub;
+    const currentSessionId = req.user.sessionId;
+    const sessions = await this.sessionService.getActiveSessions(userId);
+    const toTerminate = sessions.filter(s => s.sessionId !== currentSessionId);
+    await Promise.all(toTerminate.map(s => this.sessionService.terminateSession(userId, s.sessionId)));
+    return { message: 'All other sessions terminated' };
   }
 } 

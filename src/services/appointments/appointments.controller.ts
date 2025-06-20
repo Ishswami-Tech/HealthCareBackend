@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, Logger, Request } from '@nestjs/common';
 import { AppointmentService } from './appointments.service';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from 'src/libs/guards/jwt-auth.guard';
@@ -10,6 +10,7 @@ import { ClinicGuard } from '../../libs/guards/clinic.guard';
 import { ClinicRoute } from '../../libs/decorators/clinic-route.decorator';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../shared/interceptors/tenant-context.interceptor';
+import { CreateAppointmentDto, UpdateAppointmentDto } from './appointment.dto';
 
 @ApiTags('appointments')
 @Controller('appointments')
@@ -30,20 +31,25 @@ export class AppointmentsController {
     summary: 'Create a new appointment',
     description: 'Create a new appointment with the specified details'
   })
+  @ApiBody({ type: CreateAppointmentDto })
   @ApiResponse({
     status: 201,
     description: 'Appointment created successfully'
   })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiBearerAuth()
-  async createAppointment(@Body() appointmentData: any, @Request() req) {
+  async createAppointment(@Body() appointmentData: CreateAppointmentDto, @Request() req) {
     try {
-      // Get clinic ID from the request context
       const clinicId = req.clinicContext?.clinicId;
-      
       return await this.appointmentService.createAppointment({
-        ...appointmentData,
         userId: req.user.id,
+        doctorId: appointmentData.doctorId,
+        locationId: appointmentData.locationId,
+        date: appointmentData.date,
+        time: appointmentData.time,
+        duration: appointmentData.duration,
+        type: appointmentData.type,
+        notes: appointmentData.notes,
         clinicId: clinicId,
       });
     } catch (error) {
@@ -100,12 +106,13 @@ export class AppointmentsController {
     summary: 'Update an appointment',
     description: 'Update an existing appointment\'s details'
   })
+  @ApiBody({ type: UpdateAppointmentDto })
   @ApiResponse({ status: 200, description: 'Appointment updated successfully' })
   @ApiResponse({ status: 404, description: 'Appointment not found' })
   @ApiBearerAuth()
   async updateAppointment(
     @Param('id') id: string,
-    @Body() updateData: any,
+    @Body() updateData: UpdateAppointmentDto,
     @Request() req
   ) {
     try {

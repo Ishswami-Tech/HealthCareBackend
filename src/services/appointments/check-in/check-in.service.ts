@@ -6,7 +6,7 @@ import { AppointmentStatus, Appointment, Doctor, Patient, User, Prisma } from '@
 import { JobType, JobPriority, JobData } from '../../../shared/queue/queue.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
 import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
-import { AppointmentWithRelations } from '../appointment.types';
+import { AppointmentWithRelations } from '../appointment.dto';
 
 const appointmentInclude = {
   doctor: {

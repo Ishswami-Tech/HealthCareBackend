@@ -1,11 +1,12 @@
 import { Controller, Get, Post, Body, Param, Logger, UseGuards } from '@nestjs/common';
 import { AppointmentConfirmationService } from './appointment-confirmation.service';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
+import { VerifyAppointmentQRDto, CompleteAppointmentDto } from '../appointment.dto';
 
 @ApiTags('Appointment Confirmation')
 @Controller('api/appointments/confirmation')
@@ -33,13 +34,14 @@ export class AppointmentConfirmationController {
   }
 
   @Post('verify')
+  @ApiBody({ type: VerifyAppointmentQRDto })
   async verifyAppointmentQR(
-    @Body() data: { qrData: string; locationId: string },
+    @Body() body: VerifyAppointmentQRDto,
   ) {
     try {
       return await this.confirmationService.verifyAppointmentQR(
-        data.qrData,
-        data.locationId,
+        body.qrData,
+        body.locationId,
       );
     } catch (error) {
       this.logger.error(`Failed to verify QR code: ${error.message}`, error.stack);
@@ -48,14 +50,15 @@ export class AppointmentConfirmationController {
   }
 
   @Post(':appointmentId/complete')
+  @ApiBody({ type: CompleteAppointmentDto })
   async markAppointmentCompleted(
     @Param('appointmentId') appointmentId: string,
-    @Body() data: { doctorId: string },
+    @Body() body: CompleteAppointmentDto,
   ) {
     try {
       return await this.confirmationService.markAppointmentCompleted(
         appointmentId,
-        data.doctorId,
+        body.doctorId,
       );
     } catch (error) {
       this.logger.error(`Failed to mark appointment as completed: ${error.message}`, error.stack);

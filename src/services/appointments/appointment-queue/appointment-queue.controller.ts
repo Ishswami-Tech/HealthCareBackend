@@ -1,11 +1,12 @@
 import { Controller, Get, Post, Param, Body, Logger, UseGuards } from '@nestjs/common';
 import { AppointmentQueueService } from './appointment-queue.service';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
+import { StartConsultationDto } from '../appointment.dto';
 
 @ApiTags('Appointment Queue')
 @Controller('api/appointments/queue')
@@ -70,12 +71,13 @@ export class AppointmentQueueController {
     summary: 'Start consultation',
     description: 'Move appointment from CONFIRMED to IN_PROGRESS status'
   })
+  @ApiBody({ type: StartConsultationDto })
   async startConsultation(
     @Param('appointmentId') appointmentId: string,
-    @Body('doctorId') doctorId: string,
+    @Body() body: StartConsultationDto,
   ) {
     try {
-      return await this.queueService.startConsultation(appointmentId, doctorId);
+      return await this.queueService.startConsultation(appointmentId, body.doctorId);
     } catch (error) {
       this.logger.error(`Failed to start consultation: ${error.message}`, error.stack);
       throw error;

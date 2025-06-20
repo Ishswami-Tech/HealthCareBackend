@@ -1,5 +1,5 @@
 import { Controller, Post, Get, Body, Param, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { CheckInService } from './check-in.service';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
@@ -9,6 +9,7 @@ import { Clinic } from '../../../libs/decorators/clinic.decorator';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
+import { ProcessCheckInDto, ReorderQueueDto } from '../appointment.dto';
 
 @ApiTags('Check-in')
 @Controller('api/check-in')
@@ -26,14 +27,15 @@ export class CheckInController {
     summary: 'Process patient check-in',
     description: 'Process a patient check-in and update queue position'
   })
+  @ApiBody({ type: ProcessCheckInDto })
   @ApiResponse({ status: 200, description: 'Check-in processed successfully' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 404, description: 'Appointment not found' })
   async processCheckIn(
-    @Body('appointmentId') appointmentId: string,
+    @Body() body: ProcessCheckInDto,
     @Request() req,
   ) {
-    return this.checkInService.processCheckIn(appointmentId, req.clinic.id);
+    return this.checkInService.processCheckIn(body.appointmentId, req.clinic.id);
   }
 
   @Get('doctor-queue/:doctorId')
@@ -74,13 +76,14 @@ export class CheckInController {
     summary: 'Reorder the queue',
     description: 'Reorder the queue for a location (admin/receptionist only)'
   })
+  @ApiBody({ type: ReorderQueueDto })
   @ApiResponse({ status: 200, description: 'Queue reordered successfully' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   async reorderQueue(
-    @Body('appointmentOrder') appointmentOrder: string[],
+    @Body() body: ReorderQueueDto,
     @Request() req,
   ) {
-    return this.checkInService.reorderQueue(req.clinic.id, appointmentOrder);
+    return this.checkInService.reorderQueue(req.clinic.id, body.appointmentOrder);
   }
 
   @Get('location-queue')
