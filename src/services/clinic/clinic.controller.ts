@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../libs/guards/roles.guard';
 import { Roles } from '../../libs/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { CreateClinicDto } from './dto/create-clinic.dto';
 import { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
 import { RegisterPatientDto } from './dto/register-patient.dto';
@@ -12,6 +12,10 @@ import { UpdateClinicDto } from './dto/update-clinic.dto';
 import { Public } from '../../libs/decorators/public.decorator';
 import { AuthenticatedRequest } from '../../libs/types/clinic.types';
 import { FastifyRequest } from 'fastify';
+
+class AppNameInlineDto {
+  appName: string;
+}
 
 @ApiTags('clinic')
 @ApiBearerAuth()
@@ -147,6 +151,7 @@ export class ClinicController {
     summary: 'Assign a clinic admin',
     description: 'Assigns a user as a clinic admin. Only Super Admin or the clinic owner can assign clinic admins.' 
   })
+  @ApiBody({ type: AssignClinicAdminDto })
   @ApiResponse({ 
     status: 201, 
     description: 'The clinic admin has been successfully assigned.'
@@ -164,7 +169,7 @@ export class ClinicController {
     description: 'Conflict - User is already assigned to this clinic or does not have the correct role.'
   })
   async assignClinicAdmin(
-    @Body() data: { userId: string; clinicId: string; isOwner?: boolean },
+    @Body() data: AssignClinicAdminDto,
     @Req() req: AuthenticatedRequest,
   ) {
     const assignedBy = req.user.sub;
@@ -244,6 +249,7 @@ export class ClinicController {
     summary: 'Register a patient to a clinic',
     description: 'Registers a patient user to a specific clinic by app name. Used by the mobile app.' 
   })
+  @ApiBody({ type: RegisterPatientDto })
   @ApiResponse({ 
     status: 201, 
     description: 'The patient has been successfully registered to the clinic.'
@@ -257,7 +263,7 @@ export class ClinicController {
     description: 'Conflict - User is not a patient.'
   })
   async registerPatientToClinic(
-    @Body() data: { appName: string },
+    @Body() data: RegisterPatientDto,
     @Req() req: AuthenticatedRequest
   ) {
     return this.clinicService.registerPatientToClinic({
@@ -267,22 +273,10 @@ export class ClinicController {
   }
 
   @Post('validate-app-name')
-  @Public()
-  @ApiOperation({ 
-    summary: 'Validate clinic app name',
-    description: 'Validates if a clinic exists with the given app name and returns basic clinic information'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Returns clinic information if app name is valid'
-  })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'Clinic not found with given app name'
-  })
-  async validateAppName(@Body('appName') appName: string) {
-    const clinic = await this.clinicService.getClinicByAppName(appName);
-    
+  @ApiOperation({ summary: 'Validate app name', description: 'Validates if an app name (subdomain) is available.' })
+  @ApiBody({ type: AppNameInlineDto })
+  async validateAppName(@Body() data: AppNameInlineDto) {
+    const clinic = await this.clinicService.getClinicByAppName(data.appName);
     // Return only necessary information
     return {
       clinicId: clinic.clinicId,
@@ -293,35 +287,12 @@ export class ClinicController {
   }
 
   @Post('associate-user')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ 
-    summary: 'Associate user with clinic',
-    description: 'Associates an existing user with a clinic based on app name'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'User successfully associated with clinic'
-  })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'Clinic or user not found'
-  })
+  @ApiOperation({ summary: 'Associate user with clinic by app name', description: 'Associates the current user with a clinic by app name.' })
+  @ApiBody({ type: AppNameInlineDto })
   async associateUser(
-    @Body('appName') appName: string,
+    @Body() data: AppNameInlineDto,
     @Req() req: AuthenticatedRequest
   ) {
-    const userId = req.user.sub;
-    const clinic = await this.clinicService.getClinicByAppName(appName);
-    
-    await this.clinicService.associateUserWithClinic(userId, clinic.id);
-    
-    // Return updated clinic information
-    return {
-      clinicId: clinic.clinicId,
-      name: clinic.name,
-      locations: await this.clinicService.getActiveLocations(clinic.id),
-      settings: clinic.settings,
-      token: await this.clinicService.generateClinicToken(userId, clinic.id)
-    };
+    return this.clinicService.associateUserWithClinic(req.user.sub, data.appName);
   }
 } 

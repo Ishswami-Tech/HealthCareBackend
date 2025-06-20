@@ -10,4 +10,13 @@ export class AssignClinicAdminDto {
   @IsNotEmpty()
   @IsUUID()
   userId: string;
+
+  @ApiProperty({ description: 'Clinic ID to assign the admin to' })
+  @IsString()
+  @IsNotEmpty()
+  @IsUUID()
+  clinicId: string;
+
+  @ApiProperty({ description: 'Whether this user is the owner', required: false })
+  isOwner?: boolean;
 } 

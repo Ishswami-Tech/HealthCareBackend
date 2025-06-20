@@ -3,10 +3,13 @@ import { FastifyReply } from 'fastify';
 import { LoggingService } from './logging.service';
 import { LogType } from './types/logging.types';
 import { ApiTags } from '@nestjs/swagger';
+import { Logger } from '@nestjs/common';
 
 @ApiTags('Logging')
 @Controller('logger')
 export class LoggingController {
+  private readonly logger = new Logger(LoggingController.name);
+
   constructor(
     private readonly loggingService: LoggingService,
   ) {}
@@ -403,12 +406,22 @@ export class LoggingController {
     @Query('startTime') startTime?: string,
     @Query('endTime') endTime?: string,
   ) {
-    return this.loggingService.getLogs(
-      type,
-      startTime ? new Date(startTime) : undefined,
-      endTime ? new Date(endTime) : undefined,
-      level
-    );
+    try {
+      const logs = await this.loggingService.getLogs(
+        type,
+        startTime ? new Date(startTime) : undefined,
+        endTime ? new Date(endTime) : undefined,
+        level
+      );
+      
+      return logs.map(log => ({
+        ...log,
+        disabled: false // Ensure disabled property is always set
+      }));
+    } catch (error) {
+      this.logger.error(`Failed to fetch logs: ${error.message}`);
+      return []; // Return empty array instead of null
+    }
   }
 
   @Get('events/data')

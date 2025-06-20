@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiSecurity } from '@nestjs/swagger';
 import { UsersService } from '../services/users.service';
-import { UpdateUserDto, UserResponseDto, CreateUserDto } from '../../../libs/dtos/user.dto';
+import { UpdateUserDto, UserResponseDto, CreateUserDto, UpdateUserRoleDto } from '../../../libs/dtos/user.dto';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
 import { Role } from '@prisma/client';
@@ -179,23 +179,7 @@ export class UsersController {
     summary: 'Update user role',
     description: 'Update a user\'s role and associated role-specific information. Only accessible by Super Admin.'
   })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['role'],
-      properties: {
-        role: { 
-          type: 'string', 
-          enum: ['PATIENT', 'DOCTOR', 'RECEPTIONIST', 'CLINIC_ADMIN', 'SUPER_ADMIN'],
-          description: 'The new role to assign to the user'
-        },
-        // Include role-specific fields from CreateUserDto
-        specialization: { type: 'string', description: 'Doctor specialization (required for DOCTOR role)' },
-        licenseNumber: { type: 'string', description: 'Doctor license number (required for DOCTOR role)' },
-        clinicId: { type: 'string', description: 'Clinic ID (required for CLINIC_ADMIN role)' }
-      }
-    }
-  })
+  @ApiBody({ type: UpdateUserRoleDto })
   @ApiResponse({ 
     status: 200, 
     description: 'User role updated successfully',
@@ -207,9 +191,17 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async updateUserRole(
     @Param('id') id: string,
-    @Body('role') role: Role,
-    @Body() createUserDto: CreateUserDto
+    @Body() updateUserRoleDto: UpdateUserRoleDto
   ): Promise<UserResponseDto> {
-    return this.usersService.updateUserRole(id, role, createUserDto);
+    const minimalCreateUserDto = {
+      email: 'placeholder@example.com',
+      password: 'placeholder',
+      firstName: 'placeholder',
+      lastName: 'placeholder',
+      phone: '0000000000',
+      role: updateUserRoleDto.role as Role,
+      clinicId: updateUserRoleDto.clinicId,
+    };
+    return this.usersService.updateUserRole(id, updateUserRoleDto.role as Role, minimalCreateUserDto);
   }
 }

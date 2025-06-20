@@ -17,6 +17,8 @@ import { RedisCache } from '../../../shared/cache/decorators/redis-cache.decorat
 import { ClinicService } from '../../clinic/clinic.service';
 import { ClinicUserService } from '../../clinic/services/clinic-user.service';
 import { OAuth2Client } from 'google-auth-library';
+import * as crypto from 'crypto';
+import { SessionService } from '../services/session.service';
 
 @Injectable()
 export class AuthService {
@@ -36,6 +38,9 @@ export class AuthService {
   private readonly GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
   private readonly GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
   private readonly googleClient: OAuth2Client;
+  private readonly DEVICE_FINGERPRINT_TTL = 30 * 24 * 60 * 60; // 30 days
+  private readonly MAX_SESSIONS_PER_USER = 5;
+  private readonly SUSPICIOUS_LOGIN_THRESHOLD = 3;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -47,6 +52,7 @@ export class AuthService {
     private readonly eventService: EventService,
     private readonly clinicService: ClinicService,
     private readonly clinicUserService: ClinicUserService,
+    private readonly sessionService: SessionService,
   ) {
     if (!this.GOOGLE_CLIENT_ID) {
       throw new Error('GOOGLE_CLIENT_ID environment variable is not set');
@@ -155,63 +161,41 @@ export class AuthService {
    */
   async login(user: User, request: any, appName?: string) {
     try {
+      // Generate device fingerprint
+      const deviceFingerprint = this.generateDeviceFingerprint(request);
+      // Validate login attempt
+      await this.validateLoginAttempt(user.id, deviceFingerprint);
+
+      // Generate tokens and session info
       const payload = { email: user.email, sub: user.id, role: user.role };
       const accessToken = this.jwtService.sign(payload);
       const refreshToken = uuidv4();
       const sessionId = uuidv4();
-
-      // Extract device and IP information
       const userAgent = request.headers['user-agent'] || 'unknown';
       const ipAddress = request.ip || request.headers['x-forwarded-for'] || 'unknown';
-      const deviceInfo = this.parseUserAgent(userAgent);
+      const deviceInfo = {
+        ...this.parseUserAgent(userAgent),
+        platform: request.headers['sec-ch-ua-platform'] || 'unknown',
+      };
+      const now = new Date();
 
-      // Store session and refresh token in Redis
-      const sessionData = {
+      // Use SessionService to create session
+      await this.sessionService.createSession({
         sessionId,
         userId: user.id,
-        email: user.email,
-        role: user.role,
-        refreshToken,
-        lastLogin: new Date(),
         deviceInfo,
         ipAddress,
-        userAgent,
+        createdAt: now,
+        lastActivityAt: now,
         isActive: true,
-        createdAt: new Date(),
-        lastActivityAt: new Date()
-      };
-
-      await Promise.all([
-        this.redisService.set(
-          `session:${user.id}:${sessionId}`,
-          JSON.stringify(sessionData),
-          24 * 60 * 60
-        ),
-        this.redisService.set(
-          `refresh:${refreshToken}`,
-          JSON.stringify({ userId: user.id, sessionId }),
-          this.TOKEN_REFRESH_TTL
-        ),
-        this.redisService.sAdd(
-          `user:${user.id}:sessions`,
-          sessionId
-        ),
-        this.redisService.set(
-          `device:${user.id}:${deviceInfo.deviceId}`,
-          JSON.stringify({
-            sessionId,
-            lastSeen: new Date(),
-            deviceInfo
-          }),
-          30 * 24 * 60 * 60
-        )
-      ]);
+        refreshToken
+      });
 
       // Update last login and emit event
       const updatedUser = await this.prisma.user.update({
         where: { id: user.id },
         data: { 
-          lastLogin: new Date(),
+          lastLogin: now,
           lastLoginIP: ipAddress,
           lastLoginDevice: userAgent
         },
@@ -241,8 +225,26 @@ export class AuthService {
         deviceInfo,
         ipAddress
       });
-
-      const { password: _, ...userWithoutPassword } = updatedUser;
+      
+      // Send login notification email
+      try {
+        await this.emailService.sendEmail({
+          to: user.email,
+          subject: 'New Login to Your Account',
+          template: EmailTemplate.LOGIN_NOTIFICATION,
+          context: {
+            name: user.firstName || user.name || 'User',
+            time: now.toLocaleString(),
+            device: deviceInfo.type,
+            browser: deviceInfo.browser,
+            operatingSystem: deviceInfo.os,
+            ipAddress: ipAddress,
+            location: 'Unknown'
+          }
+        });
+      } catch (emailError) {
+        this.logger.error(`Failed to send login notification email: ${emailError.message}`);
+      }
 
       // Get basic login response with expanded user details
       const loginResponse = {
@@ -496,6 +498,25 @@ export class AuthService {
         email: user.email,
         role: user.role
       });
+      
+      // Send welcome email
+      try {
+        await this.emailService.sendEmail({
+          to: user.email,
+          subject: 'Welcome to HealthCare App',
+          template: EmailTemplate.WELCOME,
+          context: {
+            name: user.firstName || fullName,
+            role: this.getRoleDisplayName(user.role),
+            loginUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`,
+            supportEmail: process.env.SUPPORT_EMAIL || 'support@healthcareapp.com',
+            dashboardUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}${this.getRedirectPathForRole(user.role)}`
+          }
+        });
+      } catch (emailError) {
+        // Don't fail registration if email fails
+        this.logger.error(`Failed to send welcome email: ${emailError.message}`);
+      }
 
       const { password, ...result } = user;
       const userResponse = { ...result } as any;
@@ -512,6 +533,26 @@ export class AuthService {
         { error: error.message, email: createUserDto.email }
       );
       throw error;
+    }
+  }
+
+  /**
+   * Get display name for user role
+   */
+  private getRoleDisplayName(role: Role): string {
+    switch (role) {
+      case Role.SUPER_ADMIN:
+        return 'Super Administrator';
+      case Role.CLINIC_ADMIN:
+        return 'Clinic Administrator';
+      case Role.DOCTOR:
+        return 'Doctor';
+      case Role.PATIENT:
+        return 'Patient';
+      case Role.RECEPTIONIST:
+        return 'Receptionist';
+      default:
+        return 'User';
     }
   }
 
@@ -691,45 +732,56 @@ export class AuthService {
   }
 
   /**
-   * Refresh token
+   * Enhanced token refresh with security measures
    */
-  async refreshToken(userId: string) {
-    const sessionKey = `session:${userId}`;
-    const session = await this.redisService.get(sessionKey);
-    
-    if (!session) {
-      throw new UnauthorizedException('Session expired');
+  async refreshToken(userId: string, deviceFingerprint: string) {
+    try {
+      // Get user's active sessions
+      const activeSessions = await this.sessionService.getActiveSessions(userId);
+      const session = activeSessions.find(s => s.deviceInfo.deviceId === deviceFingerprint);
+      
+      if (!session) {
+        throw new UnauthorizedException('Invalid session');
+      }
+      
+      // Validate session
+      const isValid = await this.sessionService.validateSession(userId, session.sessionId);
+      if (!isValid) {
+        throw new UnauthorizedException('Session expired');
+      }
+      
+      // Generate new tokens
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+      
+      const payload = {
+        email: user.email,
+        sub: userId,
+        role: user.role,
+        sessionId: session.sessionId
+      };
+      
+      const newAccessToken = this.jwtService.sign(payload);
+      const newRefreshToken = uuidv4();
+      
+      // Update session with new refresh token
+      await this.sessionService.updateSessionActivity(userId, session.sessionId);
+      
+      return {
+        access_token: newAccessToken,
+        refresh_token: newRefreshToken,
+        token_type: 'Bearer',
+        expires_in: 24 * 60 * 60 // 24 hours in seconds
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      this.logger.error(`Token refresh failed: ${error.message}`);
+      throw new UnauthorizedException('Failed to refresh token');
     }
-
-    const sessionData = JSON.parse(session);
-    const payload = {
-      email: sessionData.email,
-      sub: userId,
-      role: sessionData.role
-    };
-
-    const newAccessToken = this.jwtService.sign(payload);
-    const newRefreshToken = uuidv4();
-
-    // Update session with new refresh token
-    sessionData.refreshToken = newRefreshToken;
-    await Promise.all([
-      this.redisService.set(
-        sessionKey,
-        JSON.stringify(sessionData),
-        24 * 60 * 60
-      ),
-      this.redisService.set(
-        `refresh:${newRefreshToken}`,
-        userId,
-        this.TOKEN_REFRESH_TTL
-      )
-    ]);
-
-    return {
-      access_token: newAccessToken,
-      refresh_token: newRefreshToken
-    };
   }
 
   async validateToken(userId: string): Promise<boolean> {
@@ -1017,6 +1069,16 @@ export class AuthService {
       this.logger.debug(`OTP verified successfully for ${email}`);
       await this.redisService.del(`otp:${email}`);
       await this.redisService.del(`otp_attempts:${email}`);
+      
+      // Mark user as verified
+      const user = await this.findUserByEmail(email);
+      if (user && !user.isVerified) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { isVerified: true }
+        });
+        this.logger.debug(`User ${user.id} marked as verified after OTP login`);
+      }
     } else {
       this.logger.debug(`Invalid OTP attempt for ${email}`);
     }
@@ -1184,7 +1246,10 @@ export class AuthService {
   private async generateTokens(user: User, request: any) {
     // Get user agent info
     const userAgent = request?.headers?.['user-agent'] || 'unknown';
-    const deviceInfo = this.parseUserAgent(userAgent);
+    const deviceInfo = {
+      ...this.parseUserAgent(userAgent),
+      platform: request.headers['sec-ch-ua-platform'] || 'unknown',
+    };
     
     // Generate session ID
     const sessionId = uuidv4();
@@ -1359,6 +1424,11 @@ export class AuthService {
       // Delete the token to prevent reuse
       await this.redisService.del(`magic_link:${originalToken}`);
       
+      // Mark user as verified if not already
+      if (!user.isVerified) {
+        await this.markUserAsVerified(user.id);
+      }
+      
       // Log the successful magic link login
       this.logger.debug(`Magic link login successful for ${user.email}`);
       
@@ -1376,13 +1446,15 @@ export class AuthService {
   // Social login methods
   
   async handleGoogleLogin(googleUser: any, request: any): Promise<any> {
-    const { email, given_name, family_name, picture, sub: googleId } = googleUser;
+    const { email, given_name, family_name, picture, sub: googleId, name } = googleUser;
     
     try {
       // Check if user exists
       let user = await this.findUserByEmail(email);
+      let isNewUser = false;
       
       if (!user) {
+        isNewUser = true;
         // Generate userid for new user
         const userid = await this.generateNextUID();
         
@@ -1390,10 +1462,11 @@ export class AuthService {
         user = await this.prisma.user.create({
           data: {
             email,
-            firstName: given_name,
-            lastName: family_name,
-            name: `${given_name} ${family_name}`,
-            profilePicture: picture,
+            firstName: given_name || '',
+            lastName: family_name || '',
+            name: name || `${given_name || ''} ${family_name || ''}`.trim(),
+            profilePicture: picture || '',
+            googleId: googleId,
             role: 'PATIENT', // Default role
             isVerified: true, // Google emails are verified
             password: await this.hashPassword(uuidv4()), // Random password
@@ -1405,8 +1478,33 @@ export class AuthService {
           }
         });
         
+        // Create patient record for new user
+        await this.prisma.patient.create({
+          data: { userId: user.id }
+        });
+        
         // Log new user creation
-        this.logger.debug(`New user created: ${user.email}`);
+        this.logger.debug(`New user created via Google: ${user.email}`);
+        
+        // Send welcome email for new users
+        try {
+          await this.emailService.sendEmail({
+            to: user.email,
+            subject: 'Welcome to HealthCare App',
+            template: EmailTemplate.WELCOME,
+            context: {
+              name: user.firstName || user.name,
+              role: this.getRoleDisplayName(user.role),
+              loginUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`,
+              supportEmail: process.env.SUPPORT_EMAIL || 'support@healthcareapp.com',
+              dashboardUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}${this.getRedirectPathForRole(user.role)}`,
+              isGoogleAccount: true
+            }
+          });
+        } catch (emailError) {
+          // Don't fail registration if email fails
+          this.logger.error(`Failed to send welcome email: ${emailError.message}`);
+        }
       } else if (!user.googleId) {
         // Update existing user with Google ID if not already set
         user = await this.prisma.user.update({
@@ -1414,7 +1512,10 @@ export class AuthService {
           data: {
             googleId,
             isVerified: true,
-            profilePicture: user.profilePicture || picture
+            profilePicture: user.profilePicture || picture || '',
+            firstName: user.firstName || given_name || '',
+            lastName: user.lastName || family_name || '',
+            name: user.name || name || `${given_name || ''} ${family_name || ''}`.trim()
           }
         });
       }
@@ -1423,7 +1524,13 @@ export class AuthService {
       this.logger.debug(`Google login successful for user ${user.email}`);
       
       // Generate tokens and return login response
-      return this.login(user, request);
+      const response = await this.login(user, request);
+      
+      // Add isNewUser flag to response
+      return {
+        ...response,
+        isNewUser
+      };
     } catch (error) {
       this.logger.error(`Google login failed: ${error.message}`);
       throw new InternalServerErrorException('Failed to process Google login');
@@ -1766,5 +1873,90 @@ export class AuthService {
   private stringifyMedicalConditions(medicalConditions?: string[]): string | null {
     if (!medicalConditions?.length) return null;
     return JSON.stringify(medicalConditions);
+  }
+
+  private generateDeviceFingerprint(request: any): string {
+    const {
+      'user-agent': userAgent,
+      'accept-language': acceptLanguage,
+      'sec-ch-ua': secChUa,
+      'sec-ch-ua-platform': platform
+    } = request.headers;
+
+    const ipAddress = request.ip || request.headers['x-forwarded-for'];
+    
+    // Create a unique device identifier
+    const deviceData = {
+      userAgent,
+      acceptLanguage,
+      secChUa,
+      platform,
+      ipAddress
+    };
+    
+    // Generate a hash of the device data
+    return crypto
+      .createHash('sha256')
+      .update(JSON.stringify(deviceData))
+      .digest('hex');
+  }
+
+  private async validateLoginAttempt(userId: string, deviceFingerprint: string): Promise<void> {
+    const key = `login_attempts:${userId}:${deviceFingerprint}`;
+    const attempts = parseInt(await this.redisService.get(key) || '0');
+    
+    if (attempts >= this.SUSPICIOUS_LOGIN_THRESHOLD) {
+      // Implement additional security measures like requiring 2FA
+      await this.enforceSecondFactorAuth(userId);
+      throw new ForbiddenException('Additional verification required due to suspicious activity');
+    }
+    
+    // Increment attempt counter with 1-hour expiry
+    await this.redisService.set(key, (attempts + 1).toString(), 3600);
+  }
+
+  private async enforceSecondFactorAuth(userId: string): Promise<void> {
+    // Set 2FA requirement flag
+    await this.redisService.set(`require_2fa:${userId}`, 'true', 3600);
+    
+    // Send notification to user about suspicious activity
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (user?.email) {
+      await this.emailService.sendEmail({
+        to: user.email,
+        subject: 'Suspicious Login Activity Detected',
+        template: EmailTemplate.SUSPICIOUS_ACTIVITY,
+        context: {
+          name: user.firstName || 'User',
+          time: new Date().toISOString(),
+          supportEmail: process.env.SUPPORT_EMAIL || 'support@healthapp.com'
+        }
+      });
+    }
+  }
+
+  /**
+   * Mark user as verified
+   * @param userId User ID to mark as verified
+   * @returns Updated user object
+   */
+  async markUserAsVerified(userId: string): Promise<User> {
+    try {
+      const updatedUser = await this.prisma.user.update({
+        where: { id: userId },
+        data: { isVerified: true }
+      });
+      
+      this.logger.debug(`User ${userId} marked as verified`);
+      
+      // Invalidate user's profile cache
+      await this.redisService.invalidateCacheByPattern(`auth:profile:${userId}:*`);
+      await this.redisService.invalidateCacheByTag(`user:${userId}`);
+      
+      return updatedUser;
+    } catch (error) {
+      this.logger.error(`Failed to mark user ${userId} as verified: ${error.message}`);
+      throw new InternalServerErrorException('Failed to update user verification status');
+    }
   }
 } 

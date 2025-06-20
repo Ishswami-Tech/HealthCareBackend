@@ -68,6 +68,41 @@ export class EmailController {
           expiryTime: '15 minutes'
         };
         break;
+      case EmailTemplate.WELCOME:
+        context = {
+          name: 'Test User',
+          role: 'Patient',
+          loginUrl: 'https://ishswami.in/login',
+          dashboardUrl: 'https://ishswami.in/patient/dashboard',
+          supportEmail: 'support@healthcareapp.com',
+          isGoogleAccount: false
+        };
+        break;
+      case EmailTemplate.LOGIN_NOTIFICATION:
+        context = {
+          name: 'Test User',
+          time: new Date().toLocaleString(),
+          device: 'Desktop',
+          browser: 'Chrome',
+          operatingSystem: 'Windows',
+          ipAddress: '192.168.1.1',
+          location: 'New York, USA'
+        };
+        break;
+      case EmailTemplate.SECURITY_ALERT:
+        context = {
+          name: 'Test User',
+          time: new Date().toLocaleString(),
+          action: 'All active sessions have been terminated for security.'
+        };
+        break;
+      case EmailTemplate.SUSPICIOUS_ACTIVITY:
+        context = {
+          name: 'Test User',
+          time: new Date().toLocaleString(),
+          supportEmail: 'support@healthcareapp.com'
+        };
+        break;
     }
 
     const result = await this.emailService.sendEmail({

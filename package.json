@@ -111,6 +111,7 @@
     "@types/passport-local": "^1.0.38",
     "@types/supertest": "^6.0.2",
     "cross-env": "^7.0.3",
+    "depcheck": "^1.4.7",
     "dotenv-cli": "^8.0.0",
     "eslint": "^9.18.0",
     "eslint-plugin-prettier": "^5.1.3",

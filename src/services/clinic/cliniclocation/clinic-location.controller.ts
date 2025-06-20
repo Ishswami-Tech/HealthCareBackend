@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Param, Delete, Put, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
@@ -19,6 +19,7 @@ export class ClinicLocationController {
   @Post()
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Create a new clinic location' })
+  @ApiBody({ type: CreateClinicLocationDto })
   @ApiResponse({ status: 201, description: 'The location has been successfully created.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiParam({ name: 'clinicId', description: 'ID of the clinic' })
@@ -57,6 +58,7 @@ export class ClinicLocationController {
   @Put(':id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Update a clinic location' })
+  @ApiBody({ type: UpdateClinicLocationDto })
   @ApiResponse({ status: 200, description: 'The location has been successfully updated.' })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiResponse({ status: 404, description: 'Location not found.' })

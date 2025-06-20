@@ -407,3 +407,20 @@ export class UserResponseDto {
     locations?: any[];
   };
 }
+
+export class UpdateUserRoleDto {
+  @ApiProperty({
+    enum: ['PATIENT', 'DOCTOR', 'RECEPTIONIST', 'CLINIC_ADMIN', 'SUPER_ADMIN'],
+    description: 'The new role to assign to the user',
+  })
+  role: string;
+
+  @ApiProperty({ required: false, description: 'Doctor specialization (required for DOCTOR role)' })
+  specialization?: string;
+
+  @ApiProperty({ required: false, description: 'Doctor license number (required for DOCTOR role)' })
+  licenseNumber?: string;
+
+  @ApiProperty({ required: false, description: 'Clinic ID (required for CLINIC_ADMIN role)' })
+  clinicId?: string;
+}

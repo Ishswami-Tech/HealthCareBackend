@@ -89,4 +89,43 @@ export class AuthResponse {
     type: UserResponseDto
   })
   user: UserResponseDto;
+}
+
+export class LoginRequestDto {
+  @ApiProperty({ example: 'user@example.com' })
+  email: string;
+
+  @ApiProperty({ example: 'password123', required: false })
+  password?: string;
+
+  @ApiProperty({ example: '123456', required: false })
+  otp?: string;
+}
+
+export class ForgotPasswordRequestDto {
+  @ApiProperty({ example: 'user@example.com' })
+  email: string;
+}
+
+export class VerifyOtpRequestDto {
+  @ApiProperty({ example: 'user@example.com' })
+  email: string;
+
+  @ApiProperty({ example: '123456' })
+  otp: string;
+}
+
+export class RequestOtpDto {
+  @ApiProperty({ example: 'user@example.com or +1234567890' })
+  identifier: string;
+}
+
+export class InvalidateOtpDto {
+  @ApiProperty({ example: 'user@example.com' })
+  email: string;
+}
+
+export class CheckOtpStatusDto {
+  @ApiProperty({ example: 'user@example.com' })
+  email: string;
 } 
