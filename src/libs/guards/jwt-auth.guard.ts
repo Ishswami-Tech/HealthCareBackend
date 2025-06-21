@@ -209,8 +209,52 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   private async validateSession(userId: string, request: any, deviceFingerprint: string): Promise<any> {
-    // Get session ID from token
-    const sessionId = request.user?.sessionId;
+    // Get session ID from token or headers
+    const sessionId = request.user?.sessionId || request.headers['x-session-id'];
+    
+    // Debug log to help diagnose session issues
+    this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.DEBUG,
+      'Session validation attempt',
+      'JwtAuthGuard',
+      { 
+        userId, 
+        hasSessionIdInToken: !!request.user?.sessionId,
+        hasSessionIdInHeader: !!request.headers['x-session-id'],
+        sessionId: sessionId || 'MISSING'
+      }
+    );
+    
+    // Check if this is a standard API request that should be more lenient
+    const isStandardApiRequest = request.raw.url.includes('/api/') || 
+                                request.raw.url.includes('/health');
+    
+    // For standard API requests, create a session if needed but don't block
+    if (!sessionId && isStandardApiRequest) {
+      this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Missing session for standard API request, creating temporary session',
+        'JwtAuthGuard',
+        { userId, path: request.raw.url }
+      );
+      
+      // Create a temporary session ID
+      const tempSessionId = require('crypto').randomUUID();
+      
+      // Create and return a basic session
+      return {
+        userId,
+        sessionId: tempSessionId,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+        deviceFingerprint: deviceFingerprint,
+        temporary: true
+      };
+    }
+    
     if (!sessionId) {
       throw new UnauthorizedException('Invalid session');
     }
@@ -219,82 +263,122 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     const sessionKey = `session:${userId}:${sessionId}`;
     const sessionData = await this.getSessionData(sessionKey);
     
+    // Determine if this is a request that should be handled with more flexibility
+    const isFlexibleRequest = 
+      (request.raw.url.includes('/user/') && 
+       (request.method === 'PATCH' || request.method === 'PUT' || request.method === 'GET')) ||
+      request.raw.url.includes('/profile-completion') ||
+      request.raw.url.includes('/dashboard') ||
+      request.raw.url.includes('/settings') ||
+      isStandardApiRequest;
+    
     if (!sessionData) {
+      // For flexible requests, create a temporary session
+      if (isFlexibleRequest) {
+        this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.INFO,
+          'Creating temporary session for flexible request',
+          'JwtAuthGuard',
+          { userId, sessionId, path: request.raw.url }
+        );
+        
+        // Create a basic session object
+        const tempSessionData = {
+          userId,
+          sessionId,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+          deviceFingerprint: deviceFingerprint,
+          userAgent: request.headers['user-agent'] || 'unknown',
+          ipAddress: request.ip || 'unknown',
+          deviceInfo: {
+            userAgent: request.headers['user-agent'] || 'unknown',
+            type: 'unknown'
+          }
+        };
+        
+        // Store the temporary session with a longer TTL (7 days)
+        await this.redisService.set(sessionKey, JSON.stringify(tempSessionData), 7 * 24 * 3600); // 7 days TTL
+        
+        // Track the event
+        await this.trackSecurityEvent(userId, 'TEMPORARY_SESSION_CREATED', {
+          sessionId,
+          context: 'flexible_request',
+          path: request.raw.url
+        });
+        
+        return tempSessionData;
+      }
+      
       throw new UnauthorizedException('Session expired or invalid');
     }
 
     // Check if this is a logout request (special case)
     const isLogoutRequest = request.raw.url.includes('/auth/logout');
     
-    // Check if this is a profile update request (special case)
-    const isProfileUpdateRequest = 
-      (request.raw.url.includes('/user/') && 
-      (request.method === 'PATCH' || request.method === 'PUT')) ||
-      request.raw.url.includes('/profile-completion');
-    
     if (isLogoutRequest) {
-      // During logout, only validate the user-agent as it's the most stable component
-      const currentUserAgent = request.headers['user-agent'];
-      const storedUserAgent = sessionData.userAgent;
-      
-      if (currentUserAgent && storedUserAgent && currentUserAgent !== storedUserAgent) {
-        await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH_LOGOUT', {
-          sessionId,
-          expectedUserAgent: storedUserAgent,
-          receivedUserAgent: currentUserAgent
-        });
-        // Log the mismatch but don't block logout
-        this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'Device mismatch during logout',
-          'JwtAuthGuard',
-          { userId, sessionId, expectedUserAgent: storedUserAgent, receivedUserAgent: currentUserAgent }
-        );
-      }
+      // Always allow logout requests
       return sessionData;
     }
 
-    // For profile updates, be more lenient to avoid blocking legitimate profile completions
-    if (isProfileUpdateRequest) {
+    // For flexible requests, be lenient with device fingerprint validation
+    if (isFlexibleRequest) {
       // If fingerprints don't match, update the stored fingerprint instead of rejecting
       if (sessionData.deviceFingerprint !== deviceFingerprint) {
         this.loggingService.log(
           LogType.SECURITY,
           LogLevel.INFO,
-          'Updating device fingerprint during profile update',
+          'Updating device fingerprint for flexible request',
           'JwtAuthGuard',
-          { userId, sessionId, oldFingerprint: sessionData.deviceFingerprint, newFingerprint: deviceFingerprint }
+          { userId, sessionId, path: request.raw.url }
         );
         
         // Update the fingerprint in the session data
         sessionData.deviceFingerprint = deviceFingerprint;
-        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 3600 * 24); // 24h TTL
+        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 7 * 24 * 3600); // 7 days TTL
         
         // Track the event but allow the request
         await this.trackSecurityEvent(userId, 'DEVICE_FINGERPRINT_UPDATED', {
           sessionId,
           oldFingerprint: sessionData.deviceFingerprint,
           newFingerprint: deviceFingerprint,
-          context: 'profile_update'
+          context: 'flexible_request'
         });
-        
-        return sessionData;
       }
       return sessionData;
     }
 
-    // For non-logout operations, perform strict device validation
+    // For non-flexible operations, perform device validation but with fallbacks
     if (sessionData.deviceFingerprint !== deviceFingerprint) {
       // Fallback for migrating from old fingerprinting method (IP-based)
       const oldFingerprint = crypto.createHash('sha256').update(`${request.headers['user-agent']}|${request.ip}`).digest('hex');
       
-      if (sessionData.deviceFingerprint === oldFingerprint) {
-        // This is a valid session using the old fingerprint method.
+      // Check if it's a similar device (e.g., same browser family but different version)
+      const isSimilarDevice = this.isSimilarUserAgent(
+        sessionData.userAgent || sessionData.deviceInfo?.userAgent, 
+        request.headers['user-agent']
+      );
+      
+      if (sessionData.deviceFingerprint === oldFingerprint || isSimilarDevice) {
+        // This is a valid session using the old fingerprint method or a similar device.
         // Let's update it to the new method.
         sessionData.deviceFingerprint = deviceFingerprint;
-        const sessionKey = `session:${userId}:${sessionId}`;
-        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 3600); // Update with 1h TTL for now
+        sessionData.userAgent = request.headers['user-agent'];
+        if (sessionData.deviceInfo) {
+          sessionData.deviceInfo.userAgent = request.headers['user-agent'];
+        }
+        
+        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 7 * 24 * 3600); // 7 days TTL
+        
+        this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.INFO,
+          'Updated device fingerprint for similar device',
+          'JwtAuthGuard',
+          { userId, sessionId }
+        );
       } else {
         await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH', {
           sessionId,
@@ -306,6 +390,44 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     }
 
     return sessionData;
+  }
+
+  /**
+   * Compare two user agent strings to determine if they are similar devices
+   * This helps with browser updates and minor variations
+   */
+  private isSimilarUserAgent(storedAgent: string, currentAgent: string): boolean {
+    if (!storedAgent || !currentAgent) return false;
+    
+    // Extract browser family (e.g., Chrome, Firefox, Safari)
+    const getBrowserFamily = (ua: string): string => {
+      ua = ua.toLowerCase();
+      if (ua.includes('chrome')) return 'chrome';
+      if (ua.includes('firefox')) return 'firefox';
+      if (ua.includes('safari')) return 'safari';
+      if (ua.includes('edge')) return 'edge';
+      if (ua.includes('opera')) return 'opera';
+      return ua;
+    };
+    
+    // Extract OS family (e.g., Windows, Mac, Android)
+    const getOSFamily = (ua: string): string => {
+      ua = ua.toLowerCase();
+      if (ua.includes('windows')) return 'windows';
+      if (ua.includes('mac')) return 'mac';
+      if (ua.includes('android')) return 'android';
+      if (ua.includes('ios') || ua.includes('iphone') || ua.includes('ipad')) return 'ios';
+      if (ua.includes('linux')) return 'linux';
+      return ua;
+    };
+    
+    const storedBrowser = getBrowserFamily(storedAgent);
+    const currentBrowser = getBrowserFamily(currentAgent);
+    const storedOS = getOSFamily(storedAgent);
+    const currentOS = getOSFamily(currentAgent);
+    
+    // Consider similar if both browser family and OS family match
+    return storedBrowser === currentBrowser && storedOS === currentOS;
   }
 
   private async checkConcurrentSessions(userId: string): Promise<void> {
@@ -454,7 +576,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       );
 
       // Track security event
-      await this.redisService.trackSecurityEvent(identifier, 'ACCOUNT_LOCKOUT', {
+      await this.trackSecurityEvent(identifier, 'ACCOUNT_LOCKOUT', {
         attempts: newAttempts,
         lockoutMinutes,
         lockedUntil: new Date(lockedUntil)
