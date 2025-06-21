@@ -8,6 +8,7 @@ import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
 import { LoggingService } from '../../shared/logging/logging.service';
 import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
 import { Logger } from '@nestjs/common';
+import * as crypto from 'crypto';
 
 @Injectable()
 
@@ -237,12 +238,23 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     // For non-logout operations, perform strict device validation
     if (sessionData.deviceFingerprint !== deviceFingerprint) {
-      await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH', {
-        sessionId,
-        expectedFingerprint: sessionData.deviceFingerprint,
-        receivedFingerprint: deviceFingerprint
-      });
-      throw new UnauthorizedException('Invalid device detected');
+      // Fallback for migrating from old fingerprinting method (IP-based)
+      const oldFingerprint = crypto.createHash('sha256').update(`${request.headers['user-agent']}|${request.ip}`).digest('hex');
+      
+      if (sessionData.deviceFingerprint === oldFingerprint) {
+        // This is a valid session using the old fingerprint method.
+        // Let's update it to the new method.
+        sessionData.deviceFingerprint = deviceFingerprint;
+        const sessionKey = `session:${userId}:${sessionId}`;
+        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 3600); // Update with 1h TTL for now
+      } else {
+        await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH', {
+          sessionId,
+          expectedFingerprint: sessionData.deviceFingerprint,
+          receivedFingerprint: deviceFingerprint
+        });
+        throw new UnauthorizedException('Invalid device detected');
+      }
     }
 
     return sessionData;
@@ -262,70 +274,67 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   private async updateSessionData(userId: string, sessionData: any, request: any): Promise<void> {
-    const sessionKey = `session:${userId}:${sessionData.sessionId}`;
-    const now = new Date();
+    try {
+      const clientIp = request.ip || 'unknown';
+      const userAgent = request.headers['user-agent'] || 'unknown';
 
-    // Update session data
-    const updatedSession = {
-      ...sessionData,
-      lastActivityAt: now,
-      lastIp: request.ip,
-      securityChecks: {
-        ...sessionData.securityChecks,
-        lastValidated: now,
-        validationHistory: [
-          ...(sessionData.securityChecks?.validationHistory || []).slice(-9),
-          {
-            timestamp: now,
-            ip: request.ip,
-            userAgent: request.headers['user-agent'],
-            path: request.raw.url
-          }
-        ]
-      }
-    };
+      // Update session with latest activity and info
+      const updatedSession = {
+        ...sessionData,
+        lastActivityAt: new Date(),
+        ipAddress: clientIp,
+        deviceInfo: {
+          ...sessionData.deviceInfo,
+          userAgent: userAgent,
+        }
+      };
 
-    await this.redisService.set(
-      sessionKey,
-      JSON.stringify(updatedSession),
-      24 * 60 * 60
-    );
-
-    // Add session data to request for use in controllers
-    request.session = updatedSession;
+      await this.redisService.set(
+        `session:${userId}:${sessionData.sessionId}`,
+        JSON.stringify(updatedSession),
+        3600 // Keep session alive for another hour
+      );
+    } catch (error) {
+      this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Failed to update session data', 'JwtAuthGuard', { error });
+    }
   }
 
   private generateDeviceFingerprint(request: any): string {
     const userAgent = request.headers['user-agent'] || 'unknown';
-    // Removed IP from fingerprint to handle dynamic IPs
-    return this.jwtService.sign({ userAgent });
+    // Use a stable hash of the user agent. IP address is removed to support dynamic IPs.
+    return crypto.createHash('sha256').update(userAgent).digest('hex');
   }
 
   private async trackSecurityEvent(identifier: string, eventType: string, details: any): Promise<void> {
-    const event = {
-      timestamp: new Date(),
-      eventType,
-      identifier,
-      details
-    };
+    try {
+      const timestamp = new Date().toISOString();
+      const event = {
+        timestamp,
+        eventType,
+        identifier,
+        details
+      };
 
-    await this.redisService.rPush(
-      `security:events:${identifier}`,
-      JSON.stringify(event)
-    );
+      await this.redisService.rPush(
+        `security:events:${identifier}`,
+        JSON.stringify(event)
+      );
 
-    // Trim old events
-    await this.redisService.lTrim(
-      `security:events:${identifier}`,
-      -1000,
-      -1
-    );
+      // Trim old events
+      await this.redisService.lTrim(
+        `security:events:${identifier}`,
+        -1000,
+        -1
+      );
 
-    // Set expiry for events list
-    await this.redisService.expire(
-      `security:events:${identifier}`,
-      this.SECURITY_EVENT_RETENTION
-    );
+      // Set expiry for events list
+      await this.redisService.expire(
+        `security:events:${identifier}`,
+        this.SECURITY_EVENT_RETENTION
+      );
+    } catch (error) {
+      this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Failed to track security event', 'JwtAuthGuard', { error });
+    }
   }
 
   private async handleAuthenticationError(error: any, context: ExecutionContext): Promise<void> {
