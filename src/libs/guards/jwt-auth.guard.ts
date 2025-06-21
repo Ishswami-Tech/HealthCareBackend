@@ -181,38 +181,57 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     }
   }
 
-  private async validateSession(userId: string, request: any, deviceFingerprint: string): Promise<any> {
-    const sessionId = request.headers['x-session-id'];
-    if (!sessionId) {
-      throw new UnauthorizedException('Session ID not provided');
-    }
-
-    const sessionKey = `session:${userId}:${sessionId}`;
+  /**
+   * Get session data from Redis and parse it
+   */
+  private async getSessionData(sessionKey: string): Promise<any> {
     const session = await this.redisService.get(sessionKey);
-    
     if (!session) {
-      throw new UnauthorizedException('Session expired or invalidated');
+      return null;
     }
-
+    
     const sessionData = JSON.parse(session);
-
+    
     // Verify session is active
     if (!sessionData.isActive) {
-      throw new UnauthorizedException('Session is no longer active');
+      return null;
     }
-
+    
     // Check session inactivity
     const lastActivity = new Date(sessionData.lastActivityAt).getTime();
     const inactivityDuration = Date.now() - lastActivity;
     if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
-      await this.trackSecurityEvent(userId, 'SESSION_INACTIVITY_WARNING', {
-        sessionId,
-        inactivityDuration: Math.floor(inactivityDuration / 1000)
-      });
+      // Session is still valid but inactive for a while
+      // This is just for logging, we'll still return the session
+    }
+    
+    return sessionData;
+  }
+
+  private async validateSession(userId: string, request: any, deviceFingerprint: string): Promise<any> {
+    // Get session ID from token
+    const sessionId = request.user?.sessionId;
+    if (!sessionId) {
+      throw new UnauthorizedException('Invalid session');
     }
 
-    // For logout operations, be more lenient with device validation
-    const isLogoutRequest = request.path === '/auth/logout';
+    // Get session data from Redis
+    const sessionKey = `session:${userId}:${sessionId}`;
+    const sessionData = await this.getSessionData(sessionKey);
+    
+    if (!sessionData) {
+      throw new UnauthorizedException('Session expired or invalid');
+    }
+
+    // Check if this is a logout request (special case)
+    const isLogoutRequest = request.raw.url.includes('/auth/logout');
+    
+    // Check if this is a profile update request (special case)
+    const isProfileUpdateRequest = 
+      (request.raw.url.includes('/user/') && 
+      (request.method === 'PATCH' || request.method === 'PUT')) ||
+      request.raw.url.includes('/profile-completion');
+    
     if (isLogoutRequest) {
       // During logout, only validate the user-agent as it's the most stable component
       const currentUserAgent = request.headers['user-agent'];
@@ -232,6 +251,35 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
           'JwtAuthGuard',
           { userId, sessionId, expectedUserAgent: storedUserAgent, receivedUserAgent: currentUserAgent }
         );
+      }
+      return sessionData;
+    }
+
+    // For profile updates, be more lenient to avoid blocking legitimate profile completions
+    if (isProfileUpdateRequest) {
+      // If fingerprints don't match, update the stored fingerprint instead of rejecting
+      if (sessionData.deviceFingerprint !== deviceFingerprint) {
+        this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.INFO,
+          'Updating device fingerprint during profile update',
+          'JwtAuthGuard',
+          { userId, sessionId, oldFingerprint: sessionData.deviceFingerprint, newFingerprint: deviceFingerprint }
+        );
+        
+        // Update the fingerprint in the session data
+        sessionData.deviceFingerprint = deviceFingerprint;
+        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 3600 * 24); // 24h TTL
+        
+        // Track the event but allow the request
+        await this.trackSecurityEvent(userId, 'DEVICE_FINGERPRINT_UPDATED', {
+          sessionId,
+          oldFingerprint: sessionData.deviceFingerprint,
+          newFingerprint: deviceFingerprint,
+          context: 'profile_update'
+        });
+        
+        return sessionData;
       }
       return sessionData;
     }
