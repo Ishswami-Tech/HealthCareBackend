@@ -153,54 +153,30 @@ export class LoggingService {
       const now = new Date();
       const defaultStartTime = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // 24 hours ago
       
-      startTime = startTime || defaultStartTime;
-      endTime = endTime || now;
+      const finalStartTime = startTime || defaultStartTime;
+      const finalEndTime = endTime || now;
 
-      let logs: any[] = [];
-
-      // First try to get logs from Redis
-      try {
-        const redisLogs = await this.redis?.lRange('logs', 0, -1) || [];
-        logs = redisLogs.map(log => JSON.parse(log));
-      } catch (redisError) {
-        console.error('Failed to get logs from Redis:', redisError);
-      }
-
-      // If no logs in Redis or Redis fails, get from database
-      if (logs.length === 0) {
-        const dbLogs = await this.prisma?.log.findMany({
-          where: {
-            type: type || undefined,
-            level: level || undefined,
-            timestamp: {
-              gte: startTime,
-              lte: endTime,
-            },
+      const dbLogs = await this.prisma.log.findMany({
+        where: {
+          type: type || undefined,
+          level: level || undefined,
+          timestamp: {
+            gte: finalStartTime,
+            lte: finalEndTime,
           },
-          orderBy: {
-            timestamp: 'desc',
-          },
-        }) || [];
-
-        logs = dbLogs.map(log => ({
-          ...log,
-          metadata: typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata,
-        }));
-      }
-
-      // Apply filters
-      logs = logs.filter(log => {
-        const logTime = new Date(log.timestamp);
-        const matchesType = !type || log.type === type;
-        const matchesLevel = !level || log.level === level;
-        const matchesTimeRange = logTime >= startTime && logTime <= endTime;
-        return matchesType && matchesLevel && matchesTimeRange;
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: 1000, // Limit to the last 1000 entries for performance
       });
 
-      // Sort by timestamp descending
-      return logs.sort((a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
+      return dbLogs.map(log => ({
+        ...log,
+        metadata: typeof log.metadata === 'string' 
+          ? JSON.parse(log.metadata) 
+          : log.metadata,
+      }));
     } catch (error) {
       console.error('Failed to retrieve logs:', error);
       return [];

@@ -152,7 +152,7 @@ export class LoggingController {
                 <input type="datetime-local" id="endTime" />
               </div>
             </div>
-            <button onclick="refreshContent()">Refresh</button>
+            <button id="refreshButton" onclick="refreshContent()">Refresh</button>
             <button onclick="clearLogs()">Clear Logs</button>
             <span id="refreshStatus"></span>
           </div>
