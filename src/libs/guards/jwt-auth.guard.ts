@@ -296,17 +296,9 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   private generateDeviceFingerprint(request: any): string {
-    const components = [
-      request.headers['user-agent'],
-      request.headers['accept-language'],
-      request.headers['accept-encoding'],
-      request.ip
-    ];
-    
-    return require('crypto')
-      .createHash('sha256')
-      .update(components.join('|'))
-      .digest('hex');
+    const userAgent = request.headers['user-agent'] || 'unknown';
+    // Removed IP from fingerprint to handle dynamic IPs
+    return this.jwtService.sign({ userAgent });
   }
 
   private async trackSecurityEvent(identifier: string, eventType: string, details: any): Promise<void> {
