@@ -1,106 +1,135 @@
-import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Role, User, Prisma } from '@prisma/client';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
+import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
+import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../libs/dtos/user.dto';
+import { RedisService } from '../../shared/cache/redis/redis.service';
 import { LoggingService } from '../../shared/logging/logging.service';
 import { EventService } from '../../shared/events/event.service';
 import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
-import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
-import { RedisService } from '../../shared/cache/redis/redis.service';
-
-// Define the Role enum locally since it's not exported from @prisma/client
-enum Role {
-  SUPER_ADMIN = 'SUPER_ADMIN',
-  CLINIC_ADMIN = 'CLINIC_ADMIN',
-  DOCTOR = 'DOCTOR',
-  PATIENT = 'PATIENT',
-}
 
 @Injectable()
 export class UsersService {
   constructor(
-    private prisma: PrismaService,
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
-    private readonly redis: RedisService,
   ) {}
 
-  private async generateNextUID(): Promise<string> {
-    // Get the last user with a UID
-    const lastUser = await this.prisma.user.findFirst({
-      where: {
-        userid: {
-          startsWith: 'UID'
-        }
+  @RedisCache({ prefix: "users:all", ttl: 3600, tags: ['users'] })
+  async findAll(role?: Role): Promise<UserResponseDto[]> {
+    const users = await this.prisma.user.findMany({
+      where: role ? { role } : undefined,
+      include: {
+        doctor: role === Role.DOCTOR,
+        patient: role === Role.PATIENT,
+        receptionist: role === Role.RECEPTIONIST,
+        clinicAdmin: role === Role.CLINIC_ADMIN,
+        superAdmin: role === Role.SUPER_ADMIN,
       },
-      orderBy: {
-        userid: 'desc'
-      }
     });
 
-    let nextNumber = 1;
-    if (lastUser && lastUser.userid) {
-      // Extract the number from the last UID and increment it
-      const lastNumber = parseInt(lastUser.userid.replace('UID', ''));
-      nextNumber = lastNumber + 1;
-    }
-
-    // Format the new UID with leading zeros (6 digits)
-    return `UID${nextNumber.toString().padStart(6, '0')}`;
+    return users.map(({ password, ...user }) => {
+      const userResponse = { ...user } as any;
+      if (userResponse.dateOfBirth) {
+        userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      }
+      return userResponse;
+    }) as UserResponseDto[];
   }
 
-  async createUser(data: {
-    email: string;
-    password: string;
-    name: string;
-    role: Role;
-    createdBy: string;
-  }) {
-    try {
-      const creator = await this.prisma.user.findUnique({
-        where: { id: data.createdBy },
-        include: { superAdmin: true },
-      });
+  @RedisCache({ prefix: "users:one", ttl: 3600, tags: ['user'] })
+  async findOne(id: string): Promise<UserResponseDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
+      },
+    });
 
-      if (!creator || creator.role !== Role.SUPER_ADMIN) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'Unauthorized user creation attempt',
-          'UsersService',
-          { userId: data.createdBy }
-        );
-        throw new UnauthorizedException('Only SuperAdmin can create users');
-      }
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
 
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email: data.email },
-      });
+    const { password, ...result } = user;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
+  }
 
-      if (existingUser) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'User creation failed - email already exists',
-          'UsersService',
-          { email: data.email }
-        );
-        throw new ConflictException('Email already exists');
-      }
+  async findByEmail(email: string): Promise<UserResponseDto | null> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: {
+          mode: 'insensitive',
+          equals: email
+        }
+      },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
+      },
+    });
 
-      // Generate the next UID
-      const userid = await this.generateNextUID();
+    if (!user) {
+      return null;
+    }
 
+    const { password, ...result } = user;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
+  }
+
+  async count(): Promise<number> {
+    return await this.prisma.user.count();
+  }
+
+  private async getNextNumericId(): Promise<string> {
+    const COUNTER_KEY = 'user:counter';
+    const currentId = await this.redis.get(COUNTER_KEY);
+    const nextId = currentId ? parseInt(currentId) + 1 : 1;
+    await this.redis.set(COUNTER_KEY, nextId.toString());
+    return `UID${nextId.toString().padStart(6, '0')}`;
+  }
+
+  async createUser(data: CreateUserDto): Promise<User> {
+    const userId = await this.getNextNumericId();
       const user = await this.prisma.user.create({
         data: {
+        id: userId,
+        userid: userId,
           email: data.email,
           password: data.password,
-          name: data.name,
-          role: data.role,
-          age: 0,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        name: `${data.firstName} ${data.lastName}`.trim(),
+        phone: data.phone,
+        role: data.role || Role.PATIENT,
+        profilePicture: data.profilePicture,
+        gender: data.gender,
+        dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
+        address: data.address,
+        city: data.city,
+        state: data.state,
+        country: data.country,
+        zipCode: data.zipCode,
           isVerified: false,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          userid: userid
-        },
+        age: data.age || 0,
+        lastLogin: data.lastLogin || null
+      }
       });
 
       await this.loggingService.log(
@@ -108,330 +137,325 @@ export class UsersService {
         LogLevel.INFO,
         'User created successfully',
         'UsersService',
-        { userId: user.id, userid: user.userid, email: data.email, role: data.role }
-      );
-
-      await this.eventService.emit('user.created', {
-        userId: user.id,
-        userid: user.userid,
-        email: data.email,
-        role: data.role,
-        createdBy: data.createdBy
-      });
-
-      // Invalidate any user list caches when a new user is created
+      { userId: user.id, email: data.email, role: data.role }
+    );
+    await this.eventService.emit('user.created', { userId: user.id, email: data.email, role: data.role });
       await this.redis.invalidateCacheByTag('users');
 
       return user;
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to create user',
-        'UsersService',
-        { error: error.message, ...data }
-      );
-      throw error;
-    }
   }
 
-  @RedisCache({
-    ttl: 600,              // 10 minutes cache TTL
-    prefix: 'users:list',  // Cache key prefix
-    staleTime: 300,        // Data becomes stale after 5 minutes
-    tags: ['users']        // Tag for grouped invalidation
-  })
-  async getAllUsers(userId: string) {
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        include: { superAdmin: true },
-      });
-
-      if (!user || user.role !== Role.SUPER_ADMIN) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'Unauthorized user list access attempt',
-          'UsersService',
-          { userId }
-        );
-        throw new UnauthorizedException('Only SuperAdmin can view all users');
-      }
-
-      const users = await this.prisma.user.findMany({
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<UserResponseDto> {
+    const user = await this.prisma.user.update({
+      where: { id },
+      data: updateUserDto,
         include: {
-          superAdmin: true,
-          clinicAdmin: true,
           doctor: true,
           patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
         },
       });
+
+    // Invalidate cache
+    await Promise.all([
+      this.redis.invalidateCache(`users:one:${id}`),
+      this.redis.invalidateCacheByTag('users'),
+      this.redis.invalidateCacheByTag(`user:${id}`),
+    ]);
 
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Users fetched successfully',
+      'User updated successfully',
         'UsersService',
-        { count: users.length }
-      );
+      { userId: id }
+    );
+    await this.eventService.emit('user.updated', { userId: id, data: updateUserDto });
 
-      return users;
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to fetch users',
-        'UsersService',
-        { error: error.message, userId }
-      );
-      throw error;
+    const { password, ...result } = user;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
     }
+    return userResponse as UserResponseDto;
   }
 
-  @RedisCache({
-    ttl: 1800,                  // 30 minutes cache TTL
-    prefix: 'users:profile',    // Cache key prefix
-    staleTime: 600,             // Data becomes stale after 10 minutes
-    tags: ['users', 'user']     // Tags for grouped invalidation
-  })
-  async getUserById(id: string, userId: string) {
-    try {
-      const requestingUser = await this.prisma.user.findUnique({
-        where: { id: userId },
-        include: { superAdmin: true },
-      });
-
-      if (!requestingUser) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'User not found while fetching user',
-          'UsersService',
-          { userId }
-        );
-        throw new NotFoundException('User not found');
-      }
-
-      if (requestingUser.role !== Role.SUPER_ADMIN && id !== userId) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'Unauthorized user access attempt',
-          'UsersService',
-          { requestingUserId: userId, targetUserId: id }
-        );
-        throw new UnauthorizedException('You do not have permission to view this user');
-      }
-
+  async remove(id: string): Promise<void> {
       const user = await this.prisma.user.findUnique({
         where: { id },
         include: {
-          superAdmin: true,
-          clinicAdmin: true,
           doctor: true,
           patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
         },
       });
 
       if (!user) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'User not found',
-          'UsersService',
-          { userId: id }
-        );
-        throw new NotFoundException('User not found');
-      }
-
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'User fetched successfully',
-        'UsersService',
-        { userId: id }
-      );
-
-      return user;
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to fetch user',
-        'UsersService',
-        { error: error.message, userId: id }
-      );
-      throw error;
+      throw new NotFoundException(`User with ID ${id} not found`);
     }
-  }
 
-  async updateUser(id: string, data: {
-    name?: string;
-    email?: string;
-    password?: string;
-    role?: Role;
-  }, userId: string) {
-    try {
-      const requestingUser = await this.prisma.user.findUnique({
-        where: { id: userId },
-        include: { superAdmin: true },
-      });
-
-      if (!requestingUser) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'User not found while updating user',
-          'UsersService',
-          { userId }
-        );
-        throw new NotFoundException('User not found');
-      }
-
-      if (requestingUser.role !== Role.SUPER_ADMIN && id !== userId) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'Unauthorized user update attempt',
-          'UsersService',
-          { requestingUserId: userId, targetUserId: id }
-        );
-        throw new UnauthorizedException('You do not have permission to update this user');
-      }
-
-      // If email is being updated, check if it's already taken
-      if (data.email) {
-        const existingUser = await this.prisma.user.findFirst({
-          where: {
-            email: data.email,
-            id: { not: id },
-          },
-        });
-
-        if (existingUser) {
-          await this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'User update failed - email already exists',
-            'UsersService',
-            { email: data.email }
-          );
-          throw new ConflictException('Email already exists');
+    // Delete role-specific record first
+    switch (user.role) {
+      case Role.DOCTOR:
+        if (user.doctor) {
+          await this.prisma.doctor.delete({
+            where: { userId: id }
+          });
         }
-      }
+        break;
+      case Role.PATIENT:
+        if (user.patient) {
+          await this.prisma.patient.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.RECEPTIONIST:
+        if (user.receptionist) {
+          await this.prisma.receptionist.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.CLINIC_ADMIN:
+        if (user.clinicAdmin) {
+          await this.prisma.clinicAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.SUPER_ADMIN:
+        if (user.superAdmin) {
+          await this.prisma.superAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+    }
 
-      const user = await this.prisma.user.update({
-        where: { id },
-        data: {
-          ...data,
-          updatedAt: new Date(),
-        },
-      });
+    // Delete user record
+    await this.prisma.user.delete({
+      where: { id }
+    });
+
+    // Invalidate cache
+    await Promise.all([
+      this.redis.invalidateCache(`users:one:${id}`),
+      this.redis.invalidateCacheByTag('users'),
+      this.redis.invalidateCacheByTag(`user:${id}`),
+    ]);
 
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'User updated successfully',
+      'User deleted successfully',
         'UsersService',
         { userId: id }
       );
+    await this.eventService.emit('user.deleted', { userId: id });
+  }
 
-      await this.eventService.emit('user.updated', {
-        userId: id,
-        updatedBy: userId,
-        data
+  private async logAuditEvent(
+    userId: string,
+    action: string,
+    description: string,
+  ): Promise<void> {
+    await this.prisma.auditLog.create({
+      data: {
+        id: undefined,
+        userId,
+        action,
+        description,
+        timestamp: new Date(),
+        ipAddress: '127.0.0.1',
+        device: 'API',
+      },
+    });
+  }
+
+  // Role-specific methods
+  async getDoctors(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.DOCTOR);
+  }
+
+  async getPatients(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.PATIENT);
+  }
+
+  async getReceptionists(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.RECEPTIONIST);
+  }
+
+  async getClinicAdmins(): Promise<UserResponseDto[]> {
+    return this.findAll(Role.CLINIC_ADMIN);
+  }
+
+  async logout(userId: string): Promise<void> {
+    // Check if user exists
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    try {
+      // Update last login timestamp
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          lastLogin: null
+        }
       });
 
-      // Invalidate user-specific and users list caches
+      // Clear all user-related cache
       await Promise.all([
-        this.redis.invalidateCache(`users:profile:${id}:${userId}`),
-        this.redis.invalidateCacheByTag('users'),
-        this.redis.invalidateCacheByTag(`user:${id}`)
+        this.redis.del(`users:one:${userId}`),
+        this.redis.del(`users:all`),
+        this.redis.del(`users:${user.role.toLowerCase()}`),
+        this.redis.del(`user:sessions:${userId}`)
       ]);
 
-      return user;
+      // Log the logout event
+      await this.logAuditEvent(userId, 'LOGOUT', 'User logged out successfully');
     } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to update user',
-        'UsersService',
-        { error: error.message, userId: id }
-      );
+      // Log the error
+      await this.logAuditEvent(userId, 'LOGOUT_ERROR', `Logout failed: ${error.message}`);
+      
+      // Re-throw the error
       throw error;
     }
   }
 
-  async deleteUser(id: string, userId: string) {
-    try {
-      const requestingUser = await this.prisma.user.findUnique({
-        where: { id: userId },
-        include: { superAdmin: true },
-      });
-
-      if (!requestingUser || requestingUser.role !== Role.SUPER_ADMIN) {
-        await this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          'Unauthorized user deletion attempt',
-          'UsersService',
-          { requestingUserId: userId, targetUserId: id }
-        );
-        throw new UnauthorizedException('Only SuperAdmin can delete users');
-      }
-
-      // Check if user exists
+  async updateUserRole(id: string, role: Role, createUserDto: CreateUserDto): Promise<UserResponseDto> {
       const user = await this.prisma.user.findUnique({
         where: { id },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
+      },
       });
 
       if (!user) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'User not found for deletion',
-          'UsersService',
-          { userId: id }
-        );
-        throw new NotFoundException('User not found');
-      }
-
-      // Delete the user
-      await this.prisma.user.delete({
-        where: { id },
-      });
-
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'User deleted successfully',
-        'UsersService',
-        { userId: id }
-      );
-
-      await this.eventService.emit('user.deleted', {
-        userId: id,
-        deletedBy: userId
-      });
-
-      // Invalidate all user-related caches
-      await Promise.all([
-        this.redis.invalidateCache(`users:profile:${id}:${userId}`),
-        this.redis.invalidateCacheByTag('users'),
-        this.redis.invalidateCacheByTag(`user:${id}`)
-      ]);
-
-      return { success: true, message: 'User deleted successfully' };
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to delete user',
-        'UsersService',
-        { error: error.message, userId: id }
-      );
-      throw error;
+      throw new NotFoundException(`User with ID ${id} not found`);
     }
+
+    // Delete old role-specific record
+    switch (user.role) {
+      case Role.DOCTOR:
+        if (user.doctor) {
+          await this.prisma.doctor.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.PATIENT:
+        if (user.patient) {
+          await this.prisma.patient.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.RECEPTIONIST:
+        if (user.receptionist) {
+          await this.prisma.receptionist.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.CLINIC_ADMIN:
+        if (user.clinicAdmin) {
+          await this.prisma.clinicAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+      case Role.SUPER_ADMIN:
+        if (user.superAdmin) {
+          await this.prisma.superAdmin.delete({
+            where: { userId: id }
+          });
+        }
+        break;
+    }
+
+    // Create new role-specific record
+    switch (role) {
+      case Role.PATIENT:
+        await this.prisma.patient.create({
+          data: { userId: id }
+        });
+        break;
+      case Role.DOCTOR:
+        await this.prisma.doctor.create({
+          data: {
+            userId: id,
+            specialization: '',
+            experience: 0
+          }
+        });
+        break;
+      case Role.RECEPTIONIST:
+        await this.prisma.receptionist.create({
+          data: { userId: id }
+        });
+        break;
+      case Role.CLINIC_ADMIN:
+        const clinics = await this.prisma.clinic.findMany({
+          take: 1
+        });
+        if (!clinics.length) {
+          throw new Error('No clinic found. Please create a clinic first.');
+        }
+        await this.prisma.clinicAdmin.create({
+          data: { 
+        userId: id,
+            clinicId: createUserDto.clinicId || clinics[0].id
+          }
+        });
+        break;
+      case Role.SUPER_ADMIN:
+        await this.prisma.superAdmin.create({
+          data: { userId: id }
+        });
+        break;
+    }
+
+    // Update user role
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data: { role },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionist: true,
+        clinicAdmin: true,
+        superAdmin: true,
+      },
+    });
+
+    // Invalidate cache
+      await Promise.all([
+      this.redis.invalidateCache(`users:one:${id}`),
+        this.redis.invalidateCacheByTag('users'),
+      this.redis.invalidateCacheByTag(`user:${id}`),
+      this.redis.invalidateCacheByTag(`users:${user.role.toLowerCase()}`),
+      this.redis.invalidateCacheByTag(`users:${role.toLowerCase()}`),
+    ]);
+
+    const { password, ...result } = updatedUser;
+    const userResponse = { ...result } as any;
+    if (userResponse.dateOfBirth) {
+      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+    }
+    return userResponse as UserResponseDto;
   }
-} 
+}

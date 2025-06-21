@@ -446,7 +446,7 @@ async function bootstrap() {
     });
 
     // Configure Fastify security headers
-    await app.register(fastifyHelmet, {
+    await app.register(fastifyHelmet as any, {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
@@ -500,7 +500,7 @@ async function bootstrap() {
     // Add environment-specific Swagger setup
     if (process.env.NODE_ENV === 'production') {
       // In production, add CORS and security headers for Swagger UI
-      await fastifyInstance.register(fastifyHelmet, {
+      await fastifyInstance.register(fastifyHelmet as any, {
         contentSecurityPolicy: {
           directives: {
             defaultSrc: ["'self'"],
