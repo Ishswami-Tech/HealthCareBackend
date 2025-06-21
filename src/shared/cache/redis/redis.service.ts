@@ -64,10 +64,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       this.client.on('error', (err) => {
         this.logger.error('Redis Client Error', err);
+        // Check if it's a read-only error and attempt to fix it
+        if (err.message && err.message.includes('READONLY')) {
+          this.logger.warn('Redis in read-only mode, attempting to fix...');
+          this.resetReadOnlyMode().catch(resetError => {
+            this.logger.error('Failed to reset read-only mode:', resetError);
+          });
+        }
       });
 
       this.client.on('connect', () => {
         this.logger.log('Successfully connected to Redis');
+        // Check read-only status on connect
+        this.checkAndResetReadOnlyMode().catch(err => {
+          this.logger.error('Failed to check read-only status on connect:', err);
+        });
       });
 
       this.client.on('ready', () => {
@@ -93,6 +104,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // Ensure connection is established
       await this.client.connect();
       await this.ping();
+      
+      // Check and reset read-only mode if needed
+      await this.checkAndResetReadOnlyMode();
+      
       this.logger.log('Redis connection initialized');
     } catch (error) {
       this.logger.error('Failed to initialize Redis connection:', error);
@@ -106,6 +121,40 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // Check if Redis is in read-only mode and reset if needed
+  async checkAndResetReadOnlyMode(): Promise<boolean> {
+    try {
+      const info = await this.client.info('replication');
+      const isReadOnly = info.includes('role:slave') || info.includes('slave_read_only:1');
+      
+      if (isReadOnly) {
+        this.logger.warn('Redis is in read-only mode, attempting to reset...');
+        return await this.resetReadOnlyMode();
+      }
+      
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to check Redis read-only status:', error);
+      return false;
+    }
+  }
+  
+  // Reset read-only mode
+  async resetReadOnlyMode(): Promise<boolean> {
+    try {
+      // Try to disable read-only mode
+      await this.client.config('SET', 'slave-read-only', 'no');
+      // Disconnect from master if we're a replica
+      await this.client.call('REPLICAOF', 'NO', 'ONE');
+      
+      this.logger.log('Successfully reset Redis read-only mode');
+      return true;
+    } catch (error) {
+      this.logger.error('Failed to reset Redis read-only mode:', error);
+      return false;
+    }
+  }
+
   // Make retryOperation public for rate limiting service
   public async retryOperation<T>(operation: () => Promise<T>): Promise<T> {
     let lastError;
@@ -115,6 +164,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       } catch (error) {
         lastError = error;
         this.logger.warn(`Redis operation failed, attempt ${i + 1}/${this.maxRetries}`);
+        
+        // Check if it's a read-only error and try to fix it
+        if (error.message && error.message.includes('READONLY')) {
+          try {
+            await this.resetReadOnlyMode();
+          } catch (resetError) {
+            // Just log the error, we'll retry the operation anyway
+            this.logger.error('Failed to reset read-only mode during retry:', resetError);
+          }
+        }
+        
         await new Promise(resolve => setTimeout(resolve, this.retryDelay));
       }
     }

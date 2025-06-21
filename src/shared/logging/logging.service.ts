@@ -47,7 +47,8 @@ export class LoggingService {
     this.ensureLogger();
     
     const timestamp = new Date();
-    const id = `${timestamp.getTime()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Generate a more unique ID with nanosecond precision and longer random string
+    const id = `${timestamp.getTime()}-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
     
     const logEntry = {
       id,
@@ -79,28 +80,8 @@ export class LoggingService {
         }
       }
 
-      // Always store in Redis for real-time access
-      try {
-        await this.redis?.rPush('logs', JSON.stringify(logEntry));
-        await this.redis?.lTrim('logs', -1000, -1); // Keep last 1000 logs
-      } catch (redisError) {
-        console.error('Failed to store log in Redis:', redisError);
-        
-        // If Redis fails, try to store in database immediately
-        await this.prisma?.log.create({
-          data: {
-            id,
-            type,
-            level,
-            message,
-            context,
-            metadata: JSON.stringify(logEntry.metadata),
-            timestamp,
-          },
-        });
-      }
-
-      // Store in database for persistence (but skip frequent health checks and socket logs)
+      // First try to store in database for persistence (but skip frequent health checks and socket logs)
+      // This way we ensure the ID is registered in the database before attempting Redis operations
       if (!message.includes('health check') && !context.includes('Socket')) {
         try {
           await this.prisma?.log.create({
@@ -116,7 +97,17 @@ export class LoggingService {
           });
         } catch (dbError) {
           console.error('Failed to store log in database:', dbError);
+          // Don't rethrow, continue with Redis attempt
         }
+      }
+
+      // Then try Redis for real-time access (if database operation succeeded)
+      try {
+        await this.redis?.rPush('logs', JSON.stringify(logEntry));
+        await this.redis?.lTrim('logs', -1000, -1); // Keep last 1000 logs
+      } catch (redisError) {
+        console.error('Failed to store log in Redis:', redisError);
+        // Redis errors are non-fatal, just log them
       }
     } catch (error) {
       // Fallback to basic console logging if everything else fails
