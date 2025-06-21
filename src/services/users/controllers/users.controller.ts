@@ -8,6 +8,7 @@ import {
   UseGuards,
   Request,
   Put,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiSecurity } from '@nestjs/swagger';
 import { UsersService } from '../services/users.service';
@@ -75,21 +76,31 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Update user',
-    description: 'Update user information. Only accessible by Super Admin and Clinic Admin.'
+    description: 'Update user information. Admins can update any user. All authenticated users can update their own information.',
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'User updated successfully',
-    type: UserResponseDto 
+    type: UserResponseDto,
   })
   async update(
     @Param('id') id: string,
-    @Body() updateUserDto: UpdateUserDto
+    @Body() updateUserDto: UpdateUserDto,
+    @Request() req,
   ): Promise<UserResponseDto> {
+    const loggedInUser = req.user;
+
+    // Allow if user is Super Admin, Clinic Admin, or updating their own profile
+    if (
+      loggedInUser.role !== Role.SUPER_ADMIN &&
+      loggedInUser.role !== Role.CLINIC_ADMIN &&
+      loggedInUser.id !== id
+    ) {
+      throw new ForbiddenException('You do not have permission to update this user.');
+    }
+
     return this.usersService.update(id, updateUserDto);
   }
 
