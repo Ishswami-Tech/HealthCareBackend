@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
-import { Role, User, Prisma } from '@prisma/client';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../libs/dtos/user.dto';
@@ -7,6 +6,8 @@ import { RedisService } from '../../shared/cache/redis/redis.service';
 import { LoggingService } from '../../shared/logging/logging.service';
 import { EventService } from '../../shared/events/event.service';
 import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
+import { Role, Gender } from '../../shared/database/prisma/prisma.types';
+import type { User } from '../../shared/database/prisma/prisma.types';
 
 @Injectable()
 export class UsersService {
@@ -146,40 +147,140 @@ export class UsersService {
   }
 
   async update(id: string, updateUserDto: UpdateUserDto): Promise<UserResponseDto> {
-    const user = await this.prisma.user.update({
-      where: { id },
-      data: updateUserDto,
+    try {
+      // Check if user exists first
+      const existingUser = await this.prisma.user.findUnique({
+        where: { id },
         include: {
           doctor: true,
           patient: true,
-        receptionist: true,
-        clinicAdmin: true,
-        superAdmin: true,
+          receptionist: true,
+          clinicAdmin: true,
+          superAdmin: true,
         },
       });
 
-    // Invalidate cache
-    await Promise.all([
-      this.redis.invalidateCache(`users:one:${id}`),
-      this.redis.invalidateCacheByTag('users'),
-      this.redis.invalidateCacheByTag(`user:${id}`),
-    ]);
+      if (!existingUser) {
+        throw new NotFoundException(`User with ID ${id} not found`);
+      }
+
+      // Log the update attempt
+      this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Attempting to update user',
+        'UsersService',
+        { 
+          userId: id,
+          updateFields: Object.keys(updateUserDto),
+          role: existingUser.role
+        }
+      );
+
+      // Clean up the data to prevent errors
+      const cleanedData: any = { ...updateUserDto };
+      
+      // Handle date conversion properly
+      if (cleanedData.dateOfBirth && typeof cleanedData.dateOfBirth === 'string') {
+        try {
+          cleanedData.dateOfBirth = new Date(cleanedData.dateOfBirth);
+        } catch (error) {
+          this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'Invalid date format for dateOfBirth',
+            'UsersService',
+            { userId: id, dateOfBirth: cleanedData.dateOfBirth }
+          );
+          throw new Error('Invalid date format for dateOfBirth');
+        }
+      }
+
+      // Handle role-specific data updates
+      if (existingUser.role === Role.DOCTOR && cleanedData.specialization) {
+        // Ensure doctor record exists
+        if (!existingUser.doctor) {
+          await this.prisma.doctor.create({
+            data: {
+              userId: id,
+              specialization: cleanedData.specialization,
+              licenseNumber: cleanedData.licenseNumber as string || '',
+              experience: parseInt(cleanedData.experience as string) || 0,
+            },
+          });
+        } else {
+          await this.prisma.doctor.update({
+            where: { userId: id },
+            data: {
+              specialization: cleanedData.specialization,
+              licenseNumber: cleanedData.licenseNumber as string || existingUser.doctor.licenseNumber,
+              experience: parseInt(cleanedData.experience as string) || existingUser.doctor.experience,
+            },
+          });
+        }
+        
+        // Remove doctor-specific fields from main update
+        delete cleanedData.specialization;
+        delete cleanedData.licenseNumber;
+        delete cleanedData.experience;
+      }
+
+      // Update the user record
+      const user = await this.prisma.user.update({
+        where: { id },
+        data: cleanedData,
+        include: {
+          doctor: true,
+          patient: true,
+          receptionist: true,
+          clinicAdmin: true,
+          superAdmin: true,
+        },
+      });
+
+      // Invalidate cache
+      await Promise.all([
+        this.redis.invalidateCache(`users:one:${id}`),
+        this.redis.invalidateCacheByTag('users'),
+        this.redis.invalidateCacheByTag(`user:${id}`),
+      ]);
 
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-      'User updated successfully',
+        'User updated successfully',
         'UsersService',
-      { userId: id }
-    );
-    await this.eventService.emit('user.updated', { userId: id, data: updateUserDto });
+        { userId: id }
+      );
+      await this.eventService.emit('user.updated', { userId: id, data: updateUserDto });
 
-    const { password, ...result } = user;
-    const userResponse = { ...result } as any;
-    if (userResponse.dateOfBirth) {
-      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      const { password, ...result } = user;
+      const userResponse = { ...result } as any;
+      if (userResponse.dateOfBirth) {
+        userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      }
+      return userResponse as UserResponseDto;
+    } catch (error) {
+      // Log the error
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Error updating user: ${error.message}`,
+        'UsersService',
+        { userId: id, error: error.stack }
+      );
+      
+      // Rethrow as appropriate exception
+      if (error.name === 'PrismaClientKnownRequestError') {
+        if (error.code === 'P2025') {
+          throw new NotFoundException(`User with ID ${id} not found`);
+        } else if (error.code === 'P2002') {
+          throw new Error(`Unique constraint violation: ${error.meta?.target}`);
+        }
+      }
+      
+      throw error;
     }
-    return userResponse as UserResponseDto;
   }
 
   async remove(id: string): Promise<void> {
