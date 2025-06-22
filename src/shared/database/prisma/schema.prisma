@@ -29,6 +29,7 @@ model User {
   state                  String?
   country                String?
   zipCode                String?
+  emergencyContact       String?
   isVerified             Boolean                 @default(false)
   lastLogin              DateTime?
   lastLoginIP            String?

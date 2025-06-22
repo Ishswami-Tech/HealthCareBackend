@@ -25,7 +25,9 @@ import type {
 } from '.prisma/client'
 
 // Re-export types with our preferred names
-export type User = PrismaUser
+export type User = PrismaUser & {
+  emergencyContact?: string;
+}
 export type Product = PrismaProduct
 export type Appointment = PrismaAppointment
 export type Payment = PrismaPayment
