@@ -108,12 +108,12 @@ export class UsersService {
 
   async createUser(data: CreateUserDto): Promise<User> {
     const userId = await this.getNextNumericId();
-      const user = await this.prisma.user.create({
-        data: {
+    const user = await this.prisma.user.create({
+      data: {
         id: userId,
         userid: userId,
-          email: data.email,
-          password: data.password,
+        email: data.email,
+        password: data.password,
         firstName: data.firstName,
         lastName: data.lastName,
         name: `${data.firstName} ${data.lastName}`.trim(),
@@ -127,23 +127,23 @@ export class UsersService {
         state: data.state,
         country: data.country,
         zipCode: data.zipCode,
-          isVerified: false,
+        isVerified: false,
         age: data.age || 0,
         lastLogin: data.lastLogin || null
       }
-      });
+    });
 
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'User created successfully',
-        'UsersService',
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'User created successfully',
+      'UsersService',
       { userId: user.id, email: data.email, role: data.role }
     );
     await this.eventService.emit('user.created', { userId: user.id, email: data.email, role: data.role });
-      await this.redis.invalidateCacheByTag('users');
+    await this.redis.invalidateCacheByTag('users');
 
-      return user;
+    return user as unknown as User;
   }
 
   async update(id: string, updateUserDto: UpdateUserDto): Promise<UserResponseDto> {
