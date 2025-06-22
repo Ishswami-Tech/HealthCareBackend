@@ -336,6 +336,66 @@ export class UpdateUserDto implements UpdateUserFields {
   @IsDate()
   @IsOptional()
   lastLogin?: Date;
+
+  @ApiProperty({ 
+    example: 'Jane Doe (Spouse): 123-456-7890', 
+    description: 'Emergency contact information', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  emergencyContact?: string;
+
+  @ApiProperty({ 
+    example: ['Diabetes', 'Hypertension'], 
+    description: 'List of medical conditions', 
+    required: false,
+    isArray: true
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  medicalConditions?: string[];
+
+  @ApiProperty({ 
+    example: ['Insulin', 'Metformin'], 
+    description: 'Current medications', 
+    required: false,
+    isArray: true
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  currentMedications?: string[];
+
+  @ApiProperty({ 
+    example: ['Penicillin'], 
+    description: 'Known allergies', 
+    required: false,
+    isArray: true
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allergies?: string[];
+
+  @ApiProperty({ 
+    example: 'O+', 
+    description: 'Blood group', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  bloodGroup?: string;
+
+  @ApiProperty({ 
+    example: 'Mother has diabetes', 
+    description: 'Family medical history', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  familyHistory?: string;
 }
 
 export class UserResponseDto {
