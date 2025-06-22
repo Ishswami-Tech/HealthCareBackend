@@ -189,14 +189,14 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     if (!session) {
       return null;
     }
-    
+
     const sessionData = JSON.parse(session);
-    
+
     // Verify session is active
     if (!sessionData.isActive) {
       return null;
     }
-    
+
     // Check session inactivity
     const lastActivity = new Date(sessionData.lastActivityAt).getTime();
     const inactivityDuration = Date.now() - lastActivity;
