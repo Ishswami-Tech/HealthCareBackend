@@ -160,17 +160,22 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   private async verifyToken(token: string): Promise<any> {
+    const logger = this.loggingService;
     try {
+      logger.log(LogType.AUTH, LogLevel.DEBUG, 'Attempting to verify JWT token', 'JwtAuthGuard');
       const payload = this.jwtService.verify(token);
+      logger.log(LogType.AUTH, LogLevel.DEBUG, 'JWT token signature verified successfully', 'JwtAuthGuard', { userId: payload.sub });
       
-      // Check if token has been invalidated (blacklisted)
       const isBlacklisted = await this.redisService.get(`blacklist:token:${token.substring(0, 64)}`);
       if (isBlacklisted) {
+        logger.log(LogType.AUTH, LogLevel.WARN, 'Token validation failed: Token is blacklisted', 'JwtAuthGuard', { userId: payload.sub });
         throw new UnauthorizedException('Token has been invalidated');
       }
       
+      logger.log(LogType.AUTH, LogLevel.DEBUG, 'Token is not blacklisted', 'JwtAuthGuard', { userId: payload.sub });
       return payload;
     } catch (error) {
+      logger.log(LogType.AUTH, LogLevel.ERROR, `Token verification failed: ${error.name}`, 'JwtAuthGuard', { error: error.message });
       if (error.name === 'TokenExpiredError') {
         throw new UnauthorizedException('Token has expired');
       }
@@ -209,186 +214,62 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   private async validateSession(userId: string, request: any, deviceFingerprint: string): Promise<any> {
-    // Get session ID from token or headers
+    const logger = this.loggingService;
     const sessionId = request.user?.sessionId || request.headers['x-session-id'];
     
-    // Debug log to help diagnose session issues
-    this.loggingService.log(
-      LogType.SYSTEM,
+    logger.log(
+      LogType.AUTH,
       LogLevel.DEBUG,
       'Session validation attempt',
       'JwtAuthGuard',
       { 
         userId, 
-        hasSessionIdInToken: !!request.user?.sessionId,
-        hasSessionIdInHeader: !!request.headers['x-session-id'],
+        path: request.raw.url,
         sessionId: sessionId || 'MISSING'
       }
     );
-    
-    // Check if this is a standard API request that should be more lenient
-    const isStandardApiRequest = request.raw.url.includes('/api/') || 
-                                request.raw.url.includes('/health');
-    
-    // For standard API requests, create a session if needed but don't block
-    if (!sessionId && isStandardApiRequest) {
-      this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Missing session for standard API request, creating temporary session',
-        'JwtAuthGuard',
-        { userId, path: request.raw.url }
-      );
-      
-      // Create a temporary session ID
-      const tempSessionId = require('crypto').randomUUID();
-      
-      // Create and return a basic session
-      return {
-        userId,
-        sessionId: tempSessionId,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        lastActivityAt: new Date().toISOString(),
-        deviceFingerprint: deviceFingerprint,
-        temporary: true
-      };
-    }
-    
+
     if (!sessionId) {
-      throw new UnauthorizedException('Invalid session');
+      logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: No session ID provided', 'JwtAuthGuard', { userId, path: request.raw.url });
+      throw new UnauthorizedException('Session ID is missing');
     }
 
-    // Get session data from Redis
     const sessionKey = `session:${userId}:${sessionId}`;
     const sessionData = await this.getSessionData(sessionKey);
-    
-    // Determine if this is a request that should be handled with more flexibility
-    const isFlexibleRequest = 
-      (request.raw.url.includes('/user/') && 
-       (request.method === 'PATCH' || request.method === 'PUT' || request.method === 'GET')) ||
-      request.raw.url.includes('/profile-completion') ||
-      request.raw.url.includes('/dashboard') ||
-      request.raw.url.includes('/settings') ||
-      isStandardApiRequest;
-    
+
     if (!sessionData) {
-      // For flexible requests, create a temporary session
-      if (isFlexibleRequest) {
-        this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.INFO,
-          'Creating temporary session for flexible request',
-          'JwtAuthGuard',
-          { userId, sessionId, path: request.raw.url }
-        );
-        
-        // Create a basic session object
-        const tempSessionData = {
-          userId,
-          sessionId,
-          isActive: true,
-          createdAt: new Date().toISOString(),
-          lastActivityAt: new Date().toISOString(),
-          deviceFingerprint: deviceFingerprint,
-          userAgent: request.headers['user-agent'] || 'unknown',
-          ipAddress: request.ip || 'unknown',
-          deviceInfo: {
-            userAgent: request.headers['user-agent'] || 'unknown',
-            type: 'unknown'
-          }
-        };
-        
-        // Store the temporary session with a longer TTL (7 days)
-        await this.redisService.set(sessionKey, JSON.stringify(tempSessionData), 7 * 24 * 3600); // 7 days TTL
-        
-        // Track the event
-        await this.trackSecurityEvent(userId, 'TEMPORARY_SESSION_CREATED', {
-          sessionId,
-          context: 'flexible_request',
-          path: request.raw.url
-        });
-        
-        return tempSessionData;
-      }
-      
-      throw new UnauthorizedException('Session expired or invalid');
+      logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: Session not found in Redis', 'JwtAuthGuard', { userId, sessionId, sessionKey });
+      throw new UnauthorizedException('Invalid or expired session');
     }
-
-    // Check if this is a logout request (special case)
-    const isLogoutRequest = request.raw.url.includes('/auth/logout');
     
-    if (isLogoutRequest) {
-      // Always allow logout requests
-      return sessionData;
-    }
+    logger.log(LogType.AUTH, LogLevel.DEBUG, 'Session found in Redis', 'JwtAuthGuard', { userId, sessionId });
 
-    // For flexible requests, be lenient with device fingerprint validation
-    if (isFlexibleRequest) {
-      // If fingerprints don't match, update the stored fingerprint instead of rejecting
-      if (sessionData.deviceFingerprint !== deviceFingerprint) {
-        this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.INFO,
-          'Updating device fingerprint for flexible request',
-          'JwtAuthGuard',
-          { userId, sessionId, path: request.raw.url }
-        );
-        
-        // Update the fingerprint in the session data
-        sessionData.deviceFingerprint = deviceFingerprint;
-        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 7 * 24 * 3600); // 7 days TTL
-        
-        // Track the event but allow the request
-        await this.trackSecurityEvent(userId, 'DEVICE_FINGERPRINT_UPDATED', {
-          sessionId,
-          oldFingerprint: sessionData.deviceFingerprint,
-          newFingerprint: deviceFingerprint,
-          context: 'flexible_request'
-        });
-      }
-      return sessionData;
+    const isFlexibleRequest = 
+       (request.raw.url.includes('/user/') && (request.method === 'PATCH' || request.method === 'PUT' || request.method === 'GET')) ||
+       request.raw.url.includes('/profile-completion') ||
+       request.raw.url.includes('/dashboard') ||
+       request.raw.url.includes('/settings');
+       
+    if (isFlexibleRequest && sessionData.deviceFingerprint !== deviceFingerprint) {
+      logger.log(LogType.SECURITY, LogLevel.INFO, 'Updating device fingerprint for flexible request', 'JwtAuthGuard', { userId, sessionId });
+      sessionData.deviceFingerprint = deviceFingerprint;
+      await this.redisService.set(sessionKey, JSON.stringify(sessionData), 7 * 24 * 3600);
+    } else if (sessionData.deviceFingerprint !== deviceFingerprint) {
+      logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: Device fingerprint mismatch', 'JwtAuthGuard', { 
+        userId, 
+        sessionId,
+        storedFingerprint: sessionData.deviceFingerprint,
+        currentFingerprint: deviceFingerprint
+      });
+      await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH', {
+         sessionId,
+         expectedFingerprint: sessionData.deviceFingerprint,
+         receivedFingerprint: deviceFingerprint
+      });
+      throw new UnauthorizedException('Invalid device detected');
     }
-
-    // For non-flexible operations, perform device validation but with fallbacks
-    if (sessionData.deviceFingerprint !== deviceFingerprint) {
-      // Fallback for migrating from old fingerprinting method (IP-based)
-      const oldFingerprint = crypto.createHash('sha256').update(`${request.headers['user-agent']}|${request.ip}`).digest('hex');
-      
-      // Check if it's a similar device (e.g., same browser family but different version)
-      const isSimilarDevice = this.isSimilarUserAgent(
-        sessionData.userAgent || sessionData.deviceInfo?.userAgent, 
-        request.headers['user-agent']
-      );
-      
-      if (sessionData.deviceFingerprint === oldFingerprint || isSimilarDevice) {
-        // This is a valid session using the old fingerprint method or a similar device.
-        // Let's update it to the new method.
-        sessionData.deviceFingerprint = deviceFingerprint;
-        sessionData.userAgent = request.headers['user-agent'];
-        if (sessionData.deviceInfo) {
-          sessionData.deviceInfo.userAgent = request.headers['user-agent'];
-        }
-        
-        await this.redisService.set(sessionKey, JSON.stringify(sessionData), 7 * 24 * 3600); // 7 days TTL
-        
-        this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.INFO,
-          'Updated device fingerprint for similar device',
-          'JwtAuthGuard',
-          { userId, sessionId }
-        );
-      } else {
-        await this.trackSecurityEvent(userId, 'DEVICE_MISMATCH', {
-          sessionId,
-          expectedFingerprint: sessionData.deviceFingerprint,
-          receivedFingerprint: deviceFingerprint
-        });
-        throw new UnauthorizedException('Invalid device detected');
-      }
-    }
-
+    
+    logger.log(LogType.AUTH, LogLevel.INFO, 'Session validated successfully', 'JwtAuthGuard', { userId, sessionId });
     return sessionData;
   }
 
