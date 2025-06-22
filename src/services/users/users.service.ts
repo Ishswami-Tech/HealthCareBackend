@@ -219,7 +219,6 @@ export class UsersService {
         
         // Remove doctor-specific fields from main update
         delete cleanedData.specialization;
-        delete cleanedData.licenseNumber;
         delete cleanedData.experience;
       }
 

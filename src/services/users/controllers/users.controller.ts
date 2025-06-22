@@ -15,7 +15,7 @@ import { UsersService } from '../users.service';
 import { UpdateUserDto, UserResponseDto, CreateUserDto, UpdateUserRoleDto } from '../../../libs/dtos/user.dto';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role } from '../../../shared/database/prisma/prisma.types';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 
 @ApiTags('user')
@@ -210,9 +210,9 @@ export class UsersController {
       firstName: 'placeholder',
       lastName: 'placeholder',
       phone: '0000000000',
-      role: updateUserRoleDto.role as Role,
+      role: updateUserRoleDto.role as unknown as Role,
       clinicId: updateUserRoleDto.clinicId,
     };
-    return this.usersService.updateUserRole(id, updateUserRoleDto.role as Role, minimalCreateUserDto);
+    return this.usersService.updateUserRole(id, updateUserRoleDto.role as unknown as Role, minimalCreateUserDto);
   }
 }
