@@ -91,13 +91,32 @@ export class UsersController {
     @Request() req,
   ): Promise<UserResponseDto> {
     const loggedInUser = req.user;
+    
+    // Log the user information for debugging
+    console.log('Update user request:', {
+      requestedUserId: id,
+      loggedInUser: {
+        id: loggedInUser.id,
+        sub: loggedInUser.sub,
+        role: loggedInUser.role
+      },
+      updateFields: Object.keys(updateUserDto)
+    });
 
     // Allow if user is Super Admin, Clinic Admin, or updating their own profile
+    // Use either id or sub field from the JWT token
+    const userIdFromToken = loggedInUser.id || loggedInUser.sub;
+    
     if (
       loggedInUser.role !== Role.SUPER_ADMIN &&
       loggedInUser.role !== Role.CLINIC_ADMIN &&
-      loggedInUser.id !== id
+      userIdFromToken !== id
     ) {
+      console.error('Permission denied:', {
+        requestedUserId: id,
+        tokenUserId: userIdFromToken,
+        userRole: loggedInUser.role
+      });
       throw new ForbiddenException('You do not have permission to update this user.');
     }
 
