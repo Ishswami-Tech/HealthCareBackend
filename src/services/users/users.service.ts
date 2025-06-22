@@ -204,7 +204,6 @@ export class UsersService {
             data: {
               userId: id,
               specialization: cleanedData.specialization,
-              licenseNumber: cleanedData.licenseNumber as string || '',
               experience: parseInt(cleanedData.experience as string) || 0,
             },
           });
@@ -213,7 +212,6 @@ export class UsersService {
             where: { userId: id },
             data: {
               specialization: cleanedData.specialization,
-              licenseNumber: cleanedData.licenseNumber as string || existingUser.doctor.licenseNumber,
               experience: parseInt(cleanedData.experience as string) || existingUser.doctor.experience,
             },
           });
