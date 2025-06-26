@@ -1,8 +1,9 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { HealthService } from './health.service';
 import { HealthCheckResponse, DetailedHealthCheckResponse } from '../../libs/types/health.types';
 import { Public } from '../../libs/decorators/public.decorator';
+import { FastifyReply } from 'fastify';
 
 @ApiTags('Health')
 @Controller('health')
@@ -163,5 +164,18 @@ export class HealthController {
   })
   async getDetailedHealth(): Promise<DetailedHealthCheckResponse> {
     return this.healthService.checkDetailedHealth();
+  }
+
+  @Get('/api-health')
+  @Public()
+  async apiHealth(@Res() res: FastifyReply) {
+    const health = await this.getHealth();
+    return res.send(health);
+  }
+
+  @Get('/api')
+  @Public()
+  async apiStatus(@Res() res: FastifyReply) {
+    return res.send({ status: 'ok', message: 'API is running', timestamp: new Date().toISOString() });
   }
 } 

@@ -166,13 +166,15 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       const payload = this.jwtService.verify(token);
       logger.log(LogType.AUTH, LogLevel.DEBUG, 'JWT token signature verified successfully', 'JwtAuthGuard', { userId: payload.sub });
       
-      const isBlacklisted = await this.redisService.get(`blacklist:token:${token.substring(0, 64)}`);
-      if (isBlacklisted) {
-        logger.log(LogType.AUTH, LogLevel.WARN, 'Token validation failed: Token is blacklisted', 'JwtAuthGuard', { userId: payload.sub });
-        throw new UnauthorizedException('Token has been invalidated');
+      // Skip blacklist check in DEV_MODE
+      if (!this.redisService.isDevelopmentMode()) {
+        const isBlacklisted = await this.redisService.get(`blacklist:token:${token.substring(0, 64)}`);
+        if (isBlacklisted) {
+          logger.log(LogType.AUTH, LogLevel.WARN, 'Token validation failed: Token is blacklisted', 'JwtAuthGuard', { userId: payload.sub });
+          throw new UnauthorizedException('Token has been invalidated');
+        }
+        logger.log(LogType.AUTH, LogLevel.DEBUG, 'Token is not blacklisted', 'JwtAuthGuard', { userId: payload.sub });
       }
-      
-      logger.log(LogType.AUTH, LogLevel.DEBUG, 'Token is not blacklisted', 'JwtAuthGuard', { userId: payload.sub });
       return payload;
     } catch (error) {
       logger.log(LogType.AUTH, LogLevel.ERROR, `Token verification failed: ${error.name}`, 'JwtAuthGuard', { error: error.message });
