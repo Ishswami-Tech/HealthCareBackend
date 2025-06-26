@@ -60,6 +60,13 @@ export class RateLimitConfig {
   };
 
   getLimits(type: string): RateLimitRule {
+    if (process.env.DEV_MODE === 'true') {
+      return {
+        maxRequests: 10000,
+        windowMs: 60000, // 1 minute
+        blockDuration: 1000 // 1 second block
+      };
+    }
     return this.limits[type] || this.defaultLimits;
   }
 
