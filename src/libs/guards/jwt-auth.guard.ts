@@ -22,7 +22,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     360    // 6 hours after 7 failures
   ];
 
-  private readonly MAX_ATTEMPTS = 5; // Initial threshold before lockout
+  private readonly MAX_ATTEMPTS = 10; // Initial threshold before lockout
   private readonly ATTEMPT_WINDOW = 30 * 60; // 30 minutes base window for attempts
   private readonly SESSION_ACTIVITY_THRESHOLD = 15 * 60 * 1000; // 15 minutes for session inactivity warning
   private readonly MAX_CONCURRENT_SESSIONS = 5; // Maximum number of active sessions per user

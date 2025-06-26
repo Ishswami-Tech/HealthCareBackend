@@ -30,8 +30,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     const nodeEnv = this.configService.get('NODE_ENV')?.toLowerCase();
     const appEnv = this.configService.get('APP_ENV')?.toLowerCase();
     const isDev = this.configService.get('IS_DEV');
-
-    return nodeEnv !== 'production' || 
+    const devMode = process.env.DEV_MODE === 'true';
+    return devMode || nodeEnv !== 'production' || 
            appEnv === 'development' || 
            appEnv === 'dev' ||
            isDev === 'true' ||
