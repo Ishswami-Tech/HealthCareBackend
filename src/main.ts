@@ -445,8 +445,8 @@ async function bootstrap() {
       done();
     });
 
-    // Add global 404 handler to reduce bot scan logs
-    fastifyInstance.setNotFoundHandler((request, reply) => {
+    // Add bot scan detection hook to reduce log noise
+    fastifyInstance.addHook('onRequest', (request, reply, done) => {
       const path = request.url;
       const userAgent = request.headers['user-agent'] || '';
       
@@ -462,22 +462,12 @@ async function bootstrap() {
         userAgent.toLowerCase().includes('spider');
       
       if (isBotScan) {
-        // For bot scans, return 404 without logging
-        return reply.status(404).send({ error: 'Not Found' });
+        // For bot scans, return 404 immediately without further processing
+        reply.status(404).send({ error: 'Not Found' });
+        return;
       }
       
-      // For legitimate 404s, log them but don't throw exceptions
-      logger.warn(`404 Not Found: ${request.method} ${path}`, {
-        userAgent,
-        ip: request.ip,
-        timestamp: new Date().toISOString()
-      });
-      
-      return reply.status(404).send({ 
-        error: 'Not Found',
-        message: 'The requested resource was not found',
-        path: path
-      });
+      done();
     });
 
     // Configure Fastify security headers
