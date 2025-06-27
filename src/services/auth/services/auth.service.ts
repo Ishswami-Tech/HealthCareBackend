@@ -19,6 +19,7 @@ import { ClinicUserService } from '../../clinic/services/clinic-user.service';
 import { OAuth2Client } from 'google-auth-library';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
+import { google } from 'googleapis';
 
 @Injectable()
 export class AuthService {
@@ -1957,6 +1958,42 @@ export class AuthService {
     } catch (error) {
       this.logger.error(`Failed to mark user ${userId} as verified: ${error.message}`);
       throw new InternalServerErrorException('Failed to update user verification status');
+    }
+  }
+
+  /**
+   * Exchange Google OAuth 2.0 code for tokens and fetch user info
+   */
+  async exchangeGoogleOAuthCode(code: string, redirectUri: string): Promise<any> {
+    try {
+      const oauth2Client = new google.auth.OAuth2(
+        this.GOOGLE_CLIENT_ID,
+        this.GOOGLE_CLIENT_SECRET,
+        redirectUri
+      );
+      const { tokens } = await oauth2Client.getToken(code);
+      oauth2Client.setCredentials(tokens);
+
+      // Get user info from Google
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const { data: userInfo } = await oauth2.userinfo.get();
+
+      if (!userInfo || !userInfo.email) {
+        throw new UnauthorizedException('Failed to fetch user info from Google');
+      }
+
+      // Map userInfo to the expected Google user payload
+      return {
+        email: userInfo.email,
+        given_name: userInfo.given_name,
+        family_name: userInfo.family_name,
+        name: userInfo.name,
+        picture: userInfo.picture,
+        sub: userInfo.id,
+      };
+    } catch (error) {
+      this.logger.error('Failed to exchange Google OAuth code:', error);
+      throw new UnauthorizedException('Failed to exchange Google OAuth code');
     }
   }
 } 
