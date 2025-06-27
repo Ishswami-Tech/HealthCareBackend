@@ -27,7 +27,7 @@ fi
 
 # Check if database indexes exist
 echo "3. Checking database indexes..."
-INDEXES=$(docker exec latest-api sh -c 'psql $DATABASE_URL -c "\d+ logs" | grep -E "(logs_timestamp_idx|logs_type_idx|logs_level_idx|logs_timestamp_type_level_idx|logs_recent_idx)" | wc -l')
+INDEXES=$(docker exec latest-postgres psql -U postgres -d userdb -c "\d+ logs" | grep -E "(logs_timestamp_idx|logs_type_idx|logs_level_idx|logs_timestamp_type_level_idx|logs_recent_idx)" | wc -l)
 
 if [ "$INDEXES" -ge 4 ]; then
     echo "✅ Database indexes are properly created ($INDEXES indexes found)"

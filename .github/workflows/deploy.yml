@@ -495,9 +495,15 @@ jobs:
               echo "Warning: Migration failed, but continuing deployment..."
             }
 
+            # Copy database optimization script to PostgreSQL container
+            echo "Copying database optimization script to PostgreSQL container..."
+            docker cp src/shared/database/scripts/optimize-logs.sql latest-postgres:/tmp/optimize-logs.sql || {
+              echo "Warning: Failed to copy optimization script, but continuing deployment..."
+            }
+
             # Run database optimization script
             echo "Running database optimization script..."
-            docker exec latest-api sh -c "cd /app && psql \$DATABASE_URL -f src/shared/database/scripts/optimize-logs.sql" || {
+            docker exec latest-postgres psql -U postgres -d userdb -f /tmp/optimize-logs.sql || {
               echo "Warning: Database optimization failed, but continuing deployment..."
             }
 

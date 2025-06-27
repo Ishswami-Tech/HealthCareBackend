@@ -501,19 +501,17 @@ export class AuthController {
   @Post('social/google')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Login with Google',
-    description: 'Authenticate using Google OAuth token'
+    summary: 'Login with Google (ID token or OAuth code)',
+    description: 'Authenticate using Google OAuth ID token (popup/credential flow) or OAuth 2.0 code (redirect)'
   })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        token: { 
-          type: 'string', 
-          description: 'Google OAuth ID token' 
-        }
-      },
-      required: ['token']
+        token: { type: 'string', description: 'Google OAuth ID token (popup/credential flow)' },
+        code: { type: 'string', description: 'Google OAuth 2.0 code (redirect flow)' },
+        redirectUri: { type: 'string', description: 'Redirect URI used in Google OAuth (required if using code)' }
+      }
     }
   })
   @ApiResponse({ 
@@ -544,35 +542,40 @@ export class AuthController {
       }
     }
   })
-  @ApiResponse({ status: 401, description: 'Invalid Google token' })
+  @ApiResponse({ status: 401, description: 'Invalid Google token or code' })
   async googleLogin(
-    @Body('token') token: string,
+    @Body() body: { token?: string; code?: string; redirectUri?: string },
     @Req() request: any
   ): Promise<any> {
     try {
-      if (!token) {
-        throw new BadRequestException('Google token is required');
+      let googleUser: any;
+      let payload: any;
+
+      if (body.token) {
+        this.logger.debug('Starting Google login process (ID token flow)');
+        this.logger.debug('Received token:', body.token.substring(0, 10) + '...');
+        // Existing logic: verify ID token
+        const ticket = await this.authService.verifyGoogleToken(body.token);
+        payload = ticket.getPayload();
+        if (!payload) throw new UnauthorizedException('Invalid Google token');
+        this.logger.debug('Google token verified successfully');
+        this.logger.debug('Token payload email:', payload.email);
+        googleUser = payload;
+      } else if (body.code && body.redirectUri) {
+        this.logger.debug('Starting Google login process (OAuth code flow)');
+        this.logger.debug('Received code:', body.code.substring(0, 10) + '...');
+        googleUser = await this.authService.exchangeGoogleOAuthCode(body.code, body.redirectUri);
+        payload = googleUser;
+        this.logger.debug('Google OAuth code exchanged successfully');
+        this.logger.debug('OAuth user email:', googleUser.email);
+      } else {
+        throw new BadRequestException('Either token or code+redirectUri must be provided');
       }
 
-      this.logger.debug('Starting Google login process');
-      this.logger.debug('Received token:', token.substring(0, 10) + '...');
-
-      // Verify Google token
-      const ticket = await this.authService.verifyGoogleToken(token);
-      const payload = ticket.getPayload();
-      
-      if (!payload) {
-        this.logger.error('No payload received from Google token verification');
-        throw new UnauthorizedException('Invalid Google token: No payload');
-      }
-
-      this.logger.debug('Google token verified successfully');
-      this.logger.debug('Token payload email:', payload.email);
-      
-      // Handle Google login
-      const response = await this.authService.handleGoogleLogin(payload, request);
+      // Use your existing handler
+      const response = await this.authService.handleGoogleLogin(googleUser, request);
       this.logger.debug('Google login handled successfully');
-      
+
       // Ensure response includes name fields
       const enhancedResponse = {
         ...response,
@@ -580,23 +583,18 @@ export class AuthController {
           ...response.user,
           firstName: response.user.firstName || payload.given_name,
           lastName: response.user.lastName || payload.family_name,
-          name: response.user.name || `${payload.given_name} ${payload.family_name}`.trim(),
+          name: response.user.name || `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
           profilePicture: response.user.profilePicture || payload.picture
         },
         isNew: !response.user.googleId, // Indicate if this is a new Google login
         redirectUrl: this.authService.getRedirectPathForRole(response.user.role)
       };
-      
+
       return enhancedResponse;
     } catch (error) {
       this.logger.error('Google login failed:', error);
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
       throw new UnauthorizedException(
-        error instanceof Error 
-          ? `Invalid Google token: ${error.message}`
-          : 'Invalid Google token'
+        error instanceof Error ? `Invalid Google login: ${error.message}` : 'Invalid Google login'
       );
     }
   }
