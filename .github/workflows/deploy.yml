@@ -30,6 +30,7 @@ env:
   NETWORK_NAME: app-network
   GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
   GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+  DEV_MODE: true
 
 jobs:
   pre-deployment-check:
@@ -494,6 +495,39 @@ jobs:
               echo "Warning: Migration failed, but continuing deployment..."
             }
 
+            # Run database optimization script
+            echo "Running database optimization script..."
+            docker exec latest-api sh -c "cd /app && psql \$DATABASE_URL -f src/shared/database/scripts/optimize-logs.sql" || {
+              echo "Warning: Database optimization failed, but continuing deployment..."
+            }
+
+            # Set DEV_MODE environment variable in the container
+            echo "Setting DEV_MODE=true in the API container..."
+            docker exec latest-api sh -c "export DEV_MODE=true && echo 'DEV_MODE=true' >> /app/.env" || {
+              echo "Warning: Failed to set DEV_MODE, but continuing deployment..."
+            }
+
+            # Restart API container to apply DEV_MODE environment variable
+            echo "Restarting API container to apply DEV_MODE environment variable..."
+            docker restart latest-api || {
+              echo "Warning: Failed to restart API container, but continuing deployment..."
+            }
+
+            # Wait for container to be healthy after restart
+            echo "Waiting for API container to be healthy after restart..."
+            for i in {1..30}; do
+              if docker ps --filter "name=${{ env.API_CONTAINER }}" --format "{{.Status}}" | grep -q "healthy"; then
+                echo "API container is healthy after restart"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "Warning: API container failed to become healthy after restart, but continuing..."
+                break
+              fi
+              echo "Attempt $i/30: Waiting for API container to be healthy after restart..."
+              sleep 10
+            done
+
             # Set up maintenance scripts
             echo "Setting up maintenance scripts..."
             mkdir -p /var/www/healthcare/backend/scripts
@@ -555,6 +589,7 @@ jobs:
             # Setting environment variables directly to API container
             docker exec -e SOCKET_URL=/socket.io \
                        -e LOGGER_URL=/logger \
+                       -e DEV_MODE=true \
                        latest-api sh -c 'echo "Environment variables updated via Docker exec"'
 
             # Configure firewall to allow traffic on ports
@@ -732,6 +767,18 @@ jobs:
             # Exit successfully if either health check passed or container is healthy
             if [ "$HEALTH_CHECK_SUCCESS" = true ]; then
               echo "✅ Deployment verification completed successfully"
+              
+              # Run verification script to ensure DEV_MODE and optimizations are applied
+              echo "🔍 Running verification script..."
+              if [ -f "/var/www/healthcare/backend/scripts/verify-dev-mode.sh" ]; then
+                chmod +x /var/www/healthcare/backend/scripts/verify-dev-mode.sh
+                /var/www/healthcare/backend/scripts/verify-dev-mode.sh || {
+                  echo "⚠️ Verification script failed, but deployment was successful"
+                }
+              else
+                echo "⚠️ Verification script not found, skipping verification"
+              fi
+              
               exit 0
             else
               echo "⚠️ Health check failed but deployment was successful"

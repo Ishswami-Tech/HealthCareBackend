@@ -147,6 +147,16 @@ export class LoggingService {
       const finalStartTime = startTime || defaultStartTime;
       const finalEndTime = endTime || now;
 
+      // Create cache key for this query
+      const cacheKey = `logs:${type || 'all'}:${level || 'all'}:${finalStartTime.getTime()}:${finalEndTime.getTime()}`;
+      
+      // Try to get from cache first
+      const cachedLogs = await this.redis.get(cacheKey);
+      if (cachedLogs) {
+        return JSON.parse(cachedLogs);
+      }
+
+      // If not in cache, query database with optimized parameters
       const dbLogs = await this.prisma.log.findMany({
         where: {
           type: type || undefined,
@@ -159,15 +169,29 @@ export class LoggingService {
         orderBy: {
           timestamp: 'desc',
         },
-        take: 1000, // Limit to the last 1000 entries for performance
+        take: 500, // Reduced from 1000 to 500 for better performance
+        select: {
+          id: true,
+          type: true,
+          level: true,
+          message: true,
+          context: true,
+          metadata: true,
+          timestamp: true,
+        },
       });
 
-      return dbLogs.map(log => ({
+      const result = dbLogs.map(log => ({
         ...log,
         metadata: typeof log.metadata === 'string' 
           ? JSON.parse(log.metadata) 
           : log.metadata,
       }));
+
+      // Cache the result for 5 minutes
+      await this.redis.set(cacheKey, JSON.stringify(result), 300);
+
+      return result;
     } catch (error) {
       console.error('Failed to retrieve logs:', error);
       return [];

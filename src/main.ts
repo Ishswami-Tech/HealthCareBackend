@@ -445,6 +445,41 @@ async function bootstrap() {
       done();
     });
 
+    // Add global 404 handler to reduce bot scan logs
+    fastifyInstance.setNotFoundHandler((request, reply) => {
+      const path = request.url;
+      const userAgent = request.headers['user-agent'] || '';
+      
+      // Check if this is likely a bot scan
+      const isBotScan = 
+        path.includes('admin') || 
+        path.includes('wp-') || 
+        path.includes('php') || 
+        path.includes('cgi-bin') ||
+        path.includes('config') ||
+        userAgent.toLowerCase().includes('bot') ||
+        userAgent.toLowerCase().includes('crawler') ||
+        userAgent.toLowerCase().includes('spider');
+      
+      if (isBotScan) {
+        // For bot scans, return 404 without logging
+        return reply.status(404).send({ error: 'Not Found' });
+      }
+      
+      // For legitimate 404s, log them but don't throw exceptions
+      logger.warn(`404 Not Found: ${request.method} ${path}`, {
+        userAgent,
+        ip: request.ip,
+        timestamp: new Date().toISOString()
+      });
+      
+      return reply.status(404).send({ 
+        error: 'Not Found',
+        message: 'The requested resource was not found',
+        path: path
+      });
+    });
+
     // Configure Fastify security headers
     await app.register(fastifyHelmet as any, {
       contentSecurityPolicy: {
