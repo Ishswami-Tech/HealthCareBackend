@@ -178,4 +178,10 @@ export class HealthController {
   async apiStatus(@Res() res: FastifyReply) {
     return res.send({ status: 'ok', message: 'API is running', timestamp: new Date().toISOString() });
   }
+
+  @Get('/favicon.ico')
+  @Public()
+  async favicon(@Res() res: FastifyReply) {
+    return res.status(204).send();
+  }
 } 

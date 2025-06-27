@@ -413,6 +413,10 @@ model Log {
   timestamp DateTime @default(now())
 
   @@index([clinicId])
+  @@index([timestamp])
+  @@index([type])
+  @@index([level])
+  @@index([timestamp, type, level])
   @@map("logs")
 }
 

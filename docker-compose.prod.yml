@@ -20,6 +20,7 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro # Add read-only access to Let's Encrypt certificates
     environment:
       NODE_ENV: production
+      DEV_MODE: true
       CORS_ORIGIN: "*"
       FRONTEND_URL: https://ishswami.in
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}

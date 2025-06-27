@@ -236,16 +236,19 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     
     logger.log(LogType.AUTH, LogLevel.DEBUG, 'Session found in Redis', 'JwtAuthGuard', { userId, sessionId });
 
-    const currentFingerprint = this.generateDeviceFingerprint(request);
-    if (sessionData.deviceFingerprint !== currentFingerprint) {
-      logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: Device fingerprint mismatch', 'JwtAuthGuard', { 
-        userId, 
-        sessionId,
-        storedFingerprint: sessionData.deviceFingerprint,
-        currentFingerprint: currentFingerprint
-      });
-      // Depending on security policy, you might want to invalidate the session here.
-      // For now, we'll just log it.
+    // Skip device fingerprint check in DEV_MODE
+    if (!this.redisService.isDevelopmentMode()) {
+      const currentFingerprint = this.generateDeviceFingerprint(request);
+      if (sessionData.deviceFingerprint !== currentFingerprint) {
+        logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: Device fingerprint mismatch', 'JwtAuthGuard', { 
+          userId, 
+          sessionId,
+          storedFingerprint: sessionData.deviceFingerprint,
+          currentFingerprint: currentFingerprint
+        });
+        // Depending on security policy, you might want to invalidate the session here.
+        // For now, we'll just log it.
+      }
     }
     
     logger.log(LogType.AUTH, LogLevel.INFO, 'Session validated successfully', 'JwtAuthGuard', { userId, sessionId });
