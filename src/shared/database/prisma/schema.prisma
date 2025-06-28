@@ -43,7 +43,7 @@ model User {
   appName                String?
   medicalConditions      String?
   
-  // Multi-tenant fields
+  // Primary clinic association
   primaryClinicId        String?                 // Primary clinic for the user
   primaryClinic          Clinic?                 @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
   
@@ -53,7 +53,9 @@ model User {
   // Role-specific clinic associations
   clinicAdmins           ClinicAdmin[]
   receptionists          Receptionist[]
-  doctorClinics          DoctorClinic[]
+  
+  // Clinics created by this user
+  createdClinics         Clinic[]                @relation("UserCreatedClinics")
   
   // Other relationships
   appointments           Appointment[]
@@ -128,6 +130,7 @@ model Clinic {
   // Multi-tenant relationships
   primaryUsers          User[]                  @relation("UserPrimaryClinic")
   users                 User[]                  @relation("UserClinics")
+  createdByUser         User                    @relation("UserCreatedClinics", fields: [createdBy], references: [id])
   
   // Role-specific relationships
   appointments          Appointment[]
@@ -136,7 +139,6 @@ model Clinic {
   receptionists         Receptionist[]
   ReceptionistsAtClinic ReceptionistsAtClinic[]
   locations             ClinicLocation[]
-  createdByUser         User                    @relation(fields: [createdBy], references: [id])
 
   @@map("clinics")
   @@index([app_name])
