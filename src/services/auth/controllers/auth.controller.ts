@@ -27,6 +27,7 @@ import { LoginDto, LogoutDto, PasswordResetDto, AuthResponse, LoginRequestDto, F
 import { Role } from '../../../shared/database/prisma/prisma.types';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
+import { ClinicId, OptionalClinicId } from '../../../libs/decorators/clinic.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -43,13 +44,13 @@ export class AuthController {
   @Public()
   @Post('register')
   @ApiOperation({ 
-    summary: 'Register a new user with clinic',
-    description: 'Create a new user account and associate with a specific clinic. Multi-tenant system supports shared user identity.'
+    summary: 'Register a new user',
+    description: 'Create a new user account. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter for clinic association.'
   })
   @ApiResponse({ 
     status: 201, 
     type: UserResponseDto,
-    description: 'User successfully registered and associated with clinic'
+    description: 'User successfully registered'
   })
   @ApiResponse({ 
     status: 400, 
@@ -63,59 +64,16 @@ export class AuthController {
     status: 500, 
     description: 'Internal server error'
   })
-  async register(@Body() registerDto: RegisterDto): Promise<UserResponseDto> {
-    try {
-      return await this.authService.register(registerDto);
-    } catch (error) {
-      this.logger.error(`Registration failed: ${error.message}`, error.stack);
-      
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      
-      if (error.code === 'P2002') {
-        throw new BadRequestException('User with this email already exists');
-      }
-      
-      throw new InternalServerErrorException('Registration failed');
-    }
-  }
-
-  @Public()
-  @Post('register-with-clinic')
-  @ApiOperation({ 
-    summary: 'Register a new user with clinic association',
-    description: 'Create a new user account and associate it with a specific clinic'
-  })
-  @ApiResponse({ 
-    status: 201, 
-    type: UserResponseDto,
-    description: 'User successfully registered and associated with clinic'
-  })
-  @ApiResponse({ 
-    status: 400, 
-    description: 'Bad request - validation error or user already exists'
-  })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'Clinic not found'
-  })
-  @ApiResponse({ 
-    status: 500, 
-    description: 'Internal server error'
-  })
-  async registerWithClinic(
-    @Body() createUserDto: CreateUserDto,
-    @Body('appName') appName: string
+  async register(
+    @Body() registerDto: RegisterDto,
+    @OptionalClinicId() clinicId?: string
   ): Promise<UserResponseDto> {
     try {
-      if (!appName) {
-        throw new BadRequestException('App name is required for clinic registration');
-      }
-      
-      return await this.authService.registerWithClinic(createUserDto, appName);
+      // Merge clinicId from decorator with DTO if provided
+      const registrationData = clinicId ? { ...registerDto, clinicId } : registerDto;
+      return await this.authService.register(registrationData);
     } catch (error) {
-      this.logger.error(`Clinic registration failed: ${error.message}`, error.stack);
+      this.logger.error(`Registration failed: ${error.message}`, error.stack);
       
       if (error instanceof HttpException) {
         throw error;
@@ -133,8 +91,8 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Login with password or OTP and clinic validation',
-    description: 'Authenticate using either password or OTP. User must be associated with the specified clinic.'
+    summary: 'Login with password or OTP',
+    description: 'Authenticate using either password or OTP. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter for clinic validation.'
   })
   @ApiBody({ type: LoginRequestDto })
   @ApiResponse({ 
@@ -146,9 +104,10 @@ export class AuthController {
   @ApiResponse({ status: 404, description: 'Clinic not found' })
   async login(
     @Body() body: LoginRequestDto,
+    @OptionalClinicId() clinicId?: string,
     @Req() request?: any
   ): Promise<any> {
-    const { email, password, otp, clinicId } = body;
+    const { email, password, otp } = body;
     
     if (!password && !otp) {
       throw new BadRequestException('Either password or OTP must be provided');
@@ -191,315 +150,271 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async logout(
     @Req() req,
-    @Body() logoutDto: LogoutDto,
+    @Body() logoutDto: LogoutDto
   ): Promise<{ message: string }> {
-    const userId = req.user.sub;
-    const token = req.headers.authorization?.split(' ')[1];
-    await this.authService.logout(
-      userId,
-      logoutDto.sessionId,
-      logoutDto.allDevices,
-      token,
-    );
-    return { message: 'Logged out successfully' };
+    try {
+      const { sessionId, allDevices } = logoutDto;
+      const token = req.headers.authorization?.replace('Bearer ', '');
+      
+      await this.authService.logout(
+        req.user.id,
+        sessionId,
+        allDevices,
+        token
+      );
+
+      return { message: 'Logged out successfully' };
+    } catch (error) {
+      this.logger.error(`Logout failed: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Logout failed');
+    }
   }
 
   @Post('refresh')
   @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Refresh access token',
-    description: 'Generate new access token using refresh token'
+    description: 'Refresh the current access token using the refresh token'
   })
-  @ApiResponse({ 
+  @ApiResponse({
     status: 200,
-    description: 'New access token generated'
+    description: 'Token refreshed successfully'
   })
-  @ApiResponse({ status: 401, description: 'Invalid refresh token' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async refresh(@Request() req) {
-    const deviceFingerprint = crypto
-      .createHash('sha256')
-      .update(JSON.stringify({
-        userAgent: req.headers['user-agent'],
-        acceptLanguage: req.headers['accept-language'],
-        secChUa: req.headers['sec-ch-ua'],
-        platform: req.headers['sec-ch-ua-platform'],
-        ipAddress: req.ip || req.headers['x-forwarded-for']
-      }))
-      .digest('hex');
-    return this.authService.refreshToken(req.user.sub, deviceFingerprint);
+    try {
+      const deviceFingerprint = this.authService['generateDeviceFingerprint'](req);
+      return await this.authService.refreshToken(req.user.id, deviceFingerprint);
+    } catch (error) {
+      this.logger.error(`Token refresh failed: ${error.message}`, error.stack);
+      throw new UnauthorizedException('Token refresh failed');
+    }
   }
 
   @Get('verify')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ 
-    summary: 'Verify current token',
-    description: 'Check if the current JWT token is valid'
+  @ApiOperation({
+    summary: 'Verify token validity',
+    description: 'Verify if the current JWT token is valid'
   })
-  @ApiResponse({ 
+  @ApiResponse({
     status: 200,
     description: 'Token is valid'
   })
-  @ApiResponse({ status: 401, description: 'Invalid token' })
+  @ApiResponse({ status: 401, description: 'Token is invalid' })
   async verifyToken(@Request() req) {
-    const isValid = await this.authService.validateToken(req.user.sub);
-    return {
-      isValid,
-      user: {
-        id: req.user.sub,
-        role: req.user.role
+    try {
+      const isValid = await this.authService.validateToken(req.user.id);
+      if (!isValid) {
+        throw new UnauthorizedException('Token is invalid');
       }
-    };
+      return { message: 'Token is valid', user: req.user };
+    } catch (error) {
+      this.logger.error(`Token verification failed: ${error.message}`, error.stack);
+      throw new UnauthorizedException('Token verification failed');
+    }
   }
 
   @Public()
   @Post('forgot-password')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Forgot password',
-    description: 'Initiates the password reset process'
+    summary: 'Request password reset',
+    description: 'Send a password reset link to the user\'s email'
   })
   @ApiBody({ type: ForgotPasswordRequestDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Password reset email sent'
   })
   async forgotPassword(@Body() body: ForgotPasswordRequestDto): Promise<{ message: string }> {
-    await this.authService.forgotPassword(body.email);
-    return { message: 'Password reset instructions sent to your email' };
+    try {
+      await this.authService.forgotPassword(body.email);
+      return { message: 'If the email exists, a password reset link has been sent' };
+    } catch (error) {
+      this.logger.error(`Forgot password failed: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to process password reset request');
+    }
   }
 
   @Public()
   @Post('reset-password')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Reset password',
-    description: 'Reset password using the token received via email'
+    summary: 'Reset password with token',
+    description: 'Reset user password using the token from email'
   })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Password reset successful'
+  @ApiBody({ type: PasswordResetDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset successfully'
   })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
   async resetPassword(
     @Body() passwordResetDto: PasswordResetDto
   ): Promise<{ message: string }> {
-    await this.authService.resetPassword(
-      passwordResetDto.token,
-      passwordResetDto.newPassword
-    );
-    return { message: 'Password reset successful' };
+    try {
+      await this.authService.resetPassword(passwordResetDto.token, passwordResetDto.newPassword);
+      return { message: 'Password reset successfully' };
+    } catch (error) {
+      this.logger.error(`Password reset failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Password reset failed');
+    }
   }
 
   @Public()
   @Post('request-otp')
   @ApiOperation({
-    summary: 'Request OTP for login with clinic validation',
-    description: 'Sends an OTP through available channels. Validates clinic context.'
+    summary: 'Request OTP for login',
+    description: 'Send OTP to user\'s email or phone for login. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter.'
   })
   @ApiBody({ type: RequestOtpDto })
   @ApiResponse({
     status: 200,
     description: 'OTP sent successfully'
   })
-  @ApiResponse({ status: 404, description: 'Clinic not found' })
   async requestOTP(
     @Body() body: RequestOtpDto,
+    @OptionalClinicId() clinicId?: string,
   ): Promise<{ success: boolean; message: string }> {
-    const { identifier, clinicId } = body;
-    
     try {
-      // Validate clinic exists
-      const clinic = await this.authService['clinicService'].getClinicById(clinicId, 'system');
-      
-      if (!clinic || !clinic.isActive) {
-        throw new NotFoundException('Clinic not found or inactive');
-      }
-      
-      return this.authService.requestLoginOTP(identifier);
+      return await this.authService.requestLoginOTP(body.identifier);
     } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      this.logger.error(`Failed to request OTP for ${identifier}: ${error.message}`);
-      throw new InternalServerErrorException('Failed to request OTP');
+      this.logger.error(`OTP request failed: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to send OTP');
     }
   }
 
   @Public()
   @Post('verify-otp')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Verify OTP and login with clinic validation',
-    description: 'Verify the OTP and log the user in. User must be associated with the specified clinic.'
+    summary: 'Verify OTP and login',
+    description: 'Verify OTP and log in the user. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter.'
   })
   @ApiBody({ type: VerifyOtpRequestDto })
   @ApiResponse({
     status: 200,
-    description: 'Login successful'
+    description: 'OTP verified and login successful'
   })
-  @ApiResponse({ status: 401, description: 'Invalid OTP or user not associated with clinic' })
-  @ApiResponse({ status: 404, description: 'Clinic not found' })
+  @ApiResponse({ status: 401, description: 'Invalid OTP' })
   async verifyOTP(
     @Body() body: VerifyOtpRequestDto,
-    @Req() request: any
+    @Req() request: any,
+    @OptionalClinicId() clinicId?: string
   ): Promise<any> {
-    const { email, otp, clinicId } = body;
     try {
+      const { email, otp } = body;
+      
       const isOtpValid = await this.authService.verifyOTP(email, otp);
       if (!isOtpValid) {
         throw new UnauthorizedException('Invalid or expired OTP');
       }
-      let user = await this.authService.findUserByEmail(email);
+      
+      const user = await this.authService.findUserByEmail(email);
       if (!user) {
         throw new UnauthorizedException('User not found');
       }
+      
       if (!user.isVerified) {
-        user = await this.authService.markUserAsVerified(user.id);
+        await this.authService.markUserAsVerified(user.id);
       }
       
-      const loginData = await this.authService.login(user, request, undefined, clinicId);
-      
-      const redirectUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      const redirectPath = this.authService.getRedirectPathForRole(loginData.user.role);
-      return {
-        ...loginData,
-        redirectUrl: `${redirectUrl}${redirectPath}`
-      };
+      return this.authService.login(user, request, undefined, clinicId);
     } catch (error) {
-      if (error instanceof UnauthorizedException || error instanceof NotFoundException) {
+      this.logger.error(`OTP verification failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
         throw error;
       }
-      this.logger.error(`Failed to verify OTP for ${email}: ${error.message}`);
-      throw new InternalServerErrorException('Failed to verify OTP');
+      
+      throw new InternalServerErrorException('OTP verification failed');
     }
   }
 
   @Public()
   @Post('check-otp-status')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Check if user has an active OTP',
-    description: 'Check if a user has an active OTP'
+    summary: 'Check if user has active OTP',
+    description: 'Check if the user has an active OTP for login'
   })
   @ApiBody({ type: CheckOtpStatusDto })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'OTP status retrieved'
+  @ApiResponse({
+    status: 200,
+    description: 'OTP status checked successfully'
   })
   async checkOTPStatus(@Body() body: CheckOtpStatusDto): Promise<{ hasActiveOTP: boolean }> {
-    const { email } = body;
     try {
-      const user = await this.authService.findUserByEmail(email);
+      const user = await this.authService.findUserByEmail(body.email);
       if (!user) {
-        throw new BadRequestException('User not found');
+        return { hasActiveOTP: false };
       }
+      
       const hasActiveOTP = await this.authService.hasActiveOTP(user.id);
       return { hasActiveOTP };
     } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new UnauthorizedException('Failed to check OTP status');
+      this.logger.error(`OTP status check failed: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to check OTP status');
     }
   }
 
   @Public()
   @Post('invalidate-otp')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Invalidate active OTP',
-    description: 'Invalidate any active OTP for a user'
+    summary: 'Invalidate user OTP',
+    description: 'Invalidate any active OTP for the user'
   })
   @ApiBody({ type: InvalidateOtpDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'OTP invalidated successfully'
   })
   async invalidateOTP(@Body() body: InvalidateOtpDto): Promise<{ message: string }> {
-    const { email } = body;
     try {
-      const user = await this.authService.findUserByEmail(email);
+      const user = await this.authService.findUserByEmail(body.email);
       if (!user) {
-        throw new BadRequestException('User not found');
+        return { message: 'OTP invalidated' };
       }
+      
       await this.authService.invalidateOTP(user.id);
       return { message: 'OTP invalidated successfully' };
     } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new UnauthorizedException('Failed to invalidate OTP');
+      this.logger.error(`OTP invalidation failed: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to invalidate OTP');
     }
   }
 
   @Public()
-  @Post('magic-link')
-  @HttpCode(HttpStatus.OK)
+  @Post('request-magic-link')
   @ApiOperation({
     summary: 'Request magic link for passwordless login',
-    description: 'Send a magic link to the user\'s email for passwordless login'
+    description: 'Send a magic link to user\'s email for passwordless login'
   })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        email: { type: 'string', format: 'email' }
-      },
-      required: ['email']
-    }
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Magic link sent successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', example: 'Magic link sent to your email' }
-      }
-    }
+  @ApiResponse({
+    status: 200,
+    description: 'Magic link sent successfully'
   })
   async requestMagicLink(@Body('email') email: string): Promise<{ message: string }> {
-    await this.authService.sendMagicLink(email);
-    // Always return success to prevent email enumeration
-    return { message: 'Magic link sent to your email' };
+    try {
+      await this.authService.sendMagicLink(email);
+      return { message: 'If the email exists, a magic link has been sent' };
+    } catch (error) {
+      this.logger.error(`Magic link request failed: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to send magic link');
+    }
   }
 
   @Public()
   @Post('verify-magic-link')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Verify magic link token',
-    description: 'Verify a magic link token and log the user in'
-  })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['token'],
-      properties: {
-        token: { type: 'string' }
-      }
-    }
+    summary: 'Verify magic link and login',
+    description: 'Verify magic link token and log in the user'
   })
   @ApiResponse({
     status: 200,
-    description: 'Login successful',
-    schema: {
-      type: 'object',
-      properties: {
-        access_token: { type: 'string' },
-        refresh_token: { type: 'string' },
-        user: { 
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            email: { type: 'string' },
-            role: { type: 'string' }
-          }
-        },
-        redirectUrl: { type: 'string', description: 'URL to redirect the user to after successful login' }
-      }
-    }
+    description: 'Magic link verified and login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid or expired magic link' })
   async verifyMagicLink(
@@ -507,261 +422,238 @@ export class AuthController {
     @Req() request: any
   ): Promise<any> {
     try {
-      // Verify the magic link token and get login data
-      const loginData = await this.authService.verifyMagicLink(token, request);
-      
-      // Add a redirect URL to the response
-      const redirectUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      
-      return {
-        ...loginData,
-        redirectUrl: `${redirectUrl}/dashboard`
-      };
+      return await this.authService.verifyMagicLink(token, request);
     } catch (error) {
-      throw new UnauthorizedException('Invalid or expired magic link');
+      this.logger.error(`Magic link verification failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Magic link verification failed');
     }
   }
 
   @Public()
-  @Post('social/google')
-  @HttpCode(HttpStatus.OK)
+  @Post('google')
   @ApiOperation({
-    summary: 'Login with Google (ID token or OAuth code)',
-    description: 'Authenticate using Google OAuth ID token (popup/credential flow) or OAuth 2.0 code (redirect)'
+    summary: 'Google OAuth login',
+    description: 'Login or register user using Google OAuth. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter.'
   })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        token: { type: 'string', description: 'Google OAuth ID token (popup/credential flow)' },
-        code: { type: 'string', description: 'Google OAuth 2.0 code (redirect flow)' },
-        redirectUri: { type: 'string', description: 'Redirect URI used in Google OAuth (required if using code)' }
-      }
-    }
+  @ApiResponse({
+    status: 200,
+    description: 'Google login successful'
   })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Login successful',
-    schema: {
-      type: 'object',
-      properties: {
-        access_token: { type: 'string' },
-        refresh_token: { type: 'string' },
-        session_id: { type: 'string' },
-        user: { 
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            email: { type: 'string' },
-            firstName: { type: 'string' },
-            lastName: { type: 'string' },
-            role: { type: 'string' },
-            isVerified: { type: 'boolean' },
-            googleId: { type: 'string' },
-            profileComplete: { type: 'boolean' },
-            profilePicture: { type: 'string' }
-          }
-        },
-        isNew: { type: 'boolean' },
-        redirectUrl: { type: 'string' }
-      }
-    }
-  })
-  @ApiResponse({ status: 401, description: 'Invalid Google token or code' })
+  @ApiResponse({ status: 401, description: 'Invalid Google token' })
   async googleLogin(
     @Body() body: { token?: string; code?: string; redirectUri?: string },
-    @Req() request: any
+    @Req() request: any,
+    @OptionalClinicId() clinicId?: string
   ): Promise<any> {
     try {
       let googleUser: any;
-      let payload: any;
-
-      if (body.token) {
-        this.logger.debug('Starting Google login process (ID token flow)');
-        this.logger.debug('Received token:', body.token.substring(0, 10) + '...');
-        // Existing logic: verify ID token
-        const ticket = await this.authService.verifyGoogleToken(body.token);
-        payload = ticket.getPayload();
-        if (!payload) throw new UnauthorizedException('Invalid Google token');
-        this.logger.debug('Google token verified successfully');
-        this.logger.debug('Token payload email:', payload.email);
-        googleUser = payload;
-      } else if (body.code && body.redirectUri) {
-        this.logger.debug('Starting Google login process (OAuth code flow)');
-        this.logger.debug('Received code:', body.code.substring(0, 10) + '...');
+      
+      if (body.code && body.redirectUri) {
+        // Exchange OAuth code for tokens and get user info
         googleUser = await this.authService.exchangeGoogleOAuthCode(body.code, body.redirectUri);
-        payload = googleUser;
-        this.logger.debug('Google OAuth code exchanged successfully');
-        this.logger.debug('OAuth user email:', googleUser.email);
+      } else if (body.token) {
+        // Verify Google ID token
+        const ticket = await this.authService.verifyGoogleToken(body.token);
+        googleUser = ticket.getPayload();
       } else {
-        throw new BadRequestException('Either token or code+redirectUri must be provided');
+        throw new BadRequestException('Either token or code with redirectUri must be provided');
       }
-
-      // Use your existing handler
+      
+      if (!googleUser || !googleUser.email) {
+        throw new UnauthorizedException('Invalid Google user data');
+      }
+      
+      // Handle Google login with clinic context
       const response = await this.authService.handleGoogleLogin(googleUser, request);
-      this.logger.debug('Google login handled successfully');
-
-      // Ensure response includes name fields
-      const enhancedResponse = {
-        ...response,
-        user: {
-          ...response.user,
-          firstName: response.user.firstName || payload.given_name,
-          lastName: response.user.lastName || payload.family_name,
-          name: response.user.name || `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
-          profilePicture: response.user.profilePicture || payload.picture
-        },
-        isNew: !response.user.googleId, // Indicate if this is a new Google login
-        redirectUrl: this.authService.getRedirectPathForRole(response.user.role)
-      };
-
-      return enhancedResponse;
+      
+      // If clinicId is provided, add clinic context to response
+      if (clinicId) {
+        const clinic = await this.authService['prisma'].clinic.findUnique({
+          where: { id: clinicId }
+        });
+        
+        if (clinic) {
+          return {
+            ...response,
+            clinic: {
+              id: clinic.id,
+              name: clinic.name,
+              appName: clinic.app_name
+            }
+          };
+        }
+      }
+      
+      return response;
     } catch (error) {
-      this.logger.error('Google login failed:', error);
-      throw new UnauthorizedException(
-        error instanceof Error ? `Invalid Google login: ${error.message}` : 'Invalid Google login'
-      );
+      this.logger.error(`Google login failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Google login failed');
     }
   }
 
   @Public()
-  @Post('social/facebook')
-  @HttpCode(HttpStatus.OK)
+  @Post('facebook')
   @ApiOperation({
-    summary: 'Login with Facebook',
-    description: 'Authenticate using Facebook access token'
+    summary: 'Facebook OAuth login',
+    description: 'Login or register user using Facebook OAuth. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter.'
   })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        token: { 
-          type: 'string', 
-          description: 'Facebook access token' 
-        }
-      },
-      required: ['token']
-    }
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Login successful',
-    schema: {
-      type: 'object',
-      properties: {
-        access_token: { type: 'string' },
-        refresh_token: { type: 'string' },
-        user: { 
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            email: { type: 'string' },
-            role: { type: 'string' }
-          }
-        }
-      }
-    }
+  @ApiResponse({
+    status: 200,
+    description: 'Facebook login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Facebook token' })
   async facebookLogin(
     @Body('token') token: string,
-    @Req() request: any
+    @Req() request: any,
+    @OptionalClinicId() clinicId?: string
   ): Promise<any> {
     try {
-      // Verify Facebook token and get user data
-      const userData = await this.authService.verifyFacebookToken(token);
+      const facebookUser = await this.authService.verifyFacebookToken(token);
       
-      // Handle Facebook login
-      return this.authService.handleFacebookLogin(userData, request);
+      if (!facebookUser || !facebookUser.email) {
+        throw new UnauthorizedException('Invalid Facebook user data');
+      }
+      
+      // Handle Facebook login with clinic context
+      const response = await this.authService.handleFacebookLogin(facebookUser, request);
+      
+      // If clinicId is provided, add clinic context to response
+      if (clinicId) {
+        const clinic = await this.authService['prisma'].clinic.findUnique({
+          where: { id: clinicId }
+        });
+        
+        if (clinic) {
+          return {
+            ...response,
+            clinic: {
+              id: clinic.id,
+              name: clinic.name,
+              appName: clinic.app_name
+            }
+          };
+        }
+      }
+      
+      return response;
     } catch (error) {
-      throw new UnauthorizedException('Invalid Facebook token');
+      this.logger.error(`Facebook login failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Facebook login failed');
     }
   }
 
   @Public()
-  @Post('social/apple')
-  @HttpCode(HttpStatus.OK)
+  @Post('apple')
   @ApiOperation({
-    summary: 'Login with Apple',
-    description: 'Authenticate using Apple ID token'
+    summary: 'Apple OAuth login',
+    description: 'Login or register user using Apple OAuth. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter.'
   })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        token: { 
-          type: 'string', 
-          description: 'Apple ID token' 
-        }
-      },
-      required: ['token']
-    }
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Login successful',
-    schema: {
-      type: 'object',
-      properties: {
-        access_token: { type: 'string' },
-        refresh_token: { type: 'string' },
-        user: { 
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            email: { type: 'string' },
-            role: { type: 'string' }
-          }
-        }
-      }
-    }
+  @ApiResponse({
+    status: 200,
+    description: 'Apple login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Apple token' })
   async appleLogin(
     @Body('token') token: string,
-    @Req() request: any
+    @Req() request: any,
+    @OptionalClinicId() clinicId?: string
   ): Promise<any> {
     try {
-      // Verify Apple token and get user data
-      const userData = await this.authService.verifyAppleToken(token);
+      const appleUser = await this.authService.verifyAppleToken(token);
       
-      // Handle Apple login
-      return this.authService.handleAppleLogin(userData, request);
+      if (!appleUser || !appleUser.email) {
+        throw new UnauthorizedException('Invalid Apple user data');
+      }
+      
+      // Handle Apple login with clinic context
+      const response = await this.authService.handleAppleLogin(appleUser, request);
+      
+      // If clinicId is provided, add clinic context to response
+      if (clinicId) {
+        const clinic = await this.authService['prisma'].clinic.findUnique({
+          where: { id: clinicId }
+        });
+        
+        if (clinic) {
+          return {
+            ...response,
+            clinic: {
+              id: clinic.id,
+              name: clinic.name,
+              appName: clinic.app_name
+            }
+          };
+        }
+      }
+      
+      return response;
     } catch (error) {
-      throw new UnauthorizedException('Invalid Apple token');
+      this.logger.error(`Apple login failed: ${error.message}`, error.stack);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Apple login failed');
     }
   }
 
   @Get('sessions')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'List all active sessions for the current user' })
-  @ApiResponse({ status: 200, description: 'List of active sessions' })
+  @ApiOperation({
+    summary: 'Get user active sessions',
+    description: 'Get all active sessions for the current user'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User sessions retrieved successfully'
+  })
   async getActiveSessions(@Request() req) {
-    const userId = req.user.sub;
-    return this.sessionService.getActiveSessions(userId);
+    return await this.authService.getUserSessions(req.user.id);
   }
 
   @Delete('sessions/:sessionId')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Terminate a specific session by sessionId' })
-  @ApiResponse({ status: 200, description: 'Session terminated' })
-  @ApiResponse({ status: 404, description: 'Session not found' })
+  @ApiOperation({
+    summary: 'Terminate specific session',
+    description: 'Terminate a specific session for the current user'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Session terminated successfully'
+  })
   async terminateSession(@Request() req, @Param('sessionId') sessionId: string) {
-    const userId = req.user.sub;
-    await this.sessionService.terminateSession(userId, sessionId);
-    return { message: 'Session terminated' };
+    await this.authService.logout(req.user.id, sessionId, false);
+    return { message: 'Session terminated successfully' };
   }
 
   @Delete('sessions')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Terminate all sessions except the current one' })
-  @ApiResponse({ status: 200, description: 'All other sessions terminated' })
+  @ApiOperation({
+    summary: 'Terminate all other sessions',
+    description: 'Terminate all sessions except the current one'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'All other sessions terminated successfully'
+  })
   async terminateAllOtherSessions(@Request() req) {
-    const userId = req.user.sub;
-    const currentSessionId = req.user.sessionId;
-    const sessions = await this.sessionService.getActiveSessions(userId);
-    const toTerminate = sessions.filter(s => s.sessionId !== currentSessionId);
-    await Promise.all(toTerminate.map(s => this.sessionService.terminateSession(userId, s.sessionId)));
-    return { message: 'All other sessions terminated' };
+    await this.authService.logout(req.user.id, undefined, true);
+    return { message: 'All other sessions terminated successfully' };
   }
 } 

@@ -21,22 +21,24 @@ export class LoginDto {
   password: string;
 
   @ApiProperty({
-    description: 'Clinic ID (required for multi-tenant system)',
-    example: 'clinic-uuid-123'
+    description: 'Clinic ID (can be provided via X-Clinic-ID header, body, or query parameter)',
+    example: 'clinic-uuid-123',
+    required: false
   })
   @IsUUID()
-  @IsNotEmpty()
-  clinicId: string;
+  @IsOptional()
+  clinicId?: string;
 }
 
 export class RegisterDto extends CreateUserDto {
   @ApiProperty({
-    description: 'Clinic ID (required for multi-tenant system)',
-    example: 'clinic-uuid-123'
+    description: 'Clinic ID (can be provided via X-Clinic-ID header, body, or query parameter)',
+    example: 'clinic-uuid-123',
+    required: false
   })
   @IsUUID()
-  @IsNotEmpty()
-  clinicId: string;
+  @IsOptional()
+  clinicId?: string;
 }
 
 export class LogoutDto {
@@ -121,12 +123,13 @@ export class LoginRequestDto {
   otp?: string;
 
   @ApiProperty({
-    description: 'Clinic ID (required for multi-tenant system)',
-    example: 'clinic-uuid-123'
+    description: 'Clinic ID (can be provided via X-Clinic-ID header, body, or query parameter)',
+    example: 'clinic-uuid-123',
+    required: false
   })
   @IsUUID()
-  @IsNotEmpty()
-  clinicId: string;
+  @IsOptional()
+  clinicId?: string;
 }
 
 export class ForgotPasswordRequestDto {
@@ -142,12 +145,13 @@ export class VerifyOtpRequestDto {
   otp: string;
 
   @ApiProperty({
-    description: 'Clinic ID (required for multi-tenant system)',
-    example: 'clinic-uuid-123'
+    description: 'Clinic ID (can be provided via X-Clinic-ID header, body, or query parameter)',
+    example: 'clinic-uuid-123',
+    required: false
   })
   @IsUUID()
-  @IsNotEmpty()
-  clinicId: string;
+  @IsOptional()
+  clinicId?: string;
 }
 
 export class RequestOtpDto {
@@ -155,12 +159,13 @@ export class RequestOtpDto {
   identifier: string;
 
   @ApiProperty({
-    description: 'Clinic ID (required for multi-tenant system)',
-    example: 'clinic-uuid-123'
+    description: 'Clinic ID (can be provided via X-Clinic-ID header, body, or query parameter)',
+    example: 'clinic-uuid-123',
+    required: false
   })
   @IsUUID()
-  @IsNotEmpty()
-  clinicId: string;
+  @IsOptional()
+  clinicId?: string;
 }
 
 export class InvalidateOtpDto {
