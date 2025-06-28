@@ -46,8 +46,8 @@ export class ClinicGuard implements CanActivate {
         include: {
           clinics: true,
           doctor: true,
-          receptionist: true,
-          clinicAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
         },
       });
 
@@ -59,15 +59,15 @@ export class ClinicGuard implements CanActivate {
       let hasAccess = false;
       
       // Check if user is directly linked to this clinic
-      if (userWithClinic.clinics && userWithClinic.clinics.length > 0) {
-        hasAccess = userWithClinic.clinics.some(clinic => clinic.id === clinicContext.clinicId);
+      if ((userWithClinic as any).clinics && (userWithClinic as any).clinics.length > 0) {
+        hasAccess = (userWithClinic as any).clinics.some((clinic: any) => clinic.id === clinicContext.clinicId);
       }
       
       // Check if user is a doctor in this clinic
-      if (!hasAccess && userWithClinic.doctor) {
+      if (!hasAccess && (userWithClinic as any).doctor) {
         const doctorClinic = await this.prisma.doctorClinic.findFirst({
           where: {
-            doctorId: userWithClinic.doctor.id,
+            doctorId: (userWithClinic as any).doctor.id,
             clinicId: clinicContext.clinicId,
           },
         });
@@ -75,13 +75,13 @@ export class ClinicGuard implements CanActivate {
       }
       
       // Check if user is a receptionist in this clinic
-      if (!hasAccess && userWithClinic.receptionist) {
-        hasAccess = userWithClinic.receptionist.clinicId === clinicContext.clinicId;
+      if (!hasAccess && (userWithClinic as any).receptionists && (userWithClinic as any).receptionists.length > 0) {
+        hasAccess = (userWithClinic as any).receptionists.some((rec: any) => rec.clinicId === clinicContext.clinicId);
       }
       
       // Check if user is an admin in this clinic
-      if (!hasAccess && userWithClinic.clinicAdmin) {
-        hasAccess = userWithClinic.clinicAdmin.clinicId === clinicContext.clinicId;
+      if (!hasAccess && (userWithClinic as any).clinicAdmins && (userWithClinic as any).clinicAdmins.length > 0) {
+        hasAccess = (userWithClinic as any).clinicAdmins.some((admin: any) => admin.clinicId === clinicContext.clinicId);
       }
 
       if (!hasAccess) {
@@ -93,7 +93,7 @@ export class ClinicGuard implements CanActivate {
           { 
             userId: user.id,
             requestedClinic: clinicContext.clinicId,
-            userClinics: userWithClinic.clinics?.map(c => c.id)
+            userClinics: (userWithClinic as any).clinics?.map((c: any) => c.id)
           }
         );
         throw new ForbiddenException('You do not have access to this clinic');

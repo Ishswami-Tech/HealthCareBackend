@@ -25,8 +25,8 @@ export class UsersService {
       include: {
         doctor: role === Role.DOCTOR,
         patient: role === Role.PATIENT,
-        receptionist: role === Role.RECEPTIONIST,
-        clinicAdmin: role === Role.CLINIC_ADMIN,
+        receptionists: role === Role.RECEPTIONIST,
+        clinicAdmins: role === Role.CLINIC_ADMIN,
         superAdmin: role === Role.SUPER_ADMIN,
       },
     });
@@ -47,8 +47,8 @@ export class UsersService {
       include: {
         doctor: true,
         patient: true,
-        receptionist: true,
-        clinicAdmin: true,
+        receptionists: true,
+        clinicAdmins: true,
         superAdmin: true,
       },
     });
@@ -76,8 +76,8 @@ export class UsersService {
       include: {
         doctor: true,
         patient: true,
-        receptionist: true,
-        clinicAdmin: true,
+        receptionists: true,
+        clinicAdmins: true,
         superAdmin: true,
       },
     });
@@ -154,8 +154,8 @@ export class UsersService {
         include: {
           doctor: true,
           patient: true,
-          receptionist: true,
-          clinicAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
           superAdmin: true,
         },
       });
@@ -199,7 +199,7 @@ export class UsersService {
       // Handle role-specific data updates
       if (existingUser.role === Role.DOCTOR && cleanedData.specialization) {
         // Ensure doctor record exists
-        if (!existingUser.doctor) {
+        if (!(existingUser as any).doctor) {
           await this.prisma.doctor.create({
             data: {
               userId: id,
@@ -212,7 +212,7 @@ export class UsersService {
             where: { userId: id },
             data: {
               specialization: cleanedData.specialization,
-              experience: parseInt(cleanedData.experience as string) || existingUser.doctor.experience,
+              experience: parseInt(cleanedData.experience as string) || (existingUser as any).doctor.experience,
             },
           });
         }
@@ -229,8 +229,8 @@ export class UsersService {
         include: {
           doctor: true,
           patient: true,
-          receptionist: true,
-          clinicAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
           superAdmin: true,
         },
       });
@@ -286,9 +286,9 @@ export class UsersService {
         include: {
           doctor: true,
           patient: true,
-        receptionist: true,
-        clinicAdmin: true,
-        superAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
+          superAdmin: true,
         },
       });
 
@@ -299,35 +299,35 @@ export class UsersService {
     // Delete role-specific record first
     switch (user.role) {
       case Role.DOCTOR:
-        if (user.doctor) {
+        if ((user as any).doctor) {
           await this.prisma.doctor.delete({
             where: { userId: id }
           });
         }
         break;
       case Role.PATIENT:
-        if (user.patient) {
+        if ((user as any).patient) {
           await this.prisma.patient.delete({
             where: { userId: id }
           });
         }
         break;
       case Role.RECEPTIONIST:
-        if (user.receptionist) {
+        if ((user as any).receptionists && (user as any).receptionists.length > 0) {
           await this.prisma.receptionist.delete({
             where: { userId: id }
           });
         }
         break;
       case Role.CLINIC_ADMIN:
-        if (user.clinicAdmin) {
+        if ((user as any).clinicAdmins && (user as any).clinicAdmins.length > 0) {
           await this.prisma.clinicAdmin.delete({
             where: { userId: id }
           });
         }
         break;
       case Role.SUPER_ADMIN:
-        if (user.superAdmin) {
+        if ((user as any).superAdmin) {
           await this.prisma.superAdmin.delete({
             where: { userId: id }
           });
@@ -436,8 +436,8 @@ export class UsersService {
       include: {
         doctor: true,
         patient: true,
-        receptionist: true,
-        clinicAdmin: true,
+        receptionists: true,
+        clinicAdmins: true,
         superAdmin: true,
       },
       });
@@ -463,14 +463,14 @@ export class UsersService {
         }
         break;
       case Role.RECEPTIONIST:
-        if (user.receptionist) {
+        if (user.receptionists && user.receptionists.length > 0) {
           await this.prisma.receptionist.delete({
             where: { userId: id }
           });
         }
         break;
       case Role.CLINIC_ADMIN:
-        if (user.clinicAdmin) {
+        if (user.clinicAdmins && user.clinicAdmins.length > 0) {
           await this.prisma.clinicAdmin.delete({
             where: { userId: id }
           });
@@ -534,8 +534,8 @@ export class UsersService {
       include: {
         doctor: true,
         patient: true,
-        receptionist: true,
-        clinicAdmin: true,
+        receptionists: true,
+        clinicAdmins: true,
         superAdmin: true,
       },
     });
