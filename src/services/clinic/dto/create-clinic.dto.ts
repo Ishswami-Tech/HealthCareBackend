@@ -51,6 +51,27 @@ export class CreateClinicDto {
   subdomain: string;
 
   @ApiProperty({
+    description: 'The app name for the clinic (unique identifier)',
+    example: 'aadesh-ayurvedalay',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'App name can only contain lowercase letters, numbers, and hyphens',
+  })
+  app_name: string;
+
+  @ApiProperty({
+    description: 'The database connection string for the clinic',
+    example: 'postgresql://user:pass@localhost:5432/clinic_db',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  db_connection_string?: string;
+
+  @ApiProperty({
     description: 'The main location of the clinic',
     type: CreateClinicLocationDto,
     required: true,
@@ -145,4 +166,13 @@ export class CreateClinicDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiProperty({
+    description: 'Clinic settings as JSON object',
+    example: { theme: 'dark', notifications: true },
+    required: false,
+  })
+  @IsOptional()
+  @IsObject()
+  settings?: Record<string, any>;
 } 

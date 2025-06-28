@@ -23,8 +23,8 @@ import { Public } from '../../../libs/decorators/public.decorator';
 import { AuthService } from '../services/auth.service';
 import { EmailService } from '../../../shared/messaging/email/email.service';
 import { Logger } from '@nestjs/common';
-import { LoginDto, LogoutDto, PasswordResetDto, AuthResponse, LoginRequestDto, ForgotPasswordRequestDto, VerifyOtpRequestDto, RequestOtpDto, InvalidateOtpDto, CheckOtpStatusDto } from '../../../libs/dtos/auth.dtos';
-import { Role } from '@prisma/client';
+import { LoginDto, LogoutDto, PasswordResetDto, AuthResponse, LoginRequestDto, ForgotPasswordRequestDto, VerifyOtpRequestDto, RequestOtpDto, InvalidateOtpDto, CheckOtpStatusDto, RegisterDto } from '../../../libs/dtos/auth.dtos';
+import { Role } from '../../../shared/database/prisma/prisma.types';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
 
@@ -43,32 +43,29 @@ export class AuthController {
   @Public()
   @Post('register')
   @ApiOperation({ 
-    summary: 'Register a new user',
-    description: 'Create a new user account with basic details and default PATIENT role'
+    summary: 'Register a new user with clinic',
+    description: 'Create a new user account and associate with a specific clinic. Multi-tenant system supports shared user identity.'
   })
   @ApiResponse({ 
     status: 201, 
     type: UserResponseDto,
-    description: 'User successfully registered'
+    description: 'User successfully registered and associated with clinic'
   })
   @ApiResponse({ 
     status: 400, 
-    description: 'Bad request - validation error or user already exists'
+    description: 'Bad request - validation error or clinic not found'
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Clinic not found'
   })
   @ApiResponse({ 
     status: 500, 
     description: 'Internal server error'
   })
-  async register(@Body() createUserDto: SimpleCreateUserDto): Promise<UserResponseDto> {
+  async register(@Body() registerDto: RegisterDto): Promise<UserResponseDto> {
     try {
-      // Convert SimpleCreateUserDto to CreateUserDto with default role
-      const fullCreateUserDto = {
-        ...createUserDto,
-        role: Role.PATIENT,
-        gender: undefined // Make gender optional
-      };
-      
-      return await this.authService.register(fullCreateUserDto);
+      return await this.authService.register(registerDto);
     } catch (error) {
       this.logger.error(`Registration failed: ${error.message}`, error.stack);
       
@@ -136,8 +133,8 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Login with password or OTP',
-    description: 'Authenticate using either password or OTP'
+    summary: 'Login with password or OTP and clinic validation',
+    description: 'Authenticate using either password or OTP. User must be associated with the specified clinic.'
   })
   @ApiBody({ type: LoginRequestDto })
   @ApiResponse({ 
@@ -145,15 +142,18 @@ export class AuthController {
     description: 'Login successful',
     type: AuthResponse
   })
-  @ApiResponse({ status: 401, description: 'Invalid credentials' })
+  @ApiResponse({ status: 401, description: 'Invalid credentials or user not associated with clinic' })
+  @ApiResponse({ status: 404, description: 'Clinic not found' })
   async login(
     @Body() body: LoginRequestDto,
     @Req() request?: any
   ): Promise<any> {
-    const { email, password, otp } = body;
+    const { email, password, otp, clinicId } = body;
+    
     if (!password && !otp) {
       throw new BadRequestException('Either password or OTP must be provided');
     }
+
     let user: any;
     if (password) {
       user = await this.authService.validateUser(email, password);
@@ -173,7 +173,8 @@ export class AuthController {
         user = await this.authService.markUserAsVerified(user.id);
       }
     }
-    return this.authService.login(user, request);
+
+    return this.authService.login(user, request, undefined, clinicId);
   }
 
   @Post('logout')
@@ -293,56 +294,80 @@ export class AuthController {
   @Public()
   @Post('request-otp')
   @ApiOperation({
-    summary: 'Request OTP for login',
-    description: 'Sends an OTP through available channels'
+    summary: 'Request OTP for login with clinic validation',
+    description: 'Sends an OTP through available channels. Validates clinic context.'
   })
   @ApiBody({ type: RequestOtpDto })
   @ApiResponse({
     status: 200,
     description: 'OTP sent successfully'
   })
+  @ApiResponse({ status: 404, description: 'Clinic not found' })
   async requestOTP(
     @Body() body: RequestOtpDto,
   ): Promise<{ success: boolean; message: string }> {
-    return this.authService.requestLoginOTP(body.identifier);
+    const { identifier, clinicId } = body;
+    
+    try {
+      // Validate clinic exists
+      const clinic = await this.authService['clinicService'].getClinicById(clinicId, 'system');
+      
+      if (!clinic || !clinic.isActive) {
+        throw new NotFoundException('Clinic not found or inactive');
+      }
+      
+      return this.authService.requestLoginOTP(identifier);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Failed to request OTP for ${identifier}: ${error.message}`);
+      throw new InternalServerErrorException('Failed to request OTP');
+    }
   }
 
   @Public()
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Verify OTP and login',
-    description: 'Verify the OTP and log the user in'
+    summary: 'Verify OTP and login with clinic validation',
+    description: 'Verify the OTP and log the user in. User must be associated with the specified clinic.'
   })
   @ApiBody({ type: VerifyOtpRequestDto })
   @ApiResponse({
     status: 200,
     description: 'Login successful'
   })
-  @ApiResponse({ status: 401, description: 'Invalid OTP' })
+  @ApiResponse({ status: 401, description: 'Invalid OTP or user not associated with clinic' })
+  @ApiResponse({ status: 404, description: 'Clinic not found' })
   async verifyOTP(
     @Body() body: VerifyOtpRequestDto,
     @Req() request: any
   ): Promise<any> {
-    const { email, otp } = body;
+    const { email, otp, clinicId } = body;
     try {
       const isOtpValid = await this.authService.verifyOTP(email, otp);
       if (!isOtpValid) {
         throw new UnauthorizedException('Invalid or expired OTP');
       }
-      const user = await this.authService.findUserByEmail(email);
+      let user = await this.authService.findUserByEmail(email);
       if (!user) {
         throw new UnauthorizedException('User not found');
       }
-      const loginData = await this.authService.login(user, request);
+      if (!user.isVerified) {
+        user = await this.authService.markUserAsVerified(user.id);
+      }
+      
+      const loginData = await this.authService.login(user, request, undefined, clinicId);
+      
       const redirectUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      const redirectPath = this.authService.getRedirectPathForRole(user.role);
+      const redirectPath = this.authService.getRedirectPathForRole(loginData.user.role);
       return {
         ...loginData,
         redirectUrl: `${redirectUrl}${redirectPath}`
       };
     } catch (error) {
-      if (error instanceof UnauthorizedException) {
+      if (error instanceof UnauthorizedException || error instanceof NotFoundException) {
         throw error;
       }
       this.logger.error(`Failed to verify OTP for ${email}: ${error.message}`);

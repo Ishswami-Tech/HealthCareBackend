@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
 import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
-import { Role } from '@prisma/client';
+import { Role } from '../../../shared/database/prisma/prisma.types';
 
 @Injectable()
 export class ClinicUserService {

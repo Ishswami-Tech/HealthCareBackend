@@ -1,6 +1,7 @@
-import { IsEmail, IsString, IsNotEmpty, IsBoolean, IsOptional, MinLength } from 'class-validator';
+import { IsEmail, IsString, IsNotEmpty, IsBoolean, IsOptional, MinLength, IsUUID } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserResponseDto } from './user.dto';
+import { CreateUserDto } from './user.dto';
 
 export class LoginDto {
   @ApiProperty({
@@ -18,6 +19,24 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty()
   password: string;
+
+  @ApiProperty({
+    description: 'Clinic ID (required for multi-tenant system)',
+    example: 'clinic-uuid-123'
+  })
+  @IsUUID()
+  @IsNotEmpty()
+  clinicId: string;
+}
+
+export class RegisterDto extends CreateUserDto {
+  @ApiProperty({
+    description: 'Clinic ID (required for multi-tenant system)',
+    example: 'clinic-uuid-123'
+  })
+  @IsUUID()
+  @IsNotEmpty()
+  clinicId: string;
 }
 
 export class LogoutDto {
@@ -100,6 +119,14 @@ export class LoginRequestDto {
 
   @ApiProperty({ example: '123456', required: false })
   otp?: string;
+
+  @ApiProperty({
+    description: 'Clinic ID (required for multi-tenant system)',
+    example: 'clinic-uuid-123'
+  })
+  @IsUUID()
+  @IsNotEmpty()
+  clinicId: string;
 }
 
 export class ForgotPasswordRequestDto {
@@ -113,11 +140,27 @@ export class VerifyOtpRequestDto {
 
   @ApiProperty({ example: '123456' })
   otp: string;
+
+  @ApiProperty({
+    description: 'Clinic ID (required for multi-tenant system)',
+    example: 'clinic-uuid-123'
+  })
+  @IsUUID()
+  @IsNotEmpty()
+  clinicId: string;
 }
 
 export class RequestOtpDto {
   @ApiProperty({ example: 'user@example.com or +1234567890' })
   identifier: string;
+
+  @ApiProperty({
+    description: 'Clinic ID (required for multi-tenant system)',
+    example: 'clinic-uuid-123'
+  })
+  @IsUUID()
+  @IsNotEmpty()
+  clinicId: string;
 }
 
 export class InvalidateOtpDto {

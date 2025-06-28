@@ -1,12 +1,11 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { QueueService } from '../../../shared/queue/queue.service';
-import { SocketService } from '../../../shared/socket/socket.service';
-import { AppointmentStatus, Appointment, Doctor, Patient, User, Prisma } from '@prisma/client';
 import { JobType, JobPriority, JobData } from '../../../shared/queue/queue.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
+import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
 import { AppointmentWithRelations } from '../appointment.dto';
+import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
 
 const appointmentInclude = {
   doctor: {
@@ -23,12 +22,9 @@ const appointmentInclude = {
 
 @Injectable()
 export class CheckInService {
-  private readonly logger = new Logger(CheckInService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly queueService: QueueService,
-    private readonly socketService: SocketService,
     private readonly loggingService: LoggingService,
   ) {}
 
@@ -55,7 +51,7 @@ export class CheckInService {
       const updatedAppointment = await this.prisma.appointment.update({
         where: { id: appointmentId },
         data: {
-          status: AppointmentStatus.CHECKED_IN,
+          status: AppointmentStatus.CONFIRMED,
           checkedInAt,
         },
         include: appointmentInclude
@@ -98,7 +94,7 @@ export class CheckInService {
         doctorId: appointment.doctorId,
         locationId: appointment.locationId,
         date: appointment.date,
-        status: AppointmentStatus.CHECKED_IN,
+        status: AppointmentStatus.CONFIRMED,
       },
       orderBy: [
         { date: 'asc' },
@@ -126,7 +122,7 @@ export class CheckInService {
           lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
         },
         status: {
-          in: [AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS],
+          in: [AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED],
         },
       },
       orderBy: [
@@ -191,15 +187,6 @@ export class CheckInService {
       {
         priority: this.calculatePriority(appointment.time, now.toLocaleTimeString('en-US', { hour12: false })),
         queueName: `doctor-${appointment.doctorId}`,
-      }
-    );
-
-    // Notify via WebSocket
-    this.socketService.sendToRoom(
-      `doctor-${appointment.doctorId}`,
-      'checkIn',
-      {
-        appointment: updatedAppointment
       }
     );
 

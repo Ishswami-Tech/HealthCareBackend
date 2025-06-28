@@ -42,15 +42,26 @@ model User {
   appleId                String?
   appName                String?
   medicalConditions      String?
+  
+  // Multi-tenant fields
+  primaryClinicId        String?                 // Primary clinic for the user
+  primaryClinic          Clinic?                 @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
+  
+  // Many-to-many clinic associations
+  clinics                Clinic[]                @relation("UserClinics")
+  
+  // Role-specific clinic associations
+  clinicAdmins           ClinicAdmin[]
+  receptionists          Receptionist[]
+  doctorClinics          DoctorClinic[]
+  
+  // Other relationships
   appointments           Appointment[]
   auditLogs              AuditLog[]
-  clinicAdmin            ClinicAdmin?
   doctor                 Doctor?
   notifications          Notification[]
   patient                Patient?
-  receptionist           Receptionist?
   superAdmin             SuperAdmin?
-  clinics                Clinic[]
   medicalHistories       MedicalHistory[]
   labReports             LabReport[]
   radiologyReports       RadiologyReport[]
@@ -71,6 +82,9 @@ model User {
   dietaryRestrictions    DietaryRestriction[]
 
   @@map("users")
+  @@index([primaryClinicId])
+  @@index([email])
+  @@index([role])
 }
 
 model Receptionist {
@@ -110,6 +124,12 @@ model Clinic {
   currency              String?                 @default("INR")
   language              String?                 @default("en")
   settings              Json?
+  
+  // Multi-tenant relationships
+  primaryUsers          User[]                  @relation("UserPrimaryClinic")
+  users                 User[]                  @relation("UserClinics")
+  
+  // Role-specific relationships
   appointments          Appointment[]
   admins                ClinicAdmin[]
   doctors               DoctorClinic[]
@@ -119,6 +139,8 @@ model Clinic {
   createdByUser         User                    @relation(fields: [createdBy], references: [id])
 
   @@map("clinics")
+  @@index([app_name])
+  @@index([isActive])
 }
 
 model ClinicLocation {

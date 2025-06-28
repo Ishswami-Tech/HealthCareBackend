@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { Role, Gender } from '@prisma/client';
+import { Role, Gender } from '../../shared/database/prisma/prisma.types';
 import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID, IsNumber, MinLength, IsArray, IsNotEmpty } from 'class-validator';
 
 // Base interface with required fields matching schema
@@ -19,6 +19,16 @@ interface BaseUserFields {
   country?: string;
   zipCode?: string;
   lastLogin?: Date;
+  // New multi-tenant fields
+  primaryClinicId?: string;
+  appName?: string;
+  // New social login fields
+  googleId?: string;
+  facebookId?: string;
+  appleId?: string;
+  // New medical fields
+  medicalConditions?: string[];
+  emergencyContact?: string;
 }
 
 // Role-specific fields
@@ -163,6 +173,53 @@ export class SimpleCreateUserDto {
   @IsOptional()
   @IsString()
   emergencyContact?: string;
+
+  // New multi-tenant fields
+  @ApiProperty({ 
+    example: 'clinic-uuid-123', 
+    description: 'Primary clinic ID for multi-tenant system', 
+    required: false
+  })
+  @IsOptional()
+  @IsUUID()
+  primaryClinicId?: string;
+
+  @ApiProperty({ 
+    example: 'myclinic', 
+    description: 'Application name for clinic registration', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  appName?: string;
+
+  // New social login fields
+  @ApiProperty({ 
+    example: 'google-user-id-123', 
+    description: 'Google OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  googleId?: string;
+
+  @ApiProperty({ 
+    example: 'facebook-user-id-123', 
+    description: 'Facebook OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  facebookId?: string;
+
+  @ApiProperty({ 
+    example: 'apple-user-id-123', 
+    description: 'Apple OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  appleId?: string;
 }
 
 export class CreateUserDto implements CreateUserFields {
@@ -254,6 +311,11 @@ export class CreateUserDto implements CreateUserFields {
   @IsString({ each: true })
   medicalConditions?: string[];
 
+  @ApiProperty({ example: 'Jane Doe (Spouse): 123-456-7890', description: 'Emergency contact information', required: false })
+  @IsOptional()
+  @IsString()
+  emergencyContact?: string;
+
   @IsDate()
   @IsOptional()
   lastLogin?: Date;
@@ -269,6 +331,44 @@ export class CreateUserDto implements CreateUserFields {
   @IsUUID()
   @IsOptional()
   clinicId?: string;
+
+  // New multi-tenant fields
+  @ApiProperty({ 
+    example: 'clinic-uuid-123', 
+    description: 'Primary clinic ID for multi-tenant system', 
+    required: false
+  })
+  @IsOptional()
+  @IsUUID()
+  primaryClinicId?: string;
+
+  // New social login fields
+  @ApiProperty({ 
+    example: 'google-user-id-123', 
+    description: 'Google OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  googleId?: string;
+
+  @ApiProperty({ 
+    example: 'facebook-user-id-123', 
+    description: 'Facebook OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  facebookId?: string;
+
+  @ApiProperty({ 
+    example: 'apple-user-id-123', 
+    description: 'Apple OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  appleId?: string;
 }
 
 export class UpdateUserDto implements UpdateUserFields {
@@ -396,6 +496,53 @@ export class UpdateUserDto implements UpdateUserFields {
   @IsOptional()
   @IsString()
   familyHistory?: string;
+
+  // New multi-tenant fields
+  @ApiProperty({ 
+    example: 'clinic-uuid-123', 
+    description: 'Primary clinic ID for multi-tenant system', 
+    required: false
+  })
+  @IsOptional()
+  @IsUUID()
+  primaryClinicId?: string;
+
+  @ApiProperty({ 
+    example: 'myclinic', 
+    description: 'Application name for clinic registration', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  appName?: string;
+
+  // New social login fields
+  @ApiProperty({ 
+    example: 'google-user-id-123', 
+    description: 'Google OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  googleId?: string;
+
+  @ApiProperty({ 
+    example: 'facebook-user-id-123', 
+    description: 'Facebook OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  facebookId?: string;
+
+  @ApiProperty({ 
+    example: 'apple-user-id-123', 
+    description: 'Apple OAuth ID', 
+    required: false
+  })
+  @IsOptional()
+  @IsString()
+  appleId?: string;
 }
 
 export class UserResponseDto {
@@ -466,6 +613,46 @@ export class UserResponseDto {
     role?: string;
     locations?: any[];
   };
+
+  // New multi-tenant fields
+  @ApiProperty({ required: false })
+  primaryClinicId?: string;
+
+  @ApiProperty({ required: false })
+  appName?: string;
+
+  // New social login fields
+  @ApiProperty({ required: false })
+  googleId?: string;
+
+  @ApiProperty({ required: false })
+  facebookId?: string;
+
+  @ApiProperty({ required: false })
+  appleId?: string;
+
+  // New fields from schema
+  @ApiProperty({ required: false })
+  emergencyContact?: string;
+
+  @ApiProperty({ required: false })
+  lastLogin?: Date;
+
+  @ApiProperty({ required: false })
+  lastLoginIP?: string;
+
+  @ApiProperty({ required: false })
+  lastLoginDevice?: string;
+
+  @ApiProperty({ required: false })
+  passwordChangedAt?: Date;
+
+  // Clinic associations
+  @ApiProperty({ required: false })
+  clinics?: any[];
+
+  @ApiProperty({ required: false })
+  primaryClinic?: any;
 }
 
 export class UpdateUserRoleDto {

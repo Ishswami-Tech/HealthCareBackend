@@ -4,7 +4,7 @@ import { QrService } from '../../../shared/QR/qr.service';
 import { LocationQrService } from '../../../shared/QR/location-qr.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
 import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
-import { AppointmentStatus } from '@prisma/client';
+import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
 import { AppointmentQueueService } from '../appointment-queue/appointment-queue.service';
 
 @Injectable()
@@ -155,8 +155,8 @@ export class AppointmentConfirmationService {
         throw new BadRequestException('This appointment does not belong to this doctor');
       }
 
-      if (appointment.status !== AppointmentStatus.IN_PROGRESS) {
-        throw new BadRequestException('Only in-progress appointments can be marked as completed');
+      if (appointment.status !== AppointmentStatus.CONFIRMED) {
+        throw new BadRequestException('Only confirmed appointments can be marked as completed');
       }
 
       const updatedAppointment = await this.prisma.appointment.update({

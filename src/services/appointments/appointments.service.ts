@@ -4,7 +4,7 @@ import { QueueService, JobType } from '../../shared/queue/queue.service';
 import { QrService } from '../../shared/QR/qr.service';
 import { LoggingService } from '../../shared/logging/logging.service';
 import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
-import { AppointmentStatus, AppointmentType } from '@prisma/client';
+import { AppointmentStatus, AppointmentType } from '../../shared/database/prisma/prisma.types';
 
 @Injectable()
 export class AppointmentService {

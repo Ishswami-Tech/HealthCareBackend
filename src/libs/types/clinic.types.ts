@@ -1,4 +1,4 @@
-import { Role } from '@prisma/client';
+import { Role } from '../../shared/database/prisma/prisma.types';
 import { FastifyRequest } from 'fastify';
 
 export interface WorkingHours {
@@ -55,4 +55,22 @@ export interface AuthenticatedUser {
 
 export interface AuthenticatedRequest extends FastifyRequest {
   user: AuthenticatedUser;
+}
+
+export interface ClinicUser {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  role: Role;
+  isVerified: boolean;
+  createdAt: Date;
+}
+
+export interface ClinicInfo {
+  id: string;
+  name: string;
+  appName: string;
+  isActive: boolean;
+  createdAt: Date;
 } 

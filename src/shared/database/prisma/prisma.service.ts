@@ -240,11 +240,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   // Helper method to determine if an error is retryable
   private isRetryableError(error: any): boolean {
     return (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      (error.code === 'P2024' || // Connection pool timeout
-       error.code === 'P2028' || // Transaction timeout
-       error.code === 'P2034' || // Transaction failed
-       error.code === 'P2037')   // Connection lost
+      error instanceof Error && error.name === 'PrismaClientKnownRequestError' &&
+      ((error as any).code === 'P2024' || // Connection pool timeout
+       (error as any).code === 'P2028' || // Transaction timeout
+       (error as any).code === 'P2025' || // Record not found
+       (error as any).code === 'P2034') // Transaction failed
     );
   }
 
