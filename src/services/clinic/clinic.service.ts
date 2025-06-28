@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
-import { Role } from '@prisma/client';
+import { Role } from '../../shared/database/prisma/prisma.types';
 import { EventService } from '../../shared/events/event.service';
 import { ClinicPermissionService } from './shared/permission.utils';
 import { ClinicErrorService } from './shared/error.utils';

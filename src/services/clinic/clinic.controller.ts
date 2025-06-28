@@ -3,7 +3,7 @@ import { ClinicService } from './clinic.service';
 import { JwtAuthGuard } from '../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../libs/guards/roles.guard';
 import { Roles } from '../../libs/decorators/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role } from '../../shared/database/prisma/prisma.types';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { CreateClinicDto } from './dto/create-clinic.dto';
 import { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';

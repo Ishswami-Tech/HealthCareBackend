@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Inject } from '@nes
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
 import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
-import { AppointmentStatus } from '@prisma/client';
+import { AppointmentStatus, QueueStatus } from '../../../shared/database/prisma/prisma.types';
 import { LocationQueueStats, QueuePosition } from '../../../libs/types/queue.types';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SocketService } from '../../../shared/socket/socket.service';
@@ -40,7 +40,7 @@ export class AppointmentQueueService {
             in: [
               AppointmentStatus.SCHEDULED,
               AppointmentStatus.CONFIRMED,
-              AppointmentStatus.IN_PROGRESS
+              QueueStatus.IN_PROGRESS
             ]
           }
         },
@@ -66,7 +66,7 @@ export class AppointmentQueueService {
       const queueStats = {
         confirmed: appointments.filter(a => a.status === AppointmentStatus.CONFIRMED),
         waiting: appointments.filter(a => a.status === AppointmentStatus.SCHEDULED),
-        inProgress: appointments.filter(a => a.status === AppointmentStatus.IN_PROGRESS),
+        inProgress: appointments.filter(a => a.status === QueueStatus.IN_PROGRESS),
       };
 
       this.eventEmitter.emit('queue.doctor.updated', {
@@ -148,7 +148,7 @@ export class AppointmentQueueService {
             in: [
               AppointmentStatus.SCHEDULED,
               AppointmentStatus.CONFIRMED,
-              AppointmentStatus.IN_PROGRESS
+              QueueStatus.IN_PROGRESS
             ]
           }
         },
@@ -174,7 +174,7 @@ export class AppointmentQueueService {
         if (appointment.status === AppointmentStatus.SCHEDULED || 
             appointment.status === AppointmentStatus.CONFIRMED) {
           stats.waiting++;
-        } else if (appointment.status === AppointmentStatus.IN_PROGRESS) {
+        } else if (appointment.status === AppointmentStatus.CONFIRMED) {
           stats.active++;
         }
 
@@ -202,7 +202,7 @@ export class AppointmentQueueService {
             status === AppointmentStatus.CONFIRMED
           ).length,
           active: appointments.filter(status => 
-            status === AppointmentStatus.IN_PROGRESS
+            status === AppointmentStatus.CONFIRMED
           ).length,
           avgWaitTime: stats.avgWaitTime
         };
@@ -334,7 +334,7 @@ export class AppointmentQueueService {
 
       const updatedAppointment = await this.prisma.appointment.update({
         where: { id: appointmentId },
-        data: { status: AppointmentStatus.IN_PROGRESS },
+        data: { status: AppointmentStatus.COMPLETED },
       });
 
       this.loggingService.log(

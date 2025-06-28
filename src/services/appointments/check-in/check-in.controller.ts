@@ -1,10 +1,10 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards, Request, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { CheckInService } from './check-in.service';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role } from '../../../shared/database/prisma/prisma.types';
 import { Clinic } from '../../../libs/decorators/clinic.decorator';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';

@@ -27,13 +27,22 @@ import type {
 // Re-export types with our preferred names
 export type User = PrismaUser & {
   emergencyContact?: string;
+  primaryClinicId?: string;
+  primaryClinic?: Clinic;
+  clinics?: Clinic[];
+  clinicAdmins?: ClinicAdmin[];
+  receptionists?: Receptionist[];
+  doctorClinics?: DoctorClinic[];
 }
 export type Product = PrismaProduct
 export type Appointment = PrismaAppointment
 export type Payment = PrismaPayment
 export type Doctor = PrismaDoctor
 export type Patient = PrismaPatient
-export type Clinic = PrismaClinic
+export type Clinic = PrismaClinic & {
+  primaryUsers?: User[];
+  users?: User[];
+}
 export type ClinicAdmin = PrismaClinicAdmin
 export type SuperAdmin = PrismaSuperAdmin
 export type Receptionist = PrismaReceptionist

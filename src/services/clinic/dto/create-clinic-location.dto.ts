@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEmail, IsBoolean, IsOptional, IsPhoneNumber, Length, IsObject } from 'class-validator';
+import { IsString, IsEmail, IsBoolean, IsOptional, IsPhoneNumber, Length, IsObject, IsNumber } from 'class-validator';
 
 export class CreateClinicLocationDto {
     @ApiProperty({
@@ -82,6 +82,24 @@ export class CreateClinicLocationDto {
     isActive?: boolean;
 
     @ApiProperty({
+        description: 'Latitude coordinate of the clinic location',
+        example: 40.7128,
+        required: false
+    })
+    @IsOptional()
+    @IsNumber()
+    latitude?: number;
+
+    @ApiProperty({
+        description: 'Longitude coordinate of the clinic location',
+        example: -74.0060,
+        required: false
+    })
+    @IsOptional()
+    @IsNumber()
+    longitude?: number;
+
+    @ApiProperty({
         example: {
             monday: { start: '09:00', end: '17:00' },
             tuesday: { start: '09:00', end: '17:00' },
@@ -97,4 +115,13 @@ export class CreateClinicLocationDto {
     @IsOptional()
     @IsObject()
     workingHours?: Record<string, { start: string; end: string } | null>;
+
+    @ApiProperty({
+        description: 'Location-specific settings as JSON object',
+        example: { parking: true, wheelchair: true, wifi: true },
+        required: false
+    })
+    @IsOptional()
+    @IsObject()
+    settings?: Record<string, any>;
 } 

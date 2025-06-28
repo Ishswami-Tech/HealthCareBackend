@@ -1,4 +1,4 @@
-import { PrismaClient, Role, Gender, Prakriti, Dosha, AppointmentStatus, AppointmentType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { faker } from "@faker-js/faker";
 import {
   PaymentStatus,
@@ -11,6 +11,7 @@ import {
   getPrismaClient
 } from './prisma.types';
 import * as bcrypt from 'bcrypt';
+import { Role, Gender, Prakriti, Dosha, AppointmentStatus, AppointmentType } from './prisma.types';
 
 const SEED_COUNT = 50;
 const prisma = getPrismaClient();

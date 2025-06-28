@@ -2,7 +2,7 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, Logger, Request
 import { AppointmentService } from './appointments.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Role } from '../../shared/database/prisma/prisma.types';
 import { JwtAuthGuard } from 'src/libs/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/libs/guards/roles.guard';
 import { Roles } from 'src/libs/decorators/roles.decorator';

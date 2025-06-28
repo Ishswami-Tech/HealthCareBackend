@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { RedisService } from '../../../shared/cache/redis/redis.service';
 import { CreateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
-import { Role, User } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { EmailService } from '../../../shared/messaging/email/email.service';
@@ -20,6 +20,10 @@ import { OAuth2Client } from 'google-auth-library';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
 import { google } from 'googleapis';
+
+// Define simple types to avoid Prisma type issues
+type User = any;
+type Role = 'SUPER_ADMIN' | 'CLINIC_ADMIN' | 'DOCTOR' | 'PATIENT' | 'RECEPTIONIST';
 
 @Injectable()
 export class AuthService {
@@ -70,7 +74,7 @@ export class AuthService {
       const superAdminEmail = 'superadmin@healthcare.com';
       const existingSuperAdmin = await this.prisma.user.findFirst({
         where: { 
-          role: Role.SUPER_ADMIN 
+          role: 'SUPER_ADMIN' 
         }
       });
 
@@ -85,7 +89,7 @@ export class AuthService {
             lastName: 'Admin',
             name: 'Super Admin',
             phone: '+1234567890',
-            role: Role.SUPER_ADMIN,
+            role: 'SUPER_ADMIN',
             age: 30,
             isVerified: true,
             userid: userid
@@ -106,7 +110,7 @@ export class AuthService {
 
         await this.eventService.emit('user.created', {
           userId: superAdmin.id,
-          role: Role.SUPER_ADMIN,
+          role: 'SUPER_ADMIN',
           email: superAdminEmail
         });
       }
@@ -157,18 +161,371 @@ export class AuthService {
   }
 
   /**
-   * Login a user and generate JWT tokens
-   * No caching here as it's security-sensitive and dynamic
+   * Register a new user with clinic association
+   * Multi-tenant system: User can register with multiple clinics using same email
    */
-  async login(user: User, request: any, appName?: string) {
+  async register(createUserDto: CreateUserDto): Promise<UserResponseDto> {
     try {
+      const { clinicId, ...userData } = createUserDto;
+
+      // If clinicId is provided, validate clinic exists
+      if (clinicId) {
+        const clinic = await this.prisma.clinic.findUnique({
+          where: { id: clinicId }
+        });
+
+        if (!clinic) {
+          throw new NotFoundException('Clinic not found');
+        }
+
+        if (!clinic.isActive) {
+          throw new BadRequestException('Clinic is not active');
+        }
+
+        // Check if user already exists
+        const existingUser = await this.prisma.user.findFirst({
+          where: {
+            email: {
+              mode: 'insensitive',
+              equals: userData.email
+            }
+          },
+          include: {
+            clinics: true
+          }
+        });
+
+        let user: any;
+
+        if (existingUser) {
+          // User exists - check if already associated with this clinic
+          const isAlreadyAssociated = existingUser.clinics.some(clinic => clinic.id === clinicId);
+          
+          if (isAlreadyAssociated) {
+            // User already associated with this clinic - return success
+            await this.loggingService.log(
+              LogType.AUTH,
+              LogLevel.INFO,
+              'User already associated with clinic',
+              'AuthService',
+              { userId: existingUser.id, clinicId, email: userData.email }
+            );
+            
+            const { password, ...result } = existingUser;
+            return result as UserResponseDto;
+          }
+
+          // User exists but not associated with this clinic - create association
+          user = existingUser;
+          
+          // Associate user with clinic
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+              clinics: {
+                connect: { id: clinicId }
+              }
+            }
+          });
+
+          await this.loggingService.log(
+            LogType.AUTH,
+            LogLevel.INFO,
+            'Existing user associated with new clinic',
+            'AuthService',
+            { userId: user.id, clinicId, email: userData.email }
+          );
+        } else {
+          // User doesn't exist - create new user with clinic association
+          const userid = await this.generateNextUID();
+          const hashedPassword = await bcrypt.hash(userData.password, this.SALT_ROUNDS);
+          
+          // Generate full name
+          const fullName = `${userData.firstName} ${userData.lastName}`.trim();
+          
+          // Create user with clinic association
+          user = await this.prisma.user.create({
+            data: {
+              ...userData,
+              userid,
+              password: hashedPassword,
+              name: fullName,
+              role: 'PATIENT', // Default role for clinic registration
+              isVerified: false,
+              clinics: {
+                connect: { id: clinicId }
+              }
+            },
+            include: {
+              clinics: true
+            }
+          });
+
+          // Create patient record
+          await this.prisma.patient.create({
+            data: { userId: user.id }
+          });
+
+          await this.loggingService.log(
+            LogType.AUTH,
+            LogLevel.INFO,
+            'New user registered with clinic',
+            'AuthService',
+            { userId: user.id, clinicId, email: userData.email }
+          );
+
+          // Emit registration event
+          await this.eventService.emit('user.registered', {
+            userId: user.id,
+            email: user.email,
+            role: user.role,
+            clinicId
+          });
+
+          // Send welcome email
+          try {
+            await this.emailService.sendEmail({
+              to: user.email,
+              subject: `Welcome to ${clinic.name}`,
+              template: EmailTemplate.WELCOME,
+              context: {
+                name: user.firstName || fullName,
+                role: this.getRoleDisplayName(user.role),
+                clinicName: clinic.name,
+                loginUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`,
+                supportEmail: process.env.SUPPORT_EMAIL || 'support@healthcareapp.com',
+                dashboardUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}${this.getRedirectPathForRole(user.role)}`
+              }
+            });
+          } catch (emailError) {
+            this.logger.error(`Failed to send welcome email: ${emailError.message}`);
+          }
+        }
+
+        const { password, ...result } = user;
+        return result as UserResponseDto;
+      } else {
+        // Original registration logic for non-clinic registration
+        const existingUser = await this.prisma.user.findFirst({
+          where: {
+            email: {
+              mode: 'insensitive',
+              equals: userData.email
+            }
+          }
+        });
+
+        if (existingUser) {
+          await this.loggingService.log(
+            LogType.AUTH,
+            LogLevel.WARN,
+            'Registration attempt with existing email',
+            'AuthService',
+            { email: userData.email }
+          );
+          throw new BadRequestException('Email already registered');
+        }
+
+        // Generate the next UID
+        const userid = await this.generateNextUID();
+
+        const hashedPassword = await bcrypt.hash(userData.password, this.SALT_ROUNDS);
+        
+        const userDataForCreate: any = { ...userData };
+        if (userDataForCreate.dateOfBirth) {
+          userDataForCreate.dateOfBirth = new Date(`${userDataForCreate.dateOfBirth}T00:00:00Z`);
+        }
+        
+        // Generate full name from firstName and lastName
+        const fullName = `${userData.firstName} ${userData.lastName}`.trim();
+        
+        const user = await this.prisma.user.create({
+          data: {
+            ...userDataForCreate,
+            userid,
+            password: hashedPassword,
+            name: fullName,
+            isVerified: false,
+            medicalConditions: this.stringifyMedicalConditions(userDataForCreate.medicalConditions)
+          },
+        });
+
+        // Create role-specific record
+        switch (user.role) {
+          case 'PATIENT':
+            await this.prisma.patient.create({
+              data: { userId: user.id }
+            });
+            break;
+          case 'DOCTOR':
+            await this.prisma.doctor.create({
+              data: {
+                userId: user.id,
+                specialization: userData.specialization || '',
+                experience: userData.experience || 0,
+              }
+            });
+            break;
+          case 'RECEPTIONIST':
+            await this.prisma.receptionist.create({
+              data: { userId: user.id }
+            });
+            break;
+          case 'CLINIC_ADMIN':
+            if ((userData as any).clinicId) {
+              await this.prisma.clinicAdmin.create({
+                data: {
+                  userId: user.id,
+                  clinicId: (userData as any).clinicId
+                }
+              });
+            }
+            break;
+        }
+
+        // Log successful registration
+        await this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.INFO,
+          'User registered successfully',
+          'AuthService',
+          { userId: user.id, email: user.email, role: user.role }
+        );
+
+        // Emit registration event
+        await this.eventService.emit('user.registered', {
+          userId: user.id,
+          email: user.email,
+          role: user.role
+        });
+        
+        // Send welcome email
+        try {
+          await this.emailService.sendEmail({
+            to: user.email,
+            subject: 'Welcome to HealthCare App',
+            template: EmailTemplate.WELCOME,
+            context: {
+              name: user.firstName || fullName,
+              role: this.getRoleDisplayName(user.role),
+              loginUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`,
+              supportEmail: process.env.SUPPORT_EMAIL || 'support@healthcareapp.com',
+              dashboardUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}${this.getRedirectPathForRole(user.role)}`
+            }
+          });
+        } catch (emailError) {
+          // Don't fail registration if email fails
+          this.logger.error(`Failed to send welcome email: ${emailError.message}`);
+        }
+
+        const { password, ...result } = user;
+        const userResponse = { ...result } as any;
+        if (userResponse.dateOfBirth) {
+          userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+        }
+        return userResponse as UserResponseDto;
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.ERROR,
+        'Registration failed',
+        'AuthService',
+        { error: error.message, email: createUserDto.email, clinicId: createUserDto.clinicId }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Login a user and generate JWT tokens with clinic context
+   * Multi-tenant system: User must be associated with the clinic to login
+   */
+  async login(user: User, request: any, appName?: string, clinicId?: string) {
+    try {
+      // If clinicId is provided, validate clinic association
+      if (clinicId) {
+        // Validate clinic exists
+        const clinic = await this.prisma.clinic.findUnique({
+          where: { id: clinicId }
+        });
+
+        if (!clinic) {
+          throw new NotFoundException('Clinic not found');
+        }
+
+        if (!clinic.isActive) {
+          throw new BadRequestException('Clinic is not active');
+        }
+
+        // Check if user is associated with the clinic
+        const userWithClinics = await this.prisma.user.findUnique({
+          where: { id: user.id },
+          include: {
+            clinics: true,
+            doctor: {
+              include: {
+                clinics: true
+              }
+            },
+            receptionist: true,
+            clinicAdmin: true
+          }
+        });
+
+        if (!userWithClinics) {
+          throw new UnauthorizedException('User not found');
+        }
+
+        // Check various ways user can be associated with clinic
+        let hasClinicAccess = false;
+
+        // Direct clinic association
+        if (userWithClinics.clinics.some(clinic => clinic.id === clinicId)) {
+          hasClinicAccess = true;
+        }
+
+        // Doctor in clinic
+        if (!hasClinicAccess && userWithClinics.doctor) {
+          const doctorClinic = await this.prisma.doctorClinic.findFirst({
+            where: {
+              doctorId: userWithClinics.doctor.id,
+              clinicId: clinicId
+            }
+          });
+          hasClinicAccess = !!doctorClinic;
+        }
+
+        // Receptionist in clinic
+        if (!hasClinicAccess && userWithClinics.receptionist) {
+          hasClinicAccess = userWithClinics.receptionist.clinicId === clinicId;
+        }
+
+        // Clinic admin
+        if (!hasClinicAccess && userWithClinics.clinicAdmin) {
+          hasClinicAccess = userWithClinics.clinicAdmin.clinicId === clinicId;
+        }
+
+        if (!hasClinicAccess) {
+          throw new UnauthorizedException('User is not associated with this clinic');
+        }
+
+        // Update appName to clinic app_name for consistency
+        appName = clinic.app_name;
+      }
+
       // Generate device fingerprint
       const deviceFingerprint = this.generateDeviceFingerprint(request);
       // Validate login attempt
       await this.validateLoginAttempt(user.id, deviceFingerprint);
 
-      // Generate tokens and session info
-      const payload = { email: user.email, sub: user.id, role: user.role };
+      // Generate tokens and session info with clinic context
+      const payload = { 
+        email: user.email, 
+        sub: user.id, 
+        role: user.role,
+        ...(clinicId && { clinicId }) // Include clinicId in JWT if provided
+      };
       const accessToken = this.jwtService.sign(payload);
       const refreshToken = uuidv4();
       const sessionId = uuidv4();
@@ -215,7 +572,7 @@ export class AuthService {
         LogLevel.INFO,
         'User logged in successfully',
         'AuthService',
-        { userId: user.id, email: user.email, role: user.role }
+        { userId: user.id, email: user.email, role: user.role, clinicId }
       );
 
       // Emit login event
@@ -224,7 +581,8 @@ export class AuthService {
         email: user.email,
         role: user.role,
         deviceInfo,
-        ipAddress
+        ipAddress,
+        clinicId
       });
       
       // Send login notification email
@@ -271,7 +629,7 @@ export class AuthService {
           dateOfBirth: user.dateOfBirth,
           age: user.age,
           gender: user.gender,
-          medicalConditions: this.parseMedicalConditions(user.medicalConditions),
+          medicalConditions: this.parseMedicalConditions((user as any).medicalConditions),
           createdAt: user.createdAt,
           updatedAt: user.updatedAt
         },
@@ -321,6 +679,24 @@ export class AuthService {
         }
       }
 
+      // If clinicId was provided, add clinic information to response
+      if (clinicId) {
+        const clinic = await this.prisma.clinic.findUnique({
+          where: { id: clinicId }
+        });
+        
+        if (clinic) {
+          return {
+            ...loginResponse,
+            clinic: {
+              id: clinic.id,
+              name: clinic.name,
+              appName: clinic.app_name
+            }
+          };
+        }
+      }
+
       return loginResponse;
     } catch (error) {
       await this.loggingService.log(
@@ -356,7 +732,7 @@ export class AuthService {
     const basePermissions = ['view_profile', 'edit_profile'];
     
     switch (role) {
-      case Role.SUPER_ADMIN:
+      case 'SUPER_ADMIN':
         return [
           ...basePermissions,
           'manage_users',
@@ -365,7 +741,7 @@ export class AuthService {
           'view_analytics',
           'manage_system'
         ];
-      case Role.CLINIC_ADMIN:
+      case 'CLINIC_ADMIN':
         return [
           ...basePermissions,
           'manage_clinic_staff',
@@ -373,7 +749,7 @@ export class AuthService {
           'manage_appointments',
           'manage_inventory'
         ];
-      case Role.DOCTOR:
+      case 'DOCTOR':
         return [
           ...basePermissions,
           'manage_patients',
@@ -381,7 +757,7 @@ export class AuthService {
           'create_prescriptions',
           'manage_appointments'
         ];
-      case Role.PATIENT:
+      case 'PATIENT':
         return [
           ...basePermissions,
           'view_appointments',
@@ -389,7 +765,7 @@ export class AuthService {
           'view_prescriptions',
           'view_medical_history'
         ];
-      case Role.RECEPTIONIST:
+      case 'RECEPTIONIST':
         return [
           ...basePermissions,
           'manage_appointments',
@@ -399,558 +775,6 @@ export class AuthService {
         ];
       default:
         return basePermissions;
-    }
-  }
-
-  /**
-   * Register a new user
-   */
-  async register(createUserDto: CreateUserDto): Promise<UserResponseDto> {
-    try {
-      const existingUser = await this.prisma.user.findFirst({
-        where: {
-          email: {
-            mode: 'insensitive',
-            equals: createUserDto.email
-          }
-        }
-      });
-
-      if (existingUser) {
-        await this.loggingService.log(
-          LogType.AUTH,
-          LogLevel.WARN,
-          'Registration attempt with existing email',
-          'AuthService',
-          { email: createUserDto.email }
-        );
-        throw new BadRequestException('Email already registered');
-      }
-
-      // Generate the next UID
-      const userid = await this.generateNextUID();
-
-      const hashedPassword = await bcrypt.hash(createUserDto.password, this.SALT_ROUNDS);
-      
-      const userData: any = { ...createUserDto };
-      if (userData.dateOfBirth) {
-        userData.dateOfBirth = new Date(`${userData.dateOfBirth}T00:00:00Z`);
-      }
-      
-      // Generate full name from firstName and lastName
-      const fullName = `${createUserDto.firstName} ${createUserDto.lastName}`.trim();
-      
-      const user = await this.prisma.user.create({
-        data: {
-          ...userData,
-          userid: userid,
-          password: hashedPassword,
-          name: fullName,
-          isVerified: false,
-          medicalConditions: this.stringifyMedicalConditions(userData.medicalConditions)
-        },
-      });
-
-      // Create role-specific record
-      switch (user.role) {
-        case Role.PATIENT:
-          await this.prisma.patient.create({
-            data: { userId: user.id }
-          });
-          break;
-        case Role.DOCTOR:
-          await this.prisma.doctor.create({
-            data: {
-              userId: user.id,
-              specialization: createUserDto.specialization || '',
-              experience: createUserDto.experience || 0,
-            }
-          });
-          break;
-        case Role.RECEPTIONIST:
-          await this.prisma.receptionist.create({
-            data: { userId: user.id }
-          });
-          break;
-        case Role.CLINIC_ADMIN:
-          if (createUserDto.clinicId) {
-            await this.prisma.clinicAdmin.create({
-              data: {
-                userId: user.id,
-                clinicId: createUserDto.clinicId
-              }
-            });
-          }
-          break;
-      }
-
-      // Log successful registration
-      await this.loggingService.log(
-        LogType.AUTH,
-        LogLevel.INFO,
-        'User registered successfully',
-        'AuthService',
-        { userId: user.id, email: user.email, role: user.role }
-      );
-
-      // Emit registration event
-      await this.eventService.emit('user.registered', {
-        userId: user.id,
-        email: user.email,
-        role: user.role
-      });
-      
-      // Send welcome email
-      try {
-        await this.emailService.sendEmail({
-          to: user.email,
-          subject: 'Welcome to HealthCare App',
-          template: EmailTemplate.WELCOME,
-          context: {
-            name: user.firstName || fullName,
-            role: this.getRoleDisplayName(user.role),
-            loginUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`,
-            supportEmail: process.env.SUPPORT_EMAIL || 'support@healthcareapp.com',
-            dashboardUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}${this.getRedirectPathForRole(user.role)}`
-          }
-        });
-      } catch (emailError) {
-        // Don't fail registration if email fails
-        this.logger.error(`Failed to send welcome email: ${emailError.message}`);
-      }
-
-      const { password, ...result } = user;
-      const userResponse = { ...result } as any;
-      if (userResponse.dateOfBirth) {
-        userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
-      }
-      return userResponse as UserResponseDto;
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.AUTH,
-        LogLevel.ERROR,
-        'Registration failed',
-        'AuthService',
-        { error: error.message, email: createUserDto.email }
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Get display name for user role
-   */
-  private getRoleDisplayName(role: Role): string {
-    switch (role) {
-      case Role.SUPER_ADMIN:
-        return 'Super Administrator';
-      case Role.CLINIC_ADMIN:
-        return 'Clinic Administrator';
-      case Role.DOCTOR:
-        return 'Doctor';
-      case Role.PATIENT:
-        return 'Patient';
-      case Role.RECEPTIONIST:
-        return 'Receptionist';
-      default:
-        return 'User';
-    }
-  }
-
-  private async generateNextUID(): Promise<string> {
-    // Get the last user with a UID
-    const lastUser = await this.prisma.user.findFirst({
-      orderBy: {
-        userid: 'desc'
-      }
-    });
-
-    let nextNumber = 1;
-    if (lastUser && lastUser.userid) {
-      // Extract the number from the last UID and increment it
-      const lastNumber = parseInt(lastUser.userid.replace('UID', ''));
-      nextNumber = lastNumber + 1;
-    }
-
-    // Format the new UID with leading zeros (6 digits)
-    return `UID${nextNumber.toString().padStart(6, '0')}`;
-  }
-
-  /**
-   * Register a new user with clinic-specific context
-   * @param createUserDto User registration data
-   * @param appName Optional clinic app name for clinic-specific registration
-   * @returns The registered user
-   */
-  async registerWithClinic(createUserDto: CreateUserDto, appName?: string): Promise<UserResponseDto> {
-    try {
-      // First, register the user in the global database
-      const user = await this.register(createUserDto);
-
-      // If an app name is provided, update the user's appName and register with clinic
-      if (appName) {
-        try {
-          // Update user's appName using StringFieldUpdateOperationsInput
-          await this.prisma.user.update({
-            where: { id: user.id },
-            data: {
-              appName: {
-                set: appName
-              }
-            }
-          });
-
-          // Get the clinic by app name using ClinicService
-          const clinic = await this.clinicService.getClinicByAppName(appName);
-          
-          if (clinic) {
-            // Associate user with clinic using ClinicUserService
-            await this.clinicService.associateUserWithClinic(user.id, clinic.id);
-
-            // Log the clinic registration
-            this.logger.log(`User ${user.id} registered to clinic ${clinic.id} (${appName})`);
-
-            // Generate clinic-specific token
-            const clinicToken = await this.clinicService.generateClinicToken(user.id, clinic.id);
-
-            // Return user with clinic information
-            return {
-              ...user,
-              clinicToken,
-              clinic: {
-                id: clinic.id,
-                name: clinic.name,
-                locations: await this.clinicService.getActiveLocations(clinic.id)
-              }
-            };
-          }
-        } catch (error) {
-          // Log the error but don't fail the registration
-          this.logger.error(`Failed to register user to clinic: ${error.message}`, error.stack);
-        }
-      }
-
-      return user;
-    } catch (error) {
-      this.logger.error(`Registration with clinic failed: ${error.message}`, error.stack);
-      throw error;
-    }
-  }
-
-  /**
-   * Logout a user - invalidate tokens
-   */
-  async logout(
-    userId: string,
-    sessionId?: string,
-    allDevices: boolean = false,
-    token?: string,
-  ): Promise<void> {
-    try {
-      // Get all active sessions for the user
-      const sessionsToTerminate: string[] = [];
-      const userSessionsKey = `user:${userId}:sessions`;
-      const activeSessions = await this.redisService.sMembers(userSessionsKey);
-
-      // If token is provided, blacklist it
-      if (token) {
-        // Store only first 64 chars of token as key to save space
-        const tokenKey = `blacklist:token:${token.substring(0, 64)}`;
-        // Set token in blacklist with expiry matching JWT expiry (default 1 day)
-        await this.redisService.set(tokenKey, 'true', 86400);
-        this.logger.debug(`Token blacklisted for user ${userId}`);
-      }
-
-      // Determine which sessions to terminate
-      if (allDevices) {
-        sessionsToTerminate.push(...activeSessions);
-      } else if (sessionId) {
-        if (activeSessions.includes(sessionId)) {
-          sessionsToTerminate.push(sessionId);
-        }
-      } else {
-        // If no sessionId provided and not all devices, use the most recent session
-        if (activeSessions.length > 0) {
-          sessionsToTerminate.push(activeSessions[0]);
-        }
-      }
-
-      for (const sid of sessionsToTerminate) {
-        // Get session data
-        const sessionKey = `session:${userId}:${sid}`;
-        const sessionData = await this.redisService.get(sessionKey);
-        
-        if (sessionData) {
-          const session = JSON.parse(sessionData);
-          const deviceKey = `device:${userId}:${session.deviceInfo?.deviceId}`;
-
-          // Delete session-related data
-          await Promise.all([
-            // Delete session data
-            this.redisService.del(sessionKey),
-            // Delete refresh token
-            this.redisService.del(`refresh:${session.refreshToken}`),
-            // Remove from active sessions
-            this.redisService.sRem(`user:${userId}:sessions`, sid),
-            // Update device last seen
-            this.redisService.get(deviceKey).then(async (deviceData) => {
-              if (deviceData) {
-                const device = JSON.parse(deviceData);
-                if (device.sessionId === sid) {
-                  await this.redisService.set(
-                    deviceKey,
-                    JSON.stringify({
-                      ...device,
-                      lastSeen: new Date(),
-                      status: 'logged_out'
-                    }),
-                    30 * 24 * 60 * 60 // 30 days
-                  );
-                }
-              }
-            })
-          ]);
-        }
-      }
-
-      // Update user's login status if logging out of all devices
-      if (allDevices) {
-        await this.prisma.user.update({
-          where: { id: userId },
-          data: { lastLogin: null }
-        });
-      }
-
-      // Invalidate user's profile cache
-      await this.redisService.invalidateCacheByPattern(`auth:profile:${userId}:*`);
-      await this.redisService.invalidateCacheByTag(`user:${userId}`);
-
-    } catch (error) {
-      // Log the error but don't expose internal details
-      this.logger.error(`Logout error for user ${userId}: ${error.message}`);
-      throw new UnauthorizedException('Failed to logout properly');
-    }
-  }
-
-  /**
-   * Enhanced token refresh with security measures
-   */
-  async refreshToken(userId: string, deviceFingerprint: string) {
-    try {
-      // Get user's active sessions
-      const activeSessions = await this.sessionService.getActiveSessions(userId);
-      const session = activeSessions.find(s => s.deviceInfo.deviceId === deviceFingerprint);
-      
-      if (!session) {
-        throw new UnauthorizedException('Invalid session');
-      }
-      
-      // Validate session
-      const isValid = await this.sessionService.validateSession(userId, session.sessionId);
-      if (!isValid) {
-        throw new UnauthorizedException('Session expired');
-      }
-      
-      // Generate new tokens
-      const user = await this.prisma.user.findUnique({ where: { id: userId } });
-      if (!user) {
-        throw new UnauthorizedException('User not found');
-      }
-      
-      const payload = {
-        email: user.email,
-        sub: userId,
-        role: user.role,
-        sessionId: session.sessionId
-      };
-      
-      const newAccessToken = this.jwtService.sign(payload);
-      const newRefreshToken = uuidv4();
-      
-      // Update session with new refresh token
-      await this.sessionService.updateSessionActivity(userId, session.sessionId);
-      
-      return {
-        access_token: newAccessToken,
-        refresh_token: newRefreshToken,
-        token_type: 'Bearer',
-        expires_in: 24 * 60 * 60 // 24 hours in seconds
-      };
-    } catch (error) {
-      if (error instanceof UnauthorizedException) {
-        throw error;
-      }
-      this.logger.error(`Token refresh failed: ${error.message}`);
-      throw new UnauthorizedException('Failed to refresh token');
-    }
-  }
-
-  async validateToken(userId: string): Promise<boolean> {
-    const session = await this.redisService.get(`session:${userId}`);
-    return !!session;
-  }
-
-  async sendVerificationEmail(user: User): Promise<void> {
-    const token = uuidv4();
-    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
-
-    // Store token in Redis
-    await this.redisService.set(
-      `email_verification:${token}`,
-      user.id,
-      this.EMAIL_VERIFICATION_TTL
-    );
-
-    await this.emailService.sendEmail({
-      to: user.email,
-      subject: 'Verify Your Email',
-      template: EmailTemplate.VERIFICATION,
-      context: { verificationUrl }
-    });
-  }
-
-  async forgotPassword(email: string): Promise<void> {
-    const user = await this.findUserByEmail(email);
-    if (!user) {
-      // Return silently to prevent email enumeration
-      return;
-    }
-
-    // Check if a reset token was recently issued
-    // Temporarily disable rate limiting for testing
-    /*
-    const rateLimitKey = `password_reset_rate_limit:${user.id}`;
-    const lastResetTime = await this.redisService.get(rateLimitKey);
-    
-    if (lastResetTime) {
-      const timeSinceLastReset = Date.now() - parseInt(lastResetTime);
-      const minimumWaitTime = 60 * 1000; // 1 minute in milliseconds
-      
-      if (timeSinceLastReset < minimumWaitTime) {
-        // A reset was requested recently, but we'll return silently to prevent abuse
-        return;
-      }
-    }
-    */
-    
-    // Generate a secure random token
-    const token = uuidv4();
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
-
-    // Store token in Redis with expiry
-    await this.redisService.set(
-      `password_reset:${token}`,
-      user.id,
-      this.PASSWORD_RESET_TTL
-    );
-
-    // Temporarily disable rate limiting for testing
-    /*
-    // Update rate limit
-    await this.redisService.set(
-      rateLimitKey,
-      Date.now().toString(),
-      this.PASSWORD_RESET_TTL
-    );
-    */
-
-    // Log the password reset request
-    this.logger.debug(`Password reset requested for user ${user.id}`);
-
-    // Send password reset email
-    await this.emailService.sendEmail({
-      to: user.email,
-      subject: 'Reset Your Password',
-      template: EmailTemplate.PASSWORD_RESET,
-      context: { 
-        resetUrl,
-        name: user.firstName || user.name || 'User',
-        expiryTime: `${this.PASSWORD_RESET_TTL / 60} minutes`
-      }
-    });
-  }
-
-  async resetPassword(token: string, newPassword: string): Promise<void> {
-    // Verify token and get user ID
-    const userId = await this.verifyResetToken(token);
-    if (!userId) {
-      throw new UnauthorizedException('Invalid or expired reset token');
-    }
-    
-    // Get the user
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-    
-    // Validate password strength
-    this.validatePasswordStrength(newPassword);
-    
-    // Hash the new password
-    const hashedPassword = await this.hashPassword(newPassword);
-    
-    // Update user's password and set passwordChangedAt
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { 
-        password: hashedPassword,
-        passwordChangedAt: new Date()
-      }
-    });
-    
-    // Invalidate all existing sessions for this user
-    await this.logout(userId, null, true);
-    
-    // Delete the reset token
-    await this.redisService.del(`password_reset:${token}`);
-    
-    // Log the password change
-    this.logger.debug(`Password changed for user ${userId}`);
-    
-    // Send confirmation email
-    await this.emailService.sendEmail({
-      to: user.email,
-      subject: 'Your Password Has Been Reset',
-      template: EmailTemplate.PASSWORD_RESET_CONFIRMATION,
-      context: { 
-        name: user.firstName || user.name || 'User',
-        loginUrl: `${process.env.FRONTEND_URL}/login`
-      }
-    });
-
-    // Invalidate user's sessions and profile caches
-    await this.redisService.invalidateCacheByPattern(`auth:profile:${userId}:*`);
-    await this.redisService.invalidateCacheByTag(`user:${userId}`);
-  }
-
-  private async verifyResetToken(token: string): Promise<string | null> {
-    const userId = await this.redisService.get(`password_reset:${token}`);
-    return userId;
-  }
-
-  private validatePasswordStrength(password: string): void {
-    if (password.length < 8) {
-      throw new BadRequestException('Password must be at least 8 characters long');
-    }
-    
-    // Check for at least one uppercase letter
-    if (!/[A-Z]/.test(password)) {
-      throw new BadRequestException('Password must contain at least one uppercase letter');
-    }
-    
-    // Check for at least one lowercase letter
-    if (!/[a-z]/.test(password)) {
-      throw new BadRequestException('Password must contain at least one lowercase letter');
-    }
-    
-    // Check for at least one number
-    if (!/[0-9]/.test(password)) {
-      throw new BadRequestException('Password must contain at least one number');
-    }
-    
-    // Check for at least one special character
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
-      throw new BadRequestException('Password must contain at least one special character');
     }
   }
 
@@ -1506,7 +1330,7 @@ export class AuthService {
           // Don't fail registration if email fails
           this.logger.error(`Failed to send welcome email: ${emailError.message}`);
         }
-      } else if (!user.googleId) {
+      } else if (!(user as any).googleId) {
         // Update existing user with Google ID if not already set
         user = await this.prisma.user.update({
           where: { id: user.id },
@@ -1666,7 +1490,7 @@ export class AuthService {
         
         // Log new user creation
         this.logger.debug(`New user created: ${user.email}`);
-      } else if (!user.appleId) {
+      } else if (!(user as any).appleId) {
         // Update existing user with Apple ID if not already set
         user = await this.prisma.user.update({
           where: { id: user.id },
@@ -1710,100 +1534,91 @@ export class AuthService {
   }
 
   /**
-   * Get user profile by ID with caching
+   * Get user profile with enhanced clinic context
    */
-  @RedisCache({
-    ttl: 900,                   // 15 minutes TTL
-    prefix: 'auth:profile',     // Cache key prefix
-    staleTime: 300,             // Data becomes stale after 5 minutes
-    tags: ['users', 'profile']  // Tags for grouped invalidation
-  })
   async getUserProfile(userId: string) {
-    // ... existing implementation ...
-  }
-
-  /**
-   * Get all active sessions for a user
-   */
-  @RedisCache({
-    ttl: 300,                         // 5 minutes TTL
-    prefix: 'auth:sessions',          // Cache key prefix
-    staleTime: 60,                    // Data becomes stale after 1 minute
-    tags: ['users', 'user-sessions']  // Tags for grouped invalidation
-  })
-  async getUserSessions(userId: string) {
-    // ... existing implementation ...
-  }
-
-  /**
-   * Request password reset
-   */
-  async requestPasswordReset(email: string) {
-    // ... existing implementation ...
-  }
-
-  /**
-   * Verify email
-   */
-  async verifyEmail(token: string) {
-    const userId = await this.verifyResetToken(token);
-    if (!userId) {
-      throw new UnauthorizedException('Invalid or expired email verification token');
-    }
-    
-    // Get the user with the retrieved userId
+    try {
     const user = await this.prisma.user.findUnique({
-      where: { id: userId }
+        where: { id: userId },
+        include: {
+          doctor: true,
+          patient: true,
+          receptionist: true,
+          clinicAdmin: true,
+          superAdmin: true,
+          clinics: true
+        }
     });
     
     if (!user) {
       throw new NotFoundException('User not found');
     }
     
-    // Update user verification status
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { isVerified: true }
-    });
-    
-    // Invalidate user's profile cache
-    await this.redisService.invalidateCacheByPattern(`auth:profile:${user.id}:*`);
-    await this.redisService.invalidateCacheByTag(`user:${user.id}`);
-    
-    return { success: true, message: 'Email verified successfully' };
+      const { password, ...userProfile } = user;
+      
+      // Add clinic information if user has clinic associations
+      if (userProfile.clinics && userProfile.clinics.length > 0) {
+        const clinicInfo = await Promise.all(
+          userProfile.clinics.map(async (clinic) => {
+            const clinicUsers = await this.clinicUserService.getClinicUsers(clinic.id);
+            let userRole = null;
+
+            if (clinicUsers.doctors.some(d => d.doctor.userId === userId)) {
+              userRole = 'DOCTOR';
+            } else if (clinicUsers.receptionists.some(r => r.userId === userId)) {
+              userRole = 'RECEPTIONIST';
+            } else if (clinicUsers.patients.some(p => p.userId === userId)) {
+              userRole = 'PATIENT';
+            }
+
+            return {
+              id: clinic.id,
+              name: clinic.name,
+              appName: clinic.app_name,
+              role: userRole
+            };
+          })
+        );
+
+        return {
+          ...userProfile,
+          clinics: clinicInfo
+        };
+      }
+
+      return userProfile;
+    } catch (error) {
+      this.logger.error(`Failed to get user profile: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
-   * Get user permissions with caching
+   * Get user sessions with enhanced security
    */
-  @RedisCache({
-    ttl: 1800,                         // 30 minutes TTL
-    prefix: 'auth:permissions',        // Cache key prefix
-    staleTime: 600,                    // Data becomes stale after 10 minutes
-    tags: ['users', 'permissions']     // Tags for grouped invalidation
-  })
-  async getUserPermissions(userId: string) {
-    // ... existing implementation ...
+  async getUserSessions(userId: string) {
+    try {
+      const sessions = await this.sessionService.getActiveSessions(userId);
+      
+      // Add security information to each session
+      const enhancedSessions = sessions.map(session => ({
+        ...session,
+        isCurrentSession: false, // Will be set by client
+        lastActivity: session.lastActivityAt,
+        deviceType: (session.deviceInfo as any)?.type || 'unknown',
+        location: 'Unknown', // Could be enhanced with IP geolocation
+        isSuspicious: false // Could be enhanced with security checks
+      }));
+
+      return enhancedSessions;
+    } catch (error) {
+      this.logger.error(`Failed to get user sessions: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
-   * Check if user has specific permission with shorter cache time
-   */
-  @RedisCache({
-    ttl: 300,                          // 5 minutes TTL
-    prefix: 'auth:has-permission',     // Cache key prefix
-    staleTime: 60,                     // Data becomes stale after 1 minute
-    tags: ['users', 'permissions']     // Tags for grouped invalidation
-  })
-  async hasPermission(userId: string, permission: string): Promise<boolean> {
-    // ... existing implementation ...
-    
-    // Return a boolean value to fix the missing return error
-    return false; // Replace with actual implementation
-  }
-
-  /**
-   * Update user profile
+   * Update user profile with validation
    */
   async updateUserProfile(
     userId: string,
@@ -1813,53 +1628,348 @@ export class AuthService {
       phoneNumber?: string;
       address?: string;
       profileImage?: string;
+      city?: string;
+      state?: string;
+      country?: string;
+      zipCode?: string;
+      dateOfBirth?: string;
+      gender?: string;
+      medicalConditions?: string[];
     }
   ) {
-    // ... existing code ...
-    
-    // Update the user profile
+    try {
+      // Validate user exists
+      const existingUser = await this.prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!existingUser) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Prepare update data
+      const updateData: any = {};
+      
+      if (data.firstName) updateData.firstName = data.firstName;
+      if (data.lastName) updateData.lastName = data.lastName;
+      if (data.phoneNumber) updateData.phone = data.phoneNumber;
+      if (data.address) updateData.address = data.address;
+      if (data.profileImage) updateData.profilePicture = data.profileImage;
+      if (data.city) updateData.city = data.city;
+      if (data.state) updateData.state = data.state;
+      if (data.country) updateData.country = data.country;
+      if (data.zipCode) updateData.zipCode = data.zipCode;
+      if (data.gender) updateData.gender = data.gender;
+      if (data.medicalConditions) {
+        updateData.medicalConditions = this.stringifyMedicalConditions(data.medicalConditions);
+      }
+      
+      if (data.dateOfBirth) {
+        updateData.dateOfBirth = new Date(`${data.dateOfBirth}T00:00:00Z`);
+      }
+
+      // Update name if firstName or lastName changed
+      if (data.firstName || data.lastName) {
+        const firstName = data.firstName || existingUser.firstName;
+        const lastName = data.lastName || existingUser.lastName;
+        updateData.name = `${firstName} ${lastName}`.trim();
+      }
+
     const updatedUser = await this.prisma.user.update({
       where: { id: userId },
-      data: {
-        // Map the profile data to the user model fields
-        firstName: data.firstName,
-        lastName: data.lastName,
-        phone: data.phoneNumber,
-        // Add other fields as needed
-      }
-    });
-    
-    await this.redisService.invalidateCacheByTag(`user:${userId}`);
-    
-    return updatedUser;
+        data: updateData,
+        include: {
+          doctor: true,
+          patient: true,
+          receptionist: true,
+          clinicAdmin: true,
+          superAdmin: true
+        }
+      });
+
+      // Log profile update
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        'User profile updated',
+        'AuthService',
+        { userId, updatedFields: Object.keys(data) }
+      );
+
+      // Emit profile update event
+      await this.eventService.emit('user.profileUpdated', {
+        userId,
+        updatedFields: Object.keys(data)
+      });
+
+      const { password, ...result } = updatedUser;
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to update user profile: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
-   * Change password
+   * Change password with security validation
    */
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
-    // ... existing implementation ...
-    
-    // Invalidate user's profile and sessions caches
-    await this.redisService.invalidateCacheByPattern(`auth:profile:${userId}:*`);
-    await this.redisService.invalidateCacheByPattern(`auth:sessions:${userId}:*`);
-    await this.redisService.invalidateCacheByTag(`user:${userId}`);
-    await this.redisService.invalidateCacheByTag('user-sessions');
-    
-    return { success: true, message: 'Password changed successfully' };
+    try {
+      // Get user with password
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Verify current password
+      const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+      if (!isCurrentPasswordValid) {
+        throw new BadRequestException('Current password is incorrect');
+      }
+
+      // Validate new password strength
+      this.validatePasswordStrength(newPassword);
+
+      // Check if new password is same as current
+      const isSamePassword = await bcrypt.compare(newPassword, user.password);
+      if (isSamePassword) {
+        throw new BadRequestException('New password must be different from current password');
+      }
+
+      // Hash new password
+      const hashedNewPassword = await bcrypt.hash(newPassword, this.SALT_ROUNDS);
+
+      // Update password
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          password: hashedNewPassword,
+          passwordChangedAt: new Date()
+        }
+      });
+
+      // Log password change
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        'Password changed successfully',
+        'AuthService',
+        { userId }
+      );
+
+      // Emit password change event
+      await this.eventService.emit('user.passwordChanged', {
+        userId,
+        timestamp: new Date()
+      });
+
+      // Send password change notification email
+      try {
+        await this.emailService.sendEmail({
+          to: user.email,
+          subject: 'Your Password Has Been Changed',
+          template: EmailTemplate.SECURITY_ALERT,
+          context: {
+            name: user.firstName || user.name || 'User',
+            timestamp: new Date().toLocaleString(),
+            loginUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`
+          }
+        });
+      } catch (emailError) {
+        this.logger.error(`Failed to send password change notification: ${emailError.message}`);
+      }
+
+      return { message: 'Password changed successfully' };
+    } catch (error) {
+      this.logger.error(`Failed to change password: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
-   * Get user roles with caching
+   * Get user roles with clinic context
    */
-  @RedisCache({
-    ttl: 1800,                    // 30 minutes TTL
-    prefix: 'auth:roles',         // Cache key prefix
-    staleTime: 600,               // Data becomes stale after 10 minutes
-    tags: ['users', 'roles']      // Tags for grouped invalidation
-  })
   async getUserRoles(userId: string) {
-    // ... existing implementation ...
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          doctor: {
+            include: {
+              clinics: true
+            }
+          },
+          receptionist: true,
+          clinicAdmin: true,
+          clinics: true
+        }
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const roles = {
+        globalRole: user.role,
+        clinicRoles: []
+      };
+
+      // Get clinic-specific roles
+      if (user.clinics && user.clinics.length > 0) {
+        for (const clinic of user.clinics) {
+          const clinicUsers = await this.clinicUserService.getClinicUsers(clinic.id);
+          let clinicRole = null;
+
+          if (clinicUsers.doctors.some(d => d.doctor.userId === userId)) {
+            clinicRole = 'DOCTOR';
+          } else if (clinicUsers.receptionists.some(r => r.userId === userId)) {
+            clinicRole = 'RECEPTIONIST';
+          } else if (clinicUsers.patients.some(p => p.userId === userId)) {
+            clinicRole = 'PATIENT';
+          }
+
+          if (clinicRole) {
+            roles.clinicRoles.push({
+              clinicId: clinic.id,
+              clinicName: clinic.name,
+              role: clinicRole
+            });
+          }
+        }
+      }
+
+      return roles;
+    } catch (error) {
+      this.logger.error(`Failed to get user roles: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Enhanced request password reset with rate limiting
+   */
+  async requestPasswordReset(email: string) {
+    try {
+      const user = await this.findUserByEmail(email);
+      if (!user) {
+        // Return silently to prevent email enumeration
+        return { message: 'If the email exists, a password reset link has been sent' };
+      }
+
+      // Check rate limiting
+      const rateLimitKey = `password_reset_rate_limit:${user.id}`;
+      const lastResetTime = await this.redisService.get(rateLimitKey);
+      
+      if (lastResetTime) {
+        const timeSinceLastReset = Date.now() - parseInt(lastResetTime);
+        const minimumWaitTime = 5 * 60 * 1000; // 5 minutes
+        
+        if (timeSinceLastReset < minimumWaitTime) {
+          throw new BadRequestException('Please wait 5 minutes before requesting another password reset');
+        }
+      }
+
+      // Generate reset token
+      const token = uuidv4();
+      const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+
+      // Store token with expiry
+      await this.redisService.set(
+        `password_reset:${token}`,
+        user.id,
+        this.PASSWORD_RESET_TTL
+      );
+
+      // Update rate limit
+      await this.redisService.set(
+        rateLimitKey,
+        Date.now().toString(),
+        this.PASSWORD_RESET_TTL
+      );
+
+      // Log password reset request
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        'Password reset requested',
+        'AuthService',
+        { userId: user.id, email: user.email }
+      );
+
+      // Send password reset email
+      await this.emailService.sendEmail({
+        to: user.email,
+        subject: 'Reset Your Password',
+        template: EmailTemplate.PASSWORD_RESET,
+        context: { 
+          resetUrl,
+          name: user.firstName || user.name || 'User',
+          expiryTime: `${this.PASSWORD_RESET_TTL / 60} minutes`
+        }
+      });
+
+      return { message: 'If the email exists, a password reset link has been sent' };
+    } catch (error) {
+      this.logger.error(`Failed to request password reset: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Enhanced email verification
+   */
+  async verifyEmail(token: string) {
+    try {
+      const userId = await this.redisService.get(`email_verification:${token}`);
+      
+      if (!userId) {
+        throw new BadRequestException('Invalid or expired verification token');
+      }
+
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      if (user.isVerified) {
+        return { message: 'Email is already verified' };
+      }
+
+      // Mark user as verified
+      const updatedUser = await this.prisma.user.update({
+        where: { id: userId },
+        data: { isVerified: true }
+      });
+
+      // Delete verification token
+      await this.redisService.del(`email_verification:${token}`);
+
+      // Log email verification
+      await this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        'Email verified successfully',
+        'AuthService',
+        { userId, email: user.email }
+      );
+
+      // Emit email verification event
+      await this.eventService.emit('user.emailVerified', {
+        userId,
+        email: user.email
+      });
+
+      return { message: 'Email verified successfully' };
+    } catch (error) {
+      this.logger.error(`Failed to verify email: ${error.message}`);
+      throw error;
+    }
   }
 
   private parseMedicalConditions(medicalConditions: string | null): string[] {
@@ -1994,6 +2104,423 @@ export class AuthService {
     } catch (error) {
       this.logger.error('Failed to exchange Google OAuth code:', error);
       throw new UnauthorizedException('Failed to exchange Google OAuth code');
+    }
+  }
+
+  /**
+   * Get display name for user role
+   */
+  private getRoleDisplayName(role: Role): string {
+    switch (role) {
+      case 'SUPER_ADMIN':
+        return 'Super Administrator';
+      case 'CLINIC_ADMIN':
+        return 'Clinic Administrator';
+      case 'DOCTOR':
+        return 'Doctor';
+      case 'PATIENT':
+        return 'Patient';
+      case 'RECEPTIONIST':
+        return 'Receptionist';
+      default:
+        return 'User';
+    }
+  }
+
+  private async generateNextUID(): Promise<string> {
+    // Get the last user with a UID
+    const lastUser = await this.prisma.user.findFirst({
+      orderBy: {
+        userid: 'desc'
+      }
+    });
+
+    let nextNumber = 1;
+    if (lastUser && lastUser.userid) {
+      // Extract the number from the last UID and increment it
+      const lastNumber = parseInt(lastUser.userid.replace('UID', ''));
+      nextNumber = lastNumber + 1;
+    }
+
+    // Format the new UID with leading zeros (6 digits)
+    return `UID${nextNumber.toString().padStart(6, '0')}`;
+  }
+
+  /**
+   * Register a new user with clinic-specific context
+   * @param createUserDto User registration data
+   * @param appName Optional clinic app name for clinic-specific registration
+   * @returns The registered user
+   */
+  async registerWithClinic(createUserDto: CreateUserDto, appName?: string): Promise<UserResponseDto> {
+    try {
+      // First, register the user in the global database
+      const user = await this.register(createUserDto);
+
+      // If an app name is provided, update the user's appName and register with clinic
+      if (appName) {
+        try {
+          // Update user's appName using StringFieldUpdateOperationsInput
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+              appName: {
+                set: appName
+              }
+            }
+          });
+
+          // Get the clinic by app name using ClinicService
+          const clinic = await this.clinicService.getClinicByAppName(appName);
+          
+          if (clinic) {
+            // Associate user with clinic using ClinicUserService
+            await this.clinicService.associateUserWithClinic(user.id, clinic.id);
+
+            // Log the clinic registration
+            this.logger.log(`User ${user.id} registered to clinic ${clinic.id} (${appName})`);
+
+            // Generate clinic-specific token
+            const clinicToken = await this.clinicService.generateClinicToken(user.id, clinic.id);
+
+            // Return user with clinic information
+            return {
+              ...user,
+              clinicToken,
+              clinic: {
+                id: clinic.id,
+                name: clinic.name,
+                locations: await this.clinicService.getActiveLocations(clinic.id)
+              }
+            };
+          }
+        } catch (error) {
+          // Log the error but don't fail the registration
+          this.logger.error(`Failed to register user to clinic: ${error.message}`, error.stack);
+        }
+      }
+
+      return user;
+    } catch (error) {
+      this.logger.error(`Registration with clinic failed: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Logout a user - invalidate tokens
+   */
+  async logout(
+    userId: string,
+    sessionId?: string,
+    allDevices: boolean = false,
+    token?: string,
+  ): Promise<void> {
+    try {
+      // Get all active sessions for the user
+      const sessionsToTerminate: string[] = [];
+      const userSessionsKey = `user:${userId}:sessions`;
+      const activeSessions = await this.redisService.sMembers(userSessionsKey);
+
+      // If token is provided, blacklist it
+      if (token) {
+        // Store only first 64 chars of token as key to save space
+        const tokenKey = `blacklist:token:${token.substring(0, 64)}`;
+        // Set token in blacklist with expiry matching JWT expiry (default 1 day)
+        await this.redisService.set(tokenKey, 'true', 86400);
+        this.logger.debug(`Token blacklisted for user ${userId}`);
+      }
+
+      // Determine which sessions to terminate
+      if (allDevices) {
+        sessionsToTerminate.push(...activeSessions);
+      } else if (sessionId) {
+        if (activeSessions.includes(sessionId)) {
+          sessionsToTerminate.push(sessionId);
+        }
+      } else {
+        // If no sessionId provided and not all devices, use the most recent session
+        if (activeSessions.length > 0) {
+          sessionsToTerminate.push(activeSessions[0]);
+        }
+      }
+
+      for (const sid of sessionsToTerminate) {
+        // Get session data
+        const sessionKey = `session:${userId}:${sid}`;
+        const sessionData = await this.redisService.get(sessionKey);
+        
+        if (sessionData) {
+          const session = JSON.parse(sessionData);
+          const deviceKey = `device:${userId}:${session.deviceInfo?.deviceId}`;
+
+          // Delete session-related data
+          await Promise.all([
+            // Delete session data
+            this.redisService.del(sessionKey),
+            // Delete refresh token
+            this.redisService.del(`refresh:${session.refreshToken}`),
+            // Remove from active sessions
+            this.redisService.sRem(`user:${userId}:sessions`, sid),
+            // Update device last seen
+            this.redisService.get(deviceKey).then(async (deviceData) => {
+              if (deviceData) {
+                const device = JSON.parse(deviceData);
+                if (device.sessionId === sid) {
+                  await this.redisService.set(
+                    deviceKey,
+                    JSON.stringify({
+                      ...device,
+                      lastSeen: new Date(),
+                      status: 'logged_out'
+                    }),
+                    30 * 24 * 60 * 60 // 30 days
+                  );
+                }
+              }
+            })
+          ]);
+        }
+      }
+
+      // Update user's login status if logging out of all devices
+      if (allDevices) {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { lastLogin: null }
+        });
+      }
+
+      // Invalidate user's profile cache
+      await this.redisService.invalidateCacheByPattern(`auth:profile:${userId}:*`);
+      await this.redisService.invalidateCacheByTag(`user:${userId}`);
+
+    } catch (error) {
+      // Log the error but don't expose internal details
+      this.logger.error(`Logout error for user ${userId}: ${error.message}`);
+      throw new UnauthorizedException('Failed to logout properly');
+    }
+  }
+
+  /**
+   * Enhanced token refresh with security measures
+   */
+  async refreshToken(userId: string, deviceFingerprint: string) {
+    try {
+      // Get user's active sessions
+      const activeSessions = await this.sessionService.getActiveSessions(userId);
+      const session = activeSessions.find(s => s.deviceInfo.deviceId === deviceFingerprint);
+      
+      if (!session) {
+        throw new UnauthorizedException('Invalid session');
+      }
+      
+      // Validate session
+      const isValid = await this.sessionService.validateSession(userId, session.sessionId);
+      if (!isValid) {
+        throw new UnauthorizedException('Session expired');
+      }
+      
+      // Generate new tokens
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+      
+      const payload = {
+        email: user.email,
+        sub: userId,
+        role: user.role,
+        sessionId: session.sessionId
+      };
+      
+      const newAccessToken = this.jwtService.sign(payload);
+      const newRefreshToken = uuidv4();
+      
+      // Update session with new refresh token
+      await this.sessionService.updateSessionActivity(userId, session.sessionId);
+      
+      return {
+        access_token: newAccessToken,
+        refresh_token: newRefreshToken,
+        token_type: 'Bearer',
+        expires_in: 24 * 60 * 60 // 24 hours in seconds
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+      this.logger.error(`Token refresh failed: ${error.message}`);
+      throw new UnauthorizedException('Failed to refresh token');
+    }
+  }
+
+  async validateToken(userId: string): Promise<boolean> {
+    const session = await this.redisService.get(`session:${userId}`);
+    return !!session;
+  }
+
+  async sendVerificationEmail(user: User): Promise<void> {
+    const token = uuidv4();
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+
+    // Store token in Redis
+    await this.redisService.set(
+      `email_verification:${token}`,
+      user.id,
+      this.EMAIL_VERIFICATION_TTL
+    );
+
+    await this.emailService.sendEmail({
+      to: user.email,
+      subject: 'Verify Your Email',
+      template: EmailTemplate.VERIFICATION,
+      context: { verificationUrl }
+    });
+  }
+
+  async forgotPassword(email: string): Promise<void> {
+    const user = await this.findUserByEmail(email);
+    if (!user) {
+      // Return silently to prevent email enumeration
+      return;
+    }
+
+    // Check if a reset token was recently issued
+    // Temporarily disable rate limiting for testing
+    /*
+    const rateLimitKey = `password_reset_rate_limit:${user.id}`;
+    const lastResetTime = await this.redisService.get(rateLimitKey);
+    
+    if (lastResetTime) {
+      const timeSinceLastReset = Date.now() - parseInt(lastResetTime);
+      const minimumWaitTime = 60 * 1000; // 1 minute in milliseconds
+      
+      if (timeSinceLastReset < minimumWaitTime) {
+        // A reset was requested recently, but we'll return silently to prevent abuse
+        return;
+      }
+    }
+    */
+    
+    // Generate a secure random token
+    const token = uuidv4();
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+
+    // Store token in Redis with expiry
+    await this.redisService.set(
+      `password_reset:${token}`,
+      user.id,
+      this.PASSWORD_RESET_TTL
+    );
+
+    // Temporarily disable rate limiting for testing
+    /*
+    // Update rate limit
+    await this.redisService.set(
+      rateLimitKey,
+      Date.now().toString(),
+      this.PASSWORD_RESET_TTL
+    );
+    */
+
+    // Log the password reset request
+    this.logger.debug(`Password reset requested for user ${user.id}`);
+
+    // Send password reset email
+    await this.emailService.sendEmail({
+      to: user.email,
+      subject: 'Reset Your Password',
+      template: EmailTemplate.PASSWORD_RESET,
+      context: { 
+        resetUrl,
+        name: user.firstName || user.name || 'User',
+        expiryTime: `${this.PASSWORD_RESET_TTL / 60} minutes`
+      }
+    });
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    // Verify token and get user ID
+    const userId = await this.verifyResetToken(token);
+    if (!userId) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+    
+    // Get the user
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+    
+    // Validate password strength
+    this.validatePasswordStrength(newPassword);
+    
+    // Hash the new password
+    const hashedPassword = await this.hashPassword(newPassword);
+    
+    // Update user's password and set passwordChangedAt
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { 
+        password: hashedPassword,
+        passwordChangedAt: new Date()
+      }
+    });
+    
+    // Invalidate all existing sessions for this user
+    await this.logout(userId, null, true);
+    
+    // Delete the reset token
+    await this.redisService.del(`password_reset:${token}`);
+    
+    // Log the password change
+    this.logger.debug(`Password changed for user ${userId}`);
+    
+    // Send confirmation email
+    await this.emailService.sendEmail({
+      to: user.email,
+      subject: 'Your Password Has Been Reset',
+      template: EmailTemplate.PASSWORD_RESET_CONFIRMATION,
+      context: { 
+        name: user.firstName || user.name || 'User',
+        loginUrl: `${process.env.FRONTEND_URL}/login`
+      }
+    });
+
+    // Invalidate user's sessions and profile caches
+    await this.redisService.invalidateCacheByPattern(`auth:profile:${userId}:*`);
+    await this.redisService.invalidateCacheByTag(`user:${userId}`);
+  }
+
+  private async verifyResetToken(token: string): Promise<string | null> {
+    const userId = await this.redisService.get(`password_reset:${token}`);
+    return userId;
+  }
+
+  private validatePasswordStrength(password: string): void {
+    if (password.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters long');
+    }
+    
+    // Check for at least one uppercase letter
+    if (!/[A-Z]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one uppercase letter');
+    }
+    
+    // Check for at least one lowercase letter
+    if (!/[a-z]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one lowercase letter');
+    }
+    
+    // Check for at least one number
+    if (!/[0-9]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one number');
+    }
+    
+    // Check for at least one special character
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one special character');
     }
   }
 } 
