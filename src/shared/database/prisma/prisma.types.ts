@@ -57,7 +57,7 @@ export type Review = PrismaReview
 export type Notification = PrismaNotification
 export type AuditLog = PrismaAuditLog
 
-// Define and export all enums
+// Define and export all enums - Updated to match schema
 export enum Role {
   SUPER_ADMIN = 'SUPER_ADMIN',
   CLINIC_ADMIN = 'CLINIC_ADMIN',
@@ -73,12 +73,14 @@ export enum Gender {
 }
 
 export enum AppointmentStatus {
-  PENDING = 'PENDING',
   SCHEDULED = 'SCHEDULED',
+  CHECKED_IN = 'CHECKED_IN',
   CONFIRMED = 'CONFIRMED',
-  CANCELLED = 'CANCELLED',
+  IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',
-  NO_SHOW = 'NO_SHOW'
+  CANCELLED = 'CANCELLED',
+  NO_SHOW = 'NO_SHOW',
+  PENDING = 'PENDING'
 }
 
 export enum PaymentStatus {

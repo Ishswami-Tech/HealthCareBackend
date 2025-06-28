@@ -622,8 +622,13 @@ async function cleanDatabase() {
     ];
 
     for (const table of tables) {
-      await prisma[table].deleteMany({});
-      console.log(`Cleaned ${table} table`);
+      try {
+        await prisma[table].deleteMany({});
+        console.log(`Cleaned ${table} table`);
+      } catch (error) {
+        // Skip if table doesn't exist
+        console.log(`Skipping ${table} table (may not exist yet)`);
+      }
     }
   } catch (error) {
     console.error('Error cleaning database:', error);

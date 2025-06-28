@@ -148,7 +148,7 @@ export class AppointmentQueueService {
             in: [
               AppointmentStatus.SCHEDULED,
               AppointmentStatus.CONFIRMED,
-              QueueStatus.IN_PROGRESS
+              AppointmentStatus.IN_PROGRESS
             ]
           }
         },
@@ -168,13 +168,13 @@ export class AppointmentQueueService {
         doctorStats: {}
       };
 
-      const doctorAppointments = new Map<string, AppointmentStatus[]>();
+      const doctorAppointments = new Map<string, any[]>();
 
       for (const appointment of appointments) {
         if (appointment.status === AppointmentStatus.SCHEDULED || 
             appointment.status === AppointmentStatus.CONFIRMED) {
           stats.waiting++;
-        } else if (appointment.status === AppointmentStatus.CONFIRMED) {
+        } else if (appointment.status === AppointmentStatus.IN_PROGRESS) {
           stats.active++;
         }
 
@@ -202,7 +202,7 @@ export class AppointmentQueueService {
             status === AppointmentStatus.CONFIRMED
           ).length,
           active: appointments.filter(status => 
-            status === AppointmentStatus.CONFIRMED
+            status === AppointmentStatus.IN_PROGRESS
           ).length,
           avgWaitTime: stats.avgWaitTime
         };

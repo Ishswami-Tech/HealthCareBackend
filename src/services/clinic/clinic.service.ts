@@ -57,13 +57,13 @@ export class ClinicService {
       where: { id: data.createdBy },
         include: { 
           superAdmin: true,
-          clinicAdmin: true 
+          clinicAdmins: true 
         },
       });
 
       if (!creator || (creator.role !== Role.SUPER_ADMIN && creator.role !== Role.CLINIC_ADMIN) || 
           (creator.role === Role.SUPER_ADMIN && !creator.superAdmin) || 
-          (creator.role === Role.CLINIC_ADMIN && !creator.clinicAdmin)) {
+          (creator.role === Role.CLINIC_ADMIN && !creator.clinicAdmins?.length)) {
         await this.errorService.logError(
           { message: 'Unauthorized clinic creation attempt' },
           'ClinicService',
@@ -96,14 +96,14 @@ export class ClinicService {
           // Look up user by email
           clinicAdmin = await this.prisma.user.findUnique({
             where: { email: data.clinicAdminIdentifier },
-            include: { clinicAdmin: true }
+            include: { clinicAdmins: true }
           });
         } else {
           // Try to parse as ID (could be numeric ID or UUID)
           try {
             clinicAdmin = await this.prisma.user.findUnique({
               where: { id: data.clinicAdminIdentifier },
-              include: { clinicAdmin: true }
+              include: { clinicAdmins: true }
             });
           } catch (error) {
             await this.errorService.logError(
@@ -126,7 +126,7 @@ export class ClinicService {
           throw new NotFoundException(`Clinic Admin with ${isEmail ? 'email' : 'ID'} "${data.clinicAdminIdentifier}" not found`);
         }
 
-        if (clinicAdmin.role !== Role.CLINIC_ADMIN || !clinicAdmin.clinicAdmin) {
+        if (clinicAdmin.role !== Role.CLINIC_ADMIN || !clinicAdmin.clinicAdmins?.length) {
           await this.errorService.logError(
             { message: 'Specified user is not a Clinic Admin' },
             'ClinicService',
@@ -279,7 +279,7 @@ export class ClinicService {
         },
       include: {
         superAdmin: true,
-          clinicAdmin: true
+          clinicAdmins: true
         }
     });
 
@@ -300,7 +300,7 @@ export class ClinicService {
         role: user.role,
         hasSuperAdmin: !!user.superAdmin,
         superAdmin: user.superAdmin,
-        hasClinicAdmin: !!user.clinicAdmin
+        hasClinicAdmin: !!user.clinicAdmins?.length
       });
 
       let clinics;
@@ -453,7 +453,7 @@ export class ClinicService {
         where: { id: userId },
         include: {
           superAdmin: true,
-          clinicAdmin: true,
+          clinicAdmins: true,
         },
       });
 
@@ -585,7 +585,7 @@ export class ClinicService {
     try {
       const assigner = await this.prisma.user.findUnique({
         where: { id: data.assignedBy },
-        include: { superAdmin: true, clinicAdmin: true }
+        include: { superAdmin: true, clinicAdmins: true }
       });
 
       if (!assigner) {
@@ -600,7 +600,7 @@ export class ClinicService {
 
       const user = await this.prisma.user.findUnique({
         where: { id: data.userId },
-        include: { clinicAdmin: true }
+        include: { clinicAdmins: true }
       });
 
       if (!user) {
@@ -658,7 +658,7 @@ export class ClinicService {
       // Check if a SuperAdmin or a ClinicAdmin owner is making this assignment
       if (assigner.role === Role.SUPER_ADMIN && assigner.superAdmin) {
         // SuperAdmin can assign any ClinicAdmin to any clinic
-      } else if (assigner.role === Role.CLINIC_ADMIN && assigner.clinicAdmin) {
+      } else if (assigner.role === Role.CLINIC_ADMIN && assigner.clinicAdmins?.length) {
         // Check if the assigner is an owner of this clinic
         const isOwner = clinic.admins.some(
           (admin) => admin.userId === data.assignedBy
@@ -793,7 +793,7 @@ export class ClinicService {
       where: { id: userId },
       include: {
         superAdmin: true,
-        clinicAdmin: true,
+        clinicAdmins: true,
       },
     });
 
@@ -813,7 +813,7 @@ export class ClinicService {
     // Check if the user has permission to view this clinic's doctors
     if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
       // SuperAdmin can see all doctors
-    } else if (user.role === Role.CLINIC_ADMIN && user.clinicAdmin) {
+    } else if (user.role === Role.CLINIC_ADMIN && user.clinicAdmins?.length) {
       // ClinicAdmin can only see doctors from their assigned clinics
       const isAdmin = await this.prisma.clinicAdmin.findFirst({
         where: {
@@ -857,7 +857,7 @@ export class ClinicService {
       where: { id: userId },
       include: {
         superAdmin: true,
-        clinicAdmin: true,
+        clinicAdmins: true,
       },
     });
 
@@ -877,7 +877,7 @@ export class ClinicService {
     // Check if the user has permission to view this clinic's patients
     if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
       // SuperAdmin can see all patients
-    } else if (user.role === Role.CLINIC_ADMIN && user.clinicAdmin) {
+    } else if (user.role === Role.CLINIC_ADMIN && user.clinicAdmins?.length) {
       // ClinicAdmin can only see patients from their assigned clinics
       const isAdmin = await this.prisma.clinicAdmin.findFirst({
         where: {
@@ -955,7 +955,7 @@ export class ClinicService {
         where: { id: userId },
         include: {
           superAdmin: true,
-          clinicAdmin: true,
+          clinicAdmins: true,
         },
       });
 

@@ -142,8 +142,8 @@ export class AuthService {
         superAdmin: true,
         doctor: true,
         patient: true,
-        clinicAdmin: true,
-        receptionist: true
+        clinicAdmins: true,
+        receptionists: true
       }
     });
 
@@ -212,7 +212,11 @@ export class AuthService {
             );
             
             const { password, ...result } = existingUser;
-            return result as UserResponseDto;
+            const userResponse = { ...result } as any;
+            if (userResponse.medicalConditions) {
+              userResponse.medicalConditions = this.parseMedicalConditions(userResponse.medicalConditions);
+            }
+            return userResponse as UserResponseDto;
           }
 
           // User exists but not associated with this clinic - create association
@@ -252,6 +256,8 @@ export class AuthService {
               name: fullName,
               role: 'PATIENT', // Default role for clinic registration
               isVerified: false,
+              age: userData.age || 0, // Ensure age is provided
+              medicalConditions: this.stringifyMedicalConditions(userData.medicalConditions),
               clinics: {
                 connect: { id: clinicId }
               }
@@ -468,8 +474,8 @@ export class AuthService {
                 clinics: true
               }
             },
-            receptionist: true,
-            clinicAdmin: true
+            receptionists: true,
+            clinicAdmins: true
           }
         });
 
@@ -481,15 +487,15 @@ export class AuthService {
         let hasClinicAccess = false;
 
         // Direct clinic association
-        if (userWithClinics.clinics.some(clinic => clinic.id === clinicId)) {
+        if ((userWithClinics as any).clinics && (userWithClinics as any).clinics.some((clinic: any) => clinic.id === clinicId)) {
           hasClinicAccess = true;
         }
 
         // Doctor in clinic
-        if (!hasClinicAccess && userWithClinics.doctor) {
+        if (!hasClinicAccess && (userWithClinics as any).doctor) {
           const doctorClinic = await this.prisma.doctorClinic.findFirst({
             where: {
-              doctorId: userWithClinics.doctor.id,
+              doctorId: (userWithClinics as any).doctor.id,
               clinicId: clinicId
             }
           });
@@ -497,13 +503,13 @@ export class AuthService {
         }
 
         // Receptionist in clinic
-        if (!hasClinicAccess && userWithClinics.receptionist) {
-          hasClinicAccess = userWithClinics.receptionist.clinicId === clinicId;
+        if (!hasClinicAccess && (userWithClinics as any).receptionists && (userWithClinics as any).receptionists.length > 0) {
+          hasClinicAccess = (userWithClinics as any).receptionists.some((rec: any) => rec.clinicId === clinicId);
         }
 
         // Clinic admin
-        if (!hasClinicAccess && userWithClinics.clinicAdmin) {
-          hasClinicAccess = userWithClinics.clinicAdmin.clinicId === clinicId;
+        if (!hasClinicAccess && (userWithClinics as any).clinicAdmins && (userWithClinics as any).clinicAdmins.length > 0) {
+          hasClinicAccess = (userWithClinics as any).clinicAdmins.some((admin: any) => admin.clinicId === clinicId);
         }
 
         if (!hasClinicAccess) {
@@ -560,8 +566,8 @@ export class AuthService {
         include: {
           doctor: true,
           patient: true,
-          receptionist: true,
-          clinicAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
           superAdmin: true,
         }
       });
@@ -1543,8 +1549,8 @@ export class AuthService {
         include: {
           doctor: true,
           patient: true,
-          receptionist: true,
-          clinicAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
           superAdmin: true,
           clinics: true
         }
@@ -1557,17 +1563,17 @@ export class AuthService {
       const { password, ...userProfile } = user;
       
       // Add clinic information if user has clinic associations
-      if (userProfile.clinics && userProfile.clinics.length > 0) {
+      if ((userProfile as any).clinics && (userProfile as any).clinics.length > 0) {
         const clinicInfo = await Promise.all(
-          userProfile.clinics.map(async (clinic) => {
+          (userProfile as any).clinics.map(async (clinic: any) => {
             const clinicUsers = await this.clinicUserService.getClinicUsers(clinic.id);
             let userRole = null;
 
-            if (clinicUsers.doctors.some(d => d.doctor.userId === userId)) {
+            if (clinicUsers.doctors.some((d: any) => d.doctor.userId === userId)) {
               userRole = 'DOCTOR';
-            } else if (clinicUsers.receptionists.some(r => r.userId === userId)) {
+            } else if (clinicUsers.receptionists.some((r: any) => r.userId === userId)) {
               userRole = 'RECEPTIONIST';
-            } else if (clinicUsers.patients.some(p => p.userId === userId)) {
+            } else if (clinicUsers.patients.some((p: any) => p.userId === userId)) {
               userRole = 'PATIENT';
             }
 
@@ -1681,8 +1687,8 @@ export class AuthService {
         include: {
           doctor: true,
           patient: true,
-          receptionist: true,
-          clinicAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
           superAdmin: true
         }
       });
@@ -1802,8 +1808,8 @@ export class AuthService {
               clinics: true
             }
           },
-          receptionist: true,
-          clinicAdmin: true,
+          receptionists: true,
+          clinicAdmins: true,
           clinics: true
         }
       });
@@ -1818,16 +1824,16 @@ export class AuthService {
       };
 
       // Get clinic-specific roles
-      if (user.clinics && user.clinics.length > 0) {
-        for (const clinic of user.clinics) {
+      if ((user as any).clinics && (user as any).clinics.length > 0) {
+        for (const clinic of (user as any).clinics) {
           const clinicUsers = await this.clinicUserService.getClinicUsers(clinic.id);
           let clinicRole = null;
 
-          if (clinicUsers.doctors.some(d => d.doctor.userId === userId)) {
+          if (clinicUsers.doctors.some((d: any) => d.doctor.userId === userId)) {
             clinicRole = 'DOCTOR';
-          } else if (clinicUsers.receptionists.some(r => r.userId === userId)) {
+          } else if (clinicUsers.receptionists.some((r: any) => r.userId === userId)) {
             clinicRole = 'RECEPTIONIST';
-          } else if (clinicUsers.patients.some(p => p.userId === userId)) {
+          } else if (clinicUsers.patients.some((p: any) => p.userId === userId)) {
             clinicRole = 'PATIENT';
           }
 
