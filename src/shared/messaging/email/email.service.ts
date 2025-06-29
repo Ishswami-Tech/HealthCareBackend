@@ -2,28 +2,35 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailTemplate, EmailOptions } from '../../../libs/types/email.types';
 import * as nodemailer from 'nodemailer';
+import { MailtrapClient } from 'mailtrap';
 
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter;
+  private mailtrap: MailtrapClient;
   private isInitialized = false;
+  private provider: 'smtp' | 'api';
 
-  constructor(
-    private configService: ConfigService,
-  ) {}
+  constructor(private configService: ConfigService) {}
 
   async onModuleInit() {
-    await this.initializeTransporter();
+    this.provider = (this.configService.get<string>('EMAIL_PROVIDER') || 'smtp') as 'smtp' | 'api';
+    if (this.provider === 'smtp') {
+      await this.initSMTP();
+    } else {
+      await this.initAPI();
+    }
   }
 
-  private async initializeTransporter() {
+  private async initSMTP() {
     try {
       const emailConfig = this.configService.get('email');
-      if (!emailConfig) {
-        throw new Error('Email configuration not found');
+      if (!emailConfig || !emailConfig.user || !emailConfig.password) {
+        this.logger.warn('SMTP credentials not provided, email service will be disabled');
+        this.isInitialized = false;
+        return;
       }
-
       this.transporter = nodemailer.createTransport({
         host: emailConfig.host,
         port: emailConfig.port,
@@ -34,47 +41,83 @@ export class EmailService implements OnModuleInit {
         },
         tls: {
           ciphers: 'SSLv3',
-          rejectUnauthorized: false
-        }
+          rejectUnauthorized: false,
+        },
       });
-
-      // Verify connection
       await this.transporter.verify();
       this.isInitialized = true;
-      this.logger.log('Email server is ready to send messages');
-
+      this.logger.log('SMTP email server is ready');
     } catch (error) {
-      this.logger.error('Failed to initialize email transporter:', error);
+      this.logger.error('Failed to initialize SMTP transporter:', error.message);
       this.isInitialized = false;
-      throw error;
     }
   }
 
-  isHealthy(): boolean {
-    return this.isInitialized && !!this.transporter;
+  private async initAPI() {
+    try {
+      const token = this.configService.get<string>('MAILTRAP_API_TOKEN');
+      if (!token) {
+        this.logger.warn('Mailtrap API token not set, email service disabled.');
+        this.isInitialized = false;
+        return;
+      }
+      this.mailtrap = new MailtrapClient({ token });
+      this.isInitialized = true;
+      this.logger.log('Mailtrap API client initialized');
+    } catch (error) {
+      this.logger.error('Failed to initialize Mailtrap API:', error.message);
+      this.isInitialized = false;
+    }
   }
 
   async sendEmail(options: EmailOptions): Promise<boolean> {
+    if (!this.isInitialized) {
+      this.logger.warn('Email service is not initialized, skipping email send');
+      return false;
+    }
+    if (this.provider === 'smtp') {
+      return this.sendViaSMTP(options);
+    } else {
+      return this.sendViaAPI(options);
+    }
+  }
+
+  private async sendViaSMTP(options: EmailOptions): Promise<boolean> {
     try {
       const emailConfig = this.configService.get('email');
-      if (!emailConfig) {
-        throw new Error('Email configuration not found');
-      }
-
       const mailOptions = {
         from: emailConfig.from,
         to: options.to,
         subject: options.subject,
         html: this.getEmailTemplate(options.template, options.context),
       };
-
       const info = await this.transporter.sendMail(mailOptions);
-      
-      this.logger.debug(`Email sent: ${info.messageId}`);
-      
+      this.logger.debug(`SMTP Email sent: ${info.messageId}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send email: ${error.message}`, error.stack);
+      this.logger.error(`Failed to send SMTP email: ${error.message}`, error.stack);
+      return false;
+    }
+  }
+
+  private async sendViaAPI(options: EmailOptions): Promise<boolean> {
+    try {
+      // Use defaults if not present in options
+      const fromEmail = (options as any).from || 'noreply@healthcare.com';
+      const fromName = (options as any).fromName || 'Healthcare App';
+      const category = (options as any).category || 'Notification';
+      await this.mailtrap.send({
+        from: { email: fromEmail, name: fromName },
+        to: [{ email: options.to }],
+        subject: options.subject,
+        text: options.text,
+        html: options.html || this.getEmailTemplate(options.template, options.context),
+        category,
+      });
+      this.logger.debug(`API Email sent to ${options.to}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send API email: ${error.message}`, error.stack);
       return false;
     }
   }
@@ -356,5 +399,9 @@ export class EmailService implements OnModuleInit {
       otp += digits[Math.floor(Math.random() * 10)];
     }
     return otp;
+  }
+
+  isHealthy(): boolean {
+    return this.isInitialized;
   }
 } 
