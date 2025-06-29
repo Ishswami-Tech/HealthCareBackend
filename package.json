@@ -85,6 +85,7 @@
     "google-auth-library": "^9.15.1",
     "googleapis": "^150.0.1",
     "ioredis": "^5.5.0",
+    "mailtrap": "^4.1.0",
     "nodemailer": "^6.10.0",
     "npmlog": "^7.0.1",
     "passport": "^0.7.0",
