@@ -406,6 +406,7 @@ async function bootstrap() {
         'Content-Type',
         'Authorization',
         'X-Session-ID',
+        'X-Clinic-ID',
         'Origin',
         'Accept',
         'X-Requested-With',
@@ -434,7 +435,7 @@ async function bootstrap() {
           if (allowedOrigins.includes(origin) || /\.ishswami\.in$/.test(origin)) {
             reply.header('Access-Control-Allow-Origin', origin);
             reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-            reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-ID');
+            reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest');
             reply.header('Access-Control-Allow-Credentials', 'true');
             reply.header('Access-Control-Max-Age', '86400');
             reply.send();
