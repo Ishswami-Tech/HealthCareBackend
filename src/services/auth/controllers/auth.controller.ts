@@ -68,23 +68,11 @@ export class AuthController {
     @Body() registerDto: RegisterDto,
     @OptionalClinicId() clinicId?: string
   ): Promise<UserResponseDto> {
-    try {
-      // Merge clinicId from decorator with DTO if provided
-      const registrationData = clinicId ? { ...registerDto, clinicId } : registerDto;
-      return await this.authService.register(registrationData);
-    } catch (error) {
-      this.logger.error(`Registration failed: ${error.message}`, error.stack);
-      
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      
-      if (error.code === 'P2002') {
-        throw new BadRequestException('User with this email already exists');
-      }
-      
-      throw new InternalServerErrorException('Registration failed');
+    if (!clinicId && !registerDto.clinicId) {
+      throw new BadRequestException('Clinic ID is required for registration');
     }
+    const registrationData = clinicId ? { ...registerDto, clinicId } : registerDto;
+    return await this.authService.register(registrationData);
   }
 
   @Public()
@@ -107,12 +95,13 @@ export class AuthController {
     @OptionalClinicId() clinicId?: string,
     @Req() request?: any
   ): Promise<any> {
+    if (!clinicId && !body.clinicId) {
+      throw new BadRequestException('Clinic ID is required for login');
+    }
     const { email, password, otp } = body;
-    
     if (!password && !otp) {
       throw new BadRequestException('Either password or OTP must be provided');
     }
-
     let user: any;
     if (password) {
       user = await this.authService.validateUser(email, password);
@@ -132,8 +121,7 @@ export class AuthController {
         user = await this.authService.markUserAsVerified(user.id);
       }
     }
-
-    return this.authService.login(user, request, undefined, clinicId);
+    return this.authService.login(user, request, undefined, clinicId ? clinicId : body.clinicId);
   }
 
   @Post('logout')
