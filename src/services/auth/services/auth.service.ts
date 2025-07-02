@@ -25,6 +25,18 @@ import { google } from 'googleapis';
 type User = any;
 type Role = 'SUPER_ADMIN' | 'CLINIC_ADMIN' | 'DOCTOR' | 'PATIENT' | 'RECEPTIONIST';
 
+// Add after imports
+async function resolveClinicUUID(prisma, clinicIdOrUUID: string): Promise<string> {
+  let clinic = await prisma.clinic.findUnique({ where: { clinicId: clinicIdOrUUID } });
+  if (!clinic) {
+    clinic = await prisma.clinic.findUnique({ where: { id: clinicIdOrUUID } });
+  }
+  if (!clinic) {
+    throw new Error('Clinic not found');
+  }
+  return clinic.id;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -167,11 +179,12 @@ export class AuthService {
   async register(createUserDto: CreateUserDto): Promise<UserResponseDto> {
     try {
       const { clinicId, ...userData } = createUserDto;
+      const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
 
       // If clinicId is provided, validate clinic exists
       if (clinicId) {
         const clinic = await this.prisma.clinic.findUnique({
-          where: { id: clinicId }
+          where: { id: clinicUUID }
         });
 
         if (!clinic) {
@@ -199,7 +212,7 @@ export class AuthService {
 
         if (existingUser) {
           // User exists - check if already associated with this clinic
-          const isAlreadyAssociated = existingUser.clinics.some(clinic => clinic.id === clinicId);
+          const isAlreadyAssociated = existingUser.clinics.some(clinic => clinic.id === clinicUUID);
           
           if (isAlreadyAssociated) {
             // User already associated with this clinic - return success
@@ -227,9 +240,9 @@ export class AuthService {
             where: { id: user.id },
             data: {
               clinics: {
-                connect: { id: clinicId }
+                connect: { id: clinicUUID }
               },
-              primaryClinicId: user.primaryClinicId ?? clinicId, // Set if not already set
+              primaryClinicId: user.primaryClinicId ?? clinicUUID, // Set if not already set
             }
           });
 
@@ -260,9 +273,9 @@ export class AuthService {
               age: userData.age || 0, // Ensure age is provided
               medicalConditions: this.stringifyMedicalConditions(userData.medicalConditions),
               clinics: {
-                connect: { id: clinicId }
+                connect: { id: clinicUUID }
               },
-              primaryClinicId: clinicId, // <-- Set primaryClinicId
+              primaryClinicId: clinicUUID, // <-- Set primaryClinicId
             },
             include: {
               clinics: true
