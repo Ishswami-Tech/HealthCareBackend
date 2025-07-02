@@ -204,3 +204,9 @@ To ensure optimal performance with row-level isolation, the following indexing s
 4. **Rate Limiting**: Per-tenant rate limiting to prevent abuse
 5. **Read Replicas**: Adding read replicas for high-traffic tenants
 6. **Connection Pooling Optimization**: Fine-tune connection pools based on tenant activity 
+
+
+Clinic Admin: clinicadmin1@example.com / test1234
+Doctor: doctor1@example.com / test1234
+Patient: patient1@example.com / test1234
+Receptionist: receptionist1@example.com / test1234

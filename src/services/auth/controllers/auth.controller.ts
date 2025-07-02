@@ -29,6 +29,7 @@ import { Role } from '../../../shared/database/prisma/prisma.types';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
 import { ClinicId, OptionalClinicId } from '../../../libs/decorators/clinic.decorator';
+import { PermissionService, Permission, PermissionGuard } from '../../../shared/permissions';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -39,7 +40,8 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly emailService: EmailService,
-    private readonly sessionService: SessionService
+    private readonly sessionService: SessionService,
+    private readonly permissionService: PermissionService,
   ) {}
 
   @Public()
@@ -65,6 +67,8 @@ export class AuthController {
     status: 500, 
     description: 'Internal server error'
   })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async register(
     @Body() registerDto: RegisterDto,
     @OptionalClinicId() clinicId?: string
@@ -91,6 +95,8 @@ export class AuthController {
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials or user not associated with clinic' })
   @ApiResponse({ status: 404, description: 'Clinic not found' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async login(
     @Body() body: LoginRequestDto,
     @OptionalClinicId() clinicId?: string,
@@ -122,9 +128,14 @@ export class AuthController {
         user = await this.authService.markUserAsVerified(user.id);
       }
     }
-
-    // ENFORCE CLINIC ID FOR NON-SUPER-ADMINS
-    if (user.role !== 'SUPER_ADMIN') {
+    // ENFORCE CLINIC ID FOR NON-SUPER-ADMINS using permission check
+    const canBypassClinicCheck = await this.permissionService.hasPermission({
+      userId: user.id,
+      action: 'manage_users',
+      resourceType: 'user',
+      resourceId: user.id,
+    });
+    if (!canBypassClinicCheck) {
       const effectiveClinicId = clinicId || body.clinicId;
       if (!effectiveClinicId) {
         throw new ForbiddenException('Clinic ID is required for login');
@@ -135,7 +146,6 @@ export class AuthController {
         throw new ForbiddenException('User is not associated with this clinic');
       }
     }
-
     return this.authService.login(user, request, undefined, clinicId ? clinicId : body.clinicId);
   }
 
@@ -151,6 +161,8 @@ export class AuthController {
     description: 'User logged out successfully'
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async logout(
     @Req() req,
     @Body() logoutDto: LogoutDto
@@ -184,6 +196,8 @@ export class AuthController {
     description: 'Token refreshed successfully'
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async refresh(@Request() req) {
     try {
       const deviceFingerprint = this.authService['generateDeviceFingerprint'](req);
@@ -205,6 +219,8 @@ export class AuthController {
     description: 'Token is valid'
   })
   @ApiResponse({ status: 401, description: 'Token is invalid' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async verifyToken(@Request() req) {
     try {
       const isValid = await this.authService.validateToken(req.user.id);
@@ -229,6 +245,8 @@ export class AuthController {
     status: 200,
     description: 'Password reset email sent'
   })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async forgotPassword(@Body() body: ForgotPasswordRequestDto): Promise<{ message: string }> {
     try {
       await this.authService.forgotPassword(body.email);
@@ -251,6 +269,8 @@ export class AuthController {
     description: 'Password reset successfully'
   })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async resetPassword(
     @Body() passwordResetDto: PasswordResetDto
   ): Promise<{ message: string }> {
@@ -279,6 +299,8 @@ export class AuthController {
     status: 200,
     description: 'OTP sent successfully'
   })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async requestOTP(
     @Body() body: RequestOtpDto,
     @OptionalClinicId() clinicId?: string,
@@ -303,6 +325,8 @@ export class AuthController {
     description: 'OTP verified and login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid OTP' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async verifyOTP(
     @Body() body: VerifyOtpRequestDto,
     @Req() request: any,
@@ -348,6 +372,8 @@ export class AuthController {
     status: 200,
     description: 'OTP status checked successfully'
   })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async checkOTPStatus(@Body() body: CheckOtpStatusDto): Promise<{ hasActiveOTP: boolean }> {
     try {
       const user = await this.authService.findUserByEmail(body.email);
@@ -374,6 +400,8 @@ export class AuthController {
     status: 200,
     description: 'OTP invalidated successfully'
   })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async invalidateOTP(@Body() body: InvalidateOtpDto): Promise<{ message: string }> {
     try {
       const user = await this.authService.findUserByEmail(body.email);
@@ -399,6 +427,8 @@ export class AuthController {
     status: 200,
     description: 'Magic link sent successfully'
   })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async requestMagicLink(@Body('email') email: string): Promise<{ message: string }> {
     try {
       await this.authService.sendMagicLink(email);
@@ -420,6 +450,8 @@ export class AuthController {
     description: 'Magic link verified and login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid or expired magic link' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async verifyMagicLink(
     @Body('token') token: string,
     @Req() request: any
@@ -448,6 +480,8 @@ export class AuthController {
     description: 'Google login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Google token' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async googleLogin(
     @Body() body: { token?: string; code?: string; redirectUri?: string },
     @Req() request: any,
@@ -497,6 +531,8 @@ export class AuthController {
     description: 'Facebook login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Facebook token' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async facebookLogin(
     @Body('token') token: string,
     @Req() request: any,
@@ -535,6 +571,8 @@ export class AuthController {
     description: 'Apple login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Apple token' })
+  @UseGuards(PermissionGuard)
+  @Permission('manage_users')
   async appleLogin(
     @Body('token') token: string,
     @Req() request: any,

@@ -6,10 +6,11 @@ import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
+import { Permission, PermissionGuard } from '../../../shared/permissions';
 
 @ApiTags('Appointment Locations')
 @Controller('api/appointments/locations')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
 @UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
