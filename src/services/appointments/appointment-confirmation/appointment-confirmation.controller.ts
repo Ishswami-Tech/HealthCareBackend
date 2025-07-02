@@ -7,10 +7,11 @@ import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 import { VerifyAppointmentQRDto, CompleteAppointmentDto } from '../appointment.dto';
+import { Permission, PermissionGuard } from '../../../shared/permissions';
 
 @ApiTags('Appointment Confirmation')
 @Controller('api/appointments/confirmation')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
 @UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
@@ -22,6 +23,7 @@ export class AppointmentConfirmationController {
   ) {}
 
   @Get(':appointmentId/qr')
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   async generateConfirmationQR(@Param('appointmentId') appointmentId: string) {
     try {
       return {
@@ -35,6 +37,7 @@ export class AppointmentConfirmationController {
 
   @Post('verify')
   @ApiBody({ type: VerifyAppointmentQRDto })
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   async verifyAppointmentQR(
     @Body() body: VerifyAppointmentQRDto,
   ) {
@@ -51,6 +54,7 @@ export class AppointmentConfirmationController {
 
   @Post(':appointmentId/complete')
   @ApiBody({ type: CompleteAppointmentDto })
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   async markAppointmentCompleted(
     @Param('appointmentId') appointmentId: string,
     @Body() body: CompleteAppointmentDto,

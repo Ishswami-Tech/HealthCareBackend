@@ -8,6 +8,7 @@ import { EventService } from '../../shared/events/event.service';
 import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
 import { Role, Gender } from '../../shared/database/prisma/prisma.types';
 import type { User } from '../../shared/database/prisma/prisma.types';
+import { PermissionService } from '../../shared/permissions';
 
 @Injectable()
 export class UsersService {
@@ -16,6 +17,7 @@ export class UsersService {
     private readonly redis: RedisService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
+    private readonly permissionService: PermissionService,
   ) {}
 
   @RedisCache({ prefix: "users:all", ttl: 3600, tags: ['users'] })
@@ -297,42 +299,30 @@ export class UsersService {
     }
 
     // Delete role-specific record first
-    switch (user.role) {
-      case Role.DOCTOR:
-        if ((user as any).doctor) {
-          await this.prisma.doctor.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.PATIENT:
-        if ((user as any).patient) {
-          await this.prisma.patient.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.RECEPTIONIST:
-        if ((user as any).receptionists && (user as any).receptionists.length > 0) {
-          await this.prisma.receptionist.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.CLINIC_ADMIN:
-        if ((user as any).clinicAdmins && (user as any).clinicAdmins.length > 0) {
-          await this.prisma.clinicAdmin.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.SUPER_ADMIN:
-        if ((user as any).superAdmin) {
-          await this.prisma.superAdmin.delete({
-            where: { userId: id }
-          });
-        }
-        break;
+    if (user.role === Role.DOCTOR && (user as any).doctor) {
+      await this.prisma.doctor.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.PATIENT && (user as any).patient) {
+      await this.prisma.patient.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.RECEPTIONIST && (user as any).receptionists && (user as any).receptionists.length > 0) {
+      await this.prisma.receptionist.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.CLINIC_ADMIN && (user as any).clinicAdmins && (user as any).clinicAdmins.length > 0) {
+      await this.prisma.clinicAdmin.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.SUPER_ADMIN && (user as any).superAdmin) {
+      await this.prisma.superAdmin.delete({
+        where: { userId: id }
+      });
     }
 
     // Delete user record
@@ -447,42 +437,30 @@ export class UsersService {
     }
 
     // Delete old role-specific record
-    switch (user.role) {
-      case Role.DOCTOR:
-        if (user.doctor) {
-          await this.prisma.doctor.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.PATIENT:
-        if (user.patient) {
-          await this.prisma.patient.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.RECEPTIONIST:
-        if (user.receptionists && user.receptionists.length > 0) {
-          await this.prisma.receptionist.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.CLINIC_ADMIN:
-        if (user.clinicAdmins && user.clinicAdmins.length > 0) {
-          await this.prisma.clinicAdmin.delete({
-            where: { userId: id }
-          });
-        }
-        break;
-      case Role.SUPER_ADMIN:
-        if (user.superAdmin) {
-          await this.prisma.superAdmin.delete({
-            where: { userId: id }
-          });
-        }
-        break;
+    if (user.role === Role.DOCTOR && user.doctor) {
+      await this.prisma.doctor.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.PATIENT && user.patient) {
+      await this.prisma.patient.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.RECEPTIONIST && (user as any).receptionists && (user as any).receptionists.length > 0) {
+      await this.prisma.receptionist.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.CLINIC_ADMIN && (user as any).clinicAdmins && (user as any).clinicAdmins.length > 0) {
+      await this.prisma.clinicAdmin.delete({
+        where: { userId: id }
+      });
+    }
+    if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
+      await this.prisma.superAdmin.delete({
+        where: { userId: id }
+      });
     }
 
     // Create new role-specific record

@@ -7,6 +7,8 @@ import { QrModule } from './QR/qr.module';
 import { ClinicModule } from '../services/clinic/clinic.module';
 import { SocketModule } from './socket/socket.module';
 import { TenantContextInterceptor } from './interceptors/tenant-context.interceptor';
+import { PermissionService, PermissionGuard } from './permissions';
+import { Reflector } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -19,7 +21,10 @@ import { TenantContextInterceptor } from './interceptors/tenant-context.intercep
     SocketModule,
   ],
   providers: [
-    TenantContextInterceptor
+    TenantContextInterceptor,
+    PermissionService,
+    PermissionGuard,
+    Reflector,
   ],
   exports: [
     PrismaModule,
@@ -29,7 +34,10 @@ import { TenantContextInterceptor } from './interceptors/tenant-context.intercep
     QrModule,
     forwardRef(() => ClinicModule),
     SocketModule,
-    TenantContextInterceptor
+    TenantContextInterceptor,
+    PermissionService,
+    PermissionGuard,
+    Reflector,
   ],
 })
 export class SharedModule {} 

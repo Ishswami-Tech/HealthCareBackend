@@ -8,13 +8,13 @@ import { LoggingModule } from '../../shared/logging/logging.module';
 import { EventService } from '../../shared/events/event.service';
 import { ConfigModule } from '@nestjs/config';
 import { GuardsModule } from '../../libs/guards/guards.module';
-import { ClinicPermissionService } from './shared/permission.utils';
 import { ClinicErrorService } from './shared/error.utils';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ClinicUserService } from './services/clinic-user.service';
 import { QrModule } from '../../shared/QR/qr.module';
 import { SharedModule } from '../../shared/shared.module';
+import { PermissionService } from '../../shared/permissions/permission.service';
 
 @Module({
   imports: [
@@ -32,13 +32,12 @@ import { SharedModule } from '../../shared/shared.module';
     PrismaService, 
     ClinicLocationService,
     EventService,
-    ClinicPermissionService,
     ClinicErrorService,
-    ClinicUserService
+    ClinicUserService,
+    PermissionService
   ],
   exports: [
     ClinicService, 
-    ClinicPermissionService,
     ClinicErrorService,
     ClinicUserService,
     ClinicLocationService

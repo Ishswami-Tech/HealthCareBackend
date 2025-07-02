@@ -2,23 +2,23 @@ import { Injectable, NotFoundException, ConflictException, UnauthorizedException
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { Role } from '../../shared/database/prisma/prisma.types';
 import { EventService } from '../../shared/events/event.service';
-import { ClinicPermissionService } from './shared/permission.utils';
 import { ClinicErrorService } from './shared/error.utils';
 import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
 import { RedisService } from '../../shared/cache/redis/redis.service';
 import { JwtService } from '@nestjs/jwt';
 import { ClinicLocationService } from './services/clinic-location.service';
+import { PermissionService } from '../../shared/permissions';
 
 @Injectable()
 export class ClinicService {
   constructor(
     private prisma: PrismaService,
     private readonly eventService: EventService,
-    private readonly permissionService: ClinicPermissionService,
     private readonly errorService: ClinicErrorService,
     private readonly clinicLocationService: ClinicLocationService,
     private readonly redis: RedisService,
     private readonly jwtService: JwtService,
+    private readonly permissionService: PermissionService,
   ) {}
 
   /**
@@ -490,7 +490,7 @@ export class ClinicService {
       }
 
       // Use the permission service to validate access
-      const hasPermission = await this.permissionService.hasClinicPermission(userId, id);
+      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinics', resourceType: 'clinic', resourceId: id });
       if (!hasPermission) {
         await this.errorService.logError(
           { message: 'Unauthorized access attempt' },

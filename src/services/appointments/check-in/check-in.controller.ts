@@ -10,10 +10,11 @@ import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 import { ProcessCheckInDto, ReorderQueueDto } from '../appointment.dto';
+import { Permission, PermissionGuard } from '../../../shared/permissions';
 
 @ApiTags('Check-in')
 @Controller('api/check-in')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
 @UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
@@ -23,6 +24,7 @@ export class CheckInController {
   @Post('process')
   @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @Clinic()
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   @ApiOperation({
     summary: 'Process patient check-in',
     description: 'Process a patient check-in and update queue position'
@@ -41,6 +43,7 @@ export class CheckInController {
   @Get('doctor-queue/:doctorId')
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
   @Clinic()
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   @ApiOperation({
     summary: 'Get doctor active queue',
     description: 'Get all checked-in patients for a doctor'
@@ -56,6 +59,7 @@ export class CheckInController {
   @Get('patient-position/:appointmentId')
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
   @Clinic()
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   @ApiOperation({
     summary: 'Get patient queue position',
     description: 'Get a patient\'s position in the queue'
@@ -72,6 +76,7 @@ export class CheckInController {
   @Post('reorder-queue')
   @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @Clinic()
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   @ApiOperation({
     summary: 'Reorder the queue',
     description: 'Reorder the queue for a location (admin/receptionist only)'
@@ -89,6 +94,7 @@ export class CheckInController {
   @Get('location-queue')
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
   @Clinic()
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   @ApiOperation({
     summary: 'Get location queue',
     description: 'Get all checked-in patients for a location grouped by doctor'

@@ -7,10 +7,11 @@ import { ClinicGuard } from '../../../libs/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 import { StartConsultationDto } from '../appointment.dto';
+import { Permission, PermissionGuard } from '../../../shared/permissions';
 
 @ApiTags('Appointment Queue')
 @Controller('api/appointments/queue')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
 @UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
@@ -43,6 +44,7 @@ export class AppointmentQueueController {
     summary: 'Get patient queue position',
     description: 'Get patient\'s current position in the queue'
   })
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   async getPatientQueuePosition(@Param('appointmentId') appointmentId: string) {
     try {
       return await this.queueService.getPatientQueuePosition(appointmentId);
@@ -57,6 +59,7 @@ export class AppointmentQueueController {
     summary: 'Confirm appointment',
     description: 'Move appointment from CHECKED_IN to CONFIRMED status'
   })
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   async confirmAppointment(@Param('appointmentId') appointmentId: string) {
     try {
       return await this.queueService.confirmAppointment(appointmentId);
@@ -72,6 +75,7 @@ export class AppointmentQueueController {
     description: 'Move appointment from CONFIRMED to IN_PROGRESS status'
   })
   @ApiBody({ type: StartConsultationDto })
+  @Permission('manage_appointments', 'appointment', 'appointmentId')
   async startConsultation(
     @Param('appointmentId') appointmentId: string,
     @Body() body: StartConsultationDto,

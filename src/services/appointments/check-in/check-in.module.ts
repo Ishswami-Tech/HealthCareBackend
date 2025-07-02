@@ -11,6 +11,7 @@ import { GuardsModule } from '../../../libs/guards/guards.module';
 import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 import { AuthModule } from '../../../services/auth/auth.module';
 import { RedisModule } from '../../../shared/cache/redis/redis.module';
+import { SharedModule } from 'src/shared';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { RedisModule } from '../../../shared/cache/redis/redis.module';
     SocketModule,
     GuardsModule,
     RateLimitModule,
+    SharedModule,
     AuthModule,
     RedisModule,
     EventEmitterModule.forRoot(),

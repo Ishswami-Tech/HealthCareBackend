@@ -1,5 +1,3 @@
-
-
 import { Module } from "@nestjs/common";
 import { UsersService } from "./users.service";
 import { UsersController } from "./controllers/users.controller";
@@ -9,6 +7,7 @@ import { GuardsModule } from "../../libs/guards/guards.module";
 import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
 import { LoggingModule } from "../../shared/logging/logging.module";
 import { EventsModule } from "../../shared/events/events.module";
+import { SharedModule } from '../../shared/shared.module';
 
 @Module({
   imports: [
@@ -18,6 +17,7 @@ import { EventsModule } from "../../shared/events/events.module";
     RateLimitModule,
     LoggingModule,
     EventsModule,
+    SharedModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

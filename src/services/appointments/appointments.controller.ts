@@ -11,12 +11,13 @@ import { ClinicRoute } from '../../libs/decorators/clinic-route.decorator';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../shared/interceptors/tenant-context.interceptor';
 import { CreateAppointmentDto, UpdateAppointmentDto } from './appointment.dto';
+import { Permission, PermissionGuard } from '../../shared/permissions';
 
 @ApiTags('appointments')
 @Controller('appointments')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
 @UseInterceptors(TenantContextInterceptor)
 export class AppointmentsController {
   private readonly logger = new Logger(AppointmentsController.name);
