@@ -12,6 +12,37 @@ import { FastifyReply } from 'fastify';
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
+  private readonly ignored404Patterns = [
+    /\.env(\.|$)/i, // any .env file
+    /favicon\.ico$/i,
+    /robots\.txt$/i,
+    /sitemap\.xml$/i,
+    /\/redmine\//i,
+    /\/uploads\//i,
+    /\/lib\//i,
+    /\/sendgrid\.env$/i,
+    /\/aws\.env$/i,
+    /\/main\/\.env$/i,
+    /\/docs\/\.env$/i,
+    /\/client\/\.env$/i,
+    /\/blogs\/\.env$/i,
+    /\/shared\/\.env$/i,
+    /\/download\/\.env$/i,
+    /\/site\/\.env$/i,
+    /\/sites\/\.env$/i,
+    /\/web\/\.env$/i,
+    /\/database\/\.env$/i,
+    /\/backend\/\.env$/i,
+    /\/geoserver\/web\//i,
+    /\/webui\//i,
+    /\/stacks$/i,
+  ];
+
+  private isIgnored404(path: string, status: number): boolean {
+    if (status !== 404) return false;
+    return this.ignored404Patterns.some((pattern) => pattern.test(path));
+  }
+
   catch(exception: any, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<FastifyReply>();
@@ -44,6 +75,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
     
     if (status >= 500) {
       this.logger.error(`Server Error: ${exception.message || 'Internal server error'}`, errorLog);
+    } else if (status === 404 && this.isIgnored404(request.url, status)) {
+      // Skip logging for ignored 404 paths
+      // Do nothing
     } else if (status >= 400) {
       this.logger.warn(`Client Error: ${exception.message || 'Bad request'}`, errorLog);
     }

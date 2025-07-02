@@ -15,6 +15,7 @@ import {
   HttpException,
   Delete,
   Param,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { CreateUserDto, UserResponseDto, SimpleCreateUserDto } from '../../../libs/dtos/user.dto';
@@ -121,6 +122,20 @@ export class AuthController {
         user = await this.authService.markUserAsVerified(user.id);
       }
     }
+
+    // ENFORCE CLINIC ID FOR NON-SUPER-ADMINS
+    if (user.role !== 'SUPER_ADMIN') {
+      const effectiveClinicId = clinicId || body.clinicId;
+      if (!effectiveClinicId) {
+        throw new ForbiddenException('Clinic ID is required for login');
+      }
+      // Check if user is associated with the clinic
+      const isAssociated = await this.authService.isUserAssociatedWithClinic(user.id, effectiveClinicId);
+      if (!isAssociated) {
+        throw new ForbiddenException('User is not associated with this clinic');
+      }
+    }
+
     return this.authService.login(user, request, undefined, clinicId ? clinicId : body.clinicId);
   }
 
