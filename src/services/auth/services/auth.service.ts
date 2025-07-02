@@ -222,13 +222,14 @@ export class AuthService {
           // User exists but not associated with this clinic - create association
           user = existingUser;
           
-          // Associate user with clinic
+          // Associate user with clinic and set primaryClinicId if not already set
           await this.prisma.user.update({
             where: { id: user.id },
             data: {
               clinics: {
                 connect: { id: clinicId }
-              }
+              },
+              primaryClinicId: user.primaryClinicId ?? clinicId, // Set if not already set
             }
           });
 
@@ -260,7 +261,8 @@ export class AuthService {
               medicalConditions: this.stringifyMedicalConditions(userData.medicalConditions),
               clinics: {
                 connect: { id: clinicId }
-              }
+              },
+              primaryClinicId: clinicId, // <-- Set primaryClinicId
             },
             include: {
               clinics: true
@@ -2528,5 +2530,18 @@ export class AuthService {
     if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
       throw new BadRequestException('Password must contain at least one special character');
     }
+  }
+
+  /**
+   * Check if a user is associated with a clinic
+   */
+  public async isUserAssociatedWithClinic(userId: string, clinicId: string): Promise<boolean> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        clinics: { some: { id: clinicId } }
+      }
+    });
+    return !!user;
   }
 } 
