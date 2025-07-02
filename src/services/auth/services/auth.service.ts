@@ -1292,6 +1292,12 @@ export class AuthService {
   // Social login methods
   
   async handleGoogleLogin(googleUser: any, request: any, clinicId: string): Promise<any> {
+    // Check if clinic exists before proceeding
+    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic) {
+      throw new NotFoundException('Clinic not found');
+    }
+    
     const { email, given_name, family_name, picture, sub: googleId, name } = googleUser;
     
     try {
@@ -1386,6 +1392,12 @@ export class AuthService {
   }
   
   async handleFacebookLogin(facebookUser: any, request: any, clinicId: string): Promise<any> {
+    // Check if clinic exists before proceeding
+    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic) {
+      throw new NotFoundException('Clinic not found');
+    }
+    
     const { email, first_name, last_name, picture } = facebookUser;
     
     try {
@@ -1484,6 +1496,12 @@ export class AuthService {
 
   // Handle Apple login
   async handleAppleLogin(appleUser: any, request: any, clinicId: string): Promise<any> {
+    // Check if clinic exists before proceeding
+    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic) {
+      throw new NotFoundException('Clinic not found');
+    }
+    
     const { email, firstName, lastName, sub: appleId } = appleUser;
     
     try {

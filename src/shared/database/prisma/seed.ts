@@ -212,7 +212,9 @@ async function main() {
         role: Role.CLINIC_ADMIN,
         gender: Gender.MALE,
         isVerified: true,
-        userid: generateUserId()
+        userid: generateUserId(),
+        clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+        primaryClinicId: clinic1.id
       }
     });
 
@@ -224,11 +226,31 @@ async function main() {
       }
     });
 
+    // ===== CLINIC ADMIN DEMO USER =====
+    const demoClinicAdmin = await prisma.user.create({
+      data: {
+        email: 'clinicadmin1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Clinic Admin',
+        age: 40,
+        firstName: 'Demo',
+        lastName: 'ClinicAdmin',
+        phone: '9000000001',
+        role: Role.CLINIC_ADMIN,
+        gender: Gender.MALE,
+        isVerified: true,
+        userid: generateUserId(),
+        clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+        primaryClinicId: clinic1.id
+      }
+    });
+    await prisma.clinicAdmin.create({ data: { userId: demoClinicAdmin.id, clinicId: clinic1.id, isOwner: false } });
+
     // Create Users with different roles
     console.log('Creating users...');
     const users = await Promise.all([
       // Clinic Admins
-      ...Array(SEED_COUNT).fill(null).map(() => 
+      ...Array(SEED_COUNT).fill(null).map((_, i) => 
         prisma.user.create({
           data: {
             email: faker.internet.email(),
@@ -241,13 +263,15 @@ async function main() {
             role: Role.CLINIC_ADMIN,
             gender: faker.helpers.arrayElement(Object.values(Gender)),
             isVerified: true,
-            userid: generateUserId()
+            userid: generateUserId(),
+            clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+            primaryClinicId: (i % 2 === 0 ? clinic1.id : clinic2.id)
           }
         })
       ),
 
       // Doctors
-      ...Array(SEED_COUNT).fill(null).map(() => 
+      ...Array(SEED_COUNT).fill(null).map((_, i) => 
         prisma.user.create({
           data: {
             email: faker.internet.email(),
@@ -260,13 +284,15 @@ async function main() {
             role: Role.DOCTOR,
             gender: faker.helpers.arrayElement(Object.values(Gender)),
             isVerified: true,
-            userid: generateUserId()
+            userid: generateUserId(),
+            clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+            primaryClinicId: (i % 2 === 0 ? clinic1.id : clinic2.id)
           }
         })
       ),
 
       // Patients
-      ...Array(SEED_COUNT).fill(null).map(() => 
+      ...Array(SEED_COUNT).fill(null).map((_, i) => 
         prisma.user.create({
           data: {
             email: faker.internet.email(),
@@ -279,13 +305,15 @@ async function main() {
             role: Role.PATIENT,
             gender: faker.helpers.arrayElement(Object.values(Gender)),
             isVerified: true,
-            userid: generateUserId()
+            userid: generateUserId(),
+            clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+            primaryClinicId: (i % 2 === 0 ? clinic1.id : clinic2.id)
           }
         })
       ),
 
       // Receptionists
-      ...Array(SEED_COUNT).fill(null).map(() => 
+      ...Array(SEED_COUNT).fill(null).map((_, i) => 
         prisma.user.create({
           data: {
             email: faker.internet.email(),
@@ -298,7 +326,9 @@ async function main() {
             role: Role.RECEPTIONIST,
             gender: faker.helpers.arrayElement(Object.values(Gender)),
             isVerified: true,
-            userid: generateUserId()
+            userid: generateUserId(),
+            clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+            primaryClinicId: (i % 2 === 0 ? clinic1.id : clinic2.id)
           }
         })
       )
@@ -447,6 +477,87 @@ async function main() {
       ])
     );
 
+    // ===== DOCTOR DEMO USER =====
+    const demoDoctor = await prisma.user.create({
+      data: {
+        email: 'doctor1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Doctor',
+        age: 45,
+        firstName: 'Demo',
+        lastName: 'Doctor',
+        phone: '9000000002',
+        role: Role.DOCTOR,
+        gender: Gender.FEMALE,
+        isVerified: true,
+        userid: generateUserId(),
+        clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+        primaryClinicId: clinic2.id
+      }
+    });
+    const demoDoctorRecord = await prisma.doctor.create({
+      data: {
+        id: demoDoctor.id,
+        userId: demoDoctor.id,
+        specialization: 'General Medicine',
+        experience: 10,
+        qualification: 'MBBS',
+        rating: 4.5,
+        isAvailable: true,
+        consultationFee: 1000
+      }
+    });
+    await prisma.doctorClinic.create({ data: { doctorId: demoDoctor.id, clinicId: clinic1.id, locationId: clinic1Locations[0].id, startTime: new Date(), endTime: new Date() } });
+    await prisma.doctorClinic.create({ data: { doctorId: demoDoctor.id, clinicId: clinic2.id, locationId: clinic2Locations[0].id, startTime: new Date(), endTime: new Date() } });
+
+    // ===== PATIENT DEMO USER =====
+    const demoPatient = await prisma.user.create({
+      data: {
+        email: 'patient1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Patient',
+        age: 30,
+        firstName: 'Demo',
+        lastName: 'Patient',
+        phone: '9000000003',
+        role: Role.PATIENT,
+        gender: Gender.OTHER,
+        isVerified: true,
+        userid: generateUserId(),
+        clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+        primaryClinicId: clinic1.id
+      }
+    });
+    const demoPatientRecord = await prisma.patient.create({
+      data: {
+        prakriti: Prakriti.VATA,
+        dosha: Dosha.PITTA,
+        user: { connect: { id: demoPatient.id } }
+      }
+    });
+
+    // ===== RECEPTIONIST DEMO USER =====
+    const demoReceptionist = await prisma.user.create({
+      data: {
+        email: 'receptionist1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Receptionist',
+        age: 28,
+        firstName: 'Demo',
+        lastName: 'Receptionist',
+        phone: '9000000004',
+        role: Role.RECEPTIONIST,
+        gender: Gender.FEMALE,
+        isVerified: true,
+        userid: generateUserId(),
+        clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+        primaryClinicId: clinic2.id
+      }
+    });
+    const demoReceptionistRecord = await prisma.receptionist.create({ data: { userId: demoReceptionist.id } });
+    await prisma.receptionistsAtClinic.create({ data: { A: clinic1.id, B: demoReceptionistRecord.id } });
+    await prisma.receptionistsAtClinic.create({ data: { A: clinic2.id, B: demoReceptionistRecord.id } });
+
     // Create sample data only in development environment
     if (process.env.NODE_ENV === 'development') {
       // Create Medicines
@@ -583,6 +694,11 @@ async function main() {
     console.log('Created clinics:');
     console.log('1. Aadesh Ayurvedalay');
     console.log('2. Shri Vishwamurthi Ayurvedalay');
+    console.log('Demo login credentials:');
+    console.log('Clinic Admin: clinicadmin1@example.com / test1234');
+    console.log('Doctor: doctor1@example.com / test1234');
+    console.log('Patient: patient1@example.com / test1234');
+    console.log('Receptionist: receptionist1@example.com / test1234');
 
   } catch (error) {
     console.error('Error during seeding:', error);

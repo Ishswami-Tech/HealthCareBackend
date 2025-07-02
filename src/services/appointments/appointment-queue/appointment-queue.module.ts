@@ -10,6 +10,7 @@ import { SocketModule } from '../../../shared/socket/socket.module';
 import { AuthModule } from '../../../services/auth/auth.module';
 import { RedisModule } from '../../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
+import { SharedModule } from '../../../shared/shared.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
     AuthModule,
     RedisModule,
     RateLimitModule,
+    SharedModule,
     BullModule.registerQueueAsync({
       name: 'appointment-queue',
       imports: [ConfigModule],

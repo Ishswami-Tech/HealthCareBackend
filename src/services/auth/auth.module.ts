@@ -14,6 +14,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { EventsModule } from '../../shared/events/events.module';
 import { LoggingModule } from '../../shared/logging/logging.module';
 import { jwtConfig } from '../../config/jwt.config';
+import { SharedModule } from "src/shared";
 
 @Global()
 @Module({
@@ -25,6 +26,7 @@ import { jwtConfig } from '../../config/jwt.config';
     UsersModule,
     GuardsModule,
     RateLimitModule,
+    SharedModule,
     forwardRef(() => ClinicModule),
     EventsModule,
     LoggingModule,
