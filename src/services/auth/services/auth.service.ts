@@ -1278,7 +1278,7 @@ export class AuthService {
 
   // Social login methods
   
-  async handleGoogleLogin(googleUser: any, request: any): Promise<any> {
+  async handleGoogleLogin(googleUser: any, request: any, clinicId: string): Promise<any> {
     const { email, given_name, family_name, picture, sub: googleId, name } = googleUser;
     
     try {
@@ -1307,7 +1307,9 @@ export class AuthService {
             phone: '', // Default empty phone
             gender: 'UNSPECIFIED', // Default gender
             dateOfBirth: new Date(), // Default date, can be updated later
-            userid: userid
+            userid: userid,
+            primaryClinicId: clinicId,
+            clinics: { connect: { id: clinicId } },
           }
         });
         
@@ -1370,7 +1372,7 @@ export class AuthService {
     }
   }
   
-  async handleFacebookLogin(facebookUser: any, request: any): Promise<any> {
+  async handleFacebookLogin(facebookUser: any, request: any, clinicId: string): Promise<any> {
     const { email, first_name, last_name, picture } = facebookUser;
     
     try {
@@ -1396,7 +1398,9 @@ export class AuthService {
             phone: '',
             gender: 'UNSPECIFIED',
             dateOfBirth: new Date(),
-            userid: userid
+            userid: userid,
+            primaryClinicId: clinicId,
+            clinics: { connect: { id: clinicId } },
           }
         });
         
@@ -1466,7 +1470,7 @@ export class AuthService {
   }
 
   // Handle Apple login
-  async handleAppleLogin(appleUser: any, request: any): Promise<any> {
+  async handleAppleLogin(appleUser: any, request: any, clinicId: string): Promise<any> {
     const { email, firstName, lastName, sub: appleId } = appleUser;
     
     try {
@@ -1492,7 +1496,9 @@ export class AuthService {
             gender: 'UNSPECIFIED', // Default gender
             dateOfBirth: new Date(), // Default date, can be updated later
             profilePicture: '', // Default empty profile picture
-            userid: userid
+            userid: userid,
+            primaryClinicId: clinicId,
+            clinics: { connect: { id: clinicId } },
           }
         });
         
