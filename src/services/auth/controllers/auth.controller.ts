@@ -472,25 +472,7 @@ export class AuthController {
       }
       
       // Handle Google login with clinic context
-      const response = await this.authService.handleGoogleLogin(googleUser, request);
-      
-      // If clinicId is provided, add clinic context to response
-      if (clinicId) {
-        const clinic = await this.authService['prisma'].clinic.findUnique({
-          where: { id: clinicId }
-        });
-        
-        if (clinic) {
-          return {
-            ...response,
-            clinic: {
-              id: clinic.id,
-              name: clinic.name,
-              appName: clinic.app_name
-            }
-          };
-        }
-      }
+      const response = await this.authService.handleGoogleLogin(googleUser, request, clinicId);
       
       return response;
     } catch (error) {
@@ -528,25 +510,7 @@ export class AuthController {
       }
       
       // Handle Facebook login with clinic context
-      const response = await this.authService.handleFacebookLogin(facebookUser, request);
-      
-      // If clinicId is provided, add clinic context to response
-      if (clinicId) {
-        const clinic = await this.authService['prisma'].clinic.findUnique({
-          where: { id: clinicId }
-        });
-        
-        if (clinic) {
-          return {
-            ...response,
-            clinic: {
-              id: clinic.id,
-              name: clinic.name,
-              appName: clinic.app_name
-            }
-          };
-        }
-      }
+      const response = await this.authService.handleFacebookLogin(facebookUser, request, clinicId);
       
       return response;
     } catch (error) {
@@ -584,25 +548,7 @@ export class AuthController {
       }
       
       // Handle Apple login with clinic context
-      const response = await this.authService.handleAppleLogin(appleUser, request);
-      
-      // If clinicId is provided, add clinic context to response
-      if (clinicId) {
-        const clinic = await this.authService['prisma'].clinic.findUnique({
-          where: { id: clinicId }
-        });
-        
-        if (clinic) {
-          return {
-            ...response,
-            clinic: {
-              id: clinic.id,
-              name: clinic.name,
-              appName: clinic.app_name
-            }
-          };
-        }
-      }
+      const response = await this.authService.handleAppleLogin(appleUser, request, clinicId);
       
       return response;
     } catch (error) {
