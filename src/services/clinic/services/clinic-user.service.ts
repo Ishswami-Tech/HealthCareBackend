@@ -3,6 +3,7 @@ import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { LoggingService } from '../../../shared/logging/logging.service';
 import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
 import { Role } from '../../../shared/database/prisma/prisma.types';
+import { resolveClinicUUID } from '../../../shared/utils/clinic.utils';
 
 @Injectable()
 export class ClinicUserService {
@@ -12,6 +13,7 @@ export class ClinicUserService {
   ) {}
 
   async getClinicUsers(clinicId: string) {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Get doctors
       const doctors = await this.prisma.doctorClinic.findMany({
@@ -68,6 +70,7 @@ export class ClinicUserService {
   }
 
   async getClinicUsersByRole(clinicId: string, role: Role) {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       switch (role) {
         case Role.DOCTOR:
