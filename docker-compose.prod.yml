@@ -186,7 +186,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: healthcarebackend-worker-prod
     depends_on:
       redis:
         condition: service_healthy
