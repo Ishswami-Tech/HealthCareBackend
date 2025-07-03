@@ -11,7 +11,6 @@ import { GuardsModule } from '../../../libs/guards/guards.module';
 import { AppointmentQueueModule } from '../appointment-queue/appointment-queue.module';
 import { AppointmentService } from '../appointments.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullModule } from '@nestjs/bull';
 
 @Module({
   imports: [
@@ -28,17 +27,6 @@ import { BullModule } from '@nestjs/bull';
         },
       }),
       inject: [ConfigService],
-    }),
-    BullModule.registerQueue({
-      name: 'appointment-queue',
-      defaultJobOptions: {
-        removeOnComplete: false,
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 5000,
-        },
-      },
     }),
     RedisModule,
     RateLimitModule,

@@ -147,7 +147,7 @@ services:
   redis:
     image: redis:7
     container_name: latest-redis
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --replica-read-only no --replicaof no one
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction --replica-read-only no --replicaof no one
     ports:
       - "6379:6379"
     volumes:
@@ -181,6 +181,38 @@ services:
       - "com.docker.compose.service=redis"
       - "app.component=cache"
       - "app.type=redis"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: healthcarebackend-worker-prod
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # ...any other env vars needed
+    command: >
+      sh -c "
+        npm run build &&
+        node dist/worker.js
+      "
+    networks:
+      app-network:
+        aliases:
+          - worker
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "dist/worker.js", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
 volumes:
   postgres_data:

@@ -14,6 +14,7 @@ permissions:
 
 env:
   DOCKER_COMPOSE_VERSION: v2.20.2
+  WORKER_COUNT: 2
   SERVER_HOST: api.ishswami.in
   SERVER_USER: ${{ secrets.SERVER_USER }}
   SERVER_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -442,7 +443,7 @@ jobs:
             if [ "$POSTGRES_RUNNING" = true ] && [ "$REDIS_RUNNING" = true ]; then
               echo "Database containers are healthy. Only rebuilding and restarting API container..."
               # Build and start only the API container with --no-deps to avoid touching database containers
-              if docker compose -f docker-compose.prod.yml up -d --build --no-deps api; then
+              if docker compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
                 echo "API container started successfully"
               else
                 echo "Failed to start API container"
@@ -473,7 +474,7 @@ jobs:
               
               # Now build and start the API container
               echo "Building and starting API container..."
-              if docker compose -f docker-compose.prod.yml up -d --build --no-deps api; then
+              if docker compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
                 echo "API container started successfully"
               else
                 echo "Failed to start API container"
@@ -1276,7 +1277,7 @@ jobs:
                 echo '    # Start API container from previous deployment' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    log "Starting API container from previous deployment..."' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    cd current' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker compose -f docker-compose.prod.yml up -d --no-deps api' >> /var/www/healthcare/backend/scripts/rollback.sh
+                echo '    docker compose -f docker-compose.prod.yml up -d --no-deps --scale worker=$WORKER_COUNT api worker' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    log "Rollback completed successfully"' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    exit 0' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '  else' >> /var/www/healthcare/backend/scripts/rollback.sh
@@ -1306,7 +1307,7 @@ jobs:
                 echo '    # Start API container from rollback release' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    log "Starting API container from rollback release..."' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    cd current' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker compose -f docker-compose.prod.yml up -d --no-deps api' >> /var/www/healthcare/backend/scripts/rollback.sh
+                echo '    docker compose -f docker-compose.prod.yml up -d --no-deps --scale worker=$WORKER_COUNT api worker' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    log "Rollback completed successfully using backup"' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '    exit 0' >> /var/www/healthcare/backend/scripts/rollback.sh
                 echo '  fi' >> /var/www/healthcare/backend/scripts/rollback.sh
@@ -1467,7 +1468,7 @@ jobs:
                   
                   # Using --no-deps ensures database containers are not touched
                   echo "Starting API container with environment variables..."
-                  docker compose --env-file .env.deploy -f docker-compose.prod.yml up -d --build --no-deps api
+                  docker compose --env-file .env.deploy -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker
                   
                   # Verify deployment
                   echo "Verifying deployment..."
@@ -1581,7 +1582,7 @@ jobs:
                 fi
                 
                 echo "Starting API container from backup..."
-                docker-compose -f docker-compose.prod.yml up -d --build --no-deps api
+                docker-compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker
                 
                 # Show container status
                 echo "Container status after backup restoration:"
