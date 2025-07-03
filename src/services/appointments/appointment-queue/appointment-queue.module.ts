@@ -3,7 +3,6 @@ import { AppointmentQueueService } from './appointment-queue.service';
 import { AppointmentQueueController } from './appointment-queue.controller';
 import { PrismaModule } from '../../../shared/database/prisma/prisma.module';
 import { LoggingModule } from '../../../shared/logging/logging.module';
-import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { SocketModule } from '../../../shared/socket/socket.module';
@@ -21,32 +20,6 @@ import { SharedModule } from '../../../shared/shared.module';
     RedisModule,
     RateLimitModule,
     SharedModule,
-    BullModule.registerQueueAsync({
-      name: 'appointment-queue',
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        redis: {
-          host: configService.get('REDIS_HOST', 'localhost'),
-          port: configService.get('REDIS_PORT', 6379),
-          password: configService.get('REDIS_PASSWORD'),
-        },
-        defaultJobOptions: {
-          removeOnComplete: false,
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 5000,
-          },
-          timeout: 30000,
-        },
-        settings: {
-          lockDuration: 30000,
-          stalledInterval: 30000,
-          maxStalledCount: 3,
-        },
-      }),
-      inject: [ConfigService],
-    }),
     EventEmitterModule.forRoot({
       wildcard: true,
       delimiter: '.',

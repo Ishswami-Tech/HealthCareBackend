@@ -1,11 +1,10 @@
-import { Process, Processor } from '@nestjs/bull';
 import { Logger, Injectable, OnModuleInit } from '@nestjs/common';
-import { Job } from 'bull';
 import { JobType, JobData } from '../../../shared/queue/queue.service';
 import { PrismaService } from '../../../shared/database/prisma/prisma.service';
 import { SocketService } from '../../../shared/socket/socket.service';
 import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Worker, Job } from 'bullmq';
 
 // Extend the JobData interface for appointment-specific data
 interface AppointmentJobData extends JobData {
@@ -23,7 +22,6 @@ interface ProcessingMetrics {
 }
 
 @Injectable()
-@Processor('appointment-queue')
 export class AppointmentQueueProcessor implements OnModuleInit {
   // Create a logger instance for this class
   private readonly logger = new Logger(AppointmentQueueProcessor.name);
@@ -31,6 +29,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
   private readonly RETRY_DELAYS = [5000, 15000, 30000]; // 5s, 15s, 30s
   private readonly JOB_TIMEOUT = 30000; // 30 seconds
   private readonly processingJobs = new Map<string, ProcessingMetrics>();
+  private worker: Worker;
   
   constructor(
     private readonly prisma: PrismaService,
@@ -39,9 +38,34 @@ export class AppointmentQueueProcessor implements OnModuleInit {
   ) {}
 
   // Implementation of OnModuleInit
-  onModuleInit() {
+  async onModuleInit() {
     this.logger.log('Appointment Queue Processor initialized');
     this.setupQueueMonitoring();
+
+    // Initialize BullMQ Worker for 'appointment-queue'
+    this.worker = new Worker('appointment-queue', async (job: Job<AppointmentJobData>) => {
+      // Replace all Process-decorated methods with this handler logic
+      // You may need to route by job.name/type if you had multiple handlers
+      switch (job.name) {
+        case JobType.CREATE:
+          return this.handleCreate(job);
+        case JobType.CONFIRM:
+          return this.handleConfirm(job);
+        case JobType.COMPLETE:
+          return this.handleComplete(job);
+        case JobType.NOTIFY:
+          return this.handleNotify(job);
+        // Add other cases as needed
+        default:
+          this.logger.warn(`Unknown job type: ${job.name}`);
+      }
+    });
+    this.worker.on('completed', (job) => {
+      this.logger.log(`Job ${job.id} completed`);
+    });
+    this.worker.on('failed', (job, err) => {
+      this.logger.error(`Job ${job?.id} failed: ${err.message}`);
+    });
   }
 
   private setupQueueMonitoring() {
@@ -77,12 +101,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
         `Retrying ${operation} for appointment ${job.data.id} after ${delay}ms. Attempt ${retryCount + 1}/${this.MAX_RETRIES}`
       );
       
-      await job.progress({
-        retryCount: retryCount + 1,
-        lastError,
-        nextRetry: new Date(Date.now() + delay).toISOString(),
-        metrics
-      });
+      await job.updateProgress({ retryCount: retryCount + 1 });
       
       this.eventEmitter.emit('appointment.job.retry', {
         jobId: job.id,
@@ -101,7 +120,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       );
       
       await this.notifyCriticalError(job.data, error);
-      await job.moveToFailed({ message: lastError }, true);
+      await job.moveToFailed(new Error(lastError), job.token);
       
       this.eventEmitter.emit('appointment.job.failed', {
         jobId: job.id,
@@ -116,8 +135,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
     }
   }
 
-  @Process(JobType.CREATE)
-  async processCreateJob(job: Job<AppointmentJobData>) {
+  private async handleCreate(job: Job<AppointmentJobData>) {
     const metrics: ProcessingMetrics = {
       startTime: Date.now(),
       attempts: 0,
@@ -129,7 +147,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       this.logger.log(`Processing create appointment job ${job.id}`);
       const { id, locationId, userId, doctorId } = job.data;
       
-      await job.progress(0);
+      await job.updateProgress({});
       
       // Update appointment status
       const appointment = await this.prisma.appointment.update({
@@ -157,7 +175,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       const processingTime = Date.now() - metrics.startTime;
       this.logger.log(`Appointment ${id} created and scheduled successfully in ${processingTime}ms`);
       
-      await job.progress(100);
+      await job.updateProgress({});
       this.processingJobs.delete(job.id.toString());
       
       this.eventEmitter.emit('appointment.created', {
@@ -177,8 +195,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
     }
   }
 
-  @Process(JobType.CONFIRM)
-  async processConfirmJob(job: Job<AppointmentJobData>) {
+  private async handleConfirm(job: Job<AppointmentJobData>) {
     const metrics: ProcessingMetrics = {
       startTime: Date.now(),
       attempts: 0,
@@ -190,7 +207,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       this.logger.log(`Processing confirm appointment job ${job.id}`);
       const { id } = job.data;
       
-      await job.progress(0);
+      await job.updateProgress({});
       
       // Update appointment status
       const appointment = await this.prisma.appointment.update({
@@ -218,7 +235,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       const processingTime = Date.now() - metrics.startTime;
       this.logger.log(`Appointment ${id} confirmed successfully in ${processingTime}ms`);
       
-      await job.progress(100);
+      await job.updateProgress({});
       this.processingJobs.delete(job.id.toString());
       
       this.eventEmitter.emit('appointment.confirmed', {
@@ -238,15 +255,14 @@ export class AppointmentQueueProcessor implements OnModuleInit {
     }
   }
 
-  @Process(JobType.COMPLETE)
-  async processCompleteJob(job: Job<AppointmentJobData>) {
+  private async handleComplete(job: Job<AppointmentJobData>) {
     const startTime = Date.now();
     try {
       this.logger.log(`Processing complete appointment job ${job.id}`);
       const { id } = job.data;
       
       // Set job timeout
-      await job.progress(0);
+      await job.updateProgress({});
       
       // Update appointment status in database
       const appointment = await this.prisma.appointment.update({
@@ -273,7 +289,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       this.logger.log(`Appointment ${id} marked as completed in ${processingTime}ms`);
       
       // Update job with processing time
-      await job.progress(100);
+      await job.updateProgress({});
       
       return { 
         success: true, 
@@ -286,15 +302,14 @@ export class AppointmentQueueProcessor implements OnModuleInit {
     }
   }
 
-  @Process(JobType.NOTIFY)
-  async processNotifyJob(job: Job<AppointmentJobData>) {
+  private async handleNotify(job: Job<AppointmentJobData>) {
     const startTime = Date.now();
     try {
       this.logger.log(`Processing notification job ${job.id}`);
       const { id, userId, metadata } = job.data;
       
       // Set job timeout
-      await job.progress(0);
+      await job.updateProgress({});
       
       if (!userId) {
         this.logger.warn(`No userId provided for notification job ${job.id}`);
@@ -313,7 +328,7 @@ export class AppointmentQueueProcessor implements OnModuleInit {
       this.logger.log(`Notification sent for appointment ${id} in ${processingTime}ms`);
       
       // Update job with processing time
-      await job.progress(100);
+      await job.updateProgress({});
       
       return { 
         success: true, 

@@ -67,8 +67,6 @@ export class AuthController {
     status: 500, 
     description: 'Internal server error'
   })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async register(
     @Body() registerDto: RegisterDto,
     @OptionalClinicId() clinicId?: string
@@ -95,8 +93,6 @@ export class AuthController {
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials or user not associated with clinic' })
   @ApiResponse({ status: 404, description: 'Clinic not found' })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async login(
     @Body() body: LoginRequestDto,
     @OptionalClinicId() clinicId?: string,
@@ -245,8 +241,6 @@ export class AuthController {
     status: 200,
     description: 'Password reset email sent'
   })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async forgotPassword(@Body() body: ForgotPasswordRequestDto): Promise<{ message: string }> {
     try {
       await this.authService.forgotPassword(body.email);
@@ -269,8 +263,6 @@ export class AuthController {
     description: 'Password reset successfully'
   })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async resetPassword(
     @Body() passwordResetDto: PasswordResetDto
   ): Promise<{ message: string }> {
@@ -299,8 +291,6 @@ export class AuthController {
     status: 200,
     description: 'OTP sent successfully'
   })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async requestOTP(
     @Body() body: RequestOtpDto,
     @OptionalClinicId() clinicId?: string,
@@ -325,8 +315,6 @@ export class AuthController {
     description: 'OTP verified and login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid OTP' })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async verifyOTP(
     @Body() body: VerifyOtpRequestDto,
     @Req() request: any,
@@ -372,8 +360,6 @@ export class AuthController {
     status: 200,
     description: 'OTP status checked successfully'
   })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async checkOTPStatus(@Body() body: CheckOtpStatusDto): Promise<{ hasActiveOTP: boolean }> {
     try {
       const user = await this.authService.findUserByEmail(body.email);
@@ -400,8 +386,6 @@ export class AuthController {
     status: 200,
     description: 'OTP invalidated successfully'
   })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async invalidateOTP(@Body() body: InvalidateOtpDto): Promise<{ message: string }> {
     try {
       const user = await this.authService.findUserByEmail(body.email);
@@ -480,8 +464,6 @@ export class AuthController {
     description: 'Google login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Google token' })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async googleLogin(
     @Body() body: { token?: string; code?: string; redirectUri?: string },
     @Req() request: any,
@@ -489,33 +471,24 @@ export class AuthController {
   ): Promise<any> {
     try {
       let googleUser: any;
-      
       if (body.code && body.redirectUri) {
-        // Exchange OAuth code for tokens and get user info
         googleUser = await this.authService.exchangeGoogleOAuthCode(body.code, body.redirectUri);
       } else if (body.token) {
-        // Verify Google ID token
         const ticket = await this.authService.verifyGoogleToken(body.token);
         googleUser = ticket.getPayload();
       } else {
         throw new BadRequestException('Either token or code with redirectUri must be provided');
       }
-      
       if (!googleUser || !googleUser.email) {
         throw new UnauthorizedException('Invalid Google user data');
       }
-      
-      // Handle Google login with clinic context
       const response = await this.authService.handleGoogleLogin(googleUser, request, clinicId);
-      
       return response;
     } catch (error) {
       this.logger.error(`Google login failed: ${error.message}`, error.stack);
-      
       if (error instanceof HttpException) {
         throw error;
       }
-      
       throw new InternalServerErrorException('Google login failed');
     }
   }
@@ -531,8 +504,6 @@ export class AuthController {
     description: 'Facebook login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Facebook token' })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async facebookLogin(
     @Body('token') token: string,
     @Req() request: any,
@@ -571,8 +542,6 @@ export class AuthController {
     description: 'Apple login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Apple token' })
-  @UseGuards(PermissionGuard)
-  @Permission('manage_users')
   async appleLogin(
     @Body('token') token: string,
     @Req() request: any,
