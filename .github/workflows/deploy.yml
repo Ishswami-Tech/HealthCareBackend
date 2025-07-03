@@ -319,7 +319,7 @@ jobs:
           command_timeout: "30m"
           timeout: 120s
           proxy_timeout: 120s
-          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET
+          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,WORKER_COUNT
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
@@ -327,6 +327,7 @@ jobs:
             # Export the environment variables
             export GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID}"
             export GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET}"
+            export WORKER_COUNT="${WORKER_COUNT:-2}"
 
             # Make scripts executable in the release directory
             if [ -d "scripts" ]; then
