@@ -1,32 +1,35 @@
-import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { Job } from 'bull';
+import { Job } from 'bullmq';
 import { JobType, JobData } from './queue.service';
 import { PrismaService } from '../database/prisma/prisma.service';
 
-@Processor('service-queue')
+// NOTE: In BullMQ, job processing is handled by Worker instances, not decorators.
+// Worker registration should be done in the module or service setup.
+
 export class QueueProcessor {
   private readonly logger = new Logger(QueueProcessor.name);
 
   constructor(private readonly prisma: PrismaService) {}
 
-  @Process(JobType.CREATE)
+  // Example BullMQ job handler for CREATE
   async processCreateJob(job: Job<JobData>) {
     try {
       this.logger.log(`Processing create job ${job.id} for resource ${job.data.id}`);
-      
-      // Generic processing logic for service-queue
-      // Implementation of CREATE job for service-queue
-      
+      // Ensure this handler is idempotent!
+      // ... job logic ...
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
     } catch (error) {
       this.logger.error(`Error processing create job: ${error.message}`, error.stack);
-      throw error; // Rethrow to trigger job retry
+      // Optionally move to DLQ if available
+      // if (job.attemptsMade >= (job.opts.attempts || 3) && this.queueService?.moveToDLQ) {
+      //   await this.queueService.moveToDLQ(job, 'service-queue');
+      // }
+      throw error;
     }
   }
 
-  @Process(JobType.UPDATE)
+  // Repeat for other job types (UPDATE, CONFIRM, COMPLETE, NOTIFY)
   async processUpdateJob(job: Job<JobData>) {
     try {
       this.logger.log(`Processing update job ${job.id} for resource ${job.data.id}`);
@@ -42,7 +45,6 @@ export class QueueProcessor {
     }
   }
 
-  @Process(JobType.CONFIRM)
   async processConfirmJob(job: Job<JobData>) {
     try {
       this.logger.log(`Processing confirm job ${job.id} for resource ${job.data.id}`);
@@ -58,7 +60,6 @@ export class QueueProcessor {
     }
   }
 
-  @Process(JobType.COMPLETE)
   async processCompleteJob(job: Job<JobData>) {
     try {
       this.logger.log(`Processing complete job ${job.id} for resource ${job.data.id}`);
@@ -74,7 +75,6 @@ export class QueueProcessor {
     }
   }
 
-  @Process(JobType.NOTIFY)
   async processNotifyJob(job: Job<JobData>) {
     try {
       this.logger.log(`Processing notification job ${job.id} for resource ${job.data.id}`);

@@ -1,16 +1,21 @@
 import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { BullModule } from '@nestjs/bull';
 import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
 import { FastifyAdapter } from '@bull-board/fastify';
-import { BullAdapter } from '@bull-board/api/bullAdapter';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import {
+  SERVICE_QUEUE,
+  APPOINTMENT_QUEUE,
+  EMAIL_QUEUE,
+  NOTIFICATION_QUEUE,
+  VIDHAKARMA_QUEUE,
+  PANCHAKARMA_QUEUE,
+  CHEQUP_QUEUE,
+} from 'src/shared/queue/queue.constants';
+import { Queue } from 'bullmq';
 
 @Module({
   imports: [
-    BullModule.registerQueue(
-      { name: 'appointment-queue' },
-      { name: 'service-queue' }
-    ),
     BullBoardNestModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -34,12 +39,32 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       inject: [ConfigService]
     }),
     BullBoardNestModule.forFeature({
-      name: 'appointment-queue',
-      adapter: BullAdapter,
+      name: SERVICE_QUEUE,
+      adapter: BullMQAdapter,
     }),
     BullBoardNestModule.forFeature({
-      name: 'service-queue',
-      adapter: BullAdapter,
+      name: APPOINTMENT_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullBoardNestModule.forFeature({
+      name: EMAIL_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullBoardNestModule.forFeature({
+      name: NOTIFICATION_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullBoardNestModule.forFeature({
+      name: VIDHAKARMA_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullBoardNestModule.forFeature({
+      name: PANCHAKARMA_QUEUE,
+      adapter: BullMQAdapter,
+    }),
+    BullBoardNestModule.forFeature({
+      name: CHEQUP_QUEUE,
+      adapter: BullMQAdapter,
     }),
   ],
 })
@@ -53,4 +78,8 @@ export class BullBoardModule {
         { path: 'queue-dashboard/*', method: RequestMethod.ALL }
       );
   }
-} 
+}
+
+// IMPORTANT: Secure Bull Board in production!
+// Example: Use strong authentication and restrict by IP
+// See: https://docs.nestjs.com/techniques/queues#monitoring-queues-with-bull-board 

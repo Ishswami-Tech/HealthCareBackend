@@ -1,14 +1,14 @@
-import { Module, DynamicModule, Inject } from '@nestjs/common';
-import { BullModule, getQueueToken } from '@nestjs/bull';
+import { Module, DynamicModule } from '@nestjs/common';
+import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { QueueService } from './queue.service';
 import { QueueProcessor } from './queue.processor';
 import { createBullBoard } from '@bull-board/api';
-import { BullAdapter } from '@bull-board/api/bullAdapter';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
-import { APPOINTMENT_QUEUE, EMAIL_QUEUE, NOTIFICATION_QUEUE, SERVICE_QUEUE } from './queue.constants';
-import { join } from 'path';
-import { Queue } from 'bull';
+import { APPOINTMENT_QUEUE, EMAIL_QUEUE, NOTIFICATION_QUEUE, SERVICE_QUEUE, VIDHAKARMA_QUEUE, PANCHAKARMA_QUEUE, CHEQUP_QUEUE } from './queue.constants';
+import { Queue, Worker } from 'bullmq';
+import { PrismaService } from '../database/prisma/prisma.service';
 
 @Module({})
 export class QueueModule {
@@ -19,101 +19,35 @@ export class QueueModule {
         BullModule.forRootAsync({
           imports: [ConfigModule],
           useFactory: async (configService: ConfigService) => ({
-            redis: {
+            connection: {
               host: configService.get('REDIS_HOST', 'localhost'),
               port: parseInt(configService.get('REDIS_PORT', '6379')),
               password: configService.get('REDIS_PASSWORD'),
-              maxRetriesPerRequest: 3,
-              enableReadyCheck: false,
-              retryStrategy: (times: number) => {
-                if (times > 3) return null;
-                return Math.min(times * 100, 3000);
-              },
-              reconnectOnError: (err) => {
-                const targetError = 'READONLY';
-                if (err.message.includes(targetError)) {
-                  return true;
-                }
-                return false;
-              }
             },
-            defaultJobOptions: {
-              attempts: 3,
-              backoff: {
-                type: 'exponential',
-                delay: 1000
-              },
-              removeOnComplete: true,
-              removeOnFail: false,
-              timeout: 30000
-            },
-            limiter: {
-              max: 1000,
-              duration: 5000,
-              bounceBack: false
-            },
-            settings: {
-              stalledInterval: 30000,
-              maxStalledCount: 2,
-              lockDuration: 30000,
-              lockRenewTime: 15000,
-              retryProcessDelay: 5000,
-            }
           }),
           inject: [ConfigService],
         }),
-        BullModule.registerQueue(
-          {
-            name: SERVICE_QUEUE,
-            defaultJobOptions: {
-              priority: 1,
-              attempts: 3,
-              backoff: {
-                type: 'exponential',
-                delay: 1000
-              }
-            }
-          },
-          {
-            name: APPOINTMENT_QUEUE,
-            processors: [
-              {
-                path: join(__dirname, '../../services/appointments/appointment-processor/appointment-queue.processor.js'),
-                concurrency: 10
-              }
-            ],
-            defaultJobOptions: {
-              priority: 2,
-              attempts: 5,
-              backoff: {
-                type: 'exponential',
-                delay: 2000
-              }
-            }
-          },
-          {
-            name: EMAIL_QUEUE,
-            defaultJobOptions: {
-              priority: 3,
-              attempts: 3,
-              backoff: {
-                type: 'fixed',
-                delay: 5000
-              }
-            }
-          },
-          {
-            name: NOTIFICATION_QUEUE,
-            defaultJobOptions: {
-              priority: 1,
-              attempts: 3,
-              backoff: {
-                type: 'fixed',
-                delay: 1000
-              }
-            }
-          }
-        )
+        BullModule.registerQueue({
+          name: SERVICE_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: APPOINTMENT_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: EMAIL_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: NOTIFICATION_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: VIDHAKARMA_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: PANCHAKARMA_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: CHEQUP_QUEUE,
+        }),
       ],
       providers: [
         QueueService,
@@ -124,15 +58,21 @@ export class QueueModule {
             serviceQueue: Queue,
             appointmentQueue: Queue,
             emailQueue: Queue,
-            notificationQueue: Queue
+            notificationQueue: Queue,
+            vidhakarmaQueue: Queue,
+            panchakarmaQueue: Queue,
+            chequpQueue: Queue
           ) => {
             const serverAdapter = new FastifyAdapter();
             createBullBoard({
               queues: [
-                new BullAdapter(serviceQueue),
-                new BullAdapter(appointmentQueue),
-                new BullAdapter(emailQueue),
-                new BullAdapter(notificationQueue)
+                new BullMQAdapter(serviceQueue),
+                new BullMQAdapter(appointmentQueue),
+                new BullMQAdapter(emailQueue),
+                new BullMQAdapter(notificationQueue),
+                new BullMQAdapter(vidhakarmaQueue),
+                new BullMQAdapter(panchakarmaQueue),
+                new BullMQAdapter(chequpQueue),
               ],
               serverAdapter
             });
@@ -142,8 +82,49 @@ export class QueueModule {
             getQueueToken(SERVICE_QUEUE),
             getQueueToken(APPOINTMENT_QUEUE),
             getQueueToken(EMAIL_QUEUE),
-            getQueueToken(NOTIFICATION_QUEUE)
+            getQueueToken(NOTIFICATION_QUEUE),
+            getQueueToken(VIDHAKARMA_QUEUE),
+            getQueueToken(PANCHAKARMA_QUEUE),
+            getQueueToken(CHEQUP_QUEUE)
           ]
+        },
+        {
+          provide: 'BULLMQ_WORKERS',
+          useFactory: async (
+            queueProcessor: QueueProcessor,
+            prisma: PrismaService
+          ) => {
+            const workers = [];
+            workers.push(new Worker(
+              SERVICE_QUEUE,
+              async (job) => {
+                switch (job.name) {
+                  case 'create':
+                    return queueProcessor.processCreateJob(job);
+                  case 'update':
+                    return queueProcessor.processUpdateJob(job);
+                  case 'confirm':
+                    return queueProcessor.processConfirmJob(job);
+                  case 'complete':
+                    return queueProcessor.processCompleteJob(job);
+                  case 'notify':
+                    return queueProcessor.processNotifyJob(job);
+                  default:
+                    throw new Error(`Unknown job type: ${job.name}`);
+                }
+              },
+              {
+                connection: {
+                  host: process.env.REDIS_HOST || 'localhost',
+                  port: parseInt(process.env.REDIS_PORT || '6379'),
+                  password: process.env.REDIS_PASSWORD,
+                },
+                concurrency: parseInt(process.env.SERVICE_QUEUE_CONCURRENCY || '10'),
+              }
+            ));
+            return workers;
+          },
+          inject: [QueueProcessor, PrismaService],
         }
       ],
       exports: [QueueService, BullModule]
@@ -154,20 +135,27 @@ export class QueueModule {
     return {
       module: QueueModule,
       imports: [
-        BullModule.registerQueue(
-          {
-            name: SERVICE_QUEUE,
-          },
-          {
-            name: APPOINTMENT_QUEUE,
-          },
-          {
-            name: EMAIL_QUEUE,
-          },
-          {
-            name: NOTIFICATION_QUEUE,
-          }
-        )
+        BullModule.registerQueue({
+          name: SERVICE_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: APPOINTMENT_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: EMAIL_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: NOTIFICATION_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: VIDHAKARMA_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: PANCHAKARMA_QUEUE,
+        }),
+        BullModule.registerQueue({
+          name: CHEQUP_QUEUE,
+        }),
       ],
       providers: [QueueService],
       exports: [BullModule, QueueService],
