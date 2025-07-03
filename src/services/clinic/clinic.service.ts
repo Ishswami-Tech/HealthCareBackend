@@ -8,6 +8,7 @@ import { RedisService } from '../../shared/cache/redis/redis.service';
 import { JwtService } from '@nestjs/jwt';
 import { ClinicLocationService } from './services/clinic-location.service';
 import { PermissionService } from '../../shared/permissions';
+import { resolveClinicUUID } from '../../shared/utils/clinic.utils';
 
 @Injectable()
 export class ClinicService {
@@ -447,6 +448,7 @@ export class ClinicService {
     tags: ['clinics', 'clinic']     // Tags for grouped invalidation
   })
   async getClinicById(id: string, userId: string) {
+    const clinicUUID = await resolveClinicUUID(this.prisma, id);
     try {
       // First check if the user exists
       const user = await this.prisma.user.findUnique({
@@ -469,7 +471,7 @@ export class ClinicService {
 
       // Then find the clinic
       const clinic = await this.prisma.clinic.findUnique({
-        where: { id },
+        where: { id: clinicUUID },
         include: {
           admins: {
             include: {
@@ -484,19 +486,19 @@ export class ClinicService {
           { message: 'Clinic not found' },
           'ClinicService',
           'find clinic',
-          { clinicId: id }
+          { clinicId: clinicUUID }
         );
         throw new NotFoundException('Clinic not found');
       }
 
       // Use the permission service to validate access
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinics', resourceType: 'clinic', resourceId: id });
+      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinics', resourceType: 'clinic', resourceId: clinicUUID });
       if (!hasPermission) {
         await this.errorService.logError(
           { message: 'Unauthorized access attempt' },
           'ClinicService',
           'authorize user',
-          { clinicId: id, userId, role: user.role }
+          { clinicId: clinicUUID, userId, role: user.role }
         );
         throw new UnauthorizedException('You do not have permission to view this clinic');
       }
@@ -505,7 +507,7 @@ export class ClinicService {
         'Clinic fetched successfully',
         'ClinicService',
         'get clinic by id',
-        { clinicId: id, userId }
+        { clinicId: clinicUUID, userId }
       );
       
       return clinic;
@@ -623,8 +625,9 @@ export class ClinicService {
         throw new ConflictException('Only ClinicAdmin role users can be assigned to clinics');
       }
 
+      const clinicUUID = await resolveClinicUUID(this.prisma, data.clinicId);
       const clinic = await this.prisma.clinic.findUnique({
-        where: { id: data.clinicId },
+        where: { id: clinicUUID },
         include: {
           admins: true
         }
@@ -802,8 +805,9 @@ export class ClinicService {
     }
 
     // Check if the clinic exists
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     const clinic = await this.prisma.clinic.findUnique({
-      where: { id: clinicId },
+      where: { id: clinicUUID },
     });
 
     if (!clinic) {
@@ -818,7 +822,7 @@ export class ClinicService {
       const isAdmin = await this.prisma.clinicAdmin.findFirst({
         where: {
           userId: userId,
-          clinicId: clinicId,
+          clinicId: clinicUUID,
         },
       });
 
@@ -831,7 +835,7 @@ export class ClinicService {
 
     // Get all doctors for this clinic
     return this.prisma.doctorClinic.findMany({
-      where: { clinicId },
+      where: { clinicId: clinicUUID },
       include: {
         doctor: {
           include: {
@@ -866,8 +870,9 @@ export class ClinicService {
     }
 
     // Check if the clinic exists
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     const clinic = await this.prisma.clinic.findUnique({
-      where: { id: clinicId },
+      where: { id: clinicUUID },
     });
 
     if (!clinic) {
@@ -882,7 +887,7 @@ export class ClinicService {
       const isAdmin = await this.prisma.clinicAdmin.findFirst({
         where: {
           userId: userId,
-          clinicId: clinicId,
+          clinicId: clinicUUID,
         },
       });
 
@@ -908,6 +913,7 @@ export class ClinicService {
     appName: string;
   }) {
     // Get the clinic by app name
+    const clinicUUID = await resolveClinicUUID(this.prisma, data.appName);
     const clinic = await this.prisma.clinic.findUnique({
       where: { email: data.appName } as any, // Use type assertion to bypass type checking
     });
@@ -936,7 +942,7 @@ export class ClinicService {
 
     // After successfully registering patient, invalidate patients cache
     await this.redis.invalidateCacheByTag('clinic-patients');
-    await this.redis.invalidateCacheByTag(`clinic:${clinic.id}`);
+    await this.redis.invalidateCacheByTag(`clinic:${clinicUUID}`);
     
     return { success: true, message: 'Patient registered to clinic successfully' };
   }
@@ -969,8 +975,9 @@ export class ClinicService {
         throw new NotFoundException('User not found');
       }
 
+      const clinicUUID = await resolveClinicUUID(this.prisma, id);
       const clinic = await this.prisma.clinic.findUnique({
-        where: { id },
+        where: { id: clinicUUID },
         include: {
           admins: {
             include: {
@@ -985,7 +992,7 @@ export class ClinicService {
           { message: 'Clinic not found' },
           'ClinicService',
           'find clinic',
-          { clinicId: id }
+          { clinicId: clinicUUID }
         );
         throw new NotFoundException('Clinic not found');
       }
@@ -998,7 +1005,7 @@ export class ClinicService {
               { message: 'Unauthorized clinic update attempt' },
               'ClinicService',
               'authorize user',
-              { clinicId: id, userId, role: user.role }
+              { clinicId: clinicUUID, userId, role: user.role }
             );
             throw new UnauthorizedException('You do not have permission to update this clinic');
           }
@@ -1007,14 +1014,14 @@ export class ClinicService {
             { message: 'Unauthorized clinic update attempt' },
             'ClinicService',
             'authorize user',
-            { clinicId: id, userId, role: user.role }
+            { clinicId: clinicUUID, userId, role: user.role }
           );
           throw new UnauthorizedException('You do not have permission to update clinics');
         }
       }
 
       const updatedClinic = await this.prisma.clinic.update({
-        where: { id },
+        where: { id: clinicUUID },
         data,
       });
 
@@ -1022,21 +1029,21 @@ export class ClinicService {
         'Clinic updated successfully',
         'ClinicService',
         'update clinic',
-        { clinicId: id, updatedFields: Object.keys(data) }
+        { clinicId: clinicUUID, updatedFields: Object.keys(data) }
       );
 
       await this.eventService.emit('clinic.updated', {
-        clinicId: id,
+        clinicId: clinicUUID,
         updatedFields: Object.keys(data),
         updatedBy: userId
       });
 
       // After successfully updating clinic, invalidate clinic caches
       await Promise.all([
-        this.redis.invalidateCacheByPattern(`clinics:detail:${id}:*`),
+        this.redis.invalidateCacheByPattern(`clinics:detail:${clinicUUID}:*`),
         this.redis.invalidateCacheByPattern(`clinics:appname:${clinic.app_name}`),
         this.redis.invalidateCacheByTag('clinics'),
-        this.redis.invalidateCacheByTag(`clinic:${id}`)
+        this.redis.invalidateCacheByTag(`clinic:${clinicUUID}`)
       ]);
 
       return updatedClinic;
@@ -1074,8 +1081,9 @@ export class ClinicService {
       }
 
       // Check if the clinic exists
+      const clinicUUID = await resolveClinicUUID(this.prisma, id);
       const clinic = await this.prisma.clinic.findUnique({
-        where: { id },
+        where: { id: clinicUUID },
         select: {
           id: true,
           name: true,
@@ -1088,35 +1096,35 @@ export class ClinicService {
           { message: 'Clinic not found for deletion' },
           'ClinicService',
           'find clinic',
-          { clinicId: id }
+          { clinicId: clinicUUID }
         );
         throw new NotFoundException('Clinic not found');
       }
 
       // No need to delete database, simply delete the clinic record
       await this.prisma.clinic.delete({
-        where: { id },
+        where: { id: clinicUUID },
       });
 
       await this.errorService.logSuccess(
         'Clinic deleted successfully',
         'ClinicService',
         'delete clinic',
-        { clinicId: id, name: clinic.name }
+        { clinicId: clinicUUID, name: clinic.name }
       );
 
       await this.eventService.emit('clinic.deleted', {
-        clinicId: id,
+        clinicId: clinicUUID,
         name: clinic.name,
         deletedBy: userId
       });
 
       // After successfully deleting clinic, invalidate all clinic-related caches
       await Promise.all([
-        this.redis.invalidateCacheByPattern(`clinics:detail:${id}:*`),
+        this.redis.invalidateCacheByPattern(`clinics:detail:${clinicUUID}:*`),
         this.redis.invalidateCacheByPattern(`clinics:appname:${clinic.app_name}`),
         this.redis.invalidateCacheByTag('clinics'),
-        this.redis.invalidateCacheByTag(`clinic:${id}`),
+        this.redis.invalidateCacheByTag(`clinic:${clinicUUID}`),
         this.redis.invalidateCacheByTag('clinic-doctors'),
         this.redis.invalidateCacheByTag('clinic-patients')
       ]);
@@ -1134,10 +1142,11 @@ export class ClinicService {
   }
 
   async getActiveLocations(clinicId: string) {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       const locations = await this.prisma.clinicLocation.findMany({
         where: {
-          clinicId,
+          clinicId: clinicUUID,
           isActive: true
         },
         select: {
@@ -1165,13 +1174,14 @@ export class ClinicService {
         error,
         'ClinicService',
         'get active locations',
-        { clinicId }
+        { clinicId: clinicUUID }
       );
       throw error;
     }
   }
 
   async associateUserWithClinic(userId: string, clinicId: string) {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: userId }
@@ -1182,7 +1192,7 @@ export class ClinicService {
       }
 
       const clinic = await this.prisma.clinic.findUnique({
-        where: { id: clinicId }
+        where: { id: clinicUUID }
       });
 
       if (!clinic) {
@@ -1194,7 +1204,7 @@ export class ClinicService {
         where: { id: userId },
         data: {
           clinics: {
-            connect: { id: clinicId }
+            connect: { id: clinicUUID }
           }
         }
       });
@@ -1225,12 +1235,13 @@ export class ClinicService {
   }
 
   async generateClinicToken(userId: string, clinicId: string): Promise<string> {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         include: {
           clinics: {
-            where: { id: clinicId },
+            where: { id: clinicUUID },
             select: { clinicId: true }
           }
         }
@@ -1249,7 +1260,7 @@ export class ClinicService {
         sub: userId,
         email: user.email,
         role: user.role,
-        clinicId: clinicId,
+        clinicId: clinicUUID,
         clinicIdentifier: user.clinics[0].clinicId
       });
 

@@ -9,6 +9,7 @@ import { LoggingService } from '../../../shared/logging/logging.service';
 import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
 import { ClinicLocation, QRCodeData } from '../../../libs/types/clinic.types';
 import { PermissionService } from '../../../shared/permissions';
+import { resolveClinicUUID } from '../../../shared/utils/clinic.utils';
 
 @Injectable()
 export class ClinicLocationService {
@@ -138,16 +139,17 @@ export class ClinicLocationService {
   }
 
   async getLocations(clinicId: string, userId: string): Promise<ClinicLocation[]> {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Check if the user has permission to view this clinic's locations
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicId });
+      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicUUID });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to view locations for this clinic');
       }
 
       const locations = await this.prisma.clinicLocation.findMany({
         where: { 
-          clinicId,
+          clinicId: clinicUUID,
           isActive: true 
         },
         include: {
@@ -205,9 +207,10 @@ export class ClinicLocationService {
   }
 
   async getLocationById(id: string, clinicId: string, userId: string): Promise<ClinicLocation> {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Check if the user has permission to view this clinic's locations
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicId });
+      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicUUID });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to view locations for this clinic');
       }
@@ -215,7 +218,7 @@ export class ClinicLocationService {
       const location = await this.prisma.clinicLocation.findFirst({
         where: {
           id,
-          clinicId,
+          clinicId: clinicUUID,
           isActive: true
         },
         include: {

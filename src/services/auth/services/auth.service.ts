@@ -20,22 +20,11 @@ import { OAuth2Client } from 'google-auth-library';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
 import { google } from 'googleapis';
+import { resolveClinicUUID } from '../../../shared/utils/clinic.utils';
 
 // Define simple types to avoid Prisma type issues
 type User = any;
 type Role = 'SUPER_ADMIN' | 'CLINIC_ADMIN' | 'DOCTOR' | 'PATIENT' | 'RECEPTIONIST';
-
-// Add after imports
-async function resolveClinicUUID(prisma, clinicIdOrUUID: string): Promise<string> {
-  let clinic = await prisma.clinic.findUnique({ where: { clinicId: clinicIdOrUUID } });
-  if (!clinic) {
-    clinic = await prisma.clinic.findUnique({ where: { id: clinicIdOrUUID } });
-  }
-  if (!clinic) {
-    throw new Error('Clinic not found');
-  }
-  return clinic.id;
-}
 
 @Injectable()
 export class AuthService {
@@ -1292,8 +1281,8 @@ export class AuthService {
   // Social login methods
   
   async handleGoogleLogin(googleUser: any, request: any, clinicId: string): Promise<any> {
-    // Check if clinic exists before proceeding
-    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicUUID } });
     if (!clinic) {
       throw new NotFoundException('Clinic not found');
     }
@@ -1327,8 +1316,8 @@ export class AuthService {
             gender: 'UNSPECIFIED', // Default gender
             dateOfBirth: new Date(), // Default date, can be updated later
             userid: userid,
-            primaryClinicId: clinicId,
-            clinics: { connect: { id: clinicId } },
+            primaryClinicId: clinicUUID,
+            clinics: { connect: { id: clinicUUID } },
           }
         });
         
@@ -1392,8 +1381,8 @@ export class AuthService {
   }
   
   async handleFacebookLogin(facebookUser: any, request: any, clinicId: string): Promise<any> {
-    // Check if clinic exists before proceeding
-    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicUUID } });
     if (!clinic) {
       throw new NotFoundException('Clinic not found');
     }
@@ -1424,8 +1413,8 @@ export class AuthService {
             gender: 'UNSPECIFIED',
             dateOfBirth: new Date(),
             userid: userid,
-            primaryClinicId: clinicId,
-            clinics: { connect: { id: clinicId } },
+            primaryClinicId: clinicUUID,
+            clinics: { connect: { id: clinicUUID } },
           }
         });
         
@@ -1496,8 +1485,8 @@ export class AuthService {
 
   // Handle Apple login
   async handleAppleLogin(appleUser: any, request: any, clinicId: string): Promise<any> {
-    // Check if clinic exists before proceeding
-    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicUUID } });
     if (!clinic) {
       throw new NotFoundException('Clinic not found');
     }
@@ -1528,8 +1517,8 @@ export class AuthService {
             dateOfBirth: new Date(), // Default date, can be updated later
             profilePicture: '', // Default empty profile picture
             userid: userid,
-            primaryClinicId: clinicId,
-            clinics: { connect: { id: clinicId } },
+            primaryClinicId: clinicUUID,
+            clinics: { connect: { id: clinicUUID } },
           }
         });
         
