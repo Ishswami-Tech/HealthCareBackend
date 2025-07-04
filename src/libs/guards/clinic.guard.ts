@@ -40,6 +40,9 @@ export class ClinicGuard implements CanActivate {
 
     // If user authentication is required, check if they belong to this clinic
     if (user) {
+      if (!user.id || user.id === 'undefined') {
+        throw new UnauthorizedException('User ID is required');
+      }
       // Get user's clinic associations
       const userWithClinic = await this.prisma.user.findUnique({
         where: { id: user.id },
