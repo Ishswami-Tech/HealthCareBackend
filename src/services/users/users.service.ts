@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
 import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../libs/dtos/user.dto';
@@ -149,6 +149,9 @@ export class UsersService {
   }
 
   async update(id: string, updateUserDto: UpdateUserDto): Promise<UserResponseDto> {
+    if (!id || id === 'undefined') {
+      throw new BadRequestException('User ID is required');
+    }
     try {
       // Check if user exists first
       const existingUser = await this.prisma.user.findUnique({
@@ -181,6 +184,10 @@ export class UsersService {
 
       // Clean up the data to prevent errors
       const cleanedData: any = { ...updateUserDto };
+      
+      // Prevent users from updating clinicId and appName
+      delete cleanedData.clinicId;
+      delete cleanedData.appName;
       
       // Handle date conversion properly
       if (cleanedData.dateOfBirth && typeof cleanedData.dateOfBirth === 'string') {

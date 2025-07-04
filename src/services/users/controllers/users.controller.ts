@@ -9,6 +9,7 @@ import {
   Request,
   Put,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiSecurity } from '@nestjs/swagger';
 import { UsersService } from '../users.service';
@@ -83,7 +84,7 @@ export class UsersController {
   @Permission('edit_profile', 'user', 'id')
   @ApiOperation({
     summary: 'Update user',
-    description: 'Update user information. Admins can update any user. All authenticated users can update their own information.',
+    description: 'Update user information. Super Admin can update any user. All authenticated users can update their own information.',
   })
   @ApiResponse({
     status: 200,
@@ -95,17 +96,20 @@ export class UsersController {
     @Body() updateUserDto: UpdateUserDto,
     @Request() req,
   ): Promise<UserResponseDto> {
-    const loggedInUser = req.user;
-    const canEdit = await this.permissionService.hasPermission({
-      userId: loggedInUser.id,
-      action: 'edit_profile',
-      resourceType: 'user',
-      resourceId: id,
-    });
-    if (!canEdit && loggedInUser.id !== id) {
-      throw new ForbiddenException('You do not have permission to update this user.');
+    if (!id || id === 'undefined') {
+      throw new BadRequestException('User ID is required in the URL');
     }
-    return this.usersService.update(id, updateUserDto);
+    const loggedInUser = req.user;
+    // Allow Super Admin to update any user
+    if (loggedInUser.role === Role.SUPER_ADMIN) {
+      return this.usersService.update(id, updateUserDto);
+    }
+    // Allow any user to update their own profile
+    if (loggedInUser.id === id) {
+      return this.usersService.update(id, updateUserDto);
+    }
+    // Otherwise, forbidden
+    throw new ForbiddenException('You do not have permission to update this user.');
   }
 
   @Delete(':id')

@@ -84,6 +84,11 @@ export class PermissionService {
     if (this.permissionCache.has(cacheKey)) {
       return this.permissionCache.get(cacheKey)!;
     }
+    if (!userId || userId === 'undefined') {
+      this.logger.warn(`Permission check failed: userId is missing or undefined`);
+      this.logAudit({ ...params, allowed: false, reason: 'User ID missing', timestamp: new Date() });
+      return false;
+    }
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       this.logAudit({ ...params, allowed: false, reason: 'User not found', timestamp: new Date() });
@@ -132,6 +137,7 @@ export class PermissionService {
    * Get all permissions for a user (from roles, and optionally direct assignments)
    */
   async getUserPermissions(userId: string): Promise<UserPermissions> {
+    if (!userId || userId === 'undefined') throw new ForbiddenException('User ID is required');
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new ForbiddenException('User not found');
     const role = user.role as Role;
