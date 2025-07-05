@@ -409,7 +409,7 @@ jobs:
           command_timeout: "30m"
           timeout: 120s
           proxy_timeout: 120s
-          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,WORKER_COUNT
+          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,WORKER_COUNT,GITHUB_SHA
           script: |
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
             bash scripts/ci/setup-deployment.sh
@@ -423,7 +423,7 @@ jobs:
           command_timeout: "30m"
           timeout: 120s
           proxy_timeout: 120s
-          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,WORKER_COUNT
+          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,WORKER_COUNT,GITHUB_SHA
           script: |
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
             bash scripts/ci/start-containers.sh
