@@ -45,8 +45,20 @@ export const connectionManagementMiddleware: any = async (
     const queryEndTime = process.hrtime.bigint();
     const queryDuration = Number(queryEndTime - queryStartTime) / 1000000; // Convert to milliseconds
 
-    if (queryDuration > 100) { // Log slow queries (>100ms)
+    // Improved slow query detection with different thresholds
+    if (queryDuration > 500) { // Critical slow queries (>500ms)
+      console.error(`[Critical Slow Query] ${params.model}.${params.action} took ${queryDuration.toFixed(2)}ms`);
+      console.error(`Query details:`, {
+        model: params.model,
+        action: params.action,
+        args: JSON.stringify(params.args, null, 2),
+        duration: `${queryDuration.toFixed(2)}ms`,
+        timestamp: new Date().toISOString()
+      });
+    } else if (queryDuration > 200) { // Slow queries (>200ms)
       console.warn(`[Slow Query] ${params.model}.${params.action} took ${queryDuration.toFixed(2)}ms`);
+    } else if (queryDuration > 100) { // Moderate slow queries (>100ms)
+      console.info(`[Moderate Slow Query] ${params.model}.${params.action} took ${queryDuration.toFixed(2)}ms`);
     }
 
     return result;
@@ -72,6 +84,12 @@ export const connectionManagementMiddleware: any = async (
           break;
         case 'P2025': // Record not found
           console.error('Record not found error');
+          break;
+        case 'P2002': // Unique constraint violation
+          console.error('Unique constraint violation');
+          break;
+        case 'P2003': // Foreign key constraint violation
+          console.error('Foreign key constraint violation');
           break;
       }
     }

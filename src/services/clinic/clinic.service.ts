@@ -910,12 +910,12 @@ export class ClinicService {
    */
   async registerPatientToClinic(data: {
     userId: string;
-    appName: string;
+    clinicId: string;
   }) {
-    // Get the clinic by app name
-    const clinicUUID = await resolveClinicUUID(this.prisma, data.appName);
+    // Get the clinic by clinic ID
+    const clinicUUID = await resolveClinicUUID(this.prisma, data.clinicId);
     const clinic = await this.prisma.clinic.findUnique({
-      where: { email: data.appName } as any, // Use type assertion to bypass type checking
+      where: { id: clinicUUID },
     });
 
     if (!clinic) {
