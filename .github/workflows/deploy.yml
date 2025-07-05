@@ -217,15 +217,50 @@ jobs:
               echo "No current deployment found, proceeding with fresh deployment..."
             fi
 
+            # Enhanced cleanup to prevent port conflicts
+            echo "Performing enhanced Docker cleanup to prevent port conflicts..."
+            
+            # Stop and remove ALL containers that might be using port 8088
+            echo "Stopping all containers that might be using port 8088..."
+            docker ps --format '{{.Names}}' | while read container; do
+              if docker port "$container" 2>/dev/null | grep -q ":8088"; then
+                echo "Stopping container using port 8088: $container"
+                docker stop "$container" || true
+                docker rm "$container" || true
+              fi
+            done
+            
+            # Force remove any containers with API-related names
+            echo "Force removing any API-related containers..."
+            docker ps -a --format '{{.Names}}' | grep -E "(api|worker)" | while read container; do
+              echo "Force removing container: $container"
+              docker rm -f "$container" || true
+            done
+            
             # Clean up Docker resources related to the API only
             echo "Cleaning up API Docker resources..."
             docker system prune -f --filter "label=com.docker.compose.service=api"
-
+            
+            # Additional cleanup for any containers that might conflict
+            echo "Performing additional cleanup..."
+            docker system prune -f --volumes=false --filter "until=24h"
+            
             # Remove any existing API containers with conflicting names
             if docker ps -a --format '{{.Names}}' | grep -q "^${{ env.API_CONTAINER }}$"; then
               echo "Removing existing API container: ${{ env.API_CONTAINER }}"
               docker rm -f ${{ env.API_CONTAINER }} || true
-              fi
+            fi
+            
+            # Verify port 8088 is free
+            echo "Verifying port 8088 is available..."
+            if netstat -tuln 2>/dev/null | grep -q ":8088 "; then
+              echo "WARNING: Port 8088 is still in use after cleanup!"
+              netstat -tuln | grep ":8088 " || true
+              echo "Attempting to kill any processes using port 8088..."
+              lsof -ti:8088 | xargs kill -9 2>/dev/null || true
+            else
+              echo "Port 8088 is available"
+            fi
 
             # Create necessary Docker network if it doesn't exist
             echo "Creating Docker network if it doesn't exist..."
@@ -438,6 +473,41 @@ jobs:
               sudo apt-get install -y python3 make g++ build-essential
             fi
 
+            # Final cleanup before starting containers to prevent port conflicts
+            echo "Performing final cleanup before starting containers..."
+            
+            # Stop any containers that might be using port 8088
+            echo "Stopping any containers using port 8088..."
+            docker ps --format '{{.Names}}' | while read container; do
+              if docker port "$container" 2>/dev/null | grep -q ":8088"; then
+                echo "Stopping container using port 8088: $container"
+                docker stop "$container" || true
+                docker rm "$container" || true
+              fi
+            done
+            
+            # Force remove any API or worker containers
+            echo "Force removing any existing API or worker containers..."
+            docker ps -a --format '{{.Names}}' | grep -E "(api|worker)" | while read container; do
+              echo "Force removing container: $container"
+              docker rm -f "$container" || true
+            done
+            
+            # Wait a moment for cleanup to complete
+            sleep 5
+            
+            # Verify port 8088 is free
+            echo "Final verification that port 8088 is available..."
+            if netstat -tuln 2>/dev/null | grep -q ":8088 "; then
+              echo "ERROR: Port 8088 is still in use after cleanup!"
+              netstat -tuln | grep ":8088 " || true
+              echo "Attempting to kill any processes using port 8088..."
+              lsof -ti:8088 | xargs kill -9 2>/dev/null || true
+              sleep 2
+            else
+              echo "Port 8088 is available for new containers"
+            fi
+
             # Selective container start based on status
             DEPLOY_SUCCESS=false
 
@@ -473,14 +543,38 @@ jobs:
                 fi
               fi
               
-              # Now build and start the API container
-              echo "Building and starting API container..."
-              if docker compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
-                echo "API container started successfully"
-              else
-                echo "Failed to start API container"
-                exit 1
-              fi
+              # Now build and start the API container with retry logic
+              echo "Building and starting API container with retry logic..."
+              MAX_RETRIES=3
+              RETRY_COUNT=0
+              API_STARTED=false
+              
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$API_STARTED" != "true" ]; do
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                echo "API container start attempt $RETRY_COUNT/$MAX_RETRIES..."
+                
+                # Additional cleanup before each retry
+                if [ $RETRY_COUNT -gt 1 ]; then
+                  echo "Performing cleanup before retry..."
+                  docker ps -a --format '{{.Names}}' | grep -E "(api|worker)" | while read container; do
+                    docker rm -f "$container" || true
+                  done
+                  sleep 3
+                fi
+                
+                if docker compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
+                  echo "API container started successfully on attempt $RETRY_COUNT"
+                  API_STARTED=true
+                else
+                  echo "Failed to start API container on attempt $RETRY_COUNT"
+                  if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                    echo "All retry attempts failed. Exiting..."
+                    exit 1
+                  fi
+                  echo "Waiting 10 seconds before retry..."
+                  sleep 10
+                fi
+              done
             fi
 
             # Verify all containers are running
@@ -699,6 +793,37 @@ jobs:
               # Add this deployment to the successful deployments file
               echo "${{ github.sha }}" >> "$SUCCESSFUL_DEPLOYMENTS_FILE"
               echo "Deployment marked as successful"
+              
+              # Create backup of successful deployment using backup scripts
+              echo "Creating backup of successful deployment..."
+              if [ -f "/var/www/healthcare/backend/scripts/backup-database.sh" ]; then
+                echo "Running database backup..."
+                /var/www/healthcare/backend/scripts/backup-database.sh || {
+                  echo "Warning: Database backup failed, but deployment was successful"
+                }
+              fi
+              
+              if [ -f "/var/www/healthcare/backend/scripts/offsite-backup.sh" ]; then
+                echo "Running offsite backup..."
+                /var/www/healthcare/backend/scripts/offsite-backup.sh || {
+                  echo "Warning: Offsite backup failed, but deployment was successful"
+                }
+              fi
+              
+              # Create application backup using the backup scripts
+              echo "Creating application backup..."
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_DIR="/var/www/healthcare/backend/backups"
+              mkdir -p "$BACKUP_DIR/$TIMESTAMP"
+              
+              # Copy current deployment to backup
+              if [ -d "current" ]; then
+                cp -r current/* "$BACKUP_DIR/$TIMESTAMP/" 2>/dev/null || true
+                echo "$TIMESTAMP" > "$BACKUP_DIR/latest_backup"
+                echo "Application backup created: $TIMESTAMP"
+              fi
+              
+              echo "✅ Deployment marked as successful with backups created"
             else
               echo "Deployment not marked as successful due to health check failures"
             fi
@@ -785,6 +910,34 @@ jobs:
                 }
               else
                 echo "⚠️ Verification script not found, skipping verification"
+              fi
+              
+              # Run server maintenance script to ensure system health
+              echo "🔧 Running server maintenance script..."
+              if [ -f "/var/www/healthcare/backend/scripts/server-maintenance.sh" ]; then
+                chmod +x /var/www/healthcare/backend/scripts/server-maintenance.sh
+                /var/www/healthcare/backend/scripts/server-maintenance.sh || {
+                  echo "⚠️ Server maintenance script failed, but deployment was successful"
+                }
+              else
+                echo "⚠️ Server maintenance script not found, skipping maintenance"
+              fi
+              
+              # Run database performance monitor to check system health
+              echo "📊 Running database performance monitor..."
+              if [ -f "/var/www/healthcare/backend/scripts/database-performance-monitor.sh" ]; then
+                chmod +x /var/www/healthcare/backend/scripts/database-performance-monitor.sh
+                # Set database environment variables for the monitor
+                export DB_HOST=localhost
+                export DB_PORT=5432
+                export DB_NAME=userdb
+                export DB_USER=postgres
+                export DB_PASSWORD=postgres
+                /var/www/healthcare/backend/scripts/database-performance-monitor.sh || {
+                  echo "⚠️ Database performance monitor failed, but deployment was successful"
+                }
+              else
+                echo "⚠️ Database performance monitor not found, skipping performance check"
               fi
               
               exit 0
@@ -1427,16 +1580,24 @@ jobs:
             if [ -L "current" ] && [ -d "$(readlink -f current)" ] && [ -f "$(readlink -f current)/docker-compose.prod.yml" ]; then
               echo "✅ Valid current deployment found, attempting to restore from previous version"
               
-              if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
-                # Get the last successful deployment that's not the current one
-                CURRENT_DEPLOY=$(basename $(readlink -f current))
-                echo "Current deployment: $CURRENT_DEPLOY"
-                
-                LAST_SUCCESSFUL=$(grep -v "$CURRENT_DEPLOY" "$SUCCESSFUL_DEPLOYMENTS_FILE" | tail -n 1)
-                echo "Last successful deployment: ${LAST_SUCCESSFUL:-none}"
-                
-                if [ -n "$LAST_SUCCESSFUL" ] && [ -d "releases/$LAST_SUCCESSFUL" ]; then
-                  echo "✅ Rolling back to last successful deployment: $LAST_SUCCESSFUL"
+              # Enhanced rollback using the rollback script
+              echo "Attempting rollback using rollback script..."
+              if [ -f "/var/www/healthcare/backend/scripts/rollback.sh" ]; then
+                echo "Running automated rollback script..."
+                /var/www/healthcare/backend/scripts/rollback.sh auto || {
+                  echo "Automated rollback failed, attempting manual rollback..."
+                  
+                  # Manual rollback fallback
+                  if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
+                    # Get the last successful deployment that's not the current one
+                    CURRENT_DEPLOY=$(basename $(readlink -f current))
+                    echo "Current deployment: $CURRENT_DEPLOY"
+                    
+                    LAST_SUCCESSFUL=$(grep -v "$CURRENT_DEPLOY" "$SUCCESSFUL_DEPLOYMENTS_FILE" | tail -n 1)
+                    echo "Last successful deployment: ${LAST_SUCCESSFUL:-none}"
+                    
+                    if [ -n "$LAST_SUCCESSFUL" ] && [ -d "releases/$LAST_SUCCESSFUL" ]; then
+                      echo "✅ Rolling back to last successful deployment: $LAST_SUCCESSFUL"
                 
                   # Stop current API container
                   echo "Stopping current API container..."
