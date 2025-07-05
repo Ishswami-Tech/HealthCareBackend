@@ -156,16 +156,25 @@ export class LoggingService {
         return JSON.parse(cachedLogs);
       }
 
+      // Build optimized query with proper indexing
+      const whereClause: any = {
+        timestamp: {
+          gte: finalStartTime,
+          lte: finalEndTime,
+        },
+      };
+
+      // Only add filters if they are provided to avoid unnecessary complexity
+      if (type) {
+        whereClause.type = type;
+      }
+      if (level) {
+        whereClause.level = level;
+      }
+
       // If not in cache, query database with optimized parameters
       const dbLogs = await this.prisma.log.findMany({
-        where: {
-          type: type || undefined,
-          level: level || undefined,
-          timestamp: {
-            gte: finalStartTime,
-            lte: finalEndTime,
-          },
-        },
+        where: whereClause,
         orderBy: {
           timestamp: 'desc',
         },
