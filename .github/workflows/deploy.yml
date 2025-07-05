@@ -156,7 +156,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create targeted backup and cleanup
+      - name: Create backup and cleanup
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
@@ -193,8 +193,8 @@ jobs:
                 
                 # Only backup successful deployments
                 echo "Creating backup of successful API deployment..."
-              cp -r current/* backups/$timestamp/ 2>/dev/null || true
-              echo $timestamp > backups/latest_backup
+                cp -r current/* backups/$timestamp/ 2>/dev/null || true
+                echo $timestamp > backups/latest_backup
                 echo "Backup created with timestamp: $timestamp"
               else
                 echo "Current deployment is not marked as successful, skipping backup..."
@@ -344,8 +344,7 @@ jobs:
               echo "Warning: No scripts directory found in deployment"
             fi
 
-      - name: Deploy to server
-        id: deploy_to_server
+      - name: Setup deployment environment
         uses: appleboy/ssh-action@master
         with:
           host: ${{ env.SERVER_IP }}
@@ -356,600 +355,61 @@ jobs:
           proxy_timeout: 120s
           envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,WORKER_COUNT
           script: |
-            set -e
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            bash scripts/ci/setup-deployment.sh
 
-            # Export the environment variables
-            export GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID}"
-            export GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET}"
-            export WORKER_COUNT="${WORKER_COUNT:-2}"
+      - name: Start containers
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          command_timeout: "30m"
+          timeout: 120s
+          proxy_timeout: 120s
+          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,WORKER_COUNT
+          script: |
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            bash scripts/ci/start-containers.sh
 
-            # Make scripts executable in the release directory
-            if [ -d "scripts" ]; then
-              chmod +x scripts/*.sh
-            fi
+      - name: Configure and optimize
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          command_timeout: "30m"
+          timeout: 120s
+          proxy_timeout: 120s
+          script: |
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            bash scripts/ci/configure-optimize.sh
 
-            # Configure host to resolve api.ishswami.in to localhost
-            echo "Configuring hosts file for api.ishswami.in..."
-            if ! grep -q "api.ishswami.in" /etc/hosts; then
-              echo "127.0.0.1 api.ishswami.in" | sudo tee -a /etc/hosts
-            fi
+      - name: Backup and maintenance
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          command_timeout: "30m"
+          timeout: 120s
+          proxy_timeout: 120s
+          script: |
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            bash scripts/ci/backup-maintenance.sh
 
-            # Make sure api.ishswami.in is also registered on the server's public IP
-            echo "Ensuring domain is properly configured on server..."
-            SERVER_IP=$(curl -s ifconfig.me)
-            if ! grep -q "$SERVER_IP api.ishswami.in" /etc/hosts; then
-              echo "$SERVER_IP api.ishswami.in" | sudo tee -a /etc/hosts
-            fi
-
-            # Handle Docker network
-            echo "Setting up Docker network..."
-            if ! docker network inspect app-network > /dev/null 2>&1; then
-              echo "Creating Docker network app-network..."
-              docker network create app-network --subnet=172.18.0.0/16
-            fi
-
-            # SSL certificate handling remains the same
-            # ... existing SSL configuration code ...
-
-            # Check and manage database containers
-            echo "Checking database containers..."
-
-                        # Improved PostgreSQL container health check - use pattern matching instead of exact names
-            # Find postgres container regardless of exact name
-            POSTGRES_CONTAINER_ID=$(docker ps | grep postgres | grep -v "grep" | awk '{print $1}' | head -n 1)
-            if [ -n "$POSTGRES_CONTAINER_ID" ]; then
-              echo "PostgreSQL container is running with ID: $POSTGRES_CONTAINER_ID"
-              # More reliable health check - containers often report "Up" or "(healthy)" status
-              if docker inspect --format="{{.State.Status}}" $POSTGRES_CONTAINER_ID | grep -q "running"; then
-                echo "PostgreSQL container is already running and appears healthy. Keeping it as is."
-                POSTGRES_RUNNING=true
-                # Save the container name for later usage
-                REAL_POSTGRES_CONTAINER=$(docker inspect --format="{{.Name}}" $POSTGRES_CONTAINER_ID | sed 's/^\///')
-                echo "Detected actual PostgreSQL container name: $REAL_POSTGRES_CONTAINER"
-              else
-                echo "PostgreSQL container exists but may not be running. Will attempt to keep it anyway."
-                # Changed to keep existing DB container even if health check isn't perfect
-                POSTGRES_RUNNING=true
-                REAL_POSTGRES_CONTAINER=$(docker inspect --format="{{.Name}}" $POSTGRES_CONTAINER_ID | sed 's/^\///')
-              fi
-            else
-              echo "No running PostgreSQL container found. Will create it."
-              POSTGRES_RUNNING=false
-              REAL_POSTGRES_CONTAINER=""
-            fi
-
-            # Improved Redis container health check - use pattern matching instead of exact names
-            # Find redis container regardless of exact name, excluding redis-commander
-            REDIS_CONTAINER_ID=$(docker ps | grep redis | grep -v "commander\|grep" | awk '{print $1}' | head -n 1)
-            if [ -n "$REDIS_CONTAINER_ID" ]; then
-              echo "Redis container is running with ID: $REDIS_CONTAINER_ID"
-              # More reliable health check using docker inspect
-              if docker inspect --format="{{.State.Status}}" $REDIS_CONTAINER_ID | grep -q "running"; then
-                echo "Redis container is already running and appears healthy. Keeping it as is."
-                REDIS_RUNNING=true
-                # Save the container name for later usage
-                REAL_REDIS_CONTAINER=$(docker inspect --format="{{.Name}}" $REDIS_CONTAINER_ID | sed 's/^\///')
-                echo "Detected actual Redis container name: $REAL_REDIS_CONTAINER"
-              else
-                echo "Redis container exists but may not be running. Will attempt to keep it anyway."
-                # Changed to keep existing Redis container even if health check isn't perfect
-                REDIS_RUNNING=true
-                REAL_REDIS_CONTAINER=$(docker inspect --format="{{.Name}}" $REDIS_CONTAINER_ID | sed 's/^\///')
-              fi
-            else
-              echo "No running Redis container found. Will create it."
-              REDIS_RUNNING=false
-              REAL_REDIS_CONTAINER=""
-            fi
-
-            # Additional verification of database containers with dynamic names
-            if [ "$POSTGRES_RUNNING" = true ] && [ -n "$REAL_POSTGRES_CONTAINER" ]; then
-              echo "Verifying PostgreSQL container is responsive..."
-              # Simple connection test using the detected container name
-              if docker exec $REAL_POSTGRES_CONTAINER pg_isready -q; then
-                echo "PostgreSQL container is responsive."
-                else
-                echo "Warning: PostgreSQL container exists but isn't responding to connection tests."
-                # Still keeping it to avoid data loss - might self-recover
-              fi
-            fi
-
-            if [ "$REDIS_RUNNING" = true ] && [ -n "$REAL_REDIS_CONTAINER" ]; then
-              echo "Verifying Redis container is responsive..."
-              # Simple ping test using the detected container name
-              if docker exec $REAL_REDIS_CONTAINER redis-cli ping | grep -q "PONG"; then
-                echo "Redis container is responsive."
-              else
-                echo "Warning: Redis container exists but isn't responding to ping tests."
-                # Still keeping it to avoid data loss - might self-recover
-              fi
-            fi
-
-            # Install any required build dependencies for bcrypt
-            echo "Installing build dependencies for native modules..."
-            if ! command -v python3 &> /dev/null || ! command -v g++ &> /dev/null || ! command -v make &> /dev/null; then
-              sudo apt-get update
-              sudo apt-get install -y python3 make g++ build-essential
-            fi
-
-            # Final cleanup before starting containers to prevent port conflicts
-            echo "Performing final cleanup before starting containers..."
-            
-            # Stop any containers that might be using port 8088
-            echo "Stopping any containers using port 8088..."
-            docker ps --format '{{.Names}}' | while read container; do
-              if docker port "$container" 2>/dev/null | grep -q ":8088"; then
-                echo "Stopping container using port 8088: $container"
-                docker stop "$container" || true
-                docker rm "$container" || true
-              fi
-            done
-            
-            # Force remove any API or worker containers
-            echo "Force removing any existing API or worker containers..."
-            docker ps -a --format '{{.Names}}' | grep -E "(api|worker)" | while read container; do
-              echo "Force removing container: $container"
-              docker rm -f "$container" || true
-            done
-            
-            # Wait a moment for cleanup to complete
-            sleep 5
-            
-            # Verify port 8088 is free
-            echo "Final verification that port 8088 is available..."
-            if netstat -tuln 2>/dev/null | grep -q ":8088 "; then
-              echo "ERROR: Port 8088 is still in use after cleanup!"
-              netstat -tuln | grep ":8088 " || true
-              echo "Attempting to kill any processes using port 8088..."
-              lsof -ti:8088 | xargs kill -9 2>/dev/null || true
-              sleep 2
-            else
-              echo "Port 8088 is available for new containers"
-            fi
-
-            # Selective container start based on status
-            DEPLOY_SUCCESS=false
-
-            if [ "$POSTGRES_RUNNING" = true ] && [ "$REDIS_RUNNING" = true ]; then
-              echo "Database containers are healthy. Only rebuilding and restarting API container..."
-              # Build and start only the API container with --no-deps to avoid touching database containers
-              if docker compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
-                echo "API container started successfully"
-              else
-                echo "Failed to start API container"
-                exit 1
-              fi
-            else
-              echo "Some database containers need to be created or recreated..."
-              
-              # Handle each container separately for better control
-              # First, make sure the network exists
-              docker network inspect app-network >/dev/null 2>&1 || docker network create app-network
-              
-              # Start/create PostgreSQL if needed
-              if [ "$POSTGRES_RUNNING" = false ]; then
-                echo "Creating PostgreSQL container..."
-                if ! docker compose -f docker-compose.prod.yml up -d --no-recreate postgres; then
-                  echo "Warning: Issue starting PostgreSQL container, but continuing..."
-                fi
-              fi
-              
-              # Start/create Redis if needed
-              if [ "$REDIS_RUNNING" = false ]; then
-                echo "Creating Redis container..."
-                if ! docker compose -f docker-compose.prod.yml up -d --no-recreate redis; then
-                  echo "Warning: Issue starting Redis container, but continuing..."
-                fi
-              fi
-              
-              # Now build and start the API container with retry logic
-              echo "Building and starting API container with retry logic..."
-              MAX_RETRIES=3
-              RETRY_COUNT=0
-              API_STARTED=false
-              
-              while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$API_STARTED" != "true" ]; do
-                RETRY_COUNT=$((RETRY_COUNT + 1))
-                echo "API container start attempt $RETRY_COUNT/$MAX_RETRIES..."
-                
-                # Additional cleanup before each retry
-                if [ $RETRY_COUNT -gt 1 ]; then
-                  echo "Performing cleanup before retry..."
-                  docker ps -a --format '{{.Names}}' | grep -E "(api|worker)" | while read container; do
-                    docker rm -f "$container" || true
-                  done
-                  sleep 3
-                fi
-                
-                if docker compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
-                  echo "API container started successfully on attempt $RETRY_COUNT"
-                  API_STARTED=true
-                else
-                  echo "Failed to start API container on attempt $RETRY_COUNT"
-                  if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-                    echo "All retry attempts failed. Exiting..."
-                    exit 1
-                  fi
-                  echo "Waiting 10 seconds before retry..."
-                  sleep 10
-                fi
-              done
-            fi
-
-            # Verify all containers are running
-            echo "Verifying all required containers are running..."
-            docker ps
-
-            # Manually generate Prisma client in the API container to ensure it's available
-            echo "Generating Prisma client in API container..."
-            docker exec latest-api sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma" || true
-
-            # Run database migrations
-            echo "Running database migrations..."
-            docker exec latest-api sh -c "npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma" || {
-              echo "Warning: Migration failed, but continuing deployment..."
-            }
-
-            # Copy database optimization script to PostgreSQL container
-            echo "Copying database optimization script to PostgreSQL container..."
-            docker cp src/shared/database/scripts/optimize-logs.sql latest-postgres:/tmp/optimize-logs.sql || {
-              echo "Warning: Failed to copy optimization script, but continuing deployment..."
-            }
-
-            # Run database optimization script
-            echo "Running database optimization script..."
-            docker exec latest-postgres psql -U postgres -d userdb -f /tmp/optimize-logs.sql || {
-              echo "Warning: Database optimization failed, but continuing deployment..."
-            }
-
-            # Set DEV_MODE environment variable in the container
-            echo "Setting DEV_MODE=true in the API container..."
-            docker exec latest-api sh -c "export DEV_MODE=true && echo 'DEV_MODE=true' >> /app/.env" || {
-              echo "Warning: Failed to set DEV_MODE, but continuing deployment..."
-            }
-
-            # Restart API container to apply DEV_MODE environment variable
-            echo "Restarting API container to apply DEV_MODE environment variable..."
-            docker restart latest-api || {
-              echo "Warning: Failed to restart API container, but continuing deployment..."
-            }
-
-            # Wait for container to be healthy after restart
-            echo "Waiting for API container to be healthy after restart..."
-            for i in {1..30}; do
-              if docker ps --filter "name=${{ env.API_CONTAINER }}" --format "{{.Status}}" | grep -q "healthy"; then
-                echo "API container is healthy after restart"
-                break
-              fi
-              if [ $i -eq 30 ]; then
-                echo "Warning: API container failed to become healthy after restart, but continuing..."
-                break
-              fi
-              echo "Attempt $i/30: Waiting for API container to be healthy after restart..."
-              sleep 10
-            done
-
-            # Set up maintenance scripts
-            echo "Setting up maintenance scripts..."
-            mkdir -p /var/www/healthcare/backend/scripts
-            mkdir -p /var/log/healthcare
-            mkdir -p /var/backups/postgres
-
-            # Copy scripts and set permissions
-            cp -r scripts/* /var/www/healthcare/backend/scripts/
-            chmod +x /var/www/healthcare/backend/scripts/*.sh
-            chown -R www-data:www-data /var/log/healthcare /var/backups/postgres
-
-            # Test database connection with fixed syntax
-            echo "Testing database connection..."
-            docker exec latest-api sh -c "cd /app && node -e \"
-              try {
-                console.log('Initializing Prisma client...');
-                const { PrismaClient } = require('@prisma/client');
-                console.log('PrismaClient imported successfully');
-                
-                const prisma = new PrismaClient();
-                console.log('PrismaClient instance created');
-                
-                prisma.\$connect()
-                  .then(() => {
-                    console.log('Database connection successful');
-                    process.exit(0);
-                  })
-                  .catch(err => {
-                    console.error('Database connection failed:', err);
-                    process.exit(1);
-                  });
-              } catch (error) {
-                console.error('Error setting up Prisma:', error);
-                process.exit(1);
-              }
-            \"" || echo "Database connection failed, continuing deployment anyway..."
-
-            # Give the API container time to fully initialize before testing health
-            echo "Giving API container time to initialize (10 seconds)..."
-            sleep 10
-
-            # Wait for API container to be healthy
-            echo "Waiting for API container to be healthy..."
-              for i in {1..30}; do
-              if docker ps --filter "name=${{ env.API_CONTAINER }}" --format "{{.Status}}" | grep -q "healthy"; then
-                echo "API container is healthy"
-                DEPLOY_SUCCESS=true
-                  break
-                fi
-                if [ $i -eq 30 ]; then
-                echo "Error: API container failed to become healthy"
-                docker logs ${{ env.API_CONTAINER }}
-                  exit 1
-                fi
-              echo "Attempt $i/30: Waiting for API container to be healthy..."
-                sleep 10
-            done
-
-            # Setting environment variables directly to API container
-            docker exec -e SOCKET_URL=/socket.io \
-                       -e LOGGER_URL=/logger \
-                       -e DEV_MODE=true \
-                       latest-api sh -c 'echo "Environment variables updated via Docker exec"'
-
-            # Configure firewall to allow traffic on ports
-            echo "Configuring firewall..."
-            sudo ufw allow 80/tcp
-            sudo ufw allow 443/tcp
-            sudo ufw allow 8088/tcp
-            sudo ufw allow 8082/tcp
-
-                        # Robust health check with retry mechanism
-            echo "Performing final health check with retries..."
-
-            MAX_RETRIES=5
-            RETRY_COUNT=0
-            DEPLOY_SUCCESS=false
-
-            while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$DEPLOY_SUCCESS" != "true" ]; do
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              echo "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
-              
-              # Check if container is running first
-              if docker ps | grep -q "latest-api"; then
-                echo "API container is running"
-                
-                # Try health check endpoint
-                HEALTH_OUTPUT=$(timeout 10 curl -v --max-time 10 http://localhost:8088/health 2>&1 || echo "Connection timed out")
-                
-                if echo "$HEALTH_OUTPUT" | grep -q "Connection timed out\|Empty reply"; then
-                  echo "Warning: Connection timed out or empty reply received"
-                  # Don't fail immediately on timeout/empty reply
-                  sleep 5
-                  continue
-                fi
-                
-                # Check for any valid HTTP 200 response
-                if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200\|< HTTP/1.1 200"; then
-                  echo "API health check successful - received HTTP 200"
-                  DEPLOY_SUCCESS=true
-                  break
-                # Look for health indicators in the response
-                elif echo "$HEALTH_OUTPUT" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"\|"ok"\|"UP"\|"HEALTHY"'; then
-                  echo "API health check successful - found health indicator in response"
-                  DEPLOY_SUCCESS=true
-                  break
-                fi
-              else
-                echo "API container is not running! This is a critical failure."
-                docker ps -a | grep latest-api || true
-                exit 1
-              fi
-              
-              echo "Health check attempt $RETRY_COUNT failed, waiting 5 seconds before retry..."
-              sleep 5
-            done
-
-            # Final decision based on container status
-            if [ "$DEPLOY_SUCCESS" != "true" ]; then
-              echo "Health check attempts completed."
-              
-              # Check container status and logs
-              echo "Checking container status and logs..."
-              if docker ps | grep -q "latest-api"; then
-                echo "Container is running despite health check response issues."
-                docker logs latest-api --tail 30
-                
-                # If container is running and has been up for at least 30 seconds, consider it successful
-                CONTAINER_UPTIME=$(docker inspect --format='{{.State.StartedAt}}' latest-api)
-                CURRENT_TIME=$(date -u +%s)
-                CONTAINER_START_TIME=$(date -u -d "$CONTAINER_UPTIME" +%s)
-                UPTIME_SECONDS=$((CURRENT_TIME - CONTAINER_START_TIME))
-                
-                if [ $UPTIME_SECONDS -gt 30 ]; then
-                  echo "Container has been running stably for over 30 seconds"
-                  echo "Marking deployment as successful despite health check response issues"
-                  DEPLOY_SUCCESS=true
-                else
-                  echo "Container is running but hasn't been up long enough to verify stability"
-                  exit 1
-                fi
-              else
-                echo "ERROR: API container is not running!"
-                docker ps -a | grep latest-api || true
-                exit 1
-              fi
-            fi
-
-            # Update current deployment symlink
-            cd ${{ env.DEPLOY_PATH }}
-            ln -sfn releases/${{ github.sha }} current
-
-            # Mark deployment as successful if health checks passed
-            if [ "$DEPLOY_SUCCESS" = true ]; then
-              echo "Marking deployment as successful..."
-              
-              # Create the successful deployments file if it doesn't exist
-              SUCCESSFUL_DEPLOYMENTS_FILE="${{ env.DEPLOY_PATH }}/successful_deployments.txt"
-              touch "$SUCCESSFUL_DEPLOYMENTS_FILE"
-              
-              # Add this deployment to the successful deployments file
-              echo "${{ github.sha }}" >> "$SUCCESSFUL_DEPLOYMENTS_FILE"
-              echo "Deployment marked as successful"
-              
-              # Create backup of successful deployment using backup scripts
-              echo "Creating backup of successful deployment..."
-              if [ -f "/var/www/healthcare/backend/scripts/backup-database.sh" ]; then
-                echo "Running database backup..."
-                /var/www/healthcare/backend/scripts/backup-database.sh || {
-                  echo "Warning: Database backup failed, but deployment was successful"
-                }
-              fi
-              
-              if [ -f "/var/www/healthcare/backend/scripts/offsite-backup.sh" ]; then
-                echo "Running offsite backup..."
-                /var/www/healthcare/backend/scripts/offsite-backup.sh || {
-                  echo "Warning: Offsite backup failed, but deployment was successful"
-                }
-              fi
-              
-              # Create application backup using the backup scripts
-              echo "Creating application backup..."
-              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-              BACKUP_DIR="/var/www/healthcare/backend/backups"
-              mkdir -p "$BACKUP_DIR/$TIMESTAMP"
-              
-              # Copy current deployment to backup
-              if [ -d "current" ]; then
-                cp -r current/* "$BACKUP_DIR/$TIMESTAMP/" 2>/dev/null || true
-                echo "$TIMESTAMP" > "$BACKUP_DIR/latest_backup"
-                echo "Application backup created: $TIMESTAMP"
-              fi
-              
-              echo "✅ Deployment marked as successful with backups created"
-            else
-              echo "Deployment not marked as successful due to health check failures"
-            fi
-
-            echo "Deployment completed successfully!"
-            echo "API should be accessible at:"
-            echo "HTTPS (Domain): https://api.ishswami.in"
-            echo "HTTP (Domain): http://api.ishswami.in"
-            echo "HTTPS (IP): https://${{ env.SERVER_IP }}"
-            echo "HTTP (IP): http://${{ env.SERVER_IP }}"
-
-            # Test API health with improved error handling
-            echo "Testing API health..."
-            MAX_RETRIES=3
-            HEALTH_CHECK_SUCCESS=false
-
-            for i in $(seq 1 $MAX_RETRIES); do
-              echo "Health check attempt $i/$MAX_RETRIES..."
-              
-              # Try multiple health check methods with proper error handling
-              for METHOD in "CURL" "WGET" "NC"; do
-                case $METHOD in
-                  "CURL")
-                    # Try curl with increased timeout and connection retry
-                    HEALTH_OUTPUT=$(curl -v --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused http://localhost:8088/health 2>&1 || true)
-                    ;;
-                  "WGET")
-                    # Try wget as fallback
-                    HEALTH_OUTPUT=$(wget -O- --timeout=10 --tries=3 http://localhost:8088/health 2>&1 || true)
-                    ;;
-                  "NC")
-                    # Try netcat as last resort
-                    HEALTH_OUTPUT=$(echo -e "GET /health HTTP/1.1\r\nHost: localhost:8088\r\n\r\n" | nc localhost 8088 || true)
-                    ;;
-                esac
-                
-                # Check if we got a successful response
-                if echo "$HEALTH_OUTPUT" | grep -q '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
-                  echo "✅ Health check passed via $METHOD"
-                  HEALTH_CHECK_SUCCESS=true
-                  break 2
-                fi
-              done
-              
-              if [ "$HEALTH_CHECK_SUCCESS" = true ]; then
-                break
-              fi
-              
-              echo "Waiting 5 seconds before next attempt..."
-              sleep 5
-            done
-
-            # Even if health check fails, check container status
-            if [ "$HEALTH_CHECK_SUCCESS" = false ]; then
-              echo "Direct health checks failed, checking container status..."
-              
-              if docker ps | grep -q "latest-api.*healthy"; then
-                echo "✅ Container is marked as healthy by Docker"
-                HEALTH_CHECK_SUCCESS=true
-              elif docker logs latest-api --tail 50 | grep -q "Starting application bootstrap\|Application bootstrap started\|Redis.*Connected\|WebSocket.*configured"; then
-                echo "✅ Container logs indicate successful startup"
-                HEALTH_CHECK_SUCCESS=true
-              fi
-            fi
-
-            # Display container status
-            echo "Docker container status:"
-            docker ps
-
-            # Check API container logs for any issues
-            echo "Latest API container logs:"
-            docker logs latest-api --tail 20
-
-            # Exit successfully if either health check passed or container is healthy
-            if [ "$HEALTH_CHECK_SUCCESS" = true ]; then
-              echo "✅ Deployment verification completed successfully"
-              
-              # Run verification script to ensure DEV_MODE and optimizations are applied
-              echo "🔍 Running verification script..."
-              if [ -f "/var/www/healthcare/backend/scripts/verify-dev-mode.sh" ]; then
-                chmod +x /var/www/healthcare/backend/scripts/verify-dev-mode.sh
-                /var/www/healthcare/backend/scripts/verify-dev-mode.sh || {
-                  echo "⚠️ Verification script failed, but deployment was successful"
-                }
-              else
-                echo "⚠️ Verification script not found, skipping verification"
-              fi
-              
-              # Run server maintenance script to ensure system health
-              echo "🔧 Running server maintenance script..."
-              if [ -f "/var/www/healthcare/backend/scripts/server-maintenance.sh" ]; then
-                chmod +x /var/www/healthcare/backend/scripts/server-maintenance.sh
-                /var/www/healthcare/backend/scripts/server-maintenance.sh || {
-                  echo "⚠️ Server maintenance script failed, but deployment was successful"
-                }
-              else
-                echo "⚠️ Server maintenance script not found, skipping maintenance"
-              fi
-              
-              # Run database performance monitor to check system health
-              echo "📊 Running database performance monitor..."
-              if [ -f "/var/www/healthcare/backend/scripts/database-performance-monitor.sh" ]; then
-                chmod +x /var/www/healthcare/backend/scripts/database-performance-monitor.sh
-                # Set database environment variables for the monitor
-                export DB_HOST=localhost
-                export DB_PORT=5432
-                export DB_NAME=userdb
-                export DB_USER=postgres
-                export DB_PASSWORD=postgres
-                /var/www/healthcare/backend/scripts/database-performance-monitor.sh || {
-                  echo "⚠️ Database performance monitor failed, but deployment was successful"
-                }
-              else
-                echo "⚠️ Database performance monitor not found, skipping performance check"
-              fi
-              
-              exit 0
-            else
-              echo "⚠️ Health check failed but deployment was successful"
-              # Still exit with 0 since we know the deployment was successful
-              exit 0
-            fi
-
-            # Restart Nginx to apply configuration changes
-            echo "Restarting Nginx service..."
-            sudo systemctl restart nginx
+      - name: Health check
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          command_timeout: "30m"
+          timeout: 120s
+          proxy_timeout: 120s
+          script: |
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            bash scripts/ci/health-check.sh
 
   post-deployment-verification:
     needs: deploy
@@ -958,8 +418,6 @@ jobs:
       - name: Verify domain
         run: |
           echo "Verifying domain resolution for api.ishswami.in..."
-
-          # Check DNS resolution
           if ! nslookup api.ishswami.in > /dev/null 2>&1; then
             echo "Warning: Domain api.ishswami.in is not resolving"
             echo "Check your DNS configuration"
@@ -974,107 +432,8 @@ jobs:
           timeout: 120s
           proxy_timeout: 120s
           script: |
-            set -e
-
-            echo "Verifying application health..."
-
-            # Function to parse and validate health check response
-            check_health_response() {
-              local HEALTH_OUTPUT=$1
-              
-              # Check for valid JSON structure with "status": "healthy"
-              if echo "$HEALTH_OUTPUT" | grep -q '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
-                echo "✅ Main status check passed"
-                return 0
-              fi
-              
-              # Check individual services
-              local SERVICES=("api" "database" "redis" "queues" "logger" "socket" "email")
-              local ALL_HEALTHY=true
-              
-              for SERVICE in "${SERVICES[@]}"; do
-                if ! echo "$HEALTH_OUTPUT" | grep -q "\"$SERVICE\"[[:space:]]*:[[:space:]]*{[^}]*\"status\"[[:space:]]*:[[:space:]]*\"healthy\""; then
-                  echo "❌ Service $SERVICE is not healthy"
-                  ALL_HEALTHY=false
-                  break
-                fi
-              done
-              
-              if [ "$ALL_HEALTHY" = true ]; then
-                echo "✅ All services are healthy"
-                return 0
-              fi
-              
-              return 1
-            }
-
-            # Enhanced API verification with better error handling
-            echo "Performing comprehensive health check..."
-            MAX_RETRIES=5
-            RETRY_COUNT=0
-            HEALTH_CHECK_PASSED=false
-
-            while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$HEALTH_CHECK_PASSED" != "true" ]; do
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              echo "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
-              
-              # First verify container is running
-              if ! docker ps | grep -q "latest-api"; then
-                echo "❌ API container is not running!"
-                docker ps -a
-                continue
-              fi
-              
-              # Try multiple endpoints with proper timeout
-              HEALTH_OUTPUT=$(curl -s -m 10 http://localhost:8088/health)
-              CURL_EXIT=$?
-              
-              if [ $CURL_EXIT -eq 0 ]; then
-                echo "Raw health check response:"
-                echo "$HEALTH_OUTPUT"
-                
-                if check_health_response "$HEALTH_OUTPUT"; then
-                  echo "✅ Health check passed successfully!"
-                  HEALTH_CHECK_PASSED=true
-                  break
-                else
-                  echo "⚠️ Health check response validation failed"
-                fi
-              else
-                echo "⚠️ Failed to get health check response (curl exit code: $CURL_EXIT)"
-                # Try alternative URL
-                HEALTH_OUTPUT=$(curl -s -m 10 https://api.ishswami.in/health)
-                CURL_EXIT=$?
-                
-                if [ $CURL_EXIT -eq 0 ] && check_health_response "$HEALTH_OUTPUT"; then
-                  echo "✅ Health check passed via domain URL!"
-                  HEALTH_CHECK_PASSED=true
-                  break
-                fi
-              fi
-              
-              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "Waiting 5 seconds before next attempt..."
-                sleep 5
-              fi
-            done
-
-            # Final verification
-            if [ "$HEALTH_CHECK_PASSED" = "true" ]; then
-              echo "✅ Health check verification completed successfully"
-              exit 0
-            else
-              # Check container logs for successful startup indicators
-              if docker logs latest-api 2>&1 | grep -q "Starting application bootstrap\|Application bootstrap started\|Redis.*Connected\|WebSocket.*configured"; then
-                echo "✅ Found successful startup indicators in logs"
-                echo "Marking deployment as successful despite health check issues"
-                exit 0
-              else
-                echo "❌ Health check failed and no positive indicators found in logs"
-                docker logs latest-api --tail 50
-                exit 1
-              fi
-            fi
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            bash scripts/ci/post-deploy-health-check.sh
 
       - name: Update deployment status success
         if: success()
@@ -1092,409 +451,9 @@ jobs:
           command_timeout: "10m"
           proxy_timeout: 180s
           script: |
-            echo "Triggering offsite backup to Google Drive..."
-
-            # Debug server directory structure
-            echo "Server directory structure:"
-            echo "Main deploy path:" 
-            ls -la /var/www/healthcare/backend/
-
-            echo "Current symlink exists?"
-            if [ -L "/var/www/healthcare/backend/current" ]; then
-              echo "Yes, pointing to: $(readlink -f /var/www/healthcare/backend/current)"
-            else
-              echo "No current symlink found"
-            fi
-
-            echo "Releases directory contents:"
-            ls -la /var/www/healthcare/backend/releases/ || echo "No releases directory"
-
-            # Find the latest release directory
-            LATEST_RELEASE=$(find /var/www/healthcare/backend/releases -maxdepth 1 -type d | sort | tail -n 1)
-            echo "Latest release directory: $LATEST_RELEASE"
-
-            echo "Checking for scripts in latest release:"
-            if [ -d "$LATEST_RELEASE/scripts" ]; then
-              echo "Scripts directory found in latest release, contents:"
-              ls -la "$LATEST_RELEASE/scripts/"
-              
-              # Copy scripts to current directory if current directory doesn't exist
-              if [ ! -d "/var/www/healthcare/backend/current" ]; then
-                echo "Creating missing current directory"
-                mkdir -p /var/www/healthcare/backend/current/scripts
-                echo "Copying scripts from latest release to current"
-                cp -r "$LATEST_RELEASE/scripts/"* /var/www/healthcare/backend/current/scripts/
-                chmod +x /var/www/healthcare/backend/current/scripts/*.sh
-              fi
-            else
-              echo "No scripts directory in latest release"
-            fi
-
-            # Create standalone scripts directory if it doesn't exist
-            if [ ! -d "/var/www/healthcare/backend/scripts" ]; then
-              echo "Creating standalone scripts directory"
-              mkdir -p /var/www/healthcare/backend/scripts
-            fi
-
-            # Try to find offsite-backup.sh in any location and copy to both directories
-            OFFSITE_SCRIPT=$(find /var/www/healthcare/backend -name "offsite-backup.sh" | head -n 1)
-            if [ -n "$OFFSITE_SCRIPT" ]; then
-              echo "Found offsite-backup.sh at: $OFFSITE_SCRIPT"
-              
-              # Ensure scripts directory exists in both locations
-              mkdir -p /var/www/healthcare/backend/current/scripts
-              mkdir -p /var/www/healthcare/backend/scripts
-              
-              # Copy to both locations and make executable
-              cp "$OFFSITE_SCRIPT" /var/www/healthcare/backend/current/scripts/
-              chmod +x /var/www/healthcare/backend/current/scripts/offsite-backup.sh
-              
-              cp "$OFFSITE_SCRIPT" /var/www/healthcare/backend/scripts/
-              chmod +x /var/www/healthcare/backend/scripts/offsite-backup.sh
-              
-              echo "Copied script to both locations"
-            else
-              echo "offsite-backup.sh not found anywhere on the server"
-              
-              # Create directories if they don't exist
-              mkdir -p /var/www/healthcare/backend/scripts
-              mkdir -p /var/log/healthcare/
-              
-              # Create the offsite backup script line by line for better reliability
-              echo "Creating offsite backup script directly on the server"
-              echo '#!/bin/bash' > /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Healthcare App Offsite Backup Script' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# This script syncs backups to Google Drive or other remote storage' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'set -e' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'APP_DIR="/var/www/healthcare/backend"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'BACKUP_DIR="$APP_DIR/backups"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'DB_BACKUP_DIR="/var/backups/postgres"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'LOG_FILE="/var/log/healthcare/offsite-backup.log"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'DEBUG_LOG_FILE="/var/log/healthcare/offsite-backup-debug.log"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Ensure log directory exists' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'mkdir -p "$(dirname "$LOG_FILE")"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'mkdir -p "$(dirname "$DEBUG_LOG_FILE")"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Function to log messages' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_message() {' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  echo "[$(date '"'"'+%Y-%m-%d %H:%M:%S'"'"')] $1" | tee -a "$LOG_FILE"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '}' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Function for error logging' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_error() {' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  echo "[$(date '"'"'+%Y-%m-%d %H:%M:%S'"'"')] ERROR: $1" | tee -a "$LOG_FILE" | tee -a "$DEBUG_LOG_FILE"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '}' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Function to log debug information' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_debug() {' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  echo "[$(date '"'"'+%Y-%m-%d %H:%M:%S'"'"')] DEBUG: $1" >> "$DEBUG_LOG_FILE"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '}' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Error handler function' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'error_handler() {' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  LINE=$1' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  ERR=$2' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  CMD=$3' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_error "Error occurred in command '"'"'$CMD'"'"' at line $LINE (Exit code: $ERR)"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  # Continue script execution instead of exiting' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '}' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Set up the error trap' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'trap '"'"'error_handler ${LINENO} $? "$BASH_COMMAND"'"'"' ERR' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Function to check if a command exists' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'command_exists() {' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  command -v "$1" >/dev/null 2>&1' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '}' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Get system diagnostic information' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_system_diagnostics() {' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "======= SYSTEM DIAGNOSTICS ======="' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "Disk Space:"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  df -h >> "$DEBUG_LOG_FILE" 2>&1' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "Memory Info:"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  free -m >> "$DEBUG_LOG_FILE" 2>&1' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "Network connections:"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  netstat -tulpn >> "$DEBUG_LOG_FILE" 2>&1 || log_debug "netstat not available"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "Process Status:"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  ps aux | grep -E "rclone|backup" >> "$DEBUG_LOG_FILE" 2>&1' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "Docker Status:"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  docker ps >> "$DEBUG_LOG_FILE" 2>&1 || log_debug "Docker command failed"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "=============================="' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '}' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Main execution' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_message "====================== OFFSITE BACKUP PROCESS STARTED ======================"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_system_diagnostics' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Override set -e to continue on errors but log them' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'set +e' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Check for rclone' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'if ! command_exists rclone; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_message "Installing rclone..."' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  curl -s https://rclone.org/install.sh | sudo bash > "$DEBUG_LOG_FILE" 2>&1' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  if command_exists rclone; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    log_message "Rclone installed successfully"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  else' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    log_error "Rclone installation failed. Check debug log for details."' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    cat "$DEBUG_LOG_FILE" >> "$LOG_FILE"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'else' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_message "rclone is already installed (version: $(rclone --version | head -n 1))"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Verify directory structure' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_debug "Verifying directory structure..."' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'if [ ! -d "$APP_DIR" ]; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_error "Application directory $APP_DIR does not exist"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_debug "APP_DIR: $(ls -la $APP_DIR 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Find and backup latest application backup' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_message "Checking for application backups..."' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'if [ -d "$BACKUP_DIR" ]; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "BACKUP_DIR contents: $(ls -la $BACKUP_DIR 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  if [ -f "$BACKUP_DIR/latest_backup" ]; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    BACKUP_ID=$(cat "$BACKUP_DIR/latest_backup")' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    log_message "Found backup: $BACKUP_ID"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    if [ -d "$BACKUP_DIR/$BACKUP_ID" ]; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '      log_message "Backup directory exists and will be backed up in future implementation"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '      log_debug "Backup directory content: $(ls -la $BACKUP_DIR/$BACKUP_ID 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    else' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '      log_error "Backup ID $BACKUP_ID found in latest_backup file, but directory does not exist"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  else' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    log_error "No latest_backup marker found in $BACKUP_DIR"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'else' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_error "Backup directory $BACKUP_DIR does not exist"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Find and backup database backups' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_message "Checking for database backups..."' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'if [ -d "$DB_BACKUP_DIR" ]; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_debug "DB_BACKUP_DIR contents: $(ls -la $DB_BACKUP_DIR 2>/dev/null || echo '"'"'Cannot access directory'"'"')"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  DB_BACKUP=$(find "$DB_BACKUP_DIR" -type f -name "*.sql.gz" -o -name "*.dump" 2>/dev/null | sort -r | head -n 1)' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  if [ -n "$DB_BACKUP" ]; then' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    log_message "Found database backup: $DB_BACKUP"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    log_message "Database backup will be stored in future implementation"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  else' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '    log_error "No database backup files found in $DB_BACKUP_DIR"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'else' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '  log_error "Database backup directory $DB_BACKUP_DIR does not exist"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'fi' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '# Final diagnostics' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_system_diagnostics' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo '' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_message "✅ Offsite backup diagnostics completed successfully. See debug logs for details."' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'log_message "Debug log location: $DEBUG_LOG_FILE"' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo 'exit 0' >> /var/www/healthcare/backend/scripts/offsite-backup.sh
-
-              chmod +x /var/www/healthcare/backend/scripts/offsite-backup.sh
-              echo "Offsite backup script created successfully"
-            fi
-
-            # Now run the script in the background with nohup to prevent SSH timeout
-            echo "Running offsite backup script in background mode..."
-            mkdir -p /var/log/healthcare
-
-            if [ -f "/var/www/healthcare/backend/scripts/offsite-backup.sh" ]; then
-              echo "Starting offsite backup from /var/www/healthcare/backend/scripts/"
-              
-              # Kill any existing offsite backup processes to avoid conflicts
-              ps aux | grep offsite-backup | grep -v grep | awk '{print $2}' | xargs kill -9 2>/dev/null || true
-              
-              # Start the backup in background with nohup
-              nohup bash /var/www/healthcare/backend/scripts/offsite-backup.sh > /var/log/healthcare/offsite-backup-nohup.log 2>&1 &
-              
-              # Record PID for monitoring
-              BACKUP_PID=$!
-              echo "Backup process started with PID: $BACKUP_PID"
-              
-              # Wait a few seconds to check if it immediately crashes
-              sleep 5
-              
-              if ps -p $BACKUP_PID > /dev/null; then
-                echo "✅ Backup process is running in background with PID: $BACKUP_PID"
-                echo "It will continue running after this SSH session ends"
-                echo "Check logs at:"
-                echo "- Main log: /var/log/healthcare/offsite-backup.log"
-                echo "- Debug log: /var/log/healthcare/offsite-backup-debug.log"
-                echo "- Nohup log: /var/log/healthcare/offsite-backup-nohup.log"
-              else
-                echo "⚠️ Warning: Backup process may have failed to start or exited immediately"
-                echo "Checking nohup log for errors:"
-                tail -n 20 /var/log/healthcare/offsite-backup-nohup.log || echo "No nohup log found"
-              fi
-              
-            elif [ -f "/var/www/healthcare/backend/current/scripts/offsite-backup.sh" ]; then
-              echo "Starting offsite backup from /var/www/healthcare/backend/current/scripts/"
-              
-              # Kill any existing offsite backup processes to avoid conflicts
-              ps aux | grep offsite-backup | grep -v grep | awk '{print $2}' | xargs kill -9 2>/dev/null || true
-              
-              # Start the backup in background with nohup
-              nohup bash /var/www/healthcare/backend/current/scripts/offsite-backup.sh > /var/log/healthcare/offsite-backup-nohup.log 2>&1 &
-              
-              # Record PID for monitoring
-              BACKUP_PID=$!
-              echo "Backup process started with PID: $BACKUP_PID"
-              
-              # Wait a few seconds to check if it immediately crashes
-              sleep 5
-              
-              if ps -p $BACKUP_PID > /dev/null; then
-                echo "✅ Backup process is running in background with PID: $BACKUP_PID"
-                echo "It will continue running after this SSH session ends"
-                echo "Check logs at:"
-                echo "- Main log: /var/log/healthcare/offsite-backup.log"
-                echo "- Debug log: /var/log/healthcare/offsite-backup-debug.log"
-                echo "- Nohup log: /var/log/healthcare/offsite-backup-nohup.log"
-              else
-                echo "⚠️ Warning: Backup process may have failed to start or exited immediately"
-                echo "Checking nohup log for errors:"
-                tail -n 20 /var/log/healthcare/offsite-backup-nohup.log || echo "No nohup log found"
-              fi
-            else
-              echo "❌ Failed to find or create offsite-backup.sh script"
-              exit 1
-            fi
-
-            # Check if script has already started writing to log file
-            if [ -f "/var/log/healthcare/offsite-backup.log" ]; then
-              echo "Backup log file exists, showing recent entries:"
-              tail -n 10 /var/log/healthcare/offsite-backup.log
-            fi
-
-            # Ensure rollback.sh is in place and executable for future use
-            echo "Verifying rollback script..."
-            if [ -f "/var/www/healthcare/backend/scripts/rollback.sh" ]; then
-              echo "Rollback script exists in scripts directory"
-              chmod +x /var/www/healthcare/backend/scripts/rollback.sh
-            elif [ -d "/var/www/healthcare/backend/current/scripts" ] && [ -f "/var/www/healthcare/backend/current/scripts/rollback.sh" ]; then
-              echo "Rollback script exists in current deployment, copying to scripts directory"
-              cp /var/www/healthcare/backend/current/scripts/rollback.sh /var/www/healthcare/backend/scripts/
-              chmod +x /var/www/healthcare/backend/scripts/rollback.sh
-            elif [ -f "$LATEST_RELEASE/scripts/rollback.sh" ]; then
-              echo "Copying rollback script from latest release"
-              cp "$LATEST_RELEASE/scripts/rollback.sh" /var/www/healthcare/backend/scripts/
-              chmod +x /var/www/healthcare/backend/scripts/rollback.sh
-            else
-              echo "No rollback script found in common locations. Searching for it in any release..."
-              # Find rollback script in any release
-              ROLLBACK_SCRIPT=$(find /var/www/healthcare/backend/releases -name "rollback.sh" | head -n 1)
-              if [ -n "$ROLLBACK_SCRIPT" ]; then
-                echo "Found rollback script at $ROLLBACK_SCRIPT"
-                cp "$ROLLBACK_SCRIPT" /var/www/healthcare/backend/scripts/
-                chmod +x /var/www/healthcare/backend/scripts/rollback.sh
-              else
-                echo "No rollback script found in any release. Creating a basic rollback script..."
-                # Create a basic rollback script
-                echo '#!/bin/bash' > /var/www/healthcare/backend/scripts/rollback.sh
-                echo '# Healthcare API rollback script' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'set -e' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'DEPLOY_PATH="/var/www/healthcare/backend"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'LOG_FILE="/var/log/healthcare/rollback.log"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '# Ensure log directory exists' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'mkdir -p $(dirname "$LOG_FILE")' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'log() { echo "[$(date "+%Y-%m-%d %H:%M:%S")] $1" | tee -a "$LOG_FILE"; }' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'log "===== ROLLBACK PROCESS STARTED ====="' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'AUTO_MODE=$1' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'cd "$DEPLOY_PATH" || { log "Error: Failed to change to deployment directory"; exit 1; }' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '# Find last successful deployment' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'if [ -f "successful_deployments.txt" ]; then' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  # Get last successful deployment excluding current one' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  CURRENT_DEPLOYMENT=$(basename $(readlink -f current))' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  log "Current deployment: $CURRENT_DEPLOYMENT"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  LAST_DEPLOYMENT=$(grep -v "$CURRENT_DEPLOYMENT" successful_deployments.txt | tail -n 1)' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  if [ -n "$LAST_DEPLOYMENT" ] && [ -d "releases/$LAST_DEPLOYMENT" ]; then' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Found previous successful deployment: $LAST_DEPLOYMENT"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    # Stop API container' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Stopping API container..."' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker stop latest-api || log "Warning: Failed to stop API container"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker rm latest-api || log "Warning: Failed to remove API container"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    # Update symlink to previous deployment' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Updating symlink to previous deployment..."' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    ln -sfn "releases/$LAST_DEPLOYMENT" current' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    # Start API container from previous deployment' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Starting API container from previous deployment..."' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    cd current' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker compose -f docker-compose.prod.yml up -d --no-deps --scale worker=$WORKER_COUNT api worker' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Rollback completed successfully"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    exit 0' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  else' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Error: No previous successful deployment found"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  fi' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'else' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  log "Error: No successful deployments file found"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'fi' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '# Try fallback - find latest backup' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'if [ -d "backups" ]; then' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  LATEST_BACKUP=$(find backups -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  if [ -n "$LATEST_BACKUP" ]; then' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Found backup: $LATEST_BACKUP"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    # Stop API container' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Stopping API container..."' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker stop latest-api || log "Warning: Failed to stop API container"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker rm latest-api || log "Warning: Failed to remove API container"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    # Create a new release from backup' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    ROLLBACK_ID="rollback_$(date +%Y%m%d_%H%M%S)"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Creating new release from backup: $ROLLBACK_ID"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    mkdir -p "releases/$ROLLBACK_ID"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    cp -r "$LATEST_BACKUP"/* "releases/$ROLLBACK_ID/"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    # Update symlink to new release' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Updating symlink to rollback release..."' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    ln -sfn "releases/$ROLLBACK_ID" current' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    # Start API container from rollback release' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Starting API container from rollback release..."' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    cd current' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    docker compose -f docker-compose.prod.yml up -d --no-deps --scale worker=$WORKER_COUNT api worker' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    log "Rollback completed successfully using backup"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '    exit 0' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '  fi' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'fi' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo '' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'log "Error: Failed to rollback - no suitable previous deployment or backup found"' >> /var/www/healthcare/backend/scripts/rollback.sh
-                echo 'exit 1' >> /var/www/healthcare/backend/scripts/rollback.sh
-                
-                chmod +x /var/www/healthcare/backend/scripts/rollback.sh
-                log "Created basic rollback script"
-              fi
-            fi
-
-            # Verify the rollback script is ready to use
-            if [ -f "/var/www/healthcare/backend/scripts/rollback.sh" ]; then
-              echo "Verifying rollback script is properly executable..."
-              ls -la /var/www/healthcare/backend/scripts/rollback.sh
-              
-              # Create a symbolic link in current if needed
-              if [ -d "/var/www/healthcare/backend/current/scripts" ] && [ ! -f "/var/www/healthcare/backend/current/scripts/rollback.sh" ]; then
-                ln -sf /var/www/healthcare/backend/scripts/rollback.sh /var/www/healthcare/backend/current/scripts/rollback.sh
-                echo "Created symbolic link to rollback script in current/scripts"
-              fi
-              
-              echo "✅ Rollback script is ready"
-            else
-              echo "❌ Rollback script preparation failed"
-            fi
-
-      - name: Update deployment status failure
-        if: failure()
-        run: |
-          echo "Deployment failed"
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            # Offsite backup is now handled by backup-maintenance.sh
+            echo "Offsite backup completed as part of backup-maintenance.sh"
 
   rollback:
     if: always() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure')
@@ -1526,27 +485,45 @@ jobs:
             docker volume ls
 
             echo "Checking for rollback script..."
-            # Check if our rollback script exists
-            if [ -f "current/scripts/rollback.sh" ]; then
-              echo "✅ Rollback script found, using it to revert to last successful deployment..."
-              cd current/scripts
-              chmod +x rollback.sh
-              ./rollback.sh auto
-              
-              ROLLBACK_RESULT=$?
-              if [ $ROLLBACK_RESULT -eq 0 ]; then
-                echo "✅ Rollback completed successfully using rollback script"
-                # Show the current container status after rollback
-                echo "Container status after rollback:"
-                docker ps
-                exit 0
-              else
-                echo "❌ Rollback script failed with exit code $ROLLBACK_RESULT"
-                echo "Falling back to manual rollback procedure"
+            
+            # Try to use the rollback script
+            ROLLBACK_SCRIPT_PATHS=(
+              "current/scripts/rollback.sh"
+              "/var/www/healthcare/backend/scripts/rollback.sh"
+              "scripts/rollback.sh"
+            )
+            
+            ROLLBACK_SCRIPT_FOUND=false
+            for script_path in "${ROLLBACK_SCRIPT_PATHS[@]}"; do
+              if [ -f "$script_path" ]; then
+                echo "✅ Rollback script found at: $script_path"
+                chmod +x "$script_path"
+                
+                # Set environment variables for the rollback script
+                export DEPLOY_PATH="${{ env.DEPLOY_PATH }}"
+                export GOOGLE_CLIENT_ID="${{ env.GOOGLE_CLIENT_ID }}"
+                export GOOGLE_CLIENT_SECRET="${{ env.GOOGLE_CLIENT_SECRET }}"
+                export WORKER_COUNT="${{ env.WORKER_COUNT }}"
+                
+                # Run the rollback script
+                if "$script_path" auto; then
+                  echo "✅ Rollback completed successfully using rollback script"
+                  echo "Container status after rollback:"
+                  docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+                  exit 0
+                else
+                  ROLLBACK_RESULT=$?
+                  echo "❌ Rollback script failed with exit code $ROLLBACK_RESULT"
+                  echo "Falling back to emergency rollback procedure"
+                  ROLLBACK_SCRIPT_FOUND=true
+                  break
+                fi
               fi
-            else
-              echo "❌ Rollback script not found in $(pwd)/current/scripts/"
-              echo "Falling back to manual rollback procedure"
+            done
+            
+            if [ "$ROLLBACK_SCRIPT_FOUND" = false ]; then
+              echo "❌ No rollback script found in any expected location"
+              echo "Falling back to emergency rollback procedure"
             fi
 
             # Manual rollback procedure as fallback

@@ -11,6 +11,7 @@ CURRENT_LINK="$APP_DIR/current"
 # File paths
 SUCCESSFUL_DEPLOYMENTS_FILE="$APP_DIR/successful_deployments.txt"
 LATEST_BACKUP_MARKER="$BACKUP_DIR/latest_backup"
+ROLLBACK_SCRIPT="$APP_DIR/scripts/rollback.sh"
 
 # Log files
 LOG_DIR="/var/log/healthcare"
