@@ -4,10 +4,6 @@ set -e
 # Post-deployment health check script for CI/CD
 # Performs comprehensive health check on the API container after deployment
 
-# Source shared configuration for consistent logging and paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../backup-config.sh"
-
 # Function to log messages with timestamp
 log_message() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -23,12 +19,6 @@ handle_error() {
 
 # Set up error handling
 trap 'handle_error $LINENO' ERR
-
-# Change to the correct directory
-cd "$(dirname "$0")/../.." || {
-    log_message "ERROR: Failed to change to project directory"
-    exit 1
-}
 
 log_message "Starting post-deployment health check for API container..."
 
@@ -137,6 +127,4 @@ else
         docker logs "$API_CONTAINER" --tail 50 || true
         exit 1
     fi
-fi
-
-cd - 
+fi 
