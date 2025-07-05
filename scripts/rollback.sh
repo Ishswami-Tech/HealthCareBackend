@@ -1,371 +1,357 @@
 #!/bin/bash
-# Healthcare App Rollback Script
-# This script rolls back to the previous successful deployment if the current one fails
-
 set -e
 
-# Try to find and source the backup config file
-CONFIG_LOCATIONS=(
-    "$(dirname "$0")/backup-config.sh"
-    "/var/www/healthcare/backend/scripts/backup-config.sh"
-    "/var/www/healthcare/backend/current/scripts/backup-config.sh"
-    "../scripts/backup-config.sh"
-)
+# Healthcare Backend Rollback Script
+# This script handles rollback operations when deployment fails
 
-CONFIG_FOUND=false
-for config_file in "${CONFIG_LOCATIONS[@]}"; do
-    if [ -f "$config_file" ]; then
-        echo "Found config file at: $config_file"
-        source "$config_file"
-        CONFIG_FOUND=true
-        break
-    fi
-done
+# Source shared configuration for consistent logging and paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/backup-config.sh"
 
-if [ "$CONFIG_FOUND" = false ]; then
-    echo "Warning: backup-config.sh not found in any standard location, using default values"
-    # Define essential variables if config is not available
-    APP_DIR="/var/www/healthcare/backend"
-    RELEASES_DIR="$APP_DIR/releases"
-    CURRENT_LINK="$APP_DIR/current"
-    SUCCESSFUL_DEPLOYMENTS_FILE="$APP_DIR/successful_deployments.txt"
-    LOG_FILE="/var/log/healthcare/rollback.log"
-    BACKUP_DIR="$APP_DIR/backups"
-    RETENTION_COUNT=5
-fi
-
-APP_DIR="/var/www/healthcare/backend"
-RELEASES_DIR="$APP_DIR/releases"
-CURRENT_LINK="$APP_DIR/current"
-SUCCESSFUL_DEPLOYMENTS_FILE="$APP_DIR/successful_deployments.txt"
-LOG_FILE="/var/log/healthcare/rollback.log"
-BACKUP_DIR="$APP_DIR/backups"
-
-# Ensure log directory exists
-mkdir -p "$(dirname "$LOG_FILE")"
-
-# Function to log messages
+# Function to log messages with timestamp
 log_message() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-# Function to check container health
+# Function to handle errors gracefully
+handle_error() {
+    local exit_code=$?
+    local line_number=$1
+    log_message "ERROR: Script failed at line $line_number with exit code $exit_code"
+    exit $exit_code
+}
+
+# Set up error handling
+trap 'handle_error $LINENO' ERR
+
+# Configuration
+DEPLOY_PATH="${DEPLOY_PATH:-/var/www/healthcare/backend}"
+SUCCESSFUL_DEPLOYMENTS_FILE="$DEPLOY_PATH/successful_deployments.txt"
+WORKER_COUNT="${WORKER_COUNT:-2}"
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to verify container health
 check_container_health() {
-  local container=$1
-  local max_attempts=$2
-  local delay=$3
-  local attempt=1
-
-  log_message "$ROLLBACK_LOG" "Checking health for container: $container (max attempts: $max_attempts)"
-  
-  while [ $attempt -le $max_attempts ]; do
-    if docker ps --format '{{.Names}}' | grep -q "^$container$"; then
-      if docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null | grep -q "healthy"; then
-        log_message "$ROLLBACK_LOG" "✅ Container $container is healthy (attempt $attempt/$max_attempts)"
-        return 0
-      fi
-    fi
+    local container_name="$1"
+    local max_attempts="${2:-10}"
+    local attempt=1
     
-    log_message "$ROLLBACK_LOG" "⏳ Waiting for container $container to be healthy (attempt $attempt/$max_attempts)"
-    attempt=$((attempt + 1))
-    sleep $delay
-  done
-  
-  log_message "$ROLLBACK_LOG" "❌ Container $container failed health check after $max_attempts attempts"
-  return 1
-}
-
-# Function to check API health
-check_api_health() {
-  local max_attempts=$1
-  local delay=$2
-  local attempt=1
-  local endpoint="http://localhost:8088/health"
-  
-  log_message "$ROLLBACK_LOG" "Checking API health at $endpoint (max attempts: $max_attempts)"
-  
-  while [ $attempt -le $max_attempts ]; do
-    local health_response
-    health_response=$(curl -s "$endpoint" || echo "connection failed")
+    log_message "Checking health of container: $container_name"
     
-    if echo "$health_response" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"'; then
-      log_message "$ROLLBACK_LOG" "✅ API health check successful (attempt $attempt/$max_attempts)"
-      return 0
-    fi
-    
-    log_message "$ROLLBACK_LOG" "⏳ Waiting for API to become healthy (attempt $attempt/$max_attempts): $health_response"
-    attempt=$((attempt + 1))
-    sleep $delay
-  done
-  
-  log_message "$ROLLBACK_LOG" "❌ API health check failed after $max_attempts attempts"
-  return 1
-}
-
-# Function to get the current deployment
-get_current_deployment() {
-  if [ -L "$CURRENT_LINK" ]; then
-    basename "$(readlink -f "$CURRENT_LINK")"
-  else
-    log_error "$ROLLBACK_LOG" "No current deployment link found"
-    return 1
-  fi
-}
-
-# Function to get last successful deployment
-get_last_successful_deployment() {
-  if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
-    # Get the last line of the successful deployments file (most recent)
-    tail -n 1 "$SUCCESSFUL_DEPLOYMENTS_FILE"
-  else
-    log_message "$ROLLBACK_LOG" "❌ No successful deployments record found"
-    return 1
-  fi
-}
-
-# Get the latest release that's not the current one
-get_latest_release() {
-  local current=$1
-  local latest
-  
-  # Find all release directories
-  latest=$(ls -t "$RELEASES_DIR" | grep -v "^$current$" | head -n 1)
-  
-  if [ -n "$latest" ]; then
-    echo "$latest"
-  else
-    log_message "$ROLLBACK_LOG" "❌ No other releases found to roll back to"
-    return 1
-  fi
-}
-
-# Function to mark a deployment as successful
-mark_deployment_successful() {
-  local deployment=$1
-  
-  # Ensure parent directory exists
-  mkdir -p "$(dirname "$SUCCESSFUL_DEPLOYMENTS_FILE")"
-  
-  # Add to successful deployments file, create if it doesn't exist
-  echo "$deployment" >> "$SUCCESSFUL_DEPLOYMENTS_FILE"
-  log_message "$ROLLBACK_LOG" "✅ Marked deployment $deployment as successful"
-}
-
-# Function to create a backup of the current deployment
-backup_current_deployment() {
-  local current=$1
-  local timestamp=$(date +%Y%m%d_%H%M%S)
-  local backup_path="$BACKUP_DIR/$timestamp"
-  local archive_name="healthcare_app_${timestamp}_deploy_${current}.tar.gz"
-  
-  # Check if current deployment is marked as successful
-  if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ] && grep -q "^$current$" "$SUCCESSFUL_DEPLOYMENTS_FILE"; then
-    log_message "$ROLLBACK_LOG" "Current deployment $current is marked as successful - creating backup"
-    
-    mkdir -p "$backup_path"
-    if [ -d "$RELEASES_DIR/$current" ]; then
-      # Copy files to backup directory
-      cp -r "$RELEASES_DIR/$current"/* "$backup_path"/ 2>/dev/null || true
-      echo "$current" > "$BACKUP_DIR/latest_backup"
-      
-      # Create archive
-      tar -czf "/tmp/$archive_name" -C "$BACKUP_DIR" "$timestamp" || {
-        log_error "$ROLLBACK_LOG" "Failed to create backup archive"
-        return 1
-      }
-      
-      # Upload to Google Drive
-      log_message "$ROLLBACK_LOG" "Uploading backup to Google Drive..."
-      if rclone copy --transfers 4 --progress "/tmp/$archive_name" "gdrive:$GDRIVE_APP_BACKUP_DIR/"; then
-        if verify_backup_exists "$archive_name" "application"; then
-          log_message "$ROLLBACK_LOG" "✅ Backup created and synced successfully"
-          rm -f "/tmp/$archive_name"
-          return 0
-        else
-          log_error "$ROLLBACK_LOG" "Failed to verify backup in Google Drive"
-          rm -f "/tmp/$archive_name"
-          return 1
+    while [ $attempt -le $max_attempts ]; do
+        if docker ps --filter "name=$container_name" --format "{{.Status}}" | grep -q "Up"; then
+            log_message "✅ Container $container_name is running"
+            return 0
         fi
-      else
-        log_error "$ROLLBACK_LOG" "Failed to upload backup to Google Drive"
-        rm -f "/tmp/$archive_name"
-        return 1
-      fi
-    else
-      log_error "$ROLLBACK_LOG" "Could not create backup - release directory not found"
-      return 1
-    fi
-  else
-    log_message "$ROLLBACK_LOG" "Current deployment $current is not marked as successful - skipping backup"
-    return 0
-  fi
-}
-
-# Function to perform rollback
-perform_rollback() {
-  local current_deployment
-  local target_deployment
-  local rollback_type=$1  # 'auto' or 'manual'
-  
-  # Get current deployment
-  current_deployment=$(get_current_deployment)
-  if [ $? -ne 0 ]; then
-    log_error "$ROLLBACK_LOG" "Cannot determine current deployment, aborting rollback"
-    return 1
-  fi
-  
-  log_message "$ROLLBACK_LOG" "Current deployment: $current_deployment"
-  
-  # Create backup of current deployment if it was successful
-  backup_current_deployment "$current_deployment"
-  
-  # Determine rollback target
-  if [ "$rollback_type" = "auto" ]; then
-    # Try to get last successful deployment
-    target_deployment=$(get_last_successful_deployment)
-    
-    # If no successful deployment record exists, fall back to latest release
-    if [ $? -ne 0 ]; then
-      log_message "$ROLLBACK_LOG" "No record of successful deployments, falling back to latest release"
-      target_deployment=$(get_latest_release "$current_deployment")
-    fi
-  else
-    # For manual rollback, always use the latest release
-    target_deployment=$(get_latest_release "$current_deployment")
-  fi
-  
-  if [ $? -ne 0 ] || [ -z "$target_deployment" ]; then
-    log_error "$ROLLBACK_LOG" "No valid rollback target found, cannot proceed"
-    return 1
-  fi
-  
-  log_message "$ROLLBACK_LOG" "Rolling back from $current_deployment to $target_deployment"
-  
-  # Stop only the API container
-  log_message "$ROLLBACK_LOG" "Stopping current API container..."
-  docker stop latest-api 2>/dev/null || true
-  docker rm latest-api 2>/dev/null || true
-  
-  # Update current symlink to point to rollback target
-  log_message "$ROLLBACK_LOG" "Updating current deployment link to $target_deployment"
-  ln -sfn "$RELEASES_DIR/$target_deployment" "$CURRENT_LINK"
-  
-  # Start the API container from the rollback target
-  log_message "$ROLLBACK_LOG" "Starting API from previous successful deployment..."
-  cd "$CURRENT_LINK"
-  
-  # Determine if database containers are healthy
-  local postgres_healthy=false
-  local redis_healthy=false
-  
-  if docker ps | grep -q "latest-postgres" && docker inspect --format='{{.State.Health.Status}}' latest-postgres 2>/dev/null | grep -q "healthy"; then
-    postgres_healthy=true
-    log_message "$ROLLBACK_LOG" "PostgreSQL container is healthy, keeping it running"
-  fi
-  
-  if docker ps | grep -q "latest-redis" && docker inspect --format='{{.State.Health.Status}}' latest-redis 2>/dev/null | grep -q "healthy"; then
-    redis_healthy=true
-    log_message "$ROLLBACK_LOG" "Redis container is healthy, keeping it running"
-  fi
-  
-  # Start containers based on health status
-  if [ "$postgres_healthy" = true ] && [ "$redis_healthy" = true ]; then
-    log_message "$ROLLBACK_LOG" "Database containers are healthy, only starting API"
-    docker-compose -f docker-compose.prod.yml up -d --no-deps api
-  else
-    log_message "$ROLLBACK_LOG" "Some database containers need to be recreated"
-    docker-compose -f docker-compose.prod.yml up -d
-  fi
-  
-  # Verify health of containers
-  if ! check_container_health "latest-api" 30 5; then
-    log_error "$ROLLBACK_LOG" "API container failed to become healthy after rollback"
-    return 1
-  fi
-  
-  # Verify API health
-  if ! check_api_health 15 5; then
-    log_error "$ROLLBACK_LOG" "API failed to become healthy after rollback"
-    return 1
-  fi
-  
-  log_message "$ROLLBACK_LOG" "✅ Rollback to $target_deployment completed successfully"
-  return 0
-}
-
-# Function to cleanup old releases and backups
-cleanup_old_releases() {
-  log_message "$ROLLBACK_LOG" "Cleaning up old releases and backups..."
-  
-  # === CLEAN UP RELEASES ===
-  log_message "$ROLLBACK_LOG" "Cleaning up old releases (keeping the last $RETENTION_COUNT)..."
-  
-  # Get all releases sorted by time (newest first)
-  local all_releases
-  all_releases=$(ls -t "$RELEASES_DIR")
-  
-  # Count the total number of releases
-  local release_count
-  release_count=$(echo "$all_releases" | wc -l)
-  
-  if [ "$release_count" -le "$RETENTION_COUNT" ]; then
-    log_message "$ROLLBACK_LOG" "Only $release_count releases exist, no cleanup needed"
-  else
-    # Get list of releases to remove (all except the newest $RETENTION_COUNT)
-    local releases_to_remove
-    releases_to_remove=$(echo "$all_releases" | tail -n +"$((RETENTION_COUNT + 1))")
-    
-    # Get list of successful deployments to preserve
-    local successful_deployments=""
-    if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
-      successful_deployments=$(cat "$SUCCESSFUL_DEPLOYMENTS_FILE")
-    fi
-    
-    # Remove old releases, but preserve successful ones
-    for release in $releases_to_remove; do
-      # Skip if this is a successful deployment we want to keep
-      if echo "$successful_deployments" | grep -q "^$release$"; then
-        log_message "$ROLLBACK_LOG" "Keeping successful deployment: $release"
-        continue
-      fi
-      
-      log_message "$ROLLBACK_LOG" "Removing old release: $release"
-      rm -rf "$RELEASES_DIR/$release"
+        
+        log_message "Attempt $attempt/$max_attempts: Container $container_name is not running"
+        if [ $attempt -lt $max_attempts ]; then
+            sleep 5
+        fi
+        attempt=$((attempt + 1))
     done
-  fi
-  
-  # === CLEAN UP BACKUPS ===
-  log_message "$ROLLBACK_LOG" "Cleaning up old backups (keeping the last $RETENTION_COUNT)..."
-  
-  # Clean up local backups
-  if [ -d "$BACKUP_DIR" ]; then
-    find "$BACKUP_DIR" -maxdepth 1 -type d -not -name "." -not -name ".." | \
-      sort -r | tail -n +"$((RETENTION_COUNT + 1))" | xargs -r rm -rf
-  fi
-  
-  # Clean up Google Drive backups
-  cleanup_gdrive_backups "application" "$RETENTION_COUNT"
-  
-  log_message "$ROLLBACK_LOG" "✅ Cleanup completed"
-  return 0
+    
+    log_message "❌ Container $container_name failed to start after $max_attempts attempts"
+    return 1
+}
+
+# Function to verify API health
+check_api_health() {
+    local max_attempts="${1:-10}"
+    local attempt=1
+    
+    log_message "Checking API health..."
+    
+    while [ $attempt -le $max_attempts ]; do
+        log_message "Health check attempt $attempt/$max_attempts..."
+        
+        HEALTH_OUTPUT=$(timeout 10 curl -v --max-time 8 --connect-timeout 5 http://localhost:8088/health 2>&1 || echo "Connection failed")
+        
+        if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200"; then
+            log_message "✅ API is healthy after rollback (HTTP 200)"
+            return 0
+        elif echo "$HEALTH_OUTPUT" | grep -q "ok\|status.*up\|\"status\":\"ok\"\|\"status\": \"ok\""; then
+            log_message "✅ API is healthy after rollback (status indicators)"
+            return 0
+        fi
+        
+        log_message "Health check attempt $attempt failed"
+        if [ $attempt -lt $max_attempts ]; then
+            sleep 5
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log_message "❌ API health check failed after $max_attempts attempts"
+    return 1
+}
+
+# Function to get the last successful deployment
+get_last_successful_deployment() {
+    if [ -f "$SUCCESSFUL_DEPLOYMENTS_FILE" ]; then
+        # Get the last successful deployment that's not the current one
+        local current_deploy=""
+        if [ -L "$DEPLOY_PATH/current" ]; then
+            current_deploy=$(basename "$(readlink -f "$DEPLOY_PATH/current")")
+        fi
+        
+        if [ -n "$current_deploy" ]; then
+            grep -v "$current_deploy" "$SUCCESSFUL_DEPLOYMENTS_FILE" | tail -n 1
+        else
+            tail -n 1 "$SUCCESSFUL_DEPLOYMENTS_FILE"
+        fi
+    else
+        echo ""
+    fi
+}
+
+# Function to perform automated rollback
+perform_automated_rollback() {
+    local last_successful="$1"
+    
+    log_message "Performing automated rollback to: $last_successful"
+    
+    if [ -z "$last_successful" ] || [ ! -d "$DEPLOY_PATH/releases/$last_successful" ]; then
+        log_message "❌ No valid previous deployment found for rollback"
+        return 1
+    fi
+    
+    # Stop current API container
+    log_message "Stopping current API container..."
+    docker stop latest-api 2>/dev/null || log_message "No API container found to stop"
+    docker rm latest-api 2>/dev/null || log_message "No API container found to remove"
+    
+    # Clean up Docker resources specifically for API only
+    log_message "Cleaning up API Docker resources..."
+    docker system prune -f --filter "label=com.docker.compose.service=api" 2>/dev/null || log_message "No API resources to prune"
+    
+    # Update symlink to the last successful deployment
+    log_message "Updating symlink to point to releases/$last_successful"
+    ln -sfn "$DEPLOY_PATH/releases/$last_successful" "$DEPLOY_PATH/current"
+    
+    # Start the API from the last successful deployment
+    cd "$DEPLOY_PATH/current" || {
+        log_message "ERROR: Failed to change to current directory"
+        return 1
+    }
+    
+    log_message "Starting API from previous successful deployment in $(pwd)"
+    
+    # Check if docker-compose.prod.yml exists
+    if [ ! -f "docker-compose.prod.yml" ]; then
+        log_message "❌ ERROR: docker-compose.prod.yml not found in $(pwd)"
+        ls -la
+        return 1
+    fi
+    
+    # Create temporary env file for deployment
+    log_message "Setting up environment variables..."
+    cat > .env.deploy << EOF
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+WORKER_COUNT=${WORKER_COUNT}
+EOF
+    
+    # Using --no-deps ensures database containers are not touched
+    log_message "Starting API container with environment variables..."
+    if docker compose --env-file .env.deploy -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
+        log_message "API container started successfully"
+    else
+        log_message "❌ Failed to start API container"
+        rm -f .env.deploy
+        return 1
+    fi
+    
+    # Verify deployment
+    log_message "Verifying deployment..."
+    if docker exec latest-api env | grep -q "GOOGLE_CLIENT"; then
+        log_message "✅ Environment variables verified in container"
+    else
+        log_message "❌ WARNING: Google environment variables not found in container"
+        docker logs latest-api --tail 50 || true
+    fi
+    
+    # Cleanup
+    rm -f .env.deploy
+    
+    # Verify database containers are still running
+    log_message "Verifying database containers are still running..."
+    
+    # Check if any PostgreSQL container is running
+    if ! docker ps | grep -q "postgres"; then
+        log_message "Warning: No PostgreSQL container appears to be running after rollback. Starting it..."
+        docker compose -f docker-compose.prod.yml up -d --no-recreate postgres || log_message "WARNING: Failed to start PostgreSQL"
+    else
+        log_message "PostgreSQL container appears to be running."
+    fi
+    
+    # Check if any Redis container is running
+    if ! docker ps | grep -q "redis" | grep -v "commander"; then
+        log_message "Warning: No Redis container appears to be running after rollback. Starting it..."
+        docker compose -f docker-compose.prod.yml up -d --no-recreate redis || log_message "WARNING: Failed to start Redis"
+    else
+        log_message "Redis container appears to be running."
+    fi
+    
+    # Show container status
+    log_message "Container status after rollback:"
+    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+    
+    # Wait for API to be healthy
+    if check_api_health 10; then
+        log_message "✅ Rollback completed successfully"
+        return 0
+    else
+        log_message "❌ Rollback failed - API is not healthy"
+        return 1
+    fi
+}
+
+# Function to perform manual rollback using backup
+perform_manual_rollback() {
+    log_message "Performing manual rollback using backup..."
+    
+    # Check for backup directory
+    if [ ! -d "$BACKUP_DIR" ]; then
+        log_message "❌ No backup directory found"
+        return 1
+    fi
+    
+    # Find the latest backup
+    local latest_backup=""
+    if [ -f "$LATEST_BACKUP_MARKER" ]; then
+        latest_backup=$(cat "$LATEST_BACKUP_MARKER")
+    else
+        latest_backup=$(find "$BACKUP_DIR" -maxdepth 1 -type d -not -name "." -not -name ".." | sort -r | head -n 1 | xargs basename)
+    fi
+    
+    if [ -z "$latest_backup" ] || [ ! -d "$BACKUP_DIR/$latest_backup" ]; then
+        log_message "❌ No valid backup found for rollback"
+        return 1
+    fi
+    
+    log_message "Found backup: $latest_backup"
+    
+    # Stop current containers
+    log_message "Stopping current containers..."
+    docker stop latest-api 2>/dev/null || true
+    docker rm latest-api 2>/dev/null || true
+    
+    # Restore from backup
+    log_message "Restoring from backup..."
+    if cp -r "$BACKUP_DIR/$latest_backup"/* "$DEPLOY_PATH/current/"; then
+        log_message "✅ Backup restored successfully"
+        
+        # Start containers from restored backup
+        cd "$DEPLOY_PATH/current" || {
+            log_message "ERROR: Failed to change to current directory"
+            return 1
+        }
+        
+        if docker compose -f docker-compose.prod.yml up -d --build --no-deps --scale worker=$WORKER_COUNT api worker; then
+            log_message "✅ Containers started from backup"
+            
+            # Check health
+            if check_api_health 10; then
+                log_message "✅ Manual rollback completed successfully using backup"
+                return 0
+            else
+                log_message "❌ Manual rollback failed - API is not healthy"
+                return 1
+            fi
+        else
+            log_message "❌ Failed to start containers from backup"
+            return 1
+        fi
+    else
+        log_message "❌ Failed to restore from backup"
+        return 1
+    fi
 }
 
 # Main execution
-log_message "$ROLLBACK_LOG" "====================== ROLLBACK PROCESS STARTED ======================"
+main() {
+    local mode="${1:-auto}"
+    
+    log_message "🚨 ROLLBACK PROCESS STARTED =========="
+    log_message "Mode: $mode"
+    log_message "Deployment path: $DEPLOY_PATH"
+    
+    # Check if we're in the right directory
+    if [ ! -d "$DEPLOY_PATH" ]; then
+        log_message "ERROR: Deployment path does not exist: $DEPLOY_PATH"
+        exit 1
+    fi
+    
+    cd "$DEPLOY_PATH" || {
+        log_message "ERROR: Failed to change to deployment directory"
+        exit 1
+    }
+    
+    log_message "Current directory: $(pwd)"
+    log_message "Listing deployment directory contents:"
+    ls -la || true
+    
+    # Check current Docker status
+    log_message "Current Docker containers:"
+    docker ps -a || true
+    log_message "Current Docker volumes:"
+    docker volume ls || true
+    
+    # Perform rollback based on mode
+    case "$mode" in
+        "auto")
+            log_message "Attempting automated rollback..."
+            last_successful=$(get_last_successful_deployment)
+            
+            if [ -n "$last_successful" ]; then
+                log_message "Found last successful deployment: $last_successful"
+                if perform_automated_rollback "$last_successful"; then
+                    log_message "✅ Automated rollback completed successfully"
+                    exit 0
+                else
+                    log_message "❌ Automated rollback failed, attempting manual rollback..."
+                    if perform_manual_rollback; then
+                        log_message "✅ Manual rollback completed successfully"
+                        exit 0
+                    else
+                        log_message "❌ Manual rollback also failed"
+                        exit 1
+                    fi
+                fi
+            else
+                log_message "No successful deployment found, attempting manual rollback..."
+                if perform_manual_rollback; then
+                    log_message "✅ Manual rollback completed successfully"
+                    exit 0
+                else
+                    log_message "❌ Manual rollback failed"
+                    exit 1
+                fi
+            fi
+            ;;
+        "manual")
+            log_message "Performing manual rollback..."
+            if perform_manual_rollback; then
+                log_message "✅ Manual rollback completed successfully"
+                exit 0
+            else
+                log_message "❌ Manual rollback failed"
+                exit 1
+            fi
+            ;;
+        *)
+            log_message "Usage: $0 [auto|manual]"
+            log_message "  auto   - Attempt automated rollback, fallback to manual"
+            log_message "  manual - Perform manual rollback only"
+            exit 1
+            ;;
+    esac
+}
 
-# Check for rollback type argument
-ROLLBACK_TYPE="auto"
-if [ "$1" = "manual" ]; then
-  ROLLBACK_TYPE="manual"
-  log_message "$ROLLBACK_LOG" "Manual rollback requested"
-fi
-
-# Perform rollback
-if perform_rollback "$ROLLBACK_TYPE"; then
-  cleanup_old_releases
-  log_message "$ROLLBACK_LOG" "✅ Rollback process completed successfully"
-  exit 0
-else
-  log_error "$ROLLBACK_LOG" "❌ Rollback process failed"
-  exit 1
-fi 
+# Run main function with all arguments
+main "$@" 
