@@ -35,6 +35,19 @@ cd "$DEPLOY_PATH/releases/$GITHUB_SHA" || {
 }
 
 log_message "Starting container deployment..."
+log_message "Current directory: $(pwd)"
+log_message "Directory contents:"
+ls -la || true
+
+# Verify docker-compose.prod.yml exists
+if [ ! -f "docker-compose.prod.yml" ]; then
+    log_message "ERROR: docker-compose.prod.yml not found in $(pwd)"
+    log_message "Available files:"
+    ls -la || true
+    exit 1
+fi
+
+log_message "✅ docker-compose.prod.yml found"
 
 # Export the environment variables
 export GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID}"
@@ -109,10 +122,16 @@ else
     # Start/create PostgreSQL if needed
     if [ "$POSTGRES_RUNNING" = false ]; then
         log_message "Creating PostgreSQL container..."
+        log_message "Current directory: $(pwd)"
+        log_message "Checking docker-compose.prod.yml:"
+        ls -la docker-compose.prod.yml || log_message "ERROR: docker-compose.prod.yml not found"
+        
         if docker compose -f docker-compose.prod.yml up -d --no-recreate postgres; then
             log_message "PostgreSQL container started successfully"
         else
             log_message "WARNING: Issue starting PostgreSQL container, but continuing..."
+            log_message "Docker compose error details:"
+            docker compose -f docker-compose.prod.yml config || log_message "ERROR: docker-compose config failed"
         fi
     fi
     

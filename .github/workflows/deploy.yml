@@ -293,8 +293,24 @@ jobs:
           mkdir -p deploy_temp/scripts
           cp -r scripts/* deploy_temp/scripts/
           chmod +x deploy_temp/scripts/*.sh
+          
+          echo "Deployment files prepared:"
+          ls -la deploy_temp/
           echo "Scripts prepared for deployment:"
           ls -la deploy_temp/scripts/
+          
+          # Verify critical files exist
+          if [ ! -f "deploy_temp/docker-compose.prod.yml" ]; then
+            echo "❌ ERROR: docker-compose.prod.yml not found in deploy_temp"
+            exit 1
+          fi
+          
+          if [ ! -d "deploy_temp/scripts" ]; then
+            echo "❌ ERROR: scripts directory not found in deploy_temp"
+            exit 1
+          fi
+          
+          echo "✅ All deployment files verified"
 
       - name: Copy deployment files
         uses: appleboy/scp-action@master
@@ -307,6 +323,46 @@ jobs:
           strip_components: 1
           overwrite: true
           rm: false
+
+      - name: Verify deployment files
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          script: |
+            echo "Verifying deployment files..."
+            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
+            
+            echo "Current directory: $(pwd)"
+            echo "Directory contents:"
+            ls -la
+            
+            echo "Checking for required files..."
+            if [ -f "docker-compose.prod.yml" ]; then
+              echo "✅ docker-compose.prod.yml found"
+            else
+              echo "❌ docker-compose.prod.yml NOT found"
+              exit 1
+            fi
+            
+            if [ -d "scripts" ]; then
+              echo "✅ scripts directory found"
+              echo "Scripts contents:"
+              ls -la scripts/
+            else
+              echo "❌ scripts directory NOT found"
+              exit 1
+            fi
+            
+            if [ -f "Dockerfile" ]; then
+              echo "✅ Dockerfile found"
+            else
+              echo "❌ Dockerfile NOT found"
+              exit 1
+            fi
+            
+            echo "✅ All required files verified"
 
       - name: Set up scripts and directories
         uses: appleboy/ssh-action@master
