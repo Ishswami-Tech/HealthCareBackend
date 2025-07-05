@@ -1281,21 +1281,43 @@ export class AuthService {
   // Social login methods
   
   async handleGoogleLogin(googleUser: any, request: any, clinicId: string): Promise<any> {
-    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-    const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicUUID } });
-    if (!clinic) {
-      throw new NotFoundException('Clinic not found');
-    }
-    
-    const { email, given_name, family_name, picture, sub: googleId, name } = googleUser;
-    
     try {
+      if (!clinicId) {
+        throw new BadRequestException('Clinic ID is required for Google login');
+      }
+
+      this.logger.debug(`Starting Google login for clinic: ${clinicId}`);
+      
+      const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+      this.logger.debug(`Resolved clinic UUID: ${clinicUUID}`);
+      
+      const clinic = await this.prisma.clinic.findUnique({ 
+        where: { id: clinicUUID },
+        select: { id: true, name: true, isActive: true }
+      });
+      
+      if (!clinic) {
+        throw new NotFoundException(`Clinic not found with UUID: ${clinicUUID}`);
+      }
+      
+      if (!clinic.isActive) {
+        throw new BadRequestException(`Clinic ${clinic.name} is inactive`);
+      }
+      
+      const { email, given_name, family_name, picture, sub: googleId, name } = googleUser;
+      
+      if (!email) {
+        throw new BadRequestException('Email is required from Google user data');
+      }
+      
       // Check if user exists
       let user = await this.findUserByEmail(email);
       let isNewUser = false;
       
       if (!user) {
         isNewUser = true;
+        this.logger.debug(`Creating new user for email: ${email}`);
+        
         // Generate userid for new user
         const userid = await this.generateNextUID();
         
@@ -1349,6 +1371,8 @@ export class AuthService {
           this.logger.error(`Failed to send welcome email: ${emailError.message}`);
         }
       } else if (!(user as any).googleId) {
+        this.logger.debug(`Updating existing user with Google ID: ${user.email}`);
+        
         // Update existing user with Google ID if not already set
         user = await this.prisma.user.update({
           where: { id: user.id },
@@ -1375,8 +1399,18 @@ export class AuthService {
         isNewUser
       };
     } catch (error) {
-      this.logger.error(`Google login failed: ${error.message}`);
-      throw new InternalServerErrorException('Failed to process Google login');
+      this.logger.error(`Google login failed: ${error.message}`, error.stack);
+      
+      // Provide more specific error messages
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      
+      if (error.message.includes('Clinic not found')) {
+        throw new NotFoundException(`Clinic not found: ${error.message}`);
+      }
+      
+      throw new InternalServerErrorException(`Google login failed: ${error.message}`);
     }
   }
   

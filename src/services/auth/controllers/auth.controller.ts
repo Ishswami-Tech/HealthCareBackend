@@ -464,32 +464,76 @@ export class AuthController {
     description: 'Google login successful'
   })
   @ApiResponse({ status: 401, description: 'Invalid Google token' })
+  @ApiResponse({ status: 400, description: 'Bad request - missing required fields' })
+  @ApiResponse({ status: 404, description: 'Clinic not found' })
   async googleLogin(
-    @Body() body: { token?: string; code?: string; redirectUri?: string },
+    @Body() body: { token?: string; code?: string; redirectUri?: string; clinicId?: string },
     @Req() request: any,
     @OptionalClinicId() clinicId?: string
   ): Promise<any> {
     try {
+      // Determine clinic ID from multiple sources
+      const finalClinicId = body.clinicId || clinicId;
+      
+      if (!finalClinicId) {
+        throw new BadRequestException('Clinic ID is required. Please provide it via X-Clinic-ID header, request body, or query parameter.');
+      }
+
+      this.logger.debug(`Google login request for clinic: ${finalClinicId}`);
+
       let googleUser: any;
       if (body.code && body.redirectUri) {
+        this.logger.debug('Processing Google OAuth code exchange');
         googleUser = await this.authService.exchangeGoogleOAuthCode(body.code, body.redirectUri);
       } else if (body.token) {
+        this.logger.debug('Processing Google ID token verification');
         const ticket = await this.authService.verifyGoogleToken(body.token);
         googleUser = ticket.getPayload();
       } else {
         throw new BadRequestException('Either token or code with redirectUri must be provided');
       }
+      
       if (!googleUser || !googleUser.email) {
-        throw new UnauthorizedException('Invalid Google user data');
+        throw new UnauthorizedException('Invalid Google user data - email is required');
       }
-      const response = await this.authService.handleGoogleLogin(googleUser, request, clinicId);
+
+      this.logger.debug(`Google user verified: ${googleUser.email}`);
+      
+      const response = await this.authService.handleGoogleLogin(googleUser, request, finalClinicId);
+      
+      this.logger.debug(`Google login successful for user: ${googleUser.email}`);
       return response;
     } catch (error) {
       this.logger.error(`Google login failed: ${error.message}`, error.stack);
-      if (error instanceof HttpException) {
+      
+      // Provide more specific error responses
+      if (error instanceof BadRequestException || error instanceof UnauthorizedException || error instanceof NotFoundException) {
         throw error;
       }
-      throw new InternalServerErrorException('Google login failed');
+      
+      // Handle specific error types
+      if (error.message.includes('Clinic not found')) {
+        throw new NotFoundException(`Clinic not found: ${error.message}`);
+      }
+      
+      if (error.message.includes('Invalid Google token')) {
+        throw new UnauthorizedException('Invalid Google token provided');
+      }
+      
+      if (error.message.includes('Clinic ID is required')) {
+        throw new BadRequestException('Clinic ID is required for Google login');
+      }
+      
+      // Log the full error for debugging
+      this.logger.error('Full Google login error:', {
+        error: error.message,
+        stack: error.stack,
+        body: body,
+        clinicId: clinicId,
+        timestamp: new Date().toISOString()
+      });
+      
+      throw new InternalServerErrorException('Google login failed - please try again later');
     }
   }
 
