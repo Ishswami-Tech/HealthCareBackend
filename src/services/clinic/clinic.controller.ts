@@ -266,9 +266,12 @@ export class ClinicController {
     @Body() data: RegisterPatientDto,
     @Req() req: AuthenticatedRequest
   ) {
+    // First get the clinic by app name to get the clinicId
+    const clinic = await this.clinicService.getClinicByAppName(data.appName);
+    
     return this.clinicService.registerPatientToClinic({
       userId: req.user.sub,
-      appName: data.appName,
+      clinicId: clinic.clinicId,
     });
   }
 
