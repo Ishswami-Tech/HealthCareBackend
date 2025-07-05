@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-# Health check script for CI/CD
+# Deployment-friendly health check script for CI/CD
 # Performs health check on the API container after deployment
+# This script works in any deployment environment without relying on specific paths
 
 # Function to log messages with timestamp
 log_message() {
@@ -20,18 +21,63 @@ handle_error() {
 # Set up error handling
 trap 'handle_error $LINENO' ERR
 
-log_message "Starting health check for API container..."
+log_message "Starting deployment health check for API container..."
 
 MAX_RETRIES=5
 RETRY_COUNT=0
 DEPLOY_SUCCESS=false
 API_CONTAINER="latest-api"
 
+# Function to check if container is running
+check_container_running() {
+    docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"
+}
+
+# Function to perform health check
+perform_health_check() {
+    local endpoint="$1"
+    local description="$2"
+    
+    log_message "Testing health endpoint: $description ($endpoint)"
+    
+    # Use curl with proper timeout and error handling
+    HEALTH_OUTPUT=$(timeout 15 curl -s -m 10 --connect-timeout 5 "$endpoint" 2>&1 || echo "Connection failed")
+    CURL_EXIT=$?
+    
+    if [ $CURL_EXIT -eq 0 ] && [ -n "$HEALTH_OUTPUT" ]; then
+        log_message "Health check response received"
+        
+        # Check for HTTP 200 response (if verbose output)
+        if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200\|< HTTP/1.1 200"; then
+            log_message "✅ HTTP 200 response received"
+            return 0
+        fi
+        
+        # Check for healthy status in JSON response
+        if echo "$HEALTH_OUTPUT" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"\|"ok"\|"UP"\|"HEALTHY"'; then
+            log_message "✅ Health status indicator found in response"
+            return 0
+        fi
+        
+        # Check for specific health indicators
+        if echo "$HEALTH_OUTPUT" | grep -q '"api".*"status".*"healthy"'; then
+            log_message "✅ API service health confirmed"
+            return 0
+        fi
+        
+        log_message "Response preview: $(echo "$HEALTH_OUTPUT" | head -3)"
+        return 1
+    else
+        log_message "⚠️ Failed to get response from $endpoint (curl exit code: $CURL_EXIT)"
+        return 1
+    fi
+}
+
 # Wait for container to be running first
 log_message "Waiting for API container to be running..."
 for i in {1..10}; do
-    if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
-        log_message "API container is running"
+    if check_container_running; then
+        log_message "✅ API container is running"
         break
     fi
     if [ $i -eq 10 ]; then
@@ -48,35 +94,22 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$DEPLOY_SUCCESS" != "true" ]; do
     RETRY_COUNT=$((RETRY_COUNT + 1))
     log_message "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
     
-    if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
-        log_message "API container is running"
-        
-        # Use curl with proper timeout and error handling
-        HEALTH_OUTPUT=$(timeout 15 curl -v --max-time 10 --connect-timeout 5 http://localhost:8088/health 2>&1 || echo "Connection timed out")
-        
-        if echo "$HEALTH_OUTPUT" | grep -q "Connection timed out\|Empty reply\|Connection refused"; then
-            log_message "Warning: Connection timed out or empty reply received"
-            sleep 5
-            continue
-        fi
-        
-        # Check for HTTP 200 response
-        if echo "$HEALTH_OUTPUT" | grep -q "< HTTP/1.1 200 OK\|< HTTP/2 200\|< HTTP/1.1 200"; then
-            log_message "API health check successful - received HTTP 200"
-            DEPLOY_SUCCESS=true
-            break
-        elif echo "$HEALTH_OUTPUT" | grep -q '"status"\s*:\s*"healthy"\|"status":"up"\|"status": "up"\|"ok"\|"UP"\|"HEALTHY"'; then
-            log_message "API health check successful - found health indicator in response"
-            DEPLOY_SUCCESS=true
-            break
-        else
-            log_message "Health check response does not indicate success"
-            log_message "Response preview: $(echo "$HEALTH_OUTPUT" | tail -5)"
-        fi
-    else
+    if ! check_container_running; then
         log_message "ERROR: API container is not running! This is a critical failure."
         docker ps -a | grep "$API_CONTAINER" || true
         exit 1
+    fi
+    
+    # Try localhost first
+    if perform_health_check "http://localhost:8088/health" "localhost"; then
+        DEPLOY_SUCCESS=true
+        break
+    fi
+    
+    # Try domain URL as fallback
+    if perform_health_check "https://api.ishswami.in/health" "domain"; then
+        DEPLOY_SUCCESS=true
+        break
     fi
     
     if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
@@ -89,7 +122,7 @@ done
 if [ "$DEPLOY_SUCCESS" != "true" ]; then
     log_message "Health check attempts completed."
     
-    if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
+    if check_container_running; then
         log_message "Container is running despite health check response issues."
         docker logs "$API_CONTAINER" --tail 30 || true
         

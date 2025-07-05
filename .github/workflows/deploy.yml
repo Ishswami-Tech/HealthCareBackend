@@ -464,8 +464,85 @@ jobs:
           timeout: 120s
           proxy_timeout: 120s
           script: |
-            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
-            bash scripts/ci/health-check.sh
+            # Try the deployment-friendly health check script first
+            if [ -f "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}/scripts/ci/deployment-health-check.sh" ]; then
+              echo "Using deployment-friendly health check script..."
+              bash ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}/scripts/ci/deployment-health-check.sh
+            else
+              echo "Deployment-friendly script not found, using inline health check..."
+              
+              # Inline health check as fallback
+              MAX_RETRIES=5
+              RETRY_COUNT=0
+              DEPLOY_SUCCESS=false
+              API_CONTAINER="latest-api"
+              
+              echo "Starting inline health check for API container..."
+              
+              # Wait for container to be running first
+              echo "Waiting for API container to be running..."
+              for i in {1..10}; do
+                if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
+                  echo "✅ API container is running"
+                  break
+                fi
+                if [ $i -eq 10 ]; then
+                  echo "ERROR: API container is not running after 10 attempts"
+                  docker ps -a | grep "$API_CONTAINER" || true
+                  exit 1
+                fi
+                echo "Attempt $i/10: Waiting for API container to be running..."
+                sleep 5
+              done
+              
+              # Perform health checks with retry logic
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$DEPLOY_SUCCESS" != "true" ]; do
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                echo "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
+                
+                if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
+                  echo "API container is running"
+                  
+                  # Try localhost first
+                  HEALTH_OUTPUT=$(timeout 15 curl -s -m 10 --connect-timeout 5 http://localhost:8088/health 2>&1 || echo "Connection failed")
+                  
+                  if echo "$HEALTH_OUTPUT" | grep -q '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+                    echo "✅ Health check successful - found healthy status"
+                    DEPLOY_SUCCESS=true
+                    break
+                  else
+                    # Try domain URL as fallback
+                    HEALTH_OUTPUT=$(timeout 15 curl -s -m 10 --connect-timeout 5 https://api.ishswami.in/health 2>&1 || echo "Connection failed")
+                    
+                    if echo "$HEALTH_OUTPUT" | grep -q '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+                      echo "✅ Health check successful via domain - found healthy status"
+                      DEPLOY_SUCCESS=true
+                      break
+                    else
+                      echo "Health check response does not indicate success"
+                      echo "Response preview: $(echo "$HEALTH_OUTPUT" | head -3)"
+                    fi
+                  fi
+                else
+                  echo "ERROR: API container is not running! This is a critical failure."
+                  docker ps -a | grep "$API_CONTAINER" || true
+                  exit 1
+                fi
+                
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "Health check attempt $RETRY_COUNT failed, waiting 5 seconds before retry..."
+                  sleep 5
+                fi
+              done
+              
+              if [ "$DEPLOY_SUCCESS" = "true" ]; then
+                echo "✅ Health check completed successfully"
+                exit 0
+              else
+                echo "❌ Health check failed"
+                exit 1
+              fi
+            fi
 
   post-deployment-verification:
     needs: deploy
@@ -488,8 +565,85 @@ jobs:
           timeout: 120s
           proxy_timeout: 120s
           script: |
-            cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
-            bash scripts/ci/post-deploy-health-check.sh
+            # Try the deployment-friendly health check script first
+            if [ -f "${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}/scripts/ci/deployment-health-check.sh" ]; then
+              echo "Using deployment-friendly health check script for verification..."
+              bash ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}/scripts/ci/deployment-health-check.sh
+            else
+              echo "Deployment-friendly script not found, using inline health check for verification..."
+              
+              # Inline health check as fallback
+              MAX_RETRIES=5
+              RETRY_COUNT=0
+              DEPLOY_SUCCESS=false
+              API_CONTAINER="latest-api"
+              
+              echo "Starting inline health check verification for API container..."
+              
+              # Wait for container to be running first
+              echo "Waiting for API container to be running..."
+              for i in {1..10}; do
+                if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
+                  echo "✅ API container is running"
+                  break
+                fi
+                if [ $i -eq 10 ]; then
+                  echo "ERROR: API container is not running after 10 attempts"
+                  docker ps -a | grep "$API_CONTAINER" || true
+                  exit 1
+                fi
+                echo "Attempt $i/10: Waiting for API container to be running..."
+                sleep 5
+              done
+              
+              # Perform health checks with retry logic
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$DEPLOY_SUCCESS" != "true" ]; do
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                echo "Health check verification attempt $RETRY_COUNT/$MAX_RETRIES..."
+                
+                if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
+                  echo "API container is running"
+                  
+                  # Try localhost first
+                  HEALTH_OUTPUT=$(timeout 15 curl -s -m 10 --connect-timeout 5 http://localhost:8088/health 2>&1 || echo "Connection failed")
+                  
+                  if echo "$HEALTH_OUTPUT" | grep -q '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+                    echo "✅ Health check verification successful - found healthy status"
+                    DEPLOY_SUCCESS=true
+                    break
+                  else
+                    # Try domain URL as fallback
+                    HEALTH_OUTPUT=$(timeout 15 curl -s -m 10 --connect-timeout 5 https://api.ishswami.in/health 2>&1 || echo "Connection failed")
+                    
+                    if echo "$HEALTH_OUTPUT" | grep -q '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+                      echo "✅ Health check verification successful via domain - found healthy status"
+                      DEPLOY_SUCCESS=true
+                      break
+                    else
+                      echo "Health check verification response does not indicate success"
+                      echo "Response preview: $(echo "$HEALTH_OUTPUT" | head -3)"
+                    fi
+                  fi
+                else
+                  echo "ERROR: API container is not running! This is a critical failure."
+                  docker ps -a | grep "$API_CONTAINER" || true
+                  exit 1
+                fi
+                
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "Health check verification attempt $RETRY_COUNT failed, waiting 5 seconds before retry..."
+                  sleep 5
+                fi
+              done
+              
+              if [ "$DEPLOY_SUCCESS" = "true" ]; then
+                echo "✅ Health check verification completed successfully"
+                exit 0
+              else
+                echo "❌ Health check verification failed"
+                exit 1
+              fi
+            fi
 
       - name: Update deployment status success
         if: success()
