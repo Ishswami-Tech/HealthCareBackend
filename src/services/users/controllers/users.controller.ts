@@ -61,7 +61,11 @@ export class UsersController {
     type: UserResponseDto 
   })
   async getProfile(@Request() req): Promise<UserResponseDto> {
-    return this.usersService.findOne(req.user.sub);
+    const userId = req.user.sub || req.user.id;
+    if (!userId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
+    return this.usersService.findOne(userId);
   }
 
   @Get(':id')
@@ -100,12 +104,15 @@ export class UsersController {
       throw new BadRequestException('User ID is required in the URL');
     }
     const loggedInUser = req.user;
+    // Use user.sub (JWT subject) as userId, fallback to user.id
+    const loggedInUserId = loggedInUser.sub || loggedInUser.id;
+    
     // Allow Super Admin to update any user
     if (loggedInUser.role === Role.SUPER_ADMIN) {
       return this.usersService.update(id, updateUserDto);
     }
     // Allow any user to update their own profile
-    if (loggedInUser.id === id) {
+    if (loggedInUserId === id) {
       return this.usersService.update(id, updateUserDto);
     }
     // Otherwise, forbidden
