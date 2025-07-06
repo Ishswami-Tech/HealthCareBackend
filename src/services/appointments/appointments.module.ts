@@ -14,6 +14,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { RedisModule } from '../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { GuardsModule } from '../../libs/guards/guards.module';
+import { PermissionsModule } from '../../shared/permissions';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { GuardsModule } from '../../libs/guards/guards.module';
     RedisModule,
     RateLimitModule,
     GuardsModule,
+    PermissionsModule,
   ],
   controllers: [AppointmentsController],
   providers: [AppointmentService],

@@ -12,6 +12,7 @@ import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 import { AuthModule } from '../../../services/auth/auth.module';
 import { RedisModule } from '../../../shared/cache/redis/redis.module';
 import { SharedModule } from 'src/shared';
+import { PermissionsModule } from '../../../shared/permissions';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { SharedModule } from 'src/shared';
     AuthModule,
     RedisModule,
     EventEmitterModule.forRoot(),
+    PermissionsModule,
   ],
   controllers: [CheckInController],
   providers: [CheckInService],

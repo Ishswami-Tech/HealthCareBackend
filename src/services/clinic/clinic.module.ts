@@ -13,6 +13,10 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ClinicUserService } from './services/clinic-user.service';
 import { QrModule } from '../../shared/QR/qr.module';
+import { PermissionsModule } from '../../shared/permissions';
+import { JwtModule } from '@nestjs/jwt';
+import { jwtConfig } from '../../config/jwt.config';
+import { RedisModule } from '../../shared/cache/redis/redis.module';
 
 @Module({
   imports: [
@@ -21,7 +25,10 @@ import { QrModule } from '../../shared/QR/qr.module';
     GuardsModule,
     RateLimitModule,
     EventEmitterModule.forRoot(),
-    QrModule
+    QrModule,
+    PermissionsModule,
+    JwtModule.register(jwtConfig),
+    RedisModule
   ],
   controllers: [ClinicController, ClinicLocationController],
   providers: [

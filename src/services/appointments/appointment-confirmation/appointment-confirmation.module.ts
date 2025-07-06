@@ -9,6 +9,7 @@ import { RedisModule } from '../../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 import { GuardsModule } from '../../../libs/guards/guards.module';
 import { AuthModule } from '../../../services/auth/auth.module';
+import { PermissionsModule } from '../../../shared/permissions';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AuthModule } from '../../../services/auth/auth.module';
     RedisModule,
     RateLimitModule,
     GuardsModule,
+    PermissionsModule,
   ],
   controllers: [AppointmentConfirmationController],
   providers: [AppointmentConfirmationService],

@@ -8,6 +8,7 @@ import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
 import { LoggingModule } from "../../shared/logging/logging.module";
 import { EventsModule } from "../../shared/events/events.module";
 import { SharedModule } from '../../shared/shared.module';
+import { PermissionsModule } from '../../shared/permissions';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { SharedModule } from '../../shared/shared.module';
     LoggingModule,
     EventsModule,
     SharedModule,
+    PermissionsModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

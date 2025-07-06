@@ -10,6 +10,7 @@ import { AuthModule } from '../../../services/auth/auth.module';
 import { RedisModule } from '../../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 import { SharedModule } from '../../../shared/shared.module';
+import { PermissionsModule } from '../../../shared/permissions';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { SharedModule } from '../../../shared/shared.module';
     RedisModule,
     RateLimitModule,
     SharedModule,
+    PermissionsModule,
     EventEmitterModule.forRoot({
       wildcard: true,
       delimiter: '.',
