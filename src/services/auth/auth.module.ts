@@ -15,6 +15,7 @@ import { EventsModule } from '../../shared/events/events.module';
 import { LoggingModule } from '../../shared/logging/logging.module';
 import { jwtConfig } from '../../config/jwt.config';
 import { SharedModule } from "src/shared";
+import { PermissionsModule } from '../../shared/permissions';
 
 @Global()
 @Module({
@@ -30,7 +31,8 @@ import { SharedModule } from "src/shared";
     forwardRef(() => ClinicModule),
     EventsModule,
     LoggingModule,
-    JwtModule.register(jwtConfig)
+    JwtModule.register(jwtConfig),
+    PermissionsModule
   ],
   controllers: [AuthController],
   providers: [AuthService, SessionService],

@@ -10,6 +10,7 @@ import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
 import { GuardsModule } from '../../../libs/guards/guards.module';
 import { AuthModule } from '../../../services/auth/auth.module';
 import { SharedModule } from '../../../shared/shared.module';
+import { PermissionsModule } from '../../../shared/permissions';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { SharedModule } from '../../../shared/shared.module';
     RateLimitModule,
     GuardsModule,
     SharedModule,
+    PermissionsModule,
   ],
   controllers: [AppointmentLocationController],
   providers: [AppointmentLocationService],
