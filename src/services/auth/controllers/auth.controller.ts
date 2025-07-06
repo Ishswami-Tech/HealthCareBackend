@@ -29,7 +29,8 @@ import { Role } from '../../../shared/database/prisma/prisma.types';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
 import { ClinicId, OptionalClinicId } from '../../../libs/decorators/clinic.decorator';
-import { PermissionService, Permission, PermissionGuard } from '../../../shared/permissions';
+import { PermissionService, Permission } from '../../../shared/permissions';
+import { PermissionGuard } from '../../../libs/guards/permission.guard';
 
 @ApiTags('auth')
 @Controller('auth')

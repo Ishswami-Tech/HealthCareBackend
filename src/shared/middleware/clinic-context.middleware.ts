@@ -43,6 +43,20 @@ export class ClinicContextMiddleware implements NestMiddleware {
         }
       }
       
+      // Log all extracted identifiers for debugging
+      this.logger.debug(`Clinic context extraction for ${req.url}:`, {
+        headerIdentifier,
+        queryIdentifier,
+        pathIdentifier,
+        jwtClinicId,
+        subdomain,
+        headers: {
+          'x-clinic-id': req.headers['x-clinic-id'],
+          'x-clinic-identifier': req.headers['x-clinic-identifier'],
+          authorization: authHeader ? 'Bearer ***' : 'none'
+        }
+      });
+      
       let clinicContext: ClinicContext = {
         identifier: headerIdentifier || queryIdentifier || pathIdentifier || jwtClinicId || subdomain,
         subdomain,
@@ -57,6 +71,13 @@ export class ClinicContextMiddleware implements NestMiddleware {
           
           // Check in database to validate clinic
           const clinic = await this.findClinic(clinicContext.identifier);
+          
+          this.logger.debug(`Clinic search result for identifier "${clinicContext.identifier}":`, {
+            found: !!clinic,
+            clinicId: clinic?.id,
+            clinicName: clinic?.name,
+            isActive: clinic?.isActive
+          });
           
           if (clinic) {
             clinicContext = {

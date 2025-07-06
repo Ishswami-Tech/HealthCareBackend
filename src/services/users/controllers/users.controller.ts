@@ -18,7 +18,8 @@ import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { Roles } from '../../../libs/decorators/roles.decorator';
 import { Role } from '../../../shared/database/prisma/prisma.types';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
-import { Permission, PermissionGuard } from '../../../shared/permissions';
+import { PermissionGuard } from '../../../libs/guards/permission.guard';
+import { Permission } from '../../../shared/permissions';
 import { PermissionService } from '../../../shared/permissions';
 
 @ApiTags('user')

@@ -21,7 +21,9 @@ export type Permission =
   | 'manage_queue'
   | 'basic_patient_info'
   | 'view_profile'
-  | 'edit_profile';
+  | 'edit_profile'
+  | 'view_clinic_details'
+  | 'view_own_appointments';
 
 export type ResourceType = 'clinic' | 'appointment' | 'user' | 'patient' | 'doctor' | 'inventory';
 
