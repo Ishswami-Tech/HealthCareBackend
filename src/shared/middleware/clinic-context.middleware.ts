@@ -30,8 +30,21 @@ export class ClinicContextMiddleware implements NestMiddleware {
       const pathIdentifier = (req.params as any)?.clinicId;
       const subdomain = this.extractSubdomain(req);
       
+      // Also check JWT token for clinic context
+      let jwtClinicId: string | undefined;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const token = authHeader.substring(7);
+          const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+          jwtClinicId = payload.clinicId;
+        } catch (error) {
+          // Continue if JWT parsing fails
+        }
+      }
+      
       let clinicContext: ClinicContext = {
-        identifier: headerIdentifier || queryIdentifier || pathIdentifier || subdomain,
+        identifier: headerIdentifier || queryIdentifier || pathIdentifier || jwtClinicId || subdomain,
         subdomain,
         isValid: false
       };
@@ -61,10 +74,14 @@ export class ClinicContextMiddleware implements NestMiddleware {
             } else {
               this.logger.warn(`Attempted to access inactive clinic: ${clinic.name} (${clinic.id})`);
             }
+          } else {
+            this.logger.warn(`Clinic not found for identifier: ${clinicContext.identifier}`);
           }
         } catch (error) {
           this.logger.error(`Error validating clinic: ${error.message}`);
         }
+      } else {
+        this.logger.debug('No clinic identifier found in request');
       }
       
       // Attach clinic context to request - even if invalid, so we can check in guards
