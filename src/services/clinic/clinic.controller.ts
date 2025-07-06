@@ -126,7 +126,7 @@ export class ClinicController {
       this.logger.log(`Creating clinic by user ${userId}`, { clinicName: createClinicDto.name });
       
       const result = await this.clinicService.createClinic({
-        ...createClinicDto,
+      ...createClinicDto,
         createdBy: userId,
       });
 
@@ -265,7 +265,7 @@ export class ClinicController {
   @Permission('manage_clinics', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Update a clinic',
-    description: 'Updates a specific clinic by ID. Super Admin can update any clinic, while Clinic Admin can only update their assigned clinics.'
+    description: 'Updates a specific clinic by ID. Super Admin can update any clinic, while Clinic Admin can only update their assigned clinics.' 
   })
   @ApiParam({ 
     name: 'id', 
@@ -326,7 +326,7 @@ export class ClinicController {
   @Permission('manage_clinics', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Delete a clinic',
-    description: 'Deletes a specific clinic by ID and its associated database. Only Super Admin can delete clinics.'
+    description: 'Deletes a specific clinic by ID and its associated database. Only Super Admin can delete clinics.' 
   })
   @ApiParam({ 
     name: 'id', 
@@ -375,7 +375,7 @@ export class ClinicController {
   @Permission('manage_clinics')
   @ApiOperation({ 
     summary: 'Assign a clinic admin',
-    description: 'Assigns a user as a clinic admin. Only Super Admin or the clinic owner can assign clinic admins.'
+    description: 'Assigns a user as a clinic admin. Only Super Admin or the clinic owner can assign clinic admins.' 
   })
   @ApiConsumes('application/json')
   @ApiProduces('application/json')
@@ -420,9 +420,9 @@ export class ClinicController {
       });
       
       const result = await this.clinicService.assignClinicAdmin({
-        ...data,
-        assignedBy,
-      });
+      ...data,
+      assignedBy,
+    });
       
       this.logger.log(`Clinic admin assigned successfully`);
       return result;
@@ -437,7 +437,7 @@ export class ClinicController {
   @Public()
   @ApiOperation({ 
     summary: 'Get a clinic by app name',
-    description: 'Retrieves a specific clinic by app name (subdomain). This endpoint is public and used to determine which clinic database to connect to.'
+    description: 'Retrieves a specific clinic by app name (subdomain). This endpoint is public and used to determine which clinic database to connect to.' 
   })
   @ApiParam({ 
     name: 'appName', 
@@ -476,7 +476,7 @@ export class ClinicController {
   @Permission('view_clinic_details', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Get all doctors for a clinic',
-    description: 'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors.'
+    description: 'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors.' 
   })
   @ApiParam({ 
     name: 'id', 
@@ -525,7 +525,7 @@ export class ClinicController {
   @Permission('view_clinic_details', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Get all patients for a clinic',
-    description: 'Retrieves all patients associated with a specific clinic. Super Admin and Clinic Admin can see all patients.'
+    description: 'Retrieves all patients associated with a specific clinic. Super Admin and Clinic Admin can see all patients.' 
   })
   @ApiParam({ 
     name: 'id', 
@@ -573,7 +573,7 @@ export class ClinicController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ 
     summary: 'Register a patient to a clinic',
-    description: 'Registers a patient user to a specific clinic by app name. Used by the mobile app.'
+    description: 'Registers a patient user to a specific clinic by app name. Used by the mobile app.' 
   })
   @ApiConsumes('application/json')
   @ApiProduces('application/json')
@@ -610,13 +610,13 @@ export class ClinicController {
 
       this.logger.log(`Registering patient ${userId} to clinic by app name: ${data.appName}`);
       
-      // First get the clinic by app name to get the clinicId
-      const clinic = await this.clinicService.getClinicByAppName(data.appName);
-      
+    // First get the clinic by app name to get the clinicId
+    const clinic = await this.clinicService.getClinicByAppName(data.appName);
+    
       const result = await this.clinicService.registerPatientToClinic({
         userId,
-        clinicId: clinic.clinicId,
-      });
+      clinicId: clinic.clinicId,
+    });
       
       this.logger.log(`Patient ${userId} registered to clinic ${clinic.clinicId} successfully`);
       return result;
@@ -659,15 +659,15 @@ export class ClinicController {
 
       this.logger.log(`Validating app name: ${data.appName}`);
       
-      const clinic = await this.clinicService.getClinicByAppName(data.appName);
+    const clinic = await this.clinicService.getClinicByAppName(data.appName);
       
-      // Return only necessary information
+    // Return only necessary information
       const result = {
-        clinicId: clinic.clinicId,
-        name: clinic.name,
-        locations: await this.clinicService.getActiveLocations(clinic.id),
-        settings: clinic.settings
-      };
+      clinicId: clinic.clinicId,
+      name: clinic.name,
+      locations: await this.clinicService.getActiveLocations(clinic.id),
+      settings: clinic.settings
+    };
       
       this.logger.log(`App name ${data.appName} validated successfully`);
       return result;
