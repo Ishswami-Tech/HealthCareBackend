@@ -35,7 +35,16 @@ export class ClinicGuard implements CanActivate {
         'ClinicGuard',
         { path: request.url, clinicContext }
       );
-      throw new ForbiddenException('Invalid clinic context');
+      
+      if (!clinicContext) {
+        throw new ForbiddenException('Clinic context is required. Please provide X-Clinic-ID header or clinicId in JWT token.');
+      } else if (!clinicContext.identifier) {
+        throw new ForbiddenException('Clinic identifier is required. Please provide X-Clinic-ID header or clinicId in JWT token.');
+      } else if (!clinicContext.clinicId) {
+        throw new ForbiddenException(`Clinic not found with identifier: ${clinicContext.identifier}`);
+      } else {
+        throw new ForbiddenException('Clinic is not active or accessible');
+      }
     }
 
     // If user authentication is required, check if they belong to this clinic
