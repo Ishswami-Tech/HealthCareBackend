@@ -157,6 +157,8 @@ export class AppointmentService {
     locationId?: string;
     date?: string;
     clinicId: string; // Required for tenant isolation
+    page?: number;
+    limit?: number;
   }) {
     try {
       // Set tenant context for row-level isolation
@@ -166,7 +168,23 @@ export class AppointmentService {
       const where: any = {};
 
       if (filters.userId) {
-        where.patientId = filters.userId; // Use patientId instead of userId
+        // Find the patient record for this user
+        const patient = await this.prisma.patient.findUnique({
+          where: { userId: filters.userId }
+        });
+        
+        if (patient) {
+          where.patientId = patient.id;
+        } else {
+          // If no patient record found, return empty result
+          return {
+            appointments: [],
+            total: 0,
+            page: filters.page || 1,
+            limit: filters.limit || 10,
+            totalPages: 0
+          };
+        }
       }
 
       if (filters.doctorId) {
@@ -185,7 +203,15 @@ export class AppointmentService {
         where.date = new Date(filters.date);
       }
 
-      // Get appointments (clinicId is automatically added by PrismaService middleware)
+      // Calculate pagination
+      const page = Math.max(1, filters.page || 1);
+      const limit = Math.min(100, Math.max(1, filters.limit || 10));
+      const skip = (page - 1) * limit;
+
+      // Get total count for pagination
+      const total = await this.prisma.appointment.count({ where });
+
+      // Get appointments with pagination
       const appointments = await this.prisma.appointment.findMany({
         where,
         include: {
@@ -204,9 +230,19 @@ export class AppointmentService {
         orderBy: {
           date: 'asc',
         },
+        skip,
+        take: limit,
       });
 
-      return appointments;
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        appointments,
+        total,
+        page,
+        limit,
+        totalPages
+      };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
@@ -750,6 +786,41 @@ export class AppointmentService {
         { userId, error: error.stack }
       );
       throw new Error(`Failed to get user appointments: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get patient by user ID
+   */
+  async getPatientByUserId(userId: string) {
+    try {
+      const patient = await this.prisma.patient.findUnique({
+        where: { userId },
+        select: {
+          id: true,
+          userId: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+              role: true
+            }
+          }
+        }
+      });
+
+      return patient;
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get patient by user ID: ${error.message}`,
+        'AppointmentService',
+        { userId, error: error.stack }
+      );
+      throw new Error(`Failed to get patient: ${error.message}`);
     }
   }
 } 

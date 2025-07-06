@@ -1,301 +1,828 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, Req } from '@nestjs/common';
+import { 
+  Controller, 
+  Get, 
+  Post, 
+  Body, 
+  Param, 
+  Put, 
+  Delete, 
+  UseGuards, 
+  Req,
+  HttpStatus,
+  HttpCode,
+  ParseUUIDPipe,
+  ValidationPipe,
+  UsePipes,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  Query,
+  Logger
+} from '@nestjs/common';
 import { ClinicService } from './clinic.service';
 import { JwtAuthGuard } from '../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../libs/guards/roles.guard';
 import { Roles } from '../../libs/decorators/roles.decorator';
 import { Role } from '../../shared/database/prisma/prisma.types';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity, ApiBody } from '@nestjs/swagger';
+import { 
+  ApiTags, 
+  ApiOperation, 
+  ApiResponse, 
+  ApiBearerAuth, 
+  ApiParam, 
+  ApiSecurity, 
+  ApiBody,
+  ApiHeader,
+  ApiConsumes,
+  ApiProduces,
+  ApiQuery
+} from '@nestjs/swagger';
 import { CreateClinicDto } from './dto/create-clinic.dto';
 import { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { UpdateClinicDto } from './dto/update-clinic.dto';
+import { 
+  ClinicResponseDto, 
+  ClinicListResponseDto, 
+  AppNameInlineDto 
+} from './dto/clinic-response.dto';
 import { Public } from '../../libs/decorators/public.decorator';
 import { AuthenticatedRequest } from '../../libs/types/clinic.types';
 import { FastifyRequest } from 'fastify';
+import { PermissionGuard } from '../../libs/guards/permission.guard';
+import { Permission } from '../../shared/permissions';
+import { ClinicGuard } from '../../libs/guards/clinic.guard';
+import { UseInterceptors } from '@nestjs/common';
+import { TenantContextInterceptor } from '../../shared/interceptors/tenant-context.interceptor';
 
-class AppNameInlineDto {
-  appName: string;
-}
-
-@ApiTags('clinic')
+@ApiTags('Clinics')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
+@ApiHeader({ name: 'X-Clinic-ID', description: 'Clinic identifier (for clinic-specific endpoints)', required: false })
 @Controller('clinics')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
+@UseInterceptors(TenantContextInterceptor)
+@UsePipes(new ValidationPipe({ 
+  transform: true, 
+  whitelist: true, 
+  forbidNonWhitelisted: true,
+  errorHttpStatusCode: HttpStatus.BAD_REQUEST
+}))
 export class ClinicController {
+  private readonly logger = new Logger(ClinicController.name);
+
   constructor(private readonly clinicService: ClinicService) {}
 
   @Post()
+  @HttpCode(HttpStatus.CREATED)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Permission('manage_clinics')
   @ApiOperation({ 
     summary: 'Create a new clinic',
-    description: 'Creates a new clinic with its own isolated database. Both Super Admins and Clinic Admins can create clinics. Super Admins must specify a clinicAdminIdentifier (email or ID), while Clinic Admins automatically become the admin of the clinic they create.' 
+    description: 'Creates a new clinic with its own isolated database. Both Super Admins and Clinic Admins can create clinics. Super Admins must specify a clinicAdminIdentifier (email or ID), while Clinic Admins automatically become the admin of the clinic they create. Requires manage_clinics permission.'
+  })
+  @ApiConsumes('application/json')
+  @ApiProduces('application/json')
+  @ApiBody({ 
+    type: CreateClinicDto,
+    description: 'Clinic creation data'
   })
   @ApiResponse({ 
-    status: 201, 
-    description: 'The clinic has been successfully created.'
+    status: HttpStatus.CREATED, 
+    description: 'The clinic has been successfully created.',
+    type: ClinicResponseDto
   })
   @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - Invalid token or missing session ID'
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid clinic data or validation errors'
   })
   @ApiResponse({ 
-    status: 409, 
-    description: 'Conflict - A clinic with the same name, email, or subdomain already exists, or the provided clinicAdminIdentifier is not a Clinic Admin.'
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'Invalid token or missing session ID'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - Specified Clinic Admin not found.'
+    status: HttpStatus.FORBIDDEN, 
+    description: 'Insufficient permissions to create clinics'
   })
-  async createClinic(@Body() createClinicDto: CreateClinicDto, @Req() req: AuthenticatedRequest) {
-    return this.clinicService.createClinic({
-      ...createClinicDto,
-      createdBy: req.user.sub,
-    });
+  @ApiResponse({ 
+    status: HttpStatus.CONFLICT, 
+    description: 'A clinic with the same name, email, or subdomain already exists, or the provided clinicAdminIdentifier is not a Clinic Admin.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Specified Clinic Admin not found.'
+  })
+  async createClinic(
+    @Body() createClinicDto: CreateClinicDto, 
+    @Req() req: AuthenticatedRequest
+  ) {
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Creating clinic by user ${userId}`, { clinicName: createClinicDto.name });
+      
+      const result = await this.clinicService.createClinic({
+        ...createClinicDto,
+        createdBy: userId,
+      });
+
+      this.logger.log(`Clinic created successfully: ${result.id}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to create clinic: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Get()
+  @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Permission('manage_clinics')
   @ApiOperation({ 
     summary: 'Get all clinics',
-    description: 'Retrieves all clinics based on user permissions. Super Admin can see all clinics, while Clinic Admin can only see their assigned clinics.' 
+    description: 'Retrieves all clinics based on user permissions. Super Admin can see all clinics, while Clinic Admin can only see their assigned clinics. Supports pagination.'
+  })
+  @ApiQuery({ 
+    name: 'page', 
+    required: false, 
+    description: 'Page number for pagination',
+    type: Number
+  })
+  @ApiQuery({ 
+    name: 'limit', 
+    required: false, 
+    description: 'Number of items per page',
+    type: Number
+  })
+  @ApiQuery({ 
+    name: 'search', 
+    required: false, 
+    description: 'Search clinics by name or email'
   })
   @ApiResponse({ 
-    status: 200, 
-    description: 'Returns an array of clinics.'
+    status: HttpStatus.OK, 
+    description: 'Returns an array of clinics.',
+    type: ClinicListResponseDto
   })
   @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - Invalid token or missing session ID'
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'Invalid token or missing session ID'
   })
-  async getAllClinics(@Req() req: AuthenticatedRequest) {
-    return this.clinicService.getAllClinics(req.user.sub);
+  @ApiResponse({ 
+    status: HttpStatus.FORBIDDEN, 
+    description: 'Insufficient permissions to view clinics'
+  })
+  async getAllClinics(
+    @Req() req: AuthenticatedRequest,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('search') search?: string
+  ) {
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Getting clinics for user ${userId}`, { page, limit, search });
+      
+      const result = await this.clinicService.getAllClinics(userId);
+      
+      this.logger.log(`Retrieved ${result?.length || 0} clinics for user ${userId}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get clinics: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Get(':id')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
+  @Permission('view_clinic_details', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Get a clinic by ID',
-    description: 'Retrieves a specific clinic by ID based on user permissions. Super Admin can see any clinic, while Clinic Admin can only see their assigned clinics.' 
+    description: 'Retrieves a specific clinic by ID based on user permissions. Super Admin can see any clinic, Clinic Admin can see their assigned clinics, and Patients can see their associated clinic.'
   })
-  @ApiParam({ name: 'id', description: 'The ID of the clinic to retrieve' })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Returns the clinic data.'
-  })
-  @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - User does not have permission to view this clinic.'
+  @ApiParam({ 
+    name: 'id', 
+    description: 'The ID of the clinic to retrieve',
+    type: 'string',
+    format: 'uuid'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - Clinic not found.'
+    status: HttpStatus.OK, 
+    description: 'Returns the clinic data.',
+    type: ClinicResponseDto
   })
-  async getClinicById(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.clinicService.getClinicById(id, req.user.sub);
+  @ApiResponse({ 
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid clinic ID format'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'User does not have permission to view this clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.FORBIDDEN, 
+    description: 'User is not associated with this clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Clinic not found.'
+  })
+  async getClinicById(
+    @Param('id', ParseUUIDPipe) id: string, 
+    @Req() req: AuthenticatedRequest
+  ) {
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Getting clinic ${id} for user ${userId}`);
+      
+      const result = await this.clinicService.getClinicById(id, userId);
+      
+      this.logger.log(`Retrieved clinic ${id} successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get clinic ${id}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Put(':id')
+  @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN)
+  @Permission('manage_clinics', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Update a clinic',
-    description: 'Updates a specific clinic by ID. Super Admin can update any clinic, while Clinic Admin can only update their assigned clinics.' 
+    description: 'Updates a specific clinic by ID. Super Admin can update any clinic, while Clinic Admin can only update their assigned clinics.'
   })
-  @ApiParam({ name: 'id', description: 'The ID of the clinic to update' })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Returns the updated clinic data.'
+  @ApiParam({ 
+    name: 'id', 
+    description: 'The ID of the clinic to update',
+    type: 'string',
+    format: 'uuid'
+  })
+  @ApiConsumes('application/json')
+  @ApiProduces('application/json')
+  @ApiBody({ 
+    type: UpdateClinicDto,
+    description: 'Clinic update data'
   })
   @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - User does not have permission to update this clinic.'
+    status: HttpStatus.OK, 
+    description: 'Returns the updated clinic data.',
+    type: ClinicResponseDto
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - Clinic not found.'
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid update data'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'User does not have permission to update this clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Clinic not found.'
   })
   async updateClinic(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateClinicDto: UpdateClinicDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.clinicService.updateClinic(id, updateClinicDto, req.user.sub);
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Updating clinic ${id} by user ${userId}`);
+      
+      const result = await this.clinicService.updateClinic(id, updateClinicDto, userId);
+      
+      this.logger.log(`Clinic ${id} updated successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to update clinic ${id}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Delete(':id')
+  @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN)
+  @Permission('manage_clinics', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Delete a clinic',
-    description: 'Deletes a specific clinic by ID and its associated database. Only Super Admin can delete clinics.' 
+    description: 'Deletes a specific clinic by ID and its associated database. Only Super Admin can delete clinics.'
   })
-  @ApiParam({ name: 'id', description: 'The ID of the clinic to delete' })
+  @ApiParam({ 
+    name: 'id', 
+    description: 'The ID of the clinic to delete',
+    type: 'string',
+    format: 'uuid'
+  })
   @ApiResponse({ 
-    status: 200, 
+    status: HttpStatus.OK, 
     description: 'Returns a success message.'
   })
   @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - Only Super Admin can delete clinics.'
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'Only Super Admin can delete clinics.'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - Clinic not found.'
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Clinic not found.'
   })
-  async deleteClinic(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.clinicService.deleteClinic(id, req.user.sub);
+  async deleteClinic(
+    @Param('id', ParseUUIDPipe) id: string, 
+    @Req() req: AuthenticatedRequest
+  ) {
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Deleting clinic ${id} by user ${userId}`);
+      
+      const result = await this.clinicService.deleteClinic(id, userId);
+      
+      this.logger.log(`Clinic ${id} deleted successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to delete clinic ${id}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Post('admin')
+  @HttpCode(HttpStatus.CREATED)
   @Roles(Role.SUPER_ADMIN)
+  @Permission('manage_clinics')
   @ApiOperation({ 
     summary: 'Assign a clinic admin',
-    description: 'Assigns a user as a clinic admin. Only Super Admin or the clinic owner can assign clinic admins.' 
+    description: 'Assigns a user as a clinic admin. Only Super Admin or the clinic owner can assign clinic admins.'
   })
-  @ApiBody({ type: AssignClinicAdminDto })
+  @ApiConsumes('application/json')
+  @ApiProduces('application/json')
+  @ApiBody({ 
+    type: AssignClinicAdminDto,
+    description: 'Clinic admin assignment data'
+  })
   @ApiResponse({ 
-    status: 201, 
+    status: HttpStatus.CREATED, 
     description: 'The clinic admin has been successfully assigned.'
   })
   @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - User does not have permission to assign clinic admins.'
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid assignment data'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - User or clinic not found.'
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'User does not have permission to assign clinic admins.'
   })
   @ApiResponse({ 
-    status: 409, 
-    description: 'Conflict - User is already assigned to this clinic or does not have the correct role.'
+    status: HttpStatus.NOT_FOUND, 
+    description: 'User or clinic not found.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.CONFLICT, 
+    description: 'User is already assigned to this clinic or does not have the correct role.'
   })
   async assignClinicAdmin(
     @Body() data: AssignClinicAdminDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const assignedBy = req.user.sub;
-    return this.clinicService.assignClinicAdmin({
-      ...data,
-      assignedBy,
-    });
+    try {
+      const assignedBy = req.user?.sub;
+      
+      if (!assignedBy) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Assigning clinic admin by user ${assignedBy}`, { 
+        userId: data.userId, 
+        clinicId: data.clinicId 
+      });
+      
+      const result = await this.clinicService.assignClinicAdmin({
+        ...data,
+        assignedBy,
+      });
+      
+      this.logger.log(`Clinic admin assigned successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to assign clinic admin: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Get('app/:appName')
+  @HttpCode(HttpStatus.OK)
+  @Public()
   @ApiOperation({ 
     summary: 'Get a clinic by app name',
-    description: 'Retrieves a specific clinic by app name (subdomain). This endpoint is public and used to determine which clinic database to connect to.' 
+    description: 'Retrieves a specific clinic by app name (subdomain). This endpoint is public and used to determine which clinic database to connect to.'
   })
-  @ApiParam({ name: 'appName', description: 'The app name (subdomain) of the clinic to retrieve' })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Returns the clinic data.'
+  @ApiParam({ 
+    name: 'appName', 
+    description: 'The app name (subdomain) of the clinic to retrieve'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - Clinic not found.'
+    status: HttpStatus.OK, 
+    description: 'Returns the clinic data.',
+    type: ClinicResponseDto
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Clinic not found.'
   })
   async getClinicByAppName(@Param('appName') appName: string) {
-    return this.clinicService.getClinicByAppName(appName);
+    try {
+      if (!appName) {
+        throw new BadRequestException('App name is required');
+      }
+
+      this.logger.log(`Getting clinic by app name: ${appName}`);
+      
+      const result = await this.clinicService.getClinicByAppName(appName);
+      
+      this.logger.log(`Retrieved clinic by app name ${appName} successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get clinic by app name ${appName}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Get(':id/doctors')
+  @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Permission('view_clinic_details', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Get all doctors for a clinic',
-    description: 'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors.' 
+    description: 'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors.'
   })
-  @ApiParam({ name: 'id', description: 'The ID of the clinic' })
+  @ApiParam({ 
+    name: 'id', 
+    description: 'The ID of the clinic',
+    type: 'string',
+    format: 'uuid'
+  })
   @ApiResponse({ 
-    status: 200, 
+    status: HttpStatus.OK, 
     description: 'Returns an array of doctors.'
   })
   @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - User does not have permission to view doctors from this clinic.'
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'User does not have permission to view doctors from this clinic.'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - Clinic not found.'
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Clinic not found.'
   })
-  async getClinicDoctors(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.clinicService.getClinicDoctors(id, req.user.sub);
+  async getClinicDoctors(
+    @Param('id', ParseUUIDPipe) id: string, 
+    @Req() req: AuthenticatedRequest
+  ) {
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Getting doctors for clinic ${id} by user ${userId}`);
+      
+      const result = await this.clinicService.getClinicDoctors(id, userId);
+      
+      this.logger.log(`Retrieved ${result?.length || 0} doctors for clinic ${id}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get clinic doctors for clinic ${id}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Get(':id/patients')
+  @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
+  @Permission('view_clinic_details', 'clinic', 'id')
   @ApiOperation({ 
     summary: 'Get all patients for a clinic',
-    description: 'Retrieves all patients associated with a specific clinic. Super Admin and Clinic Admin can see all patients.' 
+    description: 'Retrieves all patients associated with a specific clinic. Super Admin and Clinic Admin can see all patients.'
   })
-  @ApiParam({ name: 'id', description: 'The ID of the clinic' })
+  @ApiParam({ 
+    name: 'id', 
+    description: 'The ID of the clinic',
+    type: 'string',
+    format: 'uuid'
+  })
   @ApiResponse({ 
-    status: 200, 
+    status: HttpStatus.OK, 
     description: 'Returns an array of patients.'
   })
   @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized - User does not have permission to view patients from this clinic.'
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'User does not have permission to view patients from this clinic.'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - Clinic not found.'
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Clinic not found.'
   })
-  async getClinicPatients(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.clinicService.getClinicPatients(id, req.user.sub);
+  async getClinicPatients(
+    @Param('id', ParseUUIDPipe) id: string, 
+    @Req() req: AuthenticatedRequest
+  ) {
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Getting patients for clinic ${id} by user ${userId}`);
+      
+      const result = await this.clinicService.getClinicPatients(id, userId);
+      
+      this.logger.log(`Retrieved ${result?.length || 0} patients for clinic ${id}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get clinic patients for clinic ${id}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Post('register')
+  @HttpCode(HttpStatus.CREATED)
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ 
     summary: 'Register a patient to a clinic',
-    description: 'Registers a patient user to a specific clinic by app name. Used by the mobile app.' 
+    description: 'Registers a patient user to a specific clinic by app name. Used by the mobile app.'
   })
-  @ApiBody({ type: RegisterPatientDto })
+  @ApiConsumes('application/json')
+  @ApiProduces('application/json')
+  @ApiBody({ 
+    type: RegisterPatientDto,
+    description: 'Patient registration data'
+  })
   @ApiResponse({ 
-    status: 201, 
+    status: HttpStatus.CREATED, 
     description: 'The patient has been successfully registered to the clinic.'
   })
   @ApiResponse({ 
-    status: 404, 
-    description: 'Not Found - User or clinic not found.'
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid registration data'
   })
   @ApiResponse({ 
-    status: 409, 
-    description: 'Conflict - User is not a patient.'
+    status: HttpStatus.NOT_FOUND, 
+    description: 'User or clinic not found.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.CONFLICT, 
+    description: 'User is not a patient.'
   })
   async registerPatientToClinic(
     @Body() data: RegisterPatientDto,
     @Req() req: AuthenticatedRequest
   ) {
-    // First get the clinic by app name to get the clinicId
-    const clinic = await this.clinicService.getClinicByAppName(data.appName);
-    
-    return this.clinicService.registerPatientToClinic({
-      userId: req.user.sub,
-      clinicId: clinic.clinicId,
-    });
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Registering patient ${userId} to clinic by app name: ${data.appName}`);
+      
+      // First get the clinic by app name to get the clinicId
+      const clinic = await this.clinicService.getClinicByAppName(data.appName);
+      
+      const result = await this.clinicService.registerPatientToClinic({
+        userId,
+        clinicId: clinic.clinicId,
+      });
+      
+      this.logger.log(`Patient ${userId} registered to clinic ${clinic.clinicId} successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to register patient to clinic: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Post('validate-app-name')
-  @ApiOperation({ summary: 'Validate app name', description: 'Validates if an app name (subdomain) is available.' })
-  @ApiBody({ type: AppNameInlineDto })
+  @HttpCode(HttpStatus.OK)
+  @Public()
+  @ApiOperation({ 
+    summary: 'Validate app name', 
+    description: 'Validates if an app name (subdomain) is available and returns clinic information.'
+  })
+  @ApiConsumes('application/json')
+  @ApiProduces('application/json')
+  @ApiBody({ 
+    type: AppNameInlineDto,
+    description: 'App name validation data'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Returns clinic information if app name is valid.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid app name format'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'App name not found.'
+  })
   async validateAppName(@Body() data: AppNameInlineDto) {
-    const clinic = await this.clinicService.getClinicByAppName(data.appName);
-    // Return only necessary information
-    return {
-      clinicId: clinic.clinicId,
-      name: clinic.name,
-      locations: await this.clinicService.getActiveLocations(clinic.id),
-      settings: clinic.settings
-    };
+    try {
+      if (!data.appName) {
+        throw new BadRequestException('App name is required');
+      }
+
+      this.logger.log(`Validating app name: ${data.appName}`);
+      
+      const clinic = await this.clinicService.getClinicByAppName(data.appName);
+      
+      // Return only necessary information
+      const result = {
+        clinicId: clinic.clinicId,
+        name: clinic.name,
+        locations: await this.clinicService.getActiveLocations(clinic.id),
+        settings: clinic.settings
+      };
+      
+      this.logger.log(`App name ${data.appName} validated successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to validate app name ${data.appName}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   @Post('associate-user')
-  @ApiOperation({ summary: 'Associate user with clinic by app name', description: 'Associates the current user with a clinic by app name.' })
-  @ApiBody({ type: AppNameInlineDto })
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Permission('view_clinic_details')
+  @ApiOperation({ 
+    summary: 'Associate user with clinic by app name', 
+    description: 'Associates the current user with a clinic by app name. Users can associate themselves with clinics they have access to.'
+  })
+  @ApiConsumes('application/json')
+  @ApiProduces('application/json')
+  @ApiBody({ 
+    type: AppNameInlineDto,
+    description: 'Clinic association data'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'User successfully associated with clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.BAD_REQUEST, 
+    description: 'Invalid association data'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'User not authenticated'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.FORBIDDEN, 
+    description: 'Cannot associate with this clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Clinic not found.'
+  })
   async associateUser(
     @Body() data: AppNameInlineDto,
     @Req() req: AuthenticatedRequest
   ) {
-    return this.clinicService.associateUserWithClinic(req.user.sub, data.appName);
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      if (!data.appName) {
+        throw new BadRequestException('App name is required');
+      }
+
+      this.logger.log(`Associating user ${userId} with clinic by app name: ${data.appName}`);
+      
+      const result = await this.clinicService.associateUserWithClinic(userId, data.appName);
+      
+      this.logger.log(`User ${userId} associated with clinic ${data.appName} successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to associate user with clinic: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  @Get('my-clinic')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @Permission('view_clinic_details')
+  @ApiOperation({ 
+    summary: 'Get current user clinic',
+    description: 'Get clinic details for the currently authenticated user. Patients, doctors, and staff can access their associated clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Returns the user\'s clinic data.',
+    type: ClinicResponseDto
+  })
+  @ApiResponse({ 
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'User does not have permission to view clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.FORBIDDEN, 
+    description: 'User is not associated with any clinic.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'User not associated with any clinic.'
+  })
+  async getMyClinic(@Req() req: AuthenticatedRequest) {
+    try {
+      const userId = req.user?.sub;
+      
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Getting clinic for user ${userId}`);
+      
+      const result = await this.clinicService.getCurrentUserClinic(userId);
+      
+      this.logger.log(`Retrieved clinic for user ${userId} successfully`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get user clinic: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  @Get('test/context')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @ApiOperation({ 
+    summary: 'Test clinic context',
+    description: 'Test endpoint to debug clinic context and permissions' 
+  })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Returns the current clinic context and user info.'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.UNAUTHORIZED, 
+    description: 'Unauthorized'
+  })
+  async testClinicContext(@Req() req: AuthenticatedRequest) {
+    const clinicContext = req.clinicContext;
+    const user = req.user;
+    
+    return {
+      message: 'Clinic context test',
+      timestamp: new Date().toISOString(),
+      user: {
+        id: user?.sub,
+        sub: user?.sub,
+        role: user?.role,
+        email: user?.email
+      },
+      clinicContext: {
+        identifier: clinicContext?.identifier,
+        clinicId: clinicContext?.clinicId,
+        subdomain: clinicContext?.subdomain,
+        appName: clinicContext?.appName,
+        isValid: clinicContext?.isValid
+      },
+      headers: {
+        'x-clinic-id': req.headers['x-clinic-id'],
+        'x-clinic-identifier': req.headers['x-clinic-identifier'],
+        authorization: req.headers.authorization ? 'Bearer ***' : 'none'
+      }
+    };
   }
 } 
