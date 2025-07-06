@@ -45,6 +45,14 @@ export interface QRCodeData {
   timestamp: string;
 }
 
+export interface ClinicContext {
+  identifier: string;
+  clinicId?: string;
+  subdomain?: string;
+  appName?: string;
+  isValid: boolean;
+}
+
 export interface AuthenticatedUser {
   sub: string;
   email: string;
@@ -55,6 +63,7 @@ export interface AuthenticatedUser {
 
 export interface AuthenticatedRequest extends FastifyRequest {
   user: AuthenticatedUser;
+  clinicContext?: ClinicContext;
 }
 
 export interface ClinicUser {

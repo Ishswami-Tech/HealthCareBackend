@@ -7,10 +7,11 @@ import { Roles } from '../../../libs/decorators/roles.decorator';
 import { Role } from '../../../shared/database/prisma/prisma.types';
 import { Clinic } from '../../../libs/decorators/clinic.decorator';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
+import { PermissionGuard } from '../../../libs/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 import { ProcessCheckInDto, ReorderQueueDto } from '../appointment.dto';
-import { Permission, PermissionGuard } from '../../../shared/permissions';
+import { Permission } from '../../../shared/permissions';
 
 @ApiTags('Check-in')
 @Controller('api/check-in')

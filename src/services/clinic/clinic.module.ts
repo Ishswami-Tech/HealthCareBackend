@@ -14,7 +14,6 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ClinicUserService } from './services/clinic-user.service';
 import { QrModule } from '../../shared/QR/qr.module';
 import { SharedModule } from '../../shared/shared.module';
-import { PermissionService } from '../../shared/permissions/permission.service';
 
 @Module({
   imports: [
@@ -33,8 +32,7 @@ import { PermissionService } from '../../shared/permissions/permission.service';
     ClinicLocationService,
     EventService,
     ClinicErrorService,
-    ClinicUserService,
-    PermissionService
+    ClinicUserService
   ],
   exports: [
     ClinicService, 

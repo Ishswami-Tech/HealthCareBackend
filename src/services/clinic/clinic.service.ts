@@ -492,7 +492,9 @@ export class ClinicService {
       }
 
       // Use the permission service to validate access
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinics', resourceType: 'clinic', resourceId: clinicUUID });
+      // For patients, check for view_clinic_details permission, for others check manage_clinics
+      const action = user.role === 'PATIENT' ? 'view_clinic_details' : 'manage_clinics';
+      const hasPermission = await this.permissionService.hasPermission({ userId, action, resourceType: 'clinic', resourceId: clinicUUID });
       if (!hasPermission) {
         await this.errorService.logError(
           { message: 'Unauthorized access attempt' },
@@ -1271,6 +1273,57 @@ export class ClinicService {
         'ClinicService',
         'generate clinic token',
         { userId, clinicId }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get current user's clinic
+   * This method finds the clinic associated with the current user
+   */
+  async getCurrentUserClinic(userId: string) {
+    try {
+      // Get user's primary clinic or first associated clinic
+      const userWithClinics = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { 
+          primaryClinic: true,
+          clinics: true
+        }
+      });
+      
+      if (!userWithClinics) {
+        await this.errorService.logError(
+          { message: 'User not found' },
+          'ClinicService',
+          'find user',
+          { userId }
+        );
+        throw new NotFoundException('User not found');
+      }
+      
+      // Get the clinic ID (primary clinic or first associated clinic)
+      const clinicId = userWithClinics.primaryClinicId || 
+                      (userWithClinics.clinics.length > 0 ? userWithClinics.clinics[0].id : null);
+      
+      if (!clinicId) {
+        await this.errorService.logError(
+          { message: 'User not associated with any clinic' },
+          'ClinicService',
+          'find user clinic',
+          { userId }
+        );
+        throw new NotFoundException('User not associated with any clinic');
+      }
+      
+      return this.getClinicById(clinicId, userId);
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get current user clinic',
+        { userId }
       );
       throw error;
     }

@@ -29,8 +29,15 @@ export class PermissionGuard implements CanActivate {
     if (permission.resourceIdParam && request.params) {
       resourceId = request.params[permission.resourceIdParam];
     }
+    
+    // Use user.sub (JWT subject) as userId, fallback to user.id
+    const userId = user.sub || user.id;
+    if (!userId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
+    
     const has = await this.permissionService.hasPermission({
-      userId: user.id,
+      userId: userId,
       action: permission.action,
       resourceType: permission.resourceType,
       resourceId,

@@ -1,13 +1,14 @@
-import { Controller, Get, Post, Body, Param, Logger, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Logger, UseGuards, Request } from '@nestjs/common';
 import { AppointmentConfirmationService } from './appointment-confirmation.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
+import { PermissionGuard } from '../../../libs/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 import { VerifyAppointmentQRDto, CompleteAppointmentDto } from '../appointment.dto';
-import { Permission, PermissionGuard } from '../../../shared/permissions';
+import { Permission } from '../../../shared/permissions';
 
 @ApiTags('Appointment Confirmation')
 @Controller('api/appointments/confirmation')

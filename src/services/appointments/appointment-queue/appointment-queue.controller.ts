@@ -4,10 +4,11 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody
 import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../libs/guards/roles.guard';
 import { ClinicGuard } from '../../../libs/guards/clinic.guard';
+import { PermissionGuard } from '../../../libs/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
 import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
 import { StartConsultationDto } from '../appointment.dto';
-import { Permission, PermissionGuard } from '../../../shared/permissions';
+import { Permission } from '../../../shared/permissions';
 
 @ApiTags('Appointment Queue')
 @Controller('api/appointments/queue')

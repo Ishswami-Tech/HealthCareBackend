@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
+import { PermissionGuard } from './permission.guard';
 import { RedisModule } from '../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { PrismaModule } from '../../shared/database/prisma/prisma.module';
@@ -14,7 +15,7 @@ import { LoggingModule } from '../../shared/logging/logging.module';
     PrismaModule,
     LoggingModule,
   ],
-  providers: [JwtAuthGuard, RolesGuard, ClinicGuard],
-  exports: [JwtAuthGuard, RolesGuard, ClinicGuard],
+  providers: [JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard],
+  exports: [JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard],
 })
 export class GuardsModule {} 

@@ -17,6 +17,79 @@ export enum AppointmentStatus {
   NO_SHOW = 'NO_SHOW'
 }
 
+// Response DTOs for better API documentation
+export class AppointmentResponseDto {
+  @ApiProperty({ description: 'Appointment ID' })
+  id: string;
+
+  @ApiProperty({ description: 'Appointment type' })
+  type: string;
+
+  @ApiProperty({ description: 'Appointment date' })
+  date: Date;
+
+  @ApiProperty({ description: 'Appointment time' })
+  time: string;
+
+  @ApiProperty({ description: 'Appointment duration in minutes' })
+  duration: number;
+
+  @ApiProperty({ description: 'Appointment status' })
+  status: string;
+
+  @ApiProperty({ description: 'Doctor information' })
+  doctor: any;
+
+  @ApiProperty({ description: 'Patient information' })
+  patient: any;
+
+  @ApiProperty({ description: 'Location information' })
+  location: any;
+
+  @ApiProperty({ description: 'Appointment notes', required: false })
+  notes?: string;
+
+  @ApiProperty({ description: 'Created at timestamp' })
+  createdAt: Date;
+
+  @ApiProperty({ description: 'Updated at timestamp' })
+  updatedAt: Date;
+}
+
+export class AppointmentListResponseDto {
+  @ApiProperty({ description: 'List of appointments', type: [AppointmentResponseDto] })
+  appointments: AppointmentResponseDto[];
+
+  @ApiProperty({ description: 'Total count of appointments' })
+  total: number;
+
+  @ApiProperty({ description: 'Current page number' })
+  page: number;
+
+  @ApiProperty({ description: 'Number of items per page' })
+  limit: number;
+
+  @ApiProperty({ description: 'Total number of pages' })
+  totalPages: number;
+}
+
+export class DoctorAvailabilityResponseDto {
+  @ApiProperty({ description: 'Whether doctor is available' })
+  available: boolean;
+
+  @ApiProperty({ description: 'Available time slots', type: [String] })
+  availableSlots: string[];
+
+  @ApiProperty({ description: 'Booked time slots', type: [String] })
+  bookedSlots: string[];
+
+  @ApiProperty({ description: 'Working hours for the day' })
+  workingHours: any;
+
+  @ApiProperty({ description: 'Message about availability', required: false })
+  message?: string;
+}
+
 // Basic type definitions
 export interface Doctor {
   id: string;
@@ -84,21 +157,9 @@ export class CreateAppointmentDto {
   @IsUUID()
   doctorId: string;
 
-  @ApiProperty({ description: 'Patient ID', example: 'patient-uuid' })
-  @IsUUID()
-  patientId: string;
-
   @ApiProperty({ description: 'Location ID', example: 'location-uuid' })
   @IsUUID()
   locationId: string;
-
-  @ApiProperty({ description: 'Clinic ID', example: 'clinic-uuid' })
-  @IsUUID()
-  clinicId: string;
-
-  @ApiProperty({ description: 'User ID', example: 'user-uuid' })
-  @IsUUID()
-  userId: string;
 
   @ApiProperty({ description: 'Date of the appointment (YYYY-MM-DD)', example: '2024-06-01' })
   @IsDateString()

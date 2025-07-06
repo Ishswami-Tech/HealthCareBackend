@@ -30,6 +30,7 @@ export class PermissionService {
       // Add all permissions here for super admin
     ],
     CLINIC_ADMIN: [
+      'manage_clinics',
       'manage_clinic_staff',
       'view_clinic_analytics',
       'manage_appointments',
@@ -52,6 +53,8 @@ export class PermissionService {
       'view_medical_history',
       'view_profile',
       'edit_profile',
+      'view_clinic_details',
+      'view_own_appointments',
     ],
     RECEPTIONIST: [
       'manage_appointments',
@@ -177,6 +180,19 @@ export class PermissionService {
             where: { userId: user.id, clinicId: resourceId },
           });
           return !!clinicAdmin;
+        }
+        if (user.role === 'PATIENT') {
+          // Patients can access their associated clinic through User model
+          const userWithClinics = await this.prisma.user.findUnique({
+            where: { id: user.id },
+            include: { clinics: true }
+          });
+          
+          if (!userWithClinics) return false;
+          
+          // Check if user is associated with this clinic
+          return userWithClinics.clinics.some(clinic => clinic.id === resourceId) ||
+                 userWithClinics.primaryClinicId === resourceId;
         }
         return false;
       case 'appointment':

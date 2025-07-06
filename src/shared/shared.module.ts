@@ -7,7 +7,7 @@ import { QrModule } from './QR/qr.module';
 import { ClinicModule } from '../services/clinic/clinic.module';
 import { SocketModule } from './socket/socket.module';
 import { TenantContextInterceptor } from './interceptors/tenant-context.interceptor';
-import { PermissionService, PermissionGuard } from './permissions';
+import { PermissionService } from './permissions';
 import { Reflector } from '@nestjs/core';
 
 @Module({
@@ -23,7 +23,6 @@ import { Reflector } from '@nestjs/core';
   providers: [
     TenantContextInterceptor,
     PermissionService,
-    PermissionGuard,
     Reflector,
   ],
   exports: [
@@ -36,7 +35,6 @@ import { Reflector } from '@nestjs/core';
     SocketModule,
     TenantContextInterceptor,
     PermissionService,
-    PermissionGuard,
     Reflector,
   ],
 })
