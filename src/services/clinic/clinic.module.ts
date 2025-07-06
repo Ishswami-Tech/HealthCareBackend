@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
 import { ClinicController } from './clinic.controller';
 import { PrismaService } from '../../shared/database/prisma/prisma.service';
@@ -13,11 +13,9 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ClinicUserService } from './services/clinic-user.service';
 import { QrModule } from '../../shared/QR/qr.module';
-import { SharedModule } from '../../shared/shared.module';
 
 @Module({
   imports: [
-    forwardRef(() => SharedModule),
     LoggingModule,
     ConfigModule,
     GuardsModule,
