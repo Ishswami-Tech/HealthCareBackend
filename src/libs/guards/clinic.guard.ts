@@ -85,18 +85,18 @@ export class ClinicGuard implements CanActivate {
       // allow access. More specific permission checks can be done in individual services.
       // This allows for more flexible access patterns while still maintaining security.
       
-      this.loggingService.log(
-        LogType.AUTH,
+        this.loggingService.log(
+          LogType.AUTH,
         LogLevel.DEBUG,
         `User authenticated, allowing clinic access`,
-        'ClinicGuard',
-        { 
+          'ClinicGuard',
+          { 
           userId: userId,
           userRole: user.role,
           clinicId: clinicContext.clinicId
-        }
-      );
-      
+          }
+        );
+
       // Store clinic information in request for later use
       request.clinic = {
         id: clinicContext.clinicId,
