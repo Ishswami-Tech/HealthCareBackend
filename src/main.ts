@@ -25,6 +25,7 @@ import { Server } from 'socket.io';
 import { createClient } from 'redis';
 import { LoggingInterceptor } from './shared/logging/logging.interceptor';
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { ClinicContextMiddleware } from './shared/middleware/clinic-context.middleware';
 
 // Store original console methods
 const originalConsole = {
@@ -680,6 +681,17 @@ async function bootstrap() {
         console.error('Failed to log unhandled rejection:', logError);
         console.error('Original rejection:', reason);
       }
+    });
+
+    // After app is created and before app.listen
+    // Register ClinicContextMiddleware globally for all routes
+    const clinicContextMiddleware = app.get(ClinicContextMiddleware);
+    fastifyInstance.addHook('onRequest', async (request, reply) => {
+      // Use console.log instead of private logger
+      console.log(`[ClinicContextMiddleware] running for ${request.url}`);
+      await new Promise<void>((resolve) => {
+        clinicContextMiddleware.use(request as any, reply as any, () => resolve());
+      });
     });
 
   } catch (error) {
