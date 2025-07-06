@@ -7,7 +7,7 @@ import { RedisModule } from '../../shared/cache/redis/redis.module';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { PrismaModule } from '../../shared/database/prisma/prisma.module';
 import { LoggingModule } from '../../shared/logging/logging.module';
-import { PermissionService } from '../../shared/permissions/permission.service';
+import { PermissionsModule } from '../../shared/permissions/permissions.module';
 import { Reflector } from '@nestjs/core';
 
 @Module({
@@ -16,13 +16,13 @@ import { Reflector } from '@nestjs/core';
     RateLimitModule,
     PrismaModule,
     LoggingModule,
+    PermissionsModule,
   ],
   providers: [
     JwtAuthGuard, 
     RolesGuard, 
     ClinicGuard, 
     PermissionGuard,
-    PermissionService,
     Reflector
   ],
   exports: [JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard],
