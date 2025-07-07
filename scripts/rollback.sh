@@ -5,8 +5,7 @@ set -e
 # This script handles rollback operations when deployment fails
 
 # Source shared configuration for consistent logging and paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/backup-config.sh"
+source "/var/www/healthcare/backend/scripts/backup-config.sh"
 
 # Function to log messages with timestamp
 log_message() {
