@@ -683,17 +683,6 @@ async function bootstrap() {
       }
     });
 
-    // After app is created and before app.listen
-    // Register ClinicContextMiddleware globally for all routes
-    const clinicContextMiddleware = app.get(ClinicContextMiddleware);
-    fastifyInstance.addHook('onRequest', async (request, reply) => {
-      // Use console.log instead of private logger
-      console.log(`[ClinicContextMiddleware] running for ${request.url}`);
-      await new Promise<void>((resolve) => {
-        clinicContextMiddleware.use(request as any, reply as any, () => resolve());
-      });
-    });
-
   } catch (error) {
     if (loggingService) {
       try {
