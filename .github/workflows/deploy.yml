@@ -219,7 +219,7 @@ jobs:
 
             # Enhanced cleanup to prevent port conflicts
             echo "Performing enhanced Docker cleanup to prevent port conflicts..."
-            
+
             # Stop and remove ALL containers that might be using port 8088
             echo "Stopping all containers that might be using port 8088..."
             docker ps --format '{{.Names}}' | while read container; do
@@ -229,28 +229,28 @@ jobs:
                 docker rm "$container" || true
               fi
             done
-            
+
             # Force remove any containers with API-related names
             echo "Force removing any API-related containers..."
             docker ps -a --format '{{.Names}}' | grep -E "(api|worker)" | while read container; do
               echo "Force removing container: $container"
               docker rm -f "$container" || true
             done
-            
+
             # Clean up Docker resources related to the API only
             echo "Cleaning up API Docker resources..."
             docker system prune -f --filter "label=com.docker.compose.service=api"
-            
+
             # Additional cleanup for any containers that might conflict
             echo "Performing additional cleanup..."
             docker system prune -f --volumes=false --filter "until=24h"
-            
+
             # Remove any existing API containers with conflicting names
             if docker ps -a --format '{{.Names}}' | grep -q "^${{ env.API_CONTAINER }}$"; then
               echo "Removing existing API container: ${{ env.API_CONTAINER }}"
               docker rm -f ${{ env.API_CONTAINER }} || true
             fi
-            
+
             # Verify port 8088 is free
             echo "Verifying port 8088 is available..."
             if netstat -tuln 2>/dev/null | grep -q ":8088 "; then
@@ -273,6 +273,18 @@ jobs:
             mkdir -p releases
             mkdir -p backups
 
+      - name: Pre-deployment file check
+        run: |
+          echo "Checking for required files before deployment..."
+          if [ ! -d "scripts" ]; then
+            echo "❌ ERROR: scripts directory not found!"; exit 1;
+          fi
+          if [ ! -f "src/shared/database/scripts/optimize-logs.sql" ]; then
+            echo "❌ ERROR: optimize-logs.sql not found!"; exit 1;
+          fi
+          chmod +x scripts/*.sh || echo "WARNING: Some scripts may not be executable"
+          echo "✅ All required files are present and scripts are executable."
+
       - name: Prepare deployment files
         run: |
           echo "Preparing files for deployment..."
@@ -293,23 +305,23 @@ jobs:
           mkdir -p deploy_temp/scripts
           cp -r scripts/* deploy_temp/scripts/
           chmod +x deploy_temp/scripts/*.sh
-          
+
           echo "Deployment files prepared:"
           ls -la deploy_temp/
           echo "Scripts prepared for deployment:"
           ls -la deploy_temp/scripts/
-          
+
           # Verify critical files exist
           if [ ! -f "deploy_temp/docker-compose.prod.yml" ]; then
             echo "❌ ERROR: docker-compose.prod.yml not found in deploy_temp"
             exit 1
           fi
-          
+
           if [ ! -d "deploy_temp/scripts" ]; then
             echo "❌ ERROR: scripts directory not found in deploy_temp"
             exit 1
           fi
-          
+
           echo "✅ All deployment files verified"
 
       - name: Copy deployment files
@@ -333,11 +345,11 @@ jobs:
           script: |
             echo "Verifying deployment files..."
             cd ${{ env.DEPLOY_PATH }}/releases/${{ github.sha }}
-            
+
             echo "Current directory: $(pwd)"
             echo "Directory contents:"
             ls -la
-            
+
             echo "Checking for required files..."
             if [ -f "docker-compose.prod.yml" ]; then
               echo "✅ docker-compose.prod.yml found"
@@ -345,7 +357,7 @@ jobs:
               echo "❌ docker-compose.prod.yml NOT found"
               exit 1
             fi
-            
+
             if [ -d "scripts" ]; then
               echo "✅ scripts directory found"
               echo "Scripts contents:"
@@ -354,14 +366,14 @@ jobs:
               echo "❌ scripts directory NOT found"
               exit 1
             fi
-            
+
             if [ -f "Dockerfile" ]; then
               echo "✅ Dockerfile found"
             else
               echo "❌ Dockerfile NOT found"
               exit 1
             fi
-            
+
             echo "✅ All required files verified"
 
       - name: Set up scripts and directories
@@ -695,14 +707,14 @@ jobs:
             docker volume ls
 
             echo "Checking for rollback script..."
-            
+
             # Try to use the rollback script
             ROLLBACK_SCRIPT_PATHS=(
               "current/scripts/rollback.sh"
               "/var/www/healthcare/backend/scripts/rollback.sh"
               "scripts/rollback.sh"
             )
-            
+
             ROLLBACK_SCRIPT_FOUND=false
             for script_path in "${ROLLBACK_SCRIPT_PATHS[@]}"; do
               if [ -f "$script_path" ]; then
@@ -730,7 +742,7 @@ jobs:
                 fi
               fi
             done
-            
+
             if [ "$ROLLBACK_SCRIPT_FOUND" = false ]; then
               echo "❌ No rollback script found in any expected location"
               echo "Falling back to emergency rollback procedure"
