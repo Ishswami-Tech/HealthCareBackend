@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { QrService } from '../../../shared/QR/qr.service';
-import { LocationQrService } from '../../../shared/QR/location-qr.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
-import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { QrService } from '../../../libs/utils/QR/qr.service';
+import { LocationQrService } from '../../../libs/utils/QR/location-qr.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogType, LogLevel } from 'src/libs/infrastructure/logging/types/logging.types';
+import { AppointmentStatus } from 'src/libs/infrastructure/database/prisma/prisma.types';
 import { AppointmentQueueService } from '../appointment-queue/appointment-queue.service';
 
 @Injectable()

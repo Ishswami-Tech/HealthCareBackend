@@ -1,9 +1,9 @@
 import { Controller, Get, Post, Body, Param, Delete, Put, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiSecurity, ApiBody } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../libs/guards/roles.guard';
-import { Roles } from '../../../libs/decorators/roles.decorator';
-import { Role } from '../../../shared/database/prisma/prisma.types';
+import { JwtAuthGuard } from '../../../libs/core/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../libs/core/guards/roles.guard';
+import { Roles } from '../../../libs/core/decorators/roles.decorator';
+import { Role } from '../../../libs/infrastructure/database/prisma/prisma.types';
 import { ClinicLocationService } from '../services/clinic-location.service';
 import { CreateClinicLocationDto } from '../dto/create-clinic-location.dto';
 import { UpdateClinicLocationDto } from '../dto/update-clinic-location.dto';

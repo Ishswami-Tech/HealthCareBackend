@@ -14,13 +14,13 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiSecurity } from '@nestjs/swagger';
 import { UsersService } from '../users.service';
 import { UpdateUserDto, UserResponseDto, CreateUserDto, UpdateUserRoleDto } from '../../../libs/dtos/user.dto';
-import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
-import { Roles } from '../../../libs/decorators/roles.decorator';
-import { Role } from '../../../shared/database/prisma/prisma.types';
-import { RolesGuard } from '../../../libs/guards/roles.guard';
-import { PermissionGuard } from '../../../libs/guards/permission.guard';
-import { Permission } from '../../../shared/permissions';
-import { PermissionService } from '../../../shared/permissions';
+import { JwtAuthGuard } from '../../../libs/core/guards/jwt-auth.guard';
+import { Roles } from '../../../libs/core/decorators/roles.decorator';
+import { Role } from '../../../libs/infrastructure/database/prisma/prisma.types';
+import { RolesGuard } from '../../../libs/core/guards/roles.guard';
+import { PermissionGuard } from '../../../libs/core/guards/permission.guard';
+import { Permission } from '../../../libs/infrastructure/permissions';
+import { PermissionService } from '../../../libs/infrastructure/permissions';
 
 @ApiTags('user')
 @Controller('user')

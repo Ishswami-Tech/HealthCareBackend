@@ -10,15 +10,15 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Socket, Server } from 'socket.io';
-import { BaseSocket } from '../../../shared/socket/base-socket';
-import { QueueService } from '../../../shared/queue/queue.service';
-import { SocketService } from '../../../shared/socket/socket.service';
+import { BaseSocket } from 'src/libs/communication/socket/base-socket';
+import { SocketService } from 'src/libs/communication/socket/socket.service';
 import { Logger, Injectable, Inject, OnModuleInit, Optional } from '@nestjs/common';
-import { AppointmentStatus, QueueStatus } from '../../../shared/database/prisma/prisma.types';
+import { AppointmentStatus, QueueStatus } from 'src/libs/infrastructure/database/prisma/prisma.types';
 import { AppointmentQueueService } from '../appointment-queue/appointment-queue.service';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
 import { AppointmentService } from '../appointments.service';
-import { QueuePosition, LocationQueueStats } from '../../../libs/types/queue.types';
+import { QueuePosition, LocationQueueStats } from 'src/libs/core/types/queue.types';
+import { QueueService } from 'src/libs/infrastructure/queue/queue.service';
 
 @WebSocketGateway({
   namespace: '/appointments',

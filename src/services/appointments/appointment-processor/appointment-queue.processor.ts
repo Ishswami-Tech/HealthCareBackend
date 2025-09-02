@@ -1,8 +1,8 @@
 import { Logger, Injectable, OnModuleInit } from '@nestjs/common';
-import { JobType, JobData } from '../../../shared/queue/queue.service';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { SocketService } from '../../../shared/socket/socket.service';
-import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
+import { JobType, JobData } from 'src/libs/infrastructure/queue/queue.service';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { SocketService } from 'src/libs/communication/socket/socket.service';
+import { AppointmentStatus } from 'src/libs/infrastructure/database/prisma/prisma.types';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Worker, Job } from 'bullmq';
 

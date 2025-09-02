@@ -1,11 +1,11 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { QueueService } from '../../../shared/queue/queue.service';
-import { JobType, JobPriority, JobData } from '../../../shared/queue/queue.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { QueueService } from 'src/libs/infrastructure/queue/queue.service';
+import { JobType, JobPriority, JobData } from 'src/libs/infrastructure/queue/queue.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogType, LogLevel } from 'src/libs/infrastructure/logging/types/logging.types';
 import { AppointmentWithRelations } from '../appointment.dto';
-import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
+import { AppointmentStatus } from 'src/libs/infrastructure/database/prisma/prisma.types';
 
 const appointmentInclude = {
   doctor: {

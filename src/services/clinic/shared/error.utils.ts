@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogLevel, LogType } from 'src/libs/infrastructure/logging/types/logging.types';
 
 @Injectable()
 export class ClinicErrorService {

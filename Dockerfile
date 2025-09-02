@@ -25,14 +25,14 @@ RUN npm install --legacy-peer-deps --no-audit --no-progress
 COPY . .
 
 # Generate Prisma client
-RUN npx prisma generate --schema=./src/shared/database/prisma/schema.prisma
+RUN npx prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma
 
 # Build the application
 RUN npm run build
 
 # Create prisma directory in dist
-RUN mkdir -p /app/dist/shared/database/prisma
-RUN cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/
+RUN mkdir -p /app/dist/libs/infrastructure/database/prisma
+RUN cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/
 
 # Production stage
 FROM node:20-slim as production
@@ -62,16 +62,16 @@ RUN npm ci --omit=dev --legacy-peer-deps --no-audit --no-progress && \
 # Copy built files from builder
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/src/shared/database/prisma/schema.prisma ./src/shared/database/prisma/schema.prisma
-COPY --from=builder /app/dist/shared/database/prisma/schema.prisma ./dist/shared/database/prisma/schema.prisma
+COPY --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
+COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
 
-# Copy only production environment file
-COPY .env.production ./.env
+# Copy environment file
+COPY .env .env
 
 # Environment-specific configurations
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
-ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
 
 # Production-specific environment variables
 ENV NODE_OPTIONS="--max-old-space-size=1536 --max-http-header-size=16384 --expose-gc"
@@ -120,13 +120,13 @@ COPY . .
 
 # Environment setup
 ENV NODE_ENV=development
-ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma
+ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
 
 # Generate Prisma client
 RUN npx prisma generate --schema="$PRISMA_SCHEMA_PATH"
 
 # Create necessary directories
-RUN mkdir -p /app/dist/shared/database/prisma /app/logs && \
+RUN mkdir -p /app/dist/libs/infrastructure/database/prisma /app/logs && \
     chmod -R 777 /app/dist /app/logs
 
 # Expose ports

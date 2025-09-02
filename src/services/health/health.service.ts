@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../shared/database/prisma/prisma.service';
-import { RedisService } from '../../shared/cache/redis/redis.service';
-import { HealthCheckResponse, DetailedHealthCheckResponse, ServiceHealth } from '../../libs/types/health.types';
+import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
+import { RedisService } from '../../libs/infrastructure/cache/redis/redis.service';
+import { HealthCheckResponse, DetailedHealthCheckResponse, ServiceHealth } from '../../libs/core/types/health.types';
 import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
-import { QueueService } from '../../shared/queue/queue.service';
-import { LoggingService } from '../../shared/logging/logging.service';
-import { SocketService } from '../../shared/socket/socket.service';
-import { EmailService } from '../../shared/messaging/email/email.service';
+import { QueueService } from '../../libs/infrastructure/queue/queue.service';
+import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
+import { SocketService } from '../../libs/communication/socket/socket.service';
+import { EmailService } from '../../libs/communication/messaging/email/email.service';
 
 @Injectable()
 export class HealthService {

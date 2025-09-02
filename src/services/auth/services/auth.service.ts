@@ -1,26 +1,26 @@
 import { Injectable, UnauthorizedException, BadRequestException, InternalServerErrorException, ConflictException, ForbiddenException, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { RedisService } from '../../../shared/cache/redis/redis.service';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { RedisService } from 'src/libs/infrastructure/cache/redis/redis.service';
 import { CreateUserDto, UserResponseDto } from '../../../libs/dtos/user.dto';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import { EmailService } from '../../../shared/messaging/email/email.service';
-import { EmailTemplate } from '../../../libs/types/email.types';
+import { EmailService } from 'src/libs/communication/messaging/email/email.service';
 import axios from 'axios';
-import { WhatsAppService } from '../../../shared/messaging/whatsapp/whatsapp.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { EventService } from '../../../shared/events/event.service';
-import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
-import { RedisCache } from '../../../shared/cache/decorators/redis-cache.decorator';
+import { WhatsAppService } from 'src/libs/communication/messaging/whatsapp/whatsapp.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { EventService } from 'src/libs/infrastructure/events/event.service';
+import { LogLevel, LogType } from 'src/libs/infrastructure/logging/types/logging.types';
+import { RedisCache } from 'src/libs/infrastructure/cache/decorators/redis-cache.decorator';
 import { ClinicService } from '../../clinic/clinic.service';
 import { ClinicUserService } from '../../clinic/services/clinic-user.service';
 import { OAuth2Client } from 'google-auth-library';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
 import { google } from 'googleapis';
-import { resolveClinicUUID } from '../../../shared/utils/clinic.utils';
+import { resolveClinicUUID } from '../../../libs/utils/clinic.utils';
+import { EmailTemplate } from 'src/libs/core/types/email.types';
 
 // Define simple types to avoid Prisma type issues
 type User = any;
@@ -2255,11 +2255,7 @@ export class AuthService {
             return {
               ...user,
               clinicToken,
-              clinic: {
-                id: clinic.id,
-                name: clinic.name,
-                locations: await this.clinicService.getActiveLocations(clinic.id)
-              }
+              clinicId: clinic.id
             };
           }
         } catch (error) {

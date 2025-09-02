@@ -9,9 +9,9 @@ dist
 build
 
 # Environment
-.env
-.env.*
-!.env.example
+# .env files are needed for production build
+!.env
+!.env.*
 
 # IDE
 .idea

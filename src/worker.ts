@@ -7,9 +7,9 @@ import {
   VIDHAKARMA_QUEUE,
   PANCHAKARMA_QUEUE,
   CHEQUP_QUEUE,
-} from 'src/shared/queue/queue.constants';
-import { QueueProcessor } from 'src/shared/queue/queue.processor';
-import { PrismaService } from 'src/shared/database/prisma/prisma.service';
+} from 'src/libs/infrastructure/queue/queue.constants';
+import { QueueProcessor } from 'src/libs/infrastructure/queue/queue.processor';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
 
 // Setup Prisma and processor (adjust as needed for DI)
 const prisma = new PrismaService();

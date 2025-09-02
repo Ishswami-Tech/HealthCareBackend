@@ -61,8 +61,7 @@ The system uses dynamic database connections:
 ## Development Workflow
 
 1. **Modify Schemas**:
-   - Main schema: `src/shared/database/prisma/schema.prisma`
-   - Tenant schema: `src/shared/database/prisma/tenant.schema.prisma`
+   - Main schema: `src/libs/infrastructure/database/prisma/schema.prisma`
 
 2. **Generate Clients**:
    - Run `npm run prisma:generate` to generate both client libraries

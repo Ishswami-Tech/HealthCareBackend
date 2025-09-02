@@ -1,18 +1,17 @@
 import { Module } from '@nestjs/common';
 import { CheckInService } from './check-in.service';
 import { CheckInController } from './check-in.controller';
-import { PrismaModule } from '../../../shared/database/prisma/prisma.module';
-import { LoggingModule } from '../../../shared/logging/logging.module';
-import { QueueModule } from '../../../shared/queue/queue.module';
-import { SocketModule } from '../../../shared/socket/socket.module';
+import { PrismaModule } from '../../../libs/infrastructure/database/prisma/prisma.module';
+import { LoggingModule } from '../../../libs/infrastructure/logging/logging.module';
+import { QueueModule } from '../../../libs/infrastructure/queue/queue.module';
+import { SocketModule } from '../../../libs/communication/socket/socket.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { JwtModule } from '@nestjs/jwt';
-import { GuardsModule } from '../../../libs/guards/guards.module';
-import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
+import { GuardsModule } from '../../../libs/core/guards/guards.module';
+import { RateLimitModule } from '../../../libs/utils/rate-limit/rate-limit.module';
 import { AuthModule } from '../../../services/auth/auth.module';
-import { RedisModule } from '../../../shared/cache/redis/redis.module';
-import { SharedModule } from 'src/shared';
-import { PermissionsModule } from '../../../shared/permissions';
+import { RedisModule } from '../../../libs/infrastructure/cache/redis/redis.module';
+import { PermissionsModule } from '../../../libs/infrastructure/permissions';
 
 @Module({
   imports: [
@@ -22,7 +21,6 @@ import { PermissionsModule } from '../../../shared/permissions';
     SocketModule,
     GuardsModule,
     RateLimitModule,
-    SharedModule,
     AuthModule,
     RedisModule,
     EventEmitterModule.forRoot(),
