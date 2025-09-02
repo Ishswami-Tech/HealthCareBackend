@@ -52,6 +52,7 @@ import { PermissionGuard } from '../../libs/core/guards/permission.guard';
 import { Permission } from '../../libs/infrastructure/permissions';
 import { FastifyRequest } from 'fastify';
 import { AuthenticatedRequest } from '../../libs/core/types/clinic.types';
+import { RateLimitAPI } from '../../libs/security/rate-limit/rate-limit.decorator';
 
 @ApiTags('Appointments')
 @Controller('appointments')
@@ -74,6 +75,7 @@ export class AppointmentsController {
   ) {}
 
   @Post()
+  @RateLimitAPI()
   @HttpCode(HttpStatus.CREATED)
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
   @ClinicRoute()

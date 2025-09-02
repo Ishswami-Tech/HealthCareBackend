@@ -41,6 +41,7 @@ import { ClinicId, OptionalClinicId } from 'src/libs/core/decorators/clinic.deco
 import { PermissionService, Permission } from 'src/libs/infrastructure/permissions';
 import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
 import { EmailService } from 'src/libs/communication/messaging/email/email.service';
+import { RateLimitAuth, RateLimitPasswordReset, RateLimitOTP, RateLimitAPI } from '../../../libs/security/rate-limit/rate-limit.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -90,6 +91,7 @@ export class AuthController {
   }
 
   @Public()
+  @RateLimitAuth()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -241,6 +243,7 @@ export class AuthController {
   }
 
   @Public()
+  @RateLimitPasswordReset()
   @Post('forgot-password')
   @ApiOperation({
     summary: 'Request password reset',
@@ -291,6 +294,7 @@ export class AuthController {
   }
 
   @Public()
+  @RateLimitOTP()
   @Post('request-otp')
   @ApiOperation({
     summary: 'Request OTP for login',
@@ -314,6 +318,7 @@ export class AuthController {
   }
 
   @Public()
+  @RateLimitOTP()
   @Post('verify-otp')
   @ApiOperation({
     summary: 'Verify OTP and login',

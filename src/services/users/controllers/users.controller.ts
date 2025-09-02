@@ -21,6 +21,7 @@ import { RolesGuard } from '../../../libs/core/guards/roles.guard';
 import { PermissionGuard } from '../../../libs/core/guards/permission.guard';
 import { Permission } from '../../../libs/infrastructure/permissions';
 import { PermissionService } from '../../../libs/infrastructure/permissions';
+import { RateLimitAPI } from '../../../libs/security/rate-limit/rate-limit.decorator';
 
 @ApiTags('user')
 @Controller('user')
@@ -34,6 +35,7 @@ export class UsersController {
   ) {}
 
   @Get('all')
+  @RateLimitAPI()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @ApiOperation({ 
