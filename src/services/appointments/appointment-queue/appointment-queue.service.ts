@@ -1,11 +1,11 @@
 import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
-import { AppointmentStatus, QueueStatus } from '../../../shared/database/prisma/prisma.types';
-import { LocationQueueStats, QueuePosition } from '../../../libs/types/queue.types';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogType, LogLevel } from 'src/libs/infrastructure/logging/types/logging.types';
+import { AppointmentStatus, QueueStatus } from 'src/libs/infrastructure/database/prisma/prisma.types';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { SocketService } from '../../../shared/socket/socket.service';
+import { SocketService } from 'src/libs/communication/socket/socket.service';
+import { LocationQueueStats, QueuePosition } from 'src/libs/core/types/queue.types';
 
 interface QueueConfig {
   defaultWaitTime: number;

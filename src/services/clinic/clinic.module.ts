@@ -1,22 +1,22 @@
 import { Module } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
 import { ClinicController } from './clinic.controller';
-import { PrismaService } from '../../shared/database/prisma/prisma.service';
+import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
 import { ClinicLocationService } from './services/clinic-location.service';
 import { ClinicLocationController } from './cliniclocation/clinic-location.controller';
-import { LoggingModule } from '../../shared/logging/logging.module';
-import { EventService } from '../../shared/events/event.service';
+import { LoggingModule } from '../../libs/infrastructure/logging/logging.module';
+import { EventService } from '../../libs/infrastructure/events/event.service';
 import { ConfigModule } from '@nestjs/config';
-import { GuardsModule } from '../../libs/guards/guards.module';
+import { GuardsModule } from '../../libs/core/guards/guards.module';
 import { ClinicErrorService } from './shared/error.utils';
-import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
+import { RateLimitModule } from '../../libs/utils/rate-limit/rate-limit.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ClinicUserService } from './services/clinic-user.service';
-import { QrModule } from '../../shared/QR/qr.module';
-import { PermissionsModule } from '../../shared/permissions';
+import { QrModule } from '../../libs/utils/QR/qr.module';
+  import { PermissionsModule } from '../../libs/infrastructure/permissions';
 import { JwtModule } from '@nestjs/jwt';
 import { jwtConfig } from '../../config/jwt.config';
-import { RedisModule } from '../../shared/cache/redis/redis.module';
+import { RedisModule } from '../../libs/infrastructure/cache/redis/redis.module';
 
 @Module({
   imports: [

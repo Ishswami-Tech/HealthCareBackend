@@ -1,8 +1,31 @@
-import { ApiProperty } from "@nestjs/swagger";
-import { Role, Gender } from '../../shared/database/prisma/prisma.types';
-import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID, IsNumber, MinLength, IsArray, IsNotEmpty } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { IsEmail, IsString, IsInt, IsOptional, IsEnum, IsDate, IsBoolean, IsUUID, IsNumber, MinLength, IsArray, IsNotEmpty, IsDateString, Matches, MaxLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { PartialType, OmitType } from '@nestjs/mapped-types';
+import { ValidateNested } from 'class-validator';
 
-// Base interface with required fields matching schema
+// Define Gender enum locally since it's not exported from prisma.types
+export enum Gender {
+  MALE = 'MALE',
+  FEMALE = 'FEMALE',
+  OTHER = 'OTHER'
+}
+
+// Define Role enum for better type safety
+export enum Role {
+  SUPER_ADMIN = 'SUPER_ADMIN',
+  CLINIC_ADMIN = 'CLINIC_ADMIN',
+  ADMIN = 'ADMIN',
+  DOCTOR = 'DOCTOR',
+  NURSE = 'NURSE',
+  PATIENT = 'PATIENT',
+  RECEPTIONIST = 'RECEPTIONIST'
+}
+
+/**
+ * Base interface with required fields matching schema
+ * Following SOLID principles from AI rules
+ */
 interface BaseUserFields {
   email: string;
   password: string;
@@ -19,14 +42,15 @@ interface BaseUserFields {
   country?: string;
   zipCode?: string;
   lastLogin?: Date;
-  // New multi-tenant fields
+  // Multi-tenant fields
   primaryClinicId?: string;
+  primaryStudioId?: string;
   appName?: string;
-  // New social login fields
+  // Social login fields
   googleId?: string;
   facebookId?: string;
   appleId?: string;
-  // New medical fields
+  // Medical fields
   medicalConditions?: string[];
   emergencyContact?: string;
 }
@@ -36,6 +60,7 @@ interface RoleSpecificFields {
   specialization?: string;
   experience?: number;
   clinicId?: string;
+  studioId?: string;
 }
 
 // For create operations - same as base plus role-specific fields
@@ -44,630 +69,548 @@ type CreateUserFields = BaseUserFields & RoleSpecificFields;
 // For update operations - all fields optional
 type UpdateUserFields = Partial<BaseUserFields>;
 
-// Simple registration DTO with minimal required fields
+/**
+ * Simple registration DTO with minimal required fields
+ * Following NestJS best practices for public endpoints
+ */
 export class SimpleCreateUserDto {
-  @ApiProperty({ example: 'john.doe@example.com', description: 'User email address' })
-  @IsEmail()
-  email: string;
+  @ApiProperty({ 
+    example: 'john.doe@example.com', 
+    description: 'User email address',
+    format: 'email'
+  })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @Transform(({ value }) => value?.toLowerCase().trim())
+  email: string = '';
 
-  @ApiProperty({ example: 'password123', description: 'User password' })
-  @IsString()
-  @MinLength(8)
-  password: string;
+  @ApiProperty({ 
+    example: 'SecurePassword123!', 
+    description: 'User password (min 8 chars, must include uppercase, lowercase, number, special char)',
+    minLength: 8
+  })
+  @IsString({ message: 'Password must be a string' })
+  @MinLength(8, { message: 'Password must be at least 8 characters long' })
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
+    message: 'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'
+  })
+  password: string = '';
 
-  @ApiProperty({ example: 'John', description: 'User first name' })
-  @IsString()
-  @IsNotEmpty()
-  firstName: string;
+  @ApiProperty({ 
+    example: 'John', 
+    description: 'User first name',
+    minLength: 2,
+    maxLength: 50
+  })
+  @IsString({ message: 'First name must be a string' })
+  @IsNotEmpty({ message: 'First name is required' })
+  @MinLength(2, { message: 'First name must be at least 2 characters long' })
+  @MaxLength(50, { message: 'First name cannot exceed 50 characters' })
+  @Transform(({ value }) => value?.trim())
+  firstName: string = '';
 
-  @ApiProperty({ example: 'Doe', description: 'User last name' })
-  @IsString()
-  @IsNotEmpty()
-  lastName: string;
+  @ApiProperty({ 
+    example: 'Doe', 
+    description: 'User last name',
+    minLength: 2,
+    maxLength: 50
+  })
+  @IsString({ message: 'Last name must be a string' })
+  @IsNotEmpty({ message: 'Last name is required' })
+  @MinLength(2, { message: 'Last name must be at least 2 characters long' })
+  @MaxLength(50, { message: 'Last name cannot exceed 50 characters' })
+  @Transform(({ value }) => value?.trim())
+  lastName: string = '';
 
-  @ApiProperty({ example: '+1234567890', description: 'User phone number' })
-  @IsString()
-  phone: string;
+  @ApiProperty({ 
+    example: '+1234567890', 
+    description: 'User phone number (international format)',
+    pattern: '^\\+?[1-9]\\d{1,14}$'
+  })
+  @IsString({ message: 'Phone number must be a string' })
+  @IsNotEmpty({ message: 'Phone number is required' })
+  @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid phone number format' })
+  phone: string = '';
 
-  @ApiProperty({ example: 'MALE', description: 'User gender', enum: Gender, required: false })
-  @IsEnum(Gender)
+  @ApiPropertyOptional({ 
+    example: 'MALE', 
+    description: 'User gender',
+    enum: Gender
+  })
+  @IsEnum(Gender, { message: 'Gender must be one of: MALE, FEMALE, OTHER' })
   @IsOptional()
   gender?: Gender;
 
-  @ApiProperty({ example: 30, description: 'User age', required: false })
+  @ApiPropertyOptional({ 
+    example: 30, 
+    description: 'User age (calculated from date of birth)',
+    minimum: 0,
+    maximum: 150
+  })
   @IsOptional()
-  @IsNumber()
+  @IsNumber({}, { message: 'Age must be a number' })
+  @IsInt({ message: 'Age must be an integer' })
   age?: number;
 
-  @ApiProperty({ example: 'profile.jpg', description: 'User profile picture URL', required: false })
+  @ApiPropertyOptional({ 
+    example: 'profile.jpg', 
+    description: 'User profile picture URL'
+  })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'Profile picture must be a string' })
   profilePicture?: string;
 
-  @ApiProperty({ example: '1990-01-01', description: 'User date of birth', required: false })
+  @ApiPropertyOptional({ 
+    example: '1990-01-01', 
+    description: 'User date of birth (YYYY-MM-DD format)',
+    format: 'date'
+  })
   @IsOptional()
-  @IsString()
+  @IsDateString({}, { message: 'Date of birth must be a valid date string' })
   dateOfBirth?: string;
 
-  @ApiProperty({ example: '123 Main St', description: 'User address', required: false })
+  @ApiPropertyOptional({ 
+    example: '123 Main St', 
+    description: 'User address'
+  })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'Address must be a string' })
+  @Transform(({ value }) => value?.trim())
   address?: string;
 
-  @ApiProperty({ example: 'New York', description: 'User city', required: false })
+  @ApiPropertyOptional({ 
+    example: 'New York', 
+    description: 'User city'
+  })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'City must be a string' })
+  @Transform(({ value }) => value?.trim())
   city?: string;
 
-  @ApiProperty({ example: 'NY', description: 'User state', required: false })
+  @ApiPropertyOptional({ 
+    example: 'NY', 
+    description: 'User state/province'
+  })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'State must be a string' })
+  @Transform(({ value }) => value?.trim())
   state?: string;
 
-  @ApiProperty({ example: 'USA', description: 'User country', required: false })
+  @ApiPropertyOptional({ 
+    example: 'USA', 
+    description: 'User country'
+  })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'Country must be a string' })
+  @Transform(({ value }) => value?.trim())
   country?: string;
 
-  @ApiProperty({ example: '10001', description: 'User zip code', required: false })
+  @ApiPropertyOptional({ 
+    example: '10001', 
+    description: 'User zip/postal code'
+  })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'Zip code must be a string' })
+  @Transform(({ value }) => value?.trim())
   zipCode?: string;
 
-  @ApiProperty({ 
-    example: ['Diabetes', 'Hypertension'], 
-    description: 'List of medical conditions', 
-    required: false,
-    isArray: true
-  })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  medicalConditions?: string[];
-
-  @ApiProperty({ 
-    example: ['Insulin', 'Metformin'], 
-    description: 'Current medications', 
-    required: false,
-    isArray: true
-  })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  currentMedications?: string[];
-
-  @ApiProperty({ 
-    example: ['Penicillin'], 
-    description: 'Known allergies', 
-    required: false,
-    isArray: true
-  })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  allergies?: string[];
-
-  @ApiProperty({ 
-    example: 'O+', 
-    description: 'Blood group', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  bloodGroup?: string;
-
-  @ApiProperty({ 
-    example: 'Mother has diabetes', 
-    description: 'Family medical history', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  familyHistory?: string;
-
-  @ApiProperty({ 
-    example: 'None', 
-    description: 'Emergency contact information', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  emergencyContact?: string;
-
-  // New multi-tenant fields
-  @ApiProperty({ 
+  @ApiPropertyOptional({ 
     example: 'clinic-uuid-123', 
-    description: 'Primary clinic ID for multi-tenant system', 
-    required: false
+    description: 'Primary clinic ID for multi-tenant context'
   })
   @IsOptional()
-  @IsUUID()
+  @IsUUID('4', { message: 'Primary clinic ID must be a valid UUID' })
   primaryClinicId?: string;
 
-  @ApiProperty({ 
-    example: 'myclinic', 
-    description: 'Application name for clinic registration', 
-    required: false
+  @ApiPropertyOptional({ 
+    example: 'studio-uuid-123', 
+    description: 'Primary studio ID for multi-tenant context'
   })
   @IsOptional()
-  @IsString()
+  @IsUUID('4', { message: 'Primary studio ID must be a valid UUID' })
+  primaryStudioId?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'healthcare', 
+    description: 'Application name for multi-domain setup',
+    enum: ['healthcare', 'fashion']
+  })
+  @IsOptional()
+  @IsString({ message: 'App name must be a string' })
   appName?: string;
-
-  // New social login fields
-  @ApiProperty({ 
-    example: 'google-user-id-123', 
-    description: 'Google OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  googleId?: string;
-
-  @ApiProperty({ 
-    example: 'facebook-user-id-123', 
-    description: 'Facebook OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  facebookId?: string;
-
-  @ApiProperty({ 
-    example: 'apple-user-id-123', 
-    description: 'Apple OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  appleId?: string;
 }
 
-export class CreateUserDto implements CreateUserFields {
-  @ApiProperty({ example: 'john.doe@example.com', description: 'User email address' })
-  @IsEmail()
-  email: string;
-
-  @ApiProperty({ example: 'password123', description: 'User password' })
-  @IsString()
-  @MinLength(8)
-  password: string;
-
-  @ApiProperty({ example: 'John', description: 'User first name' })
-  @IsString()
-  @IsNotEmpty()
-  firstName: string;
-
-  @ApiProperty({ example: 'Doe', description: 'User last name' })
-  @IsString()
-  @IsNotEmpty()
-  lastName: string;
-
-  @ApiProperty({ example: 'MALE', description: 'User gender', enum: Gender, required: false })
-  @IsEnum(Gender)
-  @IsOptional()
-  gender?: Gender;
-
-  @ApiProperty({ example: 'PATIENT', description: 'User role', enum: Role })
-  @IsEnum(Role)
-  role: Role;
-
-  @ApiProperty({ example: 30, description: 'User age', required: false })
-  @IsOptional()
-  @IsNumber()
-  age?: number;
-
-  @ApiProperty({ example: '+1234567890', description: 'User phone number' })
-  @IsString()
-  phone: string;
-
-  @ApiProperty({ example: 'profile.jpg', description: 'User profile picture URL', required: false })
-  @IsOptional()
-  @IsString()
-  profilePicture?: string;
-
-  @ApiProperty({ example: '1990-01-01', description: 'User date of birth', required: false })
-  @IsOptional()
-  @IsString()
-  dateOfBirth?: string;
-
-  @ApiProperty({ example: '123 Main St', description: 'User address', required: false })
-  @IsOptional()
-  @IsString()
-  address?: string;
-
-  @ApiProperty({ example: 'New York', description: 'User city', required: false })
-  @IsOptional()
-  @IsString()
-  city?: string;
-
-  @ApiProperty({ example: 'NY', description: 'User state', required: false })
-  @IsOptional()
-  @IsString()
-  state?: string;
-
-  @ApiProperty({ example: 'USA', description: 'User country', required: false })
-  @IsOptional()
-  @IsString()
-  country?: string;
-
-  @ApiProperty({ example: '10001', description: 'User zip code', required: false })
-  @IsOptional()
-  @IsString()
-  zipCode?: string;
-
-  @ApiProperty({ example: 'myapp', description: 'Application name for clinic registration', required: false })
-  @IsOptional()
-  @IsString()
-  appName?: string;
-
-  @ApiProperty({ example: true, description: 'Whether user is verified', required: false })
-  @IsOptional()
-  @IsBoolean()
-  isVerified?: boolean;
-
-  @ApiProperty({ example: ['allergies', 'diabetes'], description: 'User medical conditions', required: false })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  medicalConditions?: string[];
-
-  @ApiProperty({ example: 'Jane Doe (Spouse): 123-456-7890', description: 'Emergency contact information', required: false })
-  @IsOptional()
-  @IsString()
-  emergencyContact?: string;
-
-  @IsDate()
-  @IsOptional()
-  lastLogin?: Date;
-
-  @IsString()
-  @IsOptional()
-  specialization?: string;
-
-  @IsInt()
-  @IsOptional()
-  experience?: number;
-
-  @IsUUID()
-  @IsOptional()
-  clinicId?: string;
-
-  // New multi-tenant fields
-  @ApiProperty({ 
-    example: 'clinic-uuid-123', 
-    description: 'Primary clinic ID for multi-tenant system', 
-    required: false
+/**
+ * Enhanced user creation DTO with all fields
+ */
+export class CreateUserDto extends SimpleCreateUserDto {
+  @ApiPropertyOptional({ 
+    example: 'DOCTOR', 
+    description: 'User role in the system',
+    enum: Role
   })
   @IsOptional()
-  @IsUUID()
-  primaryClinicId?: string;
-
-  // New social login fields
-  @ApiProperty({ 
-    example: 'google-user-id-123', 
-    description: 'Google OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  googleId?: string;
-
-  @ApiProperty({ 
-    example: 'facebook-user-id-123', 
-    description: 'Facebook OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  facebookId?: string;
-
-  @ApiProperty({ 
-    example: 'apple-user-id-123', 
-    description: 'Apple OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  appleId?: string;
-}
-
-export class UpdateUserDto implements UpdateUserFields {
-  @IsEmail()
-  @IsOptional()
-  email?: string;
-
-  @IsString()
-  @IsOptional()
-  password?: string;
-
-  @IsString()
-  @IsOptional()
-  firstName?: string;
-
-  @IsString()
-  @IsOptional()
-  lastName?: string;
-
-  @IsString()
-  @IsOptional()
-  phone?: string;
-
-  @IsEnum(Role)
-  @IsOptional()
+  @IsEnum(Role, { message: 'Role must be a valid system role' })
   role?: Role;
 
-  @IsString()
-  @IsOptional()
-  profilePicture?: string;
-
-  @IsEnum(Gender)
-  @IsOptional()
-  gender?: Gender;
-
-  @ApiProperty({
-    description: 'Date of birth in ISO format (YYYY-MM-DD)',
-    example: '1990-01-01',
-    required: false
-  })
-  @IsString()
-  @IsOptional()
-  dateOfBirth?: string;
-
-  @IsString()
-  @IsOptional()
-  address?: string;
-
-  @IsString()
-  @IsOptional()
-  city?: string;
-
-  @IsString()
-  @IsOptional()
-  state?: string;
-
-  @IsString()
-  @IsOptional()
-  country?: string;
-
-  @IsString()
-  @IsOptional()
-  zipCode?: string;
-
-  @IsDate()
-  @IsOptional()
-  lastLogin?: Date;
-
-  @ApiProperty({ 
-    example: 'Jane Doe (Spouse): 123-456-7890', 
-    description: 'Emergency contact information', 
-    required: false
+  @ApiPropertyOptional({ 
+    example: 'Cardiology', 
+    description: 'Professional specialization (for doctors/nurses)'
   })
   @IsOptional()
-  @IsString()
-  emergencyContact?: string;
-
-  @ApiProperty({ 
-    example: ['Diabetes', 'Hypertension'], 
-    description: 'List of medical conditions', 
-    required: false,
-    isArray: true
-  })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  medicalConditions?: string[];
-
-  @ApiProperty({ 
-    example: ['Insulin', 'Metformin'], 
-    description: 'Current medications', 
-    required: false,
-    isArray: true
-  })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  currentMedications?: string[];
-
-  @ApiProperty({ 
-    example: ['Penicillin'], 
-    description: 'Known allergies', 
-    required: false,
-    isArray: true
-  })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  allergies?: string[];
-
-  @ApiProperty({ 
-    example: 'O+', 
-    description: 'Blood group', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  bloodGroup?: string;
-
-  @ApiProperty({ 
-    example: 'Mother has diabetes', 
-    description: 'Family medical history', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  familyHistory?: string;
-
-  // New multi-tenant fields
-  @ApiProperty({ 
-    example: 'clinic-uuid-123', 
-    description: 'Primary clinic ID for multi-tenant system', 
-    required: false
-  })
-  @IsOptional()
-  @IsUUID()
-  primaryClinicId?: string;
-
-  @ApiProperty({ 
-    example: 'myclinic', 
-    description: 'Application name for clinic registration', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  appName?: string;
-
-  // New social login fields
-  @ApiProperty({ 
-    example: 'google-user-id-123', 
-    description: 'Google OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  googleId?: string;
-
-  @ApiProperty({ 
-    example: 'facebook-user-id-123', 
-    description: 'Facebook OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  facebookId?: string;
-
-  @ApiProperty({ 
-    example: 'apple-user-id-123', 
-    description: 'Apple OAuth ID', 
-    required: false
-  })
-  @IsOptional()
-  @IsString()
-  appleId?: string;
-}
-
-export class UserResponseDto {
-  @ApiProperty()
-  id: string;
-
-  @ApiProperty()
-  email: string;
-
-  @ApiProperty()
-  firstName: string;
-
-  @ApiProperty()
-  lastName: string;
-
-  @ApiProperty()
-  role: Role;
-
-  @ApiProperty()
-  isVerified: boolean;
-
-  @ApiProperty({ required: false })
-  profilePicture?: string;
-
-  @ApiProperty({ required: false })
-  phone?: string;
-
-  @ApiProperty({ required: false })
-  address?: string;
-
-  @ApiProperty({ required: false })
-  city?: string;
-
-  @ApiProperty({ required: false })
-  state?: string;
-
-  @ApiProperty({ required: false })
-  country?: string;
-
-  @ApiProperty({ required: false })
-  zipCode?: string;
-
-  @ApiProperty({ required: false })
-  dateOfBirth?: Date;
-
-  @ApiProperty({ required: false })
-  age?: number;
-
-  @ApiProperty({ required: false })
-  gender?: string;
-
-  @ApiProperty({ required: false })
-  medicalConditions?: string[];
-
-  @ApiProperty()
-  createdAt: Date;
-
-  @ApiProperty()
-  updatedAt: Date;
-
-  @ApiProperty({ required: false })
-  clinicToken?: string;
-
-  @ApiProperty({ required: false })
-  clinic?: {
-    id: string;
-    name: string;
-    role?: string;
-    locations?: any[];
-  };
-
-  // New multi-tenant fields
-  @ApiProperty({ required: false })
-  primaryClinicId?: string;
-
-  @ApiProperty({ required: false })
-  appName?: string;
-
-  // New social login fields
-  @ApiProperty({ required: false })
-  googleId?: string;
-
-  @ApiProperty({ required: false })
-  facebookId?: string;
-
-  @ApiProperty({ required: false })
-  appleId?: string;
-
-  // New fields from schema
-  @ApiProperty({ required: false })
-  emergencyContact?: string;
-
-  @ApiProperty({ required: false })
-  lastLogin?: Date;
-
-  @ApiProperty({ required: false })
-  lastLoginIP?: string;
-
-  @ApiProperty({ required: false })
-  lastLoginDevice?: string;
-
-  @ApiProperty({ required: false })
-  passwordChangedAt?: Date;
-
-  // Clinic associations
-  @ApiProperty({ required: false })
-  clinics?: any[];
-
-  @ApiProperty({ required: false })
-  primaryClinic?: any;
-}
-
-export class UpdateUserRoleDto {
-  @ApiProperty({
-    enum: ['PATIENT', 'DOCTOR', 'RECEPTIONIST', 'CLINIC_ADMIN', 'SUPER_ADMIN'],
-    description: 'The new role to assign to the user',
-  })
-  role: string;
-
-  @ApiProperty({ required: false, description: 'Doctor specialization (required for DOCTOR role)' })
+  @IsString({ message: 'Specialization must be a string' })
   specialization?: string;
 
-  @ApiProperty({ required: false, description: 'Doctor license number (required for DOCTOR role)' })
-  licenseNumber?: string;
+  @ApiPropertyOptional({ 
+    example: 5, 
+    description: 'Years of professional experience',
+    minimum: 0
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Experience must be a number' })
+  @IsInt({ message: 'Experience must be an integer' })
+  experience?: number;
 
-  @ApiProperty({ required: false, description: 'Clinic ID (required for CLINIC_ADMIN role)' })
+  @ApiPropertyOptional({ 
+    example: 'clinic-uuid-123', 
+    description: 'Associated clinic ID'
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  clinicId?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'studio-uuid-123', 
+    description: 'Associated studio ID'
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
+  studioId?: string;
+
+  @ApiPropertyOptional({ 
+    example: ['diabetes', 'hypertension'], 
+    description: 'Medical conditions (for patients)',
+    type: [String]
+  })
+  @IsOptional()
+  @IsArray({ message: 'Medical conditions must be an array' })
+  @IsString({ each: true, message: 'Each medical condition must be a string' })
+  medicalConditions?: string[];
+
+  @ApiPropertyOptional({ 
+    example: '+1987654321', 
+    description: 'Emergency contact phone number'
+  })
+  @IsOptional()
+  @IsString({ message: 'Emergency contact must be a string' })
+  @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid emergency contact phone number format' })
+  emergencyContact?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'google-oauth-id-123', 
+    description: 'Google OAuth ID for social login'
+  })
+  @IsOptional()
+  @IsString({ message: 'Google ID must be a string' })
+  googleId?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'facebook-oauth-id-123', 
+    description: 'Facebook OAuth ID for social login'
+  })
+  @IsOptional()
+  @IsString({ message: 'Facebook ID must be a string' })
+  facebookId?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'apple-oauth-id-123', 
+    description: 'Apple OAuth ID for social login'
+  })
+  @IsOptional()
+  @IsString({ message: 'Apple ID must be a string' })
+  appleId?: string;
+}
+
+/**
+ * User update DTO - all fields optional
+ */
+export class UpdateUserDto extends PartialType(CreateUserDto) {
+  @ApiPropertyOptional({ 
+    example: '2024-01-01T00:00:00.000Z', 
+    description: 'Last login timestamp'
+  })
+  @IsOptional()
+  @IsDate({ message: 'Last login must be a valid date' })
+  @Type(() => Date)
+  lastLogin?: Date;
+}
+
+/**
+ * User response DTO - excludes sensitive information
+ */
+export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as const) {
+  @ApiProperty({ 
+    example: 'user-uuid-123', 
+    description: 'Unique user identifier'
+  })
+  @IsUUID('4', { message: 'User ID must be a valid UUID' })
+  id: string;
+
+  @ApiProperty({ 
+    example: '2024-01-01T00:00:00.000Z', 
+    description: 'User creation timestamp'
+  })
+  @IsDate({ message: 'Created at must be a valid date' })
+  @Type(() => Date)
+  createdAt: Date;
+
+  @ApiProperty({ 
+    example: '2024-01-01T00:00:00.000Z', 
+    description: 'User last update timestamp'
+  })
+  @IsDate({ message: 'Updated at must be a valid date' })
+  @Type(() => Date)
+  updatedAt: Date;
+
+  @ApiProperty({ 
+    example: true, 
+    description: 'Whether user email is verified'
+  })
+  @IsBoolean({ message: 'Is verified must be a boolean' })
+  isVerified: boolean;
+
+  @ApiProperty({ 
+    example: true, 
+    description: 'Whether user account is active'
+  })
+  @IsBoolean({ message: 'Is active must be a boolean' })
+  isActive: boolean;
+
+  @ApiPropertyOptional({ 
+    example: 'clinic-token-123', 
+    description: 'Clinic-specific token for multi-tenant access'
+  })
+  @IsOptional()
+  @IsString({ message: 'Clinic token must be a string' })
+  clinicToken?: string;
+}
+
+/**
+ * User list response DTO for pagination
+ */
+export class UserListResponseDto {
+  @ApiProperty({ 
+    description: 'List of users',
+    type: [UserResponseDto]
+  })
+  @ValidateNested({ each: true })
+  @Type(() => UserResponseDto)
+  users: UserResponseDto[];
+
+  @ApiProperty({ 
+    description: 'Total number of users'
+  })
+  @IsNumber({}, { message: 'Total must be a number' })
+  total: number;
+
+  @ApiProperty({ 
+    description: 'Current page number'
+  })
+  @IsNumber({}, { message: 'Page must be a number' })
+  page: number;
+
+  @ApiProperty({ 
+    description: 'Items per page'
+  })
+  @IsNumber({}, { message: 'Limit must be a number' })
+  limit: number;
+}
+
+/**
+ * User search/filter DTO
+ */
+export class UserSearchDto {
+  @ApiPropertyOptional({ 
+    example: 'john', 
+    description: 'Search by name (first or last)'
+  })
+  @IsOptional()
+  @IsString({ message: 'Search term must be a string' })
+  search?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'DOCTOR', 
+    description: 'Filter by role',
+    enum: Role
+  })
+  @IsOptional()
+  @IsEnum(Role, { message: 'Role must be a valid system role' })
+  role?: Role;
+
+  @ApiPropertyOptional({ 
+    example: 'clinic-uuid-123', 
+    description: 'Filter by clinic ID'
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  clinicId?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'studio-uuid-123', 
+    description: 'Filter by studio ID'
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
+  studioId?: string;
+
+  @ApiPropertyOptional({ 
+    example: true, 
+    description: 'Filter by verification status'
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Is verified must be a boolean' })
+  isVerified?: boolean;
+
+  @ApiPropertyOptional({ 
+    example: true, 
+    description: 'Filter by active status'
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Is active must be a boolean' })
+  isActive?: boolean;
+}
+
+/**
+ * User profile update DTO (for users updating their own profile)
+ */
+export class UpdateUserProfileDto {
+  @ApiPropertyOptional({ 
+    example: 'John', 
+    description: 'User first name'
+  })
+  @IsOptional()
+  @IsString({ message: 'First name must be a string' })
+  @MinLength(2, { message: 'First name must be at least 2 characters long' })
+  @MaxLength(50, { message: 'First name cannot exceed 50 characters' })
+  @Transform(({ value }) => value?.trim())
+  firstName?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'Doe', 
+    description: 'User last name'
+  })
+  @IsOptional()
+  @IsString({ message: 'Last name must be a string' })
+  @MinLength(2, { message: 'Last name must be at least 2 characters long' })
+  @MaxLength(50, { message: 'Last name cannot exceed 50 characters' })
+  @Transform(({ value }) => value?.trim())
+  lastName?: string;
+
+  @ApiPropertyOptional({ 
+    example: '+1234567890', 
+    description: 'User phone number'
+  })
+  @IsOptional()
+  @IsString({ message: 'Phone number must be a string' })
+  @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid phone number format' })
+  phone?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'profile.jpg', 
+    description: 'User profile picture URL'
+  })
+  @IsOptional()
+  @IsString({ message: 'Profile picture must be a string' })
+  profilePicture?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'MALE', 
+    description: 'User gender'
+  })
+  @IsOptional()
+  @IsEnum(Gender, { message: 'Gender must be one of: MALE, FEMALE, OTHER' })
+  gender?: Gender;
+
+  @ApiPropertyOptional({ 
+    example: '1990-01-01', 
+    description: 'User date of birth'
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Date of birth must be a valid date string' })
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional({ 
+    example: '123 Main St', 
+    description: 'User address'
+  })
+  @IsOptional()
+  @IsString({ message: 'Address must be a string' })
+  @Transform(({ value }) => value?.trim())
+  address?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'New York', 
+    description: 'User city'
+  })
+  @IsOptional()
+  @IsString({ message: 'City must be a string' })
+  @Transform(({ value }) => value?.trim())
+  city?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'NY', 
+    description: 'User state/province'
+  })
+  @IsOptional()
+  @IsString({ message: 'State must be a string' })
+  @Transform(({ value }) => value?.trim())
+  state?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'USA', 
+    description: 'User country'
+  })
+  @IsOptional()
+  @IsString({ message: 'Country must be a string' })
+  @Transform(({ value }) => value?.trim())
+  country?: string;
+
+  @ApiPropertyOptional({ 
+    example: '10001', 
+    description: 'User zip/postal code'
+  })
+  @IsOptional()
+  @IsString({ message: 'Zip code must be a string' })
+  @Transform(({ value }) => value?.trim())
+  zipCode?: string;
+
+  @ApiPropertyOptional({ 
+    example: '+1987654321', 
+    description: 'Emergency contact phone number'
+  })
+  @IsOptional()
+  @IsString({ message: 'Emergency contact must be a string' })
+  @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid emergency contact phone number format' })
+  emergencyContact?: string;
+}
+
+/**
+ * DTO for updating user role - admin only
+ */
+export class UpdateUserRoleDto {
+  @ApiProperty({
+    enum: Role,
+    example: Role.DOCTOR,
+    description: 'New role to assign to the user'
+  })
+  @IsEnum(Role, { message: 'Role must be a valid role' })
+  @IsNotEmpty({ message: 'Role is required' })
+  role: Role;
+
+  @ApiPropertyOptional({
+    example: 'clinic-id-123',
+    description: 'Clinic ID for clinic-specific roles'
+  })
+  @IsOptional()
+  @IsUUID(4, { message: 'Clinic ID must be a valid UUID' })
   clinicId?: string;
 }

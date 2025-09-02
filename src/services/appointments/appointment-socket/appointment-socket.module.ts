@@ -1,20 +1,20 @@
 import { Module } from '@nestjs/common';
 import { AppointmentSocket } from './appointment.socket';
-import { SharedModule } from '../../../shared/shared.module';
-import { PrismaModule } from '../../../shared/database/prisma/prisma.module';
-import { SocketModule } from '../../../shared/socket/socket.module';
-import { QueueModule } from '../../../shared/queue/queue.module';
+import { PrismaModule } from '../../../libs/infrastructure/database/prisma/prisma.module';
+import { SocketModule } from '../../../libs/communication/socket/socket.module';
+import { QueueModule } from '../../../libs/infrastructure/queue/queue.module';
 import { JwtModule } from '@nestjs/jwt';
-import { RedisModule } from '../../../shared/cache/redis/redis.module';
-import { RateLimitModule } from '../../../shared/rate-limit/rate-limit.module';
-import { GuardsModule } from '../../../libs/guards/guards.module';
+import { RedisModule } from '../../../libs/infrastructure/cache/redis/redis.module';
+import { RateLimitModule } from '../../../libs/utils/rate-limit/rate-limit.module';
+import { GuardsModule } from '../../../libs/core/guards/guards.module';
 import { AppointmentQueueModule } from '../appointment-queue/appointment-queue.module';
 import { AppointmentService } from '../appointments.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { QrModule } from '../../../libs/utils/QR/qr.module';
+import { LoggingModule } from '../../../libs/infrastructure/logging/logging.module';
 
 @Module({
   imports: [
-    SharedModule,
     PrismaModule,
     SocketModule,
     QueueModule.register(),
@@ -33,6 +33,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
     GuardsModule,
     AppointmentQueueModule,
     ConfigModule,
+    QrModule,
+    LoggingModule,
   ],
   providers: [
     AppointmentSocket,

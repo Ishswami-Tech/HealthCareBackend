@@ -4,24 +4,23 @@ import { UsersModule } from "./services/users/users.module";
 import { AuthModule } from "./services/auth/auth.module";
 import { HealthModule } from "./services/health/health.module";
 import { AppController } from "./app.controller";
-import { CacheModule } from "./shared/cache/cache.module";
-import { WhatsAppModule } from "./shared/messaging/whatsapp/whatsapp.module";
-import { DatabaseModule } from './shared/database/database.module';
+import { CacheModule } from "./libs/infrastructure/cache/cache.module";
+import { WhatsAppModule } from "./libs/communication/messaging/whatsapp/whatsapp.module";
+import { DatabaseModule } from './libs/infrastructure/database/database.module';
 import { ClinicModule } from './services/clinic/clinic.module';
-import { ClinicContextMiddleware } from './shared/middleware/clinic-context.middleware';
-import { LoggingModule } from './shared/logging/logging.module';
+import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
+import { LoggingModule } from './libs/infrastructure/logging/logging.module';
 import { JwtModule } from '@nestjs/jwt';
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
-import { SharedModule } from './shared/shared.module';
-import { BullBoardModule } from './shared/queue/bull-board/bull-board.module';
+import { BullBoardModule } from './libs/infrastructure/queue/bull-board/bull-board.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
-import { QueueModule } from './shared/queue/queue.module';
-import { APPOINTMENT_QUEUE, SERVICE_QUEUE } from './shared/queue/queue.constants';
+import { QueueModule } from './libs/infrastructure/queue/queue.module';
+import { APPOINTMENT_QUEUE, SERVICE_QUEUE } from './libs/infrastructure/queue/queue.constants';
 import configuration from './config/configuration';
 import { HealthController } from './services/health/health.controller';
-import { SocketModule } from './shared/socket/socket.module';
+import { SocketModule } from './libs/communication/socket/socket.module';
 import { AppointmentSocketModule } from './services/appointments/appointment-socket/appointment-socket.module';
 
 @Module({
@@ -88,7 +87,6 @@ import { AppointmentSocketModule } from './services/appointments/appointment-soc
     AuthModule,
     UsersModule,
     // Core modules
-    SharedModule,
     DatabaseModule,
     CacheModule,
 

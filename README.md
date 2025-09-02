@@ -171,7 +171,7 @@ NODE_ENV=development
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?schema=public
 REDIS_HOST=redis
 REDIS_PORT=6379
-PRISMA_SCHEMA_PATH=./src/shared/database/prisma/schema.prisma
+PRISMA_SCHEMA_PATH=./src/libs/infrastructure/database/prisma/schema.prisma
 ```
 
 2. Production (`.env.production`):
@@ -180,7 +180,7 @@ NODE_ENV=production
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?schema=public
 REDIS_HOST=redis
 REDIS_PORT=6379
-PRISMA_SCHEMA_PATH=./src/shared/database/prisma/schema.prisma
+PRISMA_SCHEMA_PATH=./src/libs/infrastructure/database/prisma/schema.prisma
 ```
 
 ### Docker Development Setup
@@ -309,10 +309,10 @@ npm run prisma:seed      # Seed database
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "prisma:generate": "prisma generate --schema=./src/shared/database/prisma/schema.prisma",
-    "prisma:migrate": "prisma migrate deploy --schema=./src/shared/database/prisma/schema.prisma",
-    "prisma:seed": "ts-node src/shared/database/prisma/seed.ts",
-    "prisma:studio": "prisma studio --schema=./src/shared/database/prisma/schema.prisma",
+    "prisma:generate": "prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate deploy --schema=./src/libs/infrastructure/database/prisma/schema.prisma",
+    "prisma:seed": "ts-node src/libs/infrastructure/database/prisma/seed.ts",
+    "prisma:studio": "prisma studio --schema=./src/libs/infrastructure/database/prisma/schema.prisma",
     "test": "jest",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:cov": "jest --coverage"
@@ -723,8 +723,7 @@ This application uses a multi-tenant architecture with database-per-tenant isola
 When modifying database schemas:
 
 1. Update the schema files:
-   - Main schema: `src/shared/database/prisma/schema.prisma`
-   - Tenant schema: `src/shared/database/prisma/tenant.schema.prisma`
+   - Main schema: `src/libs/infrastructure/database/prisma/schema.prisma`
 
 2. Generate Prisma clients:
    ```

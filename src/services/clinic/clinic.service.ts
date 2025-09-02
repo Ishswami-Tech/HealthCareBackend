@@ -1,14 +1,14 @@
 import { Injectable, NotFoundException, ConflictException, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
-import { PrismaService } from '../../shared/database/prisma/prisma.service';
-import { Role } from '../../shared/database/prisma/prisma.types';
-import { EventService } from '../../shared/events/event.service';
+import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
+import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
+import { EventService } from '../../libs/infrastructure/events/event.service';
 import { ClinicErrorService } from './shared/error.utils';
-import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
-import { RedisService } from '../../shared/cache/redis/redis.service';
+import { RedisCache } from '../../libs/infrastructure/cache/decorators/redis-cache.decorator';
+import { RedisService } from '../../libs/infrastructure/cache/redis/redis.service';
 import { JwtService } from '@nestjs/jwt';
 import { ClinicLocationService } from './services/clinic-location.service';
-import { PermissionService } from '../../shared/permissions';
-import { resolveClinicUUID } from '../../shared/utils/clinic.utils';
+import { PermissionService } from '../../libs/infrastructure/permissions';
+import { resolveClinicUUID } from '../../libs/utils/clinic.utils';
 
 @Injectable()
 export class ClinicService {

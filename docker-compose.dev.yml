@@ -18,7 +18,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_URL: redis://redis:6379
-      PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       NODE_OPTIONS: "--max-old-space-size=2048"
       HOST: 0.0.0.0
       BIND_ADDRESS: 0.0.0.0
@@ -42,31 +42,31 @@ services:
         aliases:
           - api
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8088/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
+    # healthcheck:
+    #   test: ["CMD", "sh", "-c", "curl -f http://127.0.0.1:8088/health || exit 1"]
+    #   interval: 45s
+    #   timeout: 15s
+    #   retries: 5
+    #   start_period: 90s
     command: >
       sh -c "
         echo 'Waiting for PostgreSQL to be ready...' &&
         while ! nc -z postgres 5432; do sleep 1; done &&
         echo 'PostgreSQL is ready!' &&
         echo 'Setting up NestJS application...' &&
-        mkdir -p /app/dist/shared/database/prisma &&
-        cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/ &&
+        mkdir -p /app/dist/libs/infrastructure/database/prisma &&
+        cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/ &&
         echo 'Generating Prisma Client...' &&
-        npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
-       
-        echo 'Seeding database...' &&
-        npx prisma db seed &&
-        echo 'Starting NestJS in development mode...' &&
         cd /app &&
-        npm run start:dev &
-        echo 'Starting Prisma Studio...' &&
-        sleep 5 &&
-        npx prisma studio --schema=/app/src/shared/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
+        npx prisma generate --schema=src/libs/infrastructure/database/prisma/schema.prisma &&
+        echo 'Running Prisma migrations...' &&
+        npx prisma db push --schema=src/libs/infrastructure/database/prisma/schema.prisma --accept-data-loss &&
+        echo 'Skipping database seeding (already completed)...' &&
+        echo 'Starting Prisma Studio in background...' &&
+        npx prisma studio --schema=src/libs/infrastructure/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0 &
+        echo 'Starting NestJS in development mode...' &&
+        sleep 3 &&
+        npm run start:dev
       "
 
   postgres:

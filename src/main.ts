@@ -6,26 +6,26 @@ import {
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { ValidationPipe, Logger, LogLevel, INestApplication } from '@nestjs/common';
 import { AppModule } from "./app.module";
-import { HttpExceptionFilter } from "./libs/filters/http-exception.filter";
+import { HttpExceptionFilter } from "./libs/core/filters/http-exception.filter";
 import fastifyHelmet from '@fastify/helmet';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
-import { LoggingService } from './shared/logging/logging.service';
-import { LogType } from './shared/logging/types/logging.types';
-import { LogLevel as AppLogLevel } from './shared/logging/types/logging.types';
+import { LoggingService } from './libs/infrastructure/logging/logging.service';
+import { LogType } from './libs/infrastructure/logging/types/logging.types';
+import { LogLevel as AppLogLevel } from './libs/infrastructure/logging/types/logging.types';
 import developmentConfig from './config/environment/development.config';
 import productionConfig from './config/environment/production.config';
-import { RedisService } from './shared/cache/redis/redis.service';
-import { QueueService } from './shared/queue/queue.service';
-import { PrismaService } from './shared/database/prisma/prisma.service';
-import { EmailModule } from './shared/messaging/email/email.module';
+import { RedisService } from './libs/infrastructure/cache/redis/redis.service';
+import { QueueService } from './libs/infrastructure/queue/queue.service';
+import { PrismaService } from './libs/infrastructure/database/prisma/prisma.service';
+import { EmailModule } from './libs/communication/messaging/email/email.module';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { Server } from 'socket.io';
 import { createClient } from 'redis';
-import { LoggingInterceptor } from './shared/logging/logging.interceptor';
+import { LoggingInterceptor } from './libs/infrastructure/logging/logging.interceptor';
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { ClinicContextMiddleware } from './shared/middleware/clinic-context.middleware';
+import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 // Store original console methods
 const originalConsole = {
@@ -39,6 +39,9 @@ const originalConsole = {
 // Declare Redis client variables at module level
 let pubClient: any = null;
 let subClient: any = null;
+
+// Store adapter reference for graceful shutdown
+let customWebSocketAdapter: any = null;
 
 // Function to redirect only HTTP logs to the logging service
 // but keep important service logs visible in the console
@@ -346,8 +349,8 @@ async function bootstrap() {
         }
       }
 
-      const customAdapter = new CustomIoAdapter(app);
-      app.useWebSocketAdapter(customAdapter);
+      customWebSocketAdapter = new CustomIoAdapter(app);
+      app.useWebSocketAdapter(customWebSocketAdapter);
       
       logger.log('WebSocket adapter configured successfully');
       
@@ -590,26 +593,44 @@ async function bootstrap() {
           }, 10000);
           
           try {
-            // Close WebSocket connections
-            const wsAdapter = app.get(IoAdapter, { strict: false });
-            if (wsAdapter && wsAdapter instanceof IoAdapter) {
+            // Close WebSocket connections gracefully
+            if (customWebSocketAdapter) {
               logger.log('Closing WebSocket connections...');
-              const httpServer = app.getHttpServer();
-              if (httpServer) {
-                await new Promise<void>((resolve) => {
-                  httpServer.close(() => {
-                    logger.log('WebSocket server closed');
-                    resolve();
+              try {
+                const httpServer = app.getHttpServer();
+                if (httpServer && typeof httpServer.close === 'function') {
+                  await new Promise<void>((resolve) => {
+                    const timeout = setTimeout(() => {
+                      logger.warn('WebSocket server close timeout, continuing...');
+                      resolve();
+                    }, 3000);
+                    
+                    httpServer.close((err) => {
+                      clearTimeout(timeout);
+                      if (err) {
+                        logger.warn('Error closing WebSocket server:', err);
+                      } else {
+                        logger.log('WebSocket server closed successfully');
+                      }
+                      resolve();
+                    });
                   });
-                });
+                }
+                customWebSocketAdapter = null;
+              } catch (wsError) {
+                logger.warn('Error during WebSocket cleanup:', wsError);
               }
             }
             
             // Close database connections
-            const prismaService = app.get(PrismaService);
-            if (prismaService) {
-              logger.log('Closing database connections...');
-              await prismaService.$disconnect();
+            try {
+              const prismaService = await app.resolve(PrismaService);
+              if (prismaService) {
+                logger.log('Closing database connections...');
+                await prismaService.$disconnect();
+              }
+            } catch (prismaError) {
+              logger.warn('Error closing database connections:', prismaError);
             }
             
             // Close Redis connections

@@ -1,21 +1,20 @@
 import { Module, forwardRef, Global } from "@nestjs/common";
 import { AuthController } from "./controllers/auth.controller";
-import { PrismaModule } from "../../shared/database/prisma/prisma.module";
-import { RedisModule } from "../../shared/cache/redis/redis.module";
-import { EmailModule } from "../../shared/messaging/email/email.module";
-import { WhatsAppModule } from "../../shared/messaging/whatsapp/whatsapp.module";
+import { PrismaModule } from "../../libs/infrastructure/database/prisma/prisma.module";
+import { RedisModule } from "../../libs/infrastructure/cache/redis/redis.module";
+import { EmailModule } from "../../libs/communication/messaging/email/email.module";
+import { WhatsAppModule } from "../../libs/communication/messaging/whatsapp/whatsapp.module";
 import { UsersModule } from "../users/users.module";
 import { AuthService } from "./services/auth.service";
 import { SessionService } from "./services/session.service";
-import { GuardsModule } from "../../libs/guards/guards.module";
-import { RateLimitModule } from "../../shared/rate-limit/rate-limit.module";
+import { GuardsModule } from "../../libs/core/guards/guards.module";
+import { RateLimitModule } from "../../libs/utils/rate-limit/rate-limit.module";
 import { ClinicModule } from '../clinic/clinic.module';
 import { JwtModule } from '@nestjs/jwt';
-import { EventsModule } from '../../shared/events/events.module';
-import { LoggingModule } from '../../shared/logging/logging.module';
+import { EventsModule } from '../../libs/infrastructure/events/events.module';
+import { LoggingModule } from '../../libs/infrastructure/logging/logging.module';
 import { jwtConfig } from '../../config/jwt.config';
-import { SharedModule } from "src/shared";
-import { PermissionsModule } from '../../shared/permissions';
+import { PermissionsModule } from '../../libs/infrastructure/permissions';
 
 @Global()
 @Module({
@@ -27,7 +26,6 @@ import { PermissionsModule } from '../../shared/permissions';
     UsersModule,
     GuardsModule,
     RateLimitModule,
-    SharedModule,
     forwardRef(() => ClinicModule),
     EventsModule,
     LoggingModule,

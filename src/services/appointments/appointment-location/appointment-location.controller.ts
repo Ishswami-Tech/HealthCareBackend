@@ -1,13 +1,13 @@
 import { Controller, Get, Param, Logger, UseGuards } from '@nestjs/common';
 import { AppointmentLocationService } from './appointment-location.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../libs/guards/roles.guard';
-import { ClinicGuard } from '../../../libs/guards/clinic.guard';
+import { JwtAuthGuard } from 'src/libs/core/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/libs/core/guards/roles.guard';
+import { ClinicGuard } from 'src/libs/core/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
-import { PermissionGuard } from '../../../libs/guards/permission.guard';
-import { Permission } from '../../../shared/permissions';
+import { TenantContextInterceptor } from 'src/libs/utils/interceptors/tenant-context.interceptor';
+import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
+import { Permission } from 'src/libs/infrastructure/permissions';
 
 @ApiTags('Appointment Locations')
 @Controller('api/appointments/locations')

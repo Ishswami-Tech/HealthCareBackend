@@ -32,7 +32,7 @@ export default () => ({
     expiration: process.env.JWT_EXPIRATION || '24h',
   },
   prisma: {
-    schemaPath: process.env.PRISMA_SCHEMA_PATH || './src/shared/database/prisma/schema.prisma',
+          schemaPath: process.env.PRISMA_SCHEMA_PATH || './src/libs/infrastructure/database/prisma/schema.prisma',
   },
   rateLimit: {
     ttl: parseInt(process.env.RATE_LIMIT_TTL || '60', 10),

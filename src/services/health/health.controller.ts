@@ -1,8 +1,8 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { HealthService } from './health.service';
-import { HealthCheckResponse, DetailedHealthCheckResponse } from '../../libs/types/health.types';
-import { Public } from '../../libs/decorators/public.decorator';
+import { HealthCheckResponse, DetailedHealthCheckResponse } from '../../libs/core/types/health.types';
+import { Public } from '../../libs/core/decorators/public.decorator';
 import { FastifyReply } from 'fastify';
 
 @ApiTags('Health')

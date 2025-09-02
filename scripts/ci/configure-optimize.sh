@@ -54,7 +54,7 @@ done
 
 # Manually generate Prisma client in the API container to ensure it's available
 log_message "Generating Prisma client in API container..."
-if docker exec "$API_CONTAINER" sh -c "npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma"; then
+if docker exec "$API_CONTAINER" sh -c "npx prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma"; then
     log_message "Prisma client generated successfully"
 else
     log_message "WARNING: Prisma client generation failed, but continuing..."
@@ -62,7 +62,7 @@ fi
 
 # Run database migrations
 log_message "Running database migrations..."
-if docker exec "$API_CONTAINER" sh -c "npx prisma migrate deploy --schema=/app/src/shared/database/prisma/schema.prisma"; then
+if docker exec "$API_CONTAINER" sh -c "npx prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma"; then
     log_message "Database migrations completed successfully"
 else
     log_message "WARNING: Migration failed, but continuing deployment..."

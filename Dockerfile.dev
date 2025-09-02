@@ -29,13 +29,13 @@ RUN npm install --legacy-peer-deps --no-audit --no-progress && \
 COPY . .
 
 # Create necessary directories with proper permissions
-RUN mkdir -p /app/dist/shared/database/prisma && \
+RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
     mkdir -p /app/logs && \
     chmod -R 777 /app/dist && \
     chmod -R 777 /app/logs
 
 # Environment-specific configurations
-ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
+ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma \
     NODE_ENV=development \
     HOST=0.0.0.0 \
     PORT=8088
@@ -44,15 +44,15 @@ ENV PRISMA_SCHEMA_PATH=/app/src/shared/database/prisma/schema.prisma \
 RUN if [ -f "$PRISMA_SCHEMA_PATH" ]; then \
     echo "Using Prisma schema at $PRISMA_SCHEMA_PATH"; \
     npx prisma generate --schema="$PRISMA_SCHEMA_PATH"; \
-    cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/; \
+    cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/; \
     else \
     echo "Prisma schema not found at $PRISMA_SCHEMA_PATH, using fallback path"; \
-    cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/; \
-    npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma; \
+    cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/; \
+    npx prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma; \
     fi
 
 # Make scripts executable
-RUN if [ -f "/app/src/shared/database/prisma/wait-for-postgres.sh" ]; then chmod +x /app/src/shared/database/prisma/wait-for-postgres.sh; fi
+RUN if [ -f "/app/src/libs/infrastructure/database/prisma/wait-for-postgres.sh" ]; then chmod +x /app/src/libs/infrastructure/database/prisma/wait-for-postgres.sh; fi
 
 # Set proper permissions for hot reloading
 RUN chmod -R 777 /app
@@ -67,7 +67,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Entry point with improved startup sequence
 CMD ["sh", "-c", "\
     echo 'Setting up development environment...' && \
-    mkdir -p /app/dist/shared/database/prisma && \
-    cp -r /app/src/shared/database/prisma/schema.prisma /app/dist/shared/database/prisma/ && \
+    mkdir -p /app/dist/libs/infrastructure/database/prisma && \
+    cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/ && \
+    echo 'Regenerating Prisma client...' && \
+    npx prisma generate --schema=src/libs/infrastructure/database/prisma/schema.prisma && \
     echo 'Starting development server...' && \
     npm run start:dev"] 

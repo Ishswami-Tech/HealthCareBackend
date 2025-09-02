@@ -29,7 +29,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TRUST_PROXY: 1
-      PRISMA_SCHEMA_PATH: /app/src/shared/database/prisma/schema.prisma
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       HOST: 0.0.0.0
       PORT: ${API_PORT:-8088}
       BIND_ADDRESS: 0.0.0.0
@@ -91,8 +91,8 @@ services:
           memory: 512M
     command: >
       sh -c "
-        npx prisma generate --schema=/app/src/shared/database/prisma/schema.prisma &&
-        npx prisma db push --schema=/app/src/shared/database/prisma/schema.prisma --accept-data-loss &&
+        npx prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
+        npx prisma db push --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma --accept-data-loss &&
         node dist/main.js
       "
     labels:

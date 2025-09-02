@@ -1,14 +1,14 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../shared/database/prisma/prisma.service';
-import { RedisCache } from '../../shared/cache/decorators/redis-cache.decorator';
-import { CreateUserDto, UpdateUserDto, UserResponseDto } from '../../libs/dtos/user.dto';
-import { RedisService } from '../../shared/cache/redis/redis.service';
-import { LoggingService } from '../../shared/logging/logging.service';
-import { EventService } from '../../shared/events/event.service';
-import { LogLevel, LogType } from '../../shared/logging/types/logging.types';
-import { Role, Gender } from '../../shared/database/prisma/prisma.types';
-import type { User } from '../../shared/database/prisma/prisma.types';
-import { PermissionService } from '../../shared/permissions';
+import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
+import { RedisCache } from '../../libs/infrastructure/cache/decorators/redis-cache.decorator';
+import { Injectable, NotFoundException, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { RedisService } from '../../libs/infrastructure/cache/redis/redis.service';
+import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
+import { EventService } from '../../libs/infrastructure/events/event.service';
+import { LogLevel, LogType } from '../../libs/infrastructure/logging/types/logging.types';
+import { Role, Gender } from '../../libs/infrastructure/database/prisma/prisma.types';
+import type { User } from '../../libs/infrastructure/database/prisma/prisma.types';
+import { PermissionService } from '../../libs/infrastructure/permissions';
+import { CreateUserDto, UserResponseDto, UpdateUserDto } from '../../libs/dtos/user.dto';
 
 @Injectable()
 export class UsersService {
@@ -120,7 +120,7 @@ export class UsersService {
         lastName: data.lastName,
         name: `${data.firstName} ${data.lastName}`.trim(),
         phone: data.phone,
-        role: data.role || Role.PATIENT,
+        role: (data.role as Role) || Role.PATIENT,
         profilePicture: data.profilePicture,
         gender: data.gender,
         dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
@@ -130,8 +130,7 @@ export class UsersService {
         country: data.country,
         zipCode: data.zipCode,
         isVerified: false,
-        age: data.age || 0,
-        lastLogin: data.lastLogin || null
+        age: data.age || 0
       }
     });
 

@@ -1,9 +1,9 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogType, LogLevel } from 'src/libs/infrastructure/logging/types/logging.types';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { AppointmentStatus } from '../../../shared/database/prisma/prisma.types';
+import { AppointmentStatus } from 'src/libs/infrastructure/database/prisma/prisma.types';
 
 interface QueueMetrics {
   averageWaitTime: number;

@@ -20,10 +20,12 @@ import {
   Logger
 } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
-import { JwtAuthGuard } from '../../libs/guards/jwt-auth.guard';
-import { RolesGuard } from '../../libs/guards/roles.guard';
-import { Roles } from '../../libs/decorators/roles.decorator';
-import { Role } from '../../shared/database/prisma/prisma.types';
+import { JwtAuthGuard } from '../../libs/core/guards/jwt-auth.guard';
+import { RolesGuard } from '../../libs/core/guards/roles.guard';
+import { Roles } from '../../libs/core/decorators/roles.decorator';
+import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
+import { Permission } from '../../libs/infrastructure/permissions';
+import { TenantContextInterceptor } from '../../libs/utils/interceptors/tenant-context.interceptor';
 import { 
   ApiTags, 
   ApiOperation, 
@@ -46,14 +48,11 @@ import {
   ClinicListResponseDto, 
   AppNameInlineDto 
 } from './dto/clinic-response.dto';
-import { Public } from '../../libs/decorators/public.decorator';
-import { AuthenticatedRequest } from '../../libs/types/clinic.types';
-import { FastifyRequest } from 'fastify';
-import { PermissionGuard } from '../../libs/guards/permission.guard';
-import { Permission } from '../../shared/permissions';
-import { ClinicGuard } from '../../libs/guards/clinic.guard';
+import { Public } from '../../libs/core/decorators/public.decorator';
+import { AuthenticatedRequest } from '../../libs/core/types/clinic.types';
+import { PermissionGuard } from '../../libs/core/guards/permission.guard';
+import { ClinicGuard } from '../../libs/core/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from '../../shared/interceptors/tenant-context.interceptor';
 
 @ApiTags('Clinics')
 @ApiBearerAuth()

@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AppointmentQueueProcessor } from './appointment-queue.processor';
-import { PrismaModule } from '../../../shared/database/prisma/prisma.module';
-import { SocketModule } from '../../../shared/socket/socket.module';
+import { PrismaModule } from 'src/libs/infrastructure/database/prisma/prisma.module';
+import { SocketModule } from 'src/libs/communication/socket/socket.module';
 
 @Module({
   imports: [

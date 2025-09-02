@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
-import { RedisService } from '../../../shared/cache/redis/redis.service';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogLevel, LogType } from 'src/libs/infrastructure/logging/types/logging.types';
+import { RedisService } from 'src/libs/infrastructure/cache/redis/redis.service';
 
 @Injectable()
 export class AppointmentLocationService {

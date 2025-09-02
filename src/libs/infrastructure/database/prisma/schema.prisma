@@ -1,0 +1,831 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../../../../../node_modules/.prisma/client"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  engineType    = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                     String                  @id @default(uuid())
+  userid                 String                  @unique
+  email                  String                  @unique
+  password               String
+  name                   String
+  age                    Int
+  firstName              String?
+  lastName               String?
+  phone                  String?
+  role                   Role                    @default(PATIENT)
+  profilePicture         String?
+  gender                 String?
+  dateOfBirth            DateTime?
+  address                String?
+  city                   String?
+  state                  String?
+  country                String?
+  zipCode                String?
+  emergencyContact       String?
+  isVerified             Boolean                 @default(false)
+  lastLogin              DateTime?
+  lastLoginIP            String?
+  lastLoginDevice        String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  passwordChangedAt      DateTime?
+  googleId               String?
+  facebookId             String?
+  appleId                String?
+  appName                String?
+  medicalConditions      String?
+  
+  // Primary clinic association
+  primaryClinicId        String?                 // Primary clinic for the user
+  primaryClinic          Clinic?                 @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
+  
+  // Many-to-many clinic associations
+  clinics                Clinic[]                @relation("UserClinics")
+  
+  // Role-specific clinic associations
+  clinicAdmins           ClinicAdmin[]
+  receptionists          Receptionist[]
+  
+  // Clinics created by this user
+  createdClinics         Clinic[]                @relation("UserCreatedClinics")
+  
+  // Other relationships
+  appointments           Appointment[]
+  auditLogs              AuditLog[]
+  doctor                 Doctor?
+  notifications          Notification[]
+  patient                Patient?
+  superAdmin             SuperAdmin?
+  medicalHistories       MedicalHistory[]
+  labReports             LabReport[]
+  radiologyReports       RadiologyReport[]
+  surgicalRecords        SurgicalRecord[]
+  mentalHealthNotes      MentalHealthNote[]
+  vitals                 Vital[]
+  ayurvedicTherapies     AyurvedicTherapy[]
+  nadiParikshas          NadiPariksha[]
+  ayurvedicPrescriptions AyurvedicPrescription[]
+  prakritiAnalyses       PrakritiAnalysis[]
+  immunizations          Immunization[]
+  allergies              Allergy[]
+  familyHistories        FamilyHistory[]
+  lifestyleAssessments   LifestyleAssessment[]
+  emergencyContacts      EmergencyContact[]
+  insurances             Insurance[]
+  medications            Medication[]
+  dietaryRestrictions    DietaryRestriction[]
+
+  @@map("users")
+  @@index([primaryClinicId])
+  @@index([email])
+  @@index([role])
+}
+
+model Receptionist {
+  id                    String                  @id @default(uuid())
+  userId                String                  @unique
+  clinicId              String?
+  createdAt             DateTime                @default(now())
+  clinic                Clinic?                 @relation(fields: [clinicId], references: [id])
+  user                  User                    @relation(fields: [userId], references: [id])
+  ReceptionistsAtClinic ReceptionistsAtClinic[]
+
+  @@index([clinicId])
+}
+
+model Clinic {
+  id                    String                  @id @default(uuid())
+  clinicId              String                  @unique
+  name                  String
+  address               String
+  phone                 String
+  email                 String                  @unique
+  app_name              String                  @unique
+  db_connection_string  String
+  databaseName          String?
+  databaseStatus        DatabaseStatus          @default(CREATING)
+  databaseCreatedAt     DateTime?
+  databaseLastSync      DateTime?
+  isActive              Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  createdBy             String
+  subdomain             String?                 @unique
+  logo                  String?
+  website               String?
+  description           String?
+  timezone              String?                 @default("UTC")
+  currency              String?                 @default("INR")
+  language              String?                 @default("en")
+  settings              Json?
+  
+  // Multi-tenant relationships
+  primaryUsers          User[]                  @relation("UserPrimaryClinic")
+  users                 User[]                  @relation("UserClinics")
+  createdByUser         User                    @relation("UserCreatedClinics", fields: [createdBy], references: [id])
+  
+  // Role-specific relationships
+  appointments          Appointment[]
+  admins                ClinicAdmin[]
+  doctors               DoctorClinic[]
+  receptionists         Receptionist[]
+  ReceptionistsAtClinic ReceptionistsAtClinic[]
+  locations             ClinicLocation[]
+
+  @@map("clinics")
+  @@index([app_name])
+  @@index([isActive])
+}
+
+model ClinicLocation {
+  id           String         @id @default(uuid())
+  locationId   String         @unique
+  name         String
+  address      String
+  city         String
+  state        String
+  country      String
+  zipCode      String?
+  phone        String?
+  email        String?
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  clinicId     String
+  latitude     Float?
+  longitude    Float?
+  timezone     String?        @default("UTC")
+  workingHours Json?
+  settings     Json?
+  appointments Appointment[]
+  doctorClinic DoctorClinic[]
+  clinic       Clinic         @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
+  @@map("clinic_locations")
+}
+
+model SuperAdmin {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model ClinicAdmin {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  clinicId  String
+  createdAt DateTime @default(now())
+  isOwner   Boolean  @default(false)
+  clinic    Clinic   @relation(fields: [clinicId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+}
+
+model Doctor {
+  id              String         @id @default(uuid())
+  userId          String         @unique
+  specialization  String
+  experience      Int
+  qualification   String?
+  consultationFee Float?
+  rating          Float?         @default(0.0)
+  isAvailable     Boolean        @default(true)
+  workingHours    Json?
+  createdAt       DateTime       @default(now())
+  appointments    Appointment[]
+  user            User           @relation(fields: [userId], references: [id])
+  clinics         DoctorClinic[]
+  healthRecords   HealthRecord[]
+  prescriptions   Prescription[]
+  reviews         Review[]
+}
+
+model Patient {
+  id            String         @id @default(uuid())
+  userId        String         @unique
+  prakriti      Prakriti?
+  dosha         Dosha?
+  createdAt     DateTime       @default(now())
+  appointments  Appointment[]
+  healthRecords HealthRecord[]
+  user          User           @relation(fields: [userId], references: [id])
+  prescriptions Prescription[]
+  reviews       Review[]
+}
+
+model Appointment {
+  id          String            @id @default(uuid())
+  type        AppointmentType
+  doctorId    String
+  patientId   String
+  locationId  String
+  clinicId    String
+  date        DateTime
+  time        String
+  duration    Int
+  status      AppointmentStatus
+  notes       String?
+  userId      String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  therapyId   String?
+  startedAt   DateTime?
+  checkedInAt DateTime?
+  completedAt DateTime?
+  clinic      Clinic            @relation(fields: [clinicId], references: [id])
+  doctor      Doctor            @relation(fields: [doctorId], references: [id])
+  location    ClinicLocation    @relation(fields: [locationId], references: [id])
+  patient     Patient           @relation(fields: [patientId], references: [id])
+  therapy     Therapy?          @relation(fields: [therapyId], references: [id])
+  user        User              @relation(fields: [userId], references: [id])
+  payment     Payment?
+  queue       Queue?
+
+  @@index([doctorId])
+  @@index([patientId])
+  @@index([locationId])
+  @@index([clinicId])
+}
+
+model Therapy {
+  id           String        @id @default(uuid())
+  name         String
+  description  String?
+  duration     Int?
+  createdAt    DateTime      @default(now())
+  clinicId     String
+  appointments Appointment[]
+
+  @@index([clinicId])
+}
+
+model Prescription {
+  id        String             @id @default(uuid())
+  patientId String
+  doctorId  String
+  date      DateTime           @default(now())
+  notes     String?
+  clinicId  String
+  doctor    Doctor             @relation(fields: [doctorId], references: [id])
+  patient   Patient            @relation(fields: [patientId], references: [id])
+  items     PrescriptionItem[]
+
+  @@index([clinicId])
+}
+
+model PrescriptionItem {
+  id             String       @id @default(uuid())
+  prescriptionId String
+  medicineId     String?
+  dosage         String?
+  frequency      String?
+  duration       String?
+  clinicId       String
+  medicine       Medicine?    @relation(fields: [medicineId], references: [id])
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id])
+
+  @@index([clinicId])
+}
+
+model Medicine {
+  id                String             @id @default(uuid())
+  name              String
+  ingredients       String?
+  properties        String?
+  dosage            String?
+  manufacturer      String?
+  type              MedicineType
+  clinicId          String
+  prescriptionItems PrescriptionItem[]
+
+  @@index([clinicId])
+}
+
+model DoctorClinic {
+  doctorId   String
+  clinicId   String
+  startTime  DateTime?
+  endTime    DateTime?
+  locationId String?
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
+  doctor     Doctor          @relation(fields: [doctorId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+
+  @@id([doctorId, clinicId])
+  @@index([clinicId])
+}
+
+model Payment {
+  id            String         @id @default(uuid())
+  appointmentId String         @unique
+  amount        Float
+  status        PaymentStatus  @default(PENDING)
+  method        PaymentMethod?
+  transactionId String?
+  clinicId      String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  appointment   Appointment    @relation(fields: [appointmentId], references: [id])
+
+  @@index([clinicId])
+}
+
+model Queue {
+  id                String      @id @default(uuid())
+  appointmentId     String      @unique
+  queueNumber       Int
+  estimatedWaitTime Int?
+  status            QueueStatus @default(WAITING)
+  clinicId          String
+  updatedAt         DateTime    @updatedAt
+  appointment       Appointment @relation(fields: [appointmentId], references: [id])
+
+  @@index([clinicId])
+}
+
+model Notification {
+  id        String             @id @default(uuid())
+  userId    String
+  type      NotificationType
+  message   String
+  read      Boolean            @default(false)
+  sentAt    DateTime?
+  status    NotificationStatus @default(PENDING)
+  clinicId  String?
+  createdAt DateTime           @default(now())
+  user      User               @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+}
+
+model HealthRecord {
+  id         String           @id @default(uuid())
+  patientId  String
+  doctorId   String
+  recordType HealthRecordType
+  report     String?
+  fileUrl    String?
+  clinicId   String
+  createdAt  DateTime         @default(now())
+  doctor     Doctor           @relation(fields: [doctorId], references: [id])
+  patient    Patient          @relation(fields: [patientId], references: [id])
+
+  @@index([clinicId])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String
+  action      String
+  timestamp   DateTime @default(now())
+  ipAddress   String?
+  device      String?
+  description String   @default("")
+  clinicId    String?
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  rating    Int      @default(0)
+  comment   String?
+  patientId String
+  doctorId  String
+  clinicId  String
+  createdAt DateTime @default(now())
+  doctor    Doctor   @relation(fields: [doctorId], references: [id])
+  patient   Patient  @relation(fields: [patientId], references: [id])
+
+  @@index([clinicId])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  price       Float
+  category    String
+  stock       Int      @default(0)
+  clinicId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([clinicId])
+}
+
+model Log {
+  id        String   @id @default(uuid())
+  type      String
+  level     String
+  message   String
+  context   String
+  metadata  String?
+  clinicId  String?
+  timestamp DateTime @default(now())
+
+  @@index([clinicId])
+  @@index([timestamp])
+  @@index([type])
+  @@index([level])
+  @@index([timestamp, type, level])
+  @@map("logs")
+}
+
+model ReceptionistsAtClinic {
+  A            String
+  B            String
+  clinics      Clinic       @relation(fields: [A], references: [id], onDelete: Cascade)
+  Receptionist Receptionist @relation(fields: [B], references: [id], onDelete: Cascade)
+
+  @@id([A, B], map: "_ReceptionistsAtClinic_AB_pkey")
+  @@index([B], map: "_ReceptionistsAtClinic_B_index")
+  @@map("_ReceptionistsAtClinic")
+}
+
+enum Role {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+  DOCTOR
+  PATIENT
+  RECEPTIONIST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CHECKED_IN
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  PENDING
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  NET_BANKING
+}
+
+enum QueueStatus {
+  WAITING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum HealthRecordType {
+  LAB_TEST
+  XRAY
+  MRI
+  PRESCRIPTION
+  DIAGNOSIS_REPORT
+  PULSE_DIAGNOSIS
+}
+
+enum NotificationType {
+  EMAIL
+  SMS
+  PUSH_NOTIFICATION
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum AppointmentType {
+  IN_PERSON
+  VIDEO_CALL
+  HOME_VISIT
+}
+
+enum Dosha {
+  VATA
+  PITTA
+  KAPHA
+}
+
+enum Prakriti {
+  VATA
+  PITTA
+  KAPHA
+  VATA_PITTA
+  PITTA_KAPHA
+  VATA_KAPHA
+  TRIDOSHA
+}
+
+enum MedicineType {
+  CLASSICAL
+  PROPRIETARY
+  HERBAL
+}
+
+enum DatabaseStatus {
+  CREATING
+  ACTIVE
+  ERROR
+  MIGRATING
+  DISABLED
+}
+
+model MedicalHistory {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  condition String
+  notes     String?
+  date      DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model LabReport {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  testName    String
+  result      String
+  unit        String?
+  normalRange String?
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model RadiologyReport {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  imageType  String
+  findings   String
+  conclusion String
+  date       DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SurgicalRecord {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  surgeryName String
+  surgeon     String
+  notes       String?
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model MentalHealthNote {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  therapist   String
+  sessionNote String
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Vital {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  type       String
+  value      String
+  recordedAt DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model AyurvedicTherapy {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  therapyType String
+  description String?
+  date        DateTime
+  therapist   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model NadiPariksha {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  diagnosis    String
+  pulseType    String
+  notes        String?
+  date         DateTime
+  practitioner String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model AyurvedicPrescription {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  formulation  String
+  dosage       String
+  duration     String
+  instructions String?
+  prescribedAt DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model PrakritiAnalysis {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  vataLevel    Int
+  pittaLevel   Int
+  kaphaLevel   Int
+  dominantType String
+  notes        String?
+  assessedAt   DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Immunization {
+  id               String    @id @default(uuid())
+  user             User      @relation(fields: [userId], references: [id])
+  userId           String
+  vaccineName      String
+  dateAdministered DateTime
+  nextDueDate      DateTime?
+  batchNumber      String?
+  administrator    String?
+  location         String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Allergy {
+  id            String   @id @default(uuid())
+  user          User     @relation(fields: [userId], references: [id])
+  userId        String
+  allergen      String
+  severity      String // Mild, Moderate, Severe
+  reaction      String
+  diagnosedDate DateTime
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model FamilyHistory {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String
+  relation     String // Father, Mother, Sibling, etc.
+  condition    String
+  diagnosedAge Int?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model LifestyleAssessment {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  diet       String?
+  exercise   String?
+  smoking    String? // Never, Former, Current
+  alcohol    String? // Never, Occasional, Regular
+  sleep      String?
+  stress     String?
+  occupation String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model EmergencyContact {
+  id             String   @id @default(uuid())
+  user           User     @relation(fields: [userId], references: [id])
+  userId         String
+  name           String
+  relationship   String
+  phone          String
+  alternatePhone String?
+  address        String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Insurance {
+  id                String    @id @default(uuid())
+  user              User      @relation(fields: [userId], references: [id])
+  userId            String
+  provider          String
+  policyNumber      String
+  groupNumber       String?
+  primaryHolder     String
+  coverageStartDate DateTime
+  coverageEndDate   DateTime?
+  coverageType      String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Medication {
+  id           String    @id @default(uuid())
+  user         User      @relation(fields: [userId], references: [id])
+  userId       String
+  name         String
+  dosage       String
+  frequency    String
+  startDate    DateTime
+  endDate      DateTime?
+  prescribedBy String
+  purpose      String?
+  sideEffects  String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model DietaryRestriction {
+  id           String    @id @default(uuid())
+  user         User      @relation(fields: [userId], references: [id])
+  userId       String
+  restriction  String
+  reason       String?
+  startDate    DateTime
+  endDate      DateTime?
+  prescribedBy String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
+}

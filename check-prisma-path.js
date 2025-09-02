@@ -13,11 +13,11 @@ console.log("Running in Docker:", isDocker);
 // Try different potential schema paths
 const possiblePaths = [
   path.resolve(process.cwd(), "./prisma/schema.prisma"),
-  path.resolve(process.cwd(), "./src/shared/database/prisma/schema.prisma"),
+  path.resolve(process.cwd(), "./src/libs/infrastructure/database/prisma/schema.prisma"),
   path.resolve(process.cwd(), "./dist/shared/database/prisma/schema.prisma"),
   path.resolve(__dirname, "./prisma/schema.prisma"),
-  path.resolve(__dirname, "./src/shared/database/prisma/schema.prisma"),
-  "/app/src/shared/database/prisma/schema.prisma",
+      path.resolve(__dirname, "./src/libs/infrastructure/database/prisma/schema.prisma"),
+    "/app/src/libs/infrastructure/database/prisma/schema.prisma",
   "/app/dist/shared/database/prisma/schema.prisma",
 ];
 
@@ -48,7 +48,7 @@ console.log("\nTry to load schema directly:");
 try {
   const schemaPath = path.resolve(
     process.cwd(),
-    "./src/shared/database/prisma/schema.prisma"
+    "./src/libs/infrastructure/database/prisma/schema.prisma"
   );
   const schema = fs.readFileSync(schemaPath, "utf8");
   console.log(`Successfully read schema (${schema.length} bytes)`);

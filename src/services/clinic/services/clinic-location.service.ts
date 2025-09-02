@@ -1,15 +1,15 @@
 import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
+import { PrismaService } from '../../../libs/infrastructure/database/prisma/prisma.service';
 import { CreateClinicLocationDto } from '../dto/create-clinic-location.dto';
 import { UpdateClinicLocationDto } from '../dto/update-clinic-location.dto';
-import { EventService } from '../../../shared/events/event.service';
+import { EventService } from '../../../libs/infrastructure/events/event.service';
 import { ClinicErrorService } from '../shared/error.utils';
-import { QrService } from '../../../shared/QR/qr.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
-import { ClinicLocation, QRCodeData } from '../../../libs/types/clinic.types';
-import { PermissionService } from '../../../shared/permissions';
-import { resolveClinicUUID } from '../../../shared/utils/clinic.utils';
+import { QrService } from '../../../libs/utils/QR/qr.service';
+import { LoggingService } from '../../../libs/infrastructure/logging/logging.service';
+import { LogType, LogLevel } from '../../../libs/infrastructure/logging/types/logging.types';
+import { PermissionService } from '../../../libs/infrastructure/permissions';
+import { resolveClinicUUID } from '../../../libs/utils/clinic.utils';
+import { ClinicLocation, QRCodeData } from 'src/libs/core/types/clinic.types';
 
 @Injectable()
 export class ClinicLocationService {
