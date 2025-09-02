@@ -1,4 +1,4 @@
-import { Module, MiddlewareConsumer, RequestMethod, NestModule } from '@nestjs/common';
+import { Module, MiddlewareConsumer, RequestMethod, NestModule, forwardRef } from '@nestjs/common';
 import { ConfigModule } from "@nestjs/config";
 import { UsersModule } from "./services/users/users.module";
 import { AuthModule } from "./services/auth/auth.module";
@@ -22,6 +22,8 @@ import configuration from './config/configuration';
 import { HealthController } from './services/health/health.controller';
 import { SocketModule } from './libs/communication/socket/socket.module';
 import { AppointmentSocketModule } from './services/appointments/appointment-socket/appointment-socket.module';
+import { SecurityModule } from './libs/security/security.module';
+import { RateLimitInterceptor } from './libs/security/rate-limit/rate-limit.interceptor';
 
 @Module({
   imports: [
@@ -98,9 +100,17 @@ import { AppointmentSocketModule } from './services/appointments/appointment-soc
     WhatsAppModule,
     LoggingModule,
     BullBoardModule,
+    forwardRef(() => SecurityModule),
   ],
   controllers: [AppController],
-  providers: [AppService, HealthController],
+  providers: [
+    AppService, 
+    HealthController,
+    {
+      provide: 'APP_INTERCEPTOR',
+      useClass: RateLimitInterceptor,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
