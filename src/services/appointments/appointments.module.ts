@@ -6,19 +6,18 @@ import { AppointmentSocketModule } from './appointment-socket/appointment-socket
 import { AppointmentProcessorModule } from './appointment-processor/appointment-processor.module';
 import { AppointmentQueueModule } from './appointment-queue/appointment-queue.module';
 import { CheckInModule } from './check-in/check-in.module';
-import { SharedModule } from '../../shared/shared.module';
-import { LoggingModule } from '../../shared/logging/logging.module';
+import { LoggingModule } from '../../libs/infrastructure/logging/logging.module';
 import { AppointmentService } from './appointments.service';
-import { QueueModule } from '../../shared/queue/queue.module';
+import { QueueModule } from '../../libs/infrastructure/queue/queue.module';
 import { JwtModule } from '@nestjs/jwt';
-import { RedisModule } from '../../shared/cache/redis/redis.module';
-import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
-import { GuardsModule } from '../../libs/guards/guards.module';
-import { PermissionsModule } from '../../shared/permissions';
+import { RedisModule } from '../../libs/infrastructure/cache/redis/redis.module';
+import { RateLimitModule } from '../../libs/utils/rate-limit/rate-limit.module';
+import { GuardsModule } from '../../libs/core/guards/guards.module';
+import { PermissionsModule } from '../../libs/infrastructure/permissions';
+import { QrModule } from '../../libs/utils/QR/qr.module';
 
 @Module({
   imports: [
-    SharedModule,
     QueueModule.register(),
     AppointmentLocationModule,
     AppointmentConfirmationModule,
@@ -27,6 +26,7 @@ import { PermissionsModule } from '../../shared/permissions';
     AppointmentQueueModule,
     CheckInModule,
     LoggingModule,
+    QrModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },

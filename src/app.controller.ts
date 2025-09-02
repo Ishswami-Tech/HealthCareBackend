@@ -1,11 +1,11 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
-import { Public } from './libs/decorators/public.decorator';
+import { Public } from './libs/core/decorators/public.decorator';
 import { ConfigService } from '@nestjs/config';
 import { FastifyReply } from 'fastify';
 import { HealthController } from './services/health/health.controller';
-import { LoggingService } from './shared/logging/logging.service';
+import { LoggingService } from './libs/infrastructure/logging/logging.service';
 
 interface ServiceInfo {
   name: string;

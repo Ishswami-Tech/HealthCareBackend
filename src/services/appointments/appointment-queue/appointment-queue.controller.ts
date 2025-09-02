@@ -1,14 +1,14 @@
 import { Controller, Get, Post, Param, Body, Logger, UseGuards } from '@nestjs/common';
 import { AppointmentQueueService } from './appointment-queue.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../libs/guards/roles.guard';
-import { ClinicGuard } from '../../../libs/guards/clinic.guard';
-import { PermissionGuard } from '../../../libs/guards/permission.guard';
+import { JwtAuthGuard } from 'src/libs/core/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/libs/core/guards/roles.guard';
+import { ClinicGuard } from 'src/libs/core/guards/clinic.guard';
+import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
+import { TenantContextInterceptor } from 'src/libs/utils/interceptors/tenant-context.interceptor';
 import { StartConsultationDto } from '../appointment.dto';
-import { Permission } from '../../../shared/permissions';
+import { Permission } from 'src/libs/infrastructure/permissions';
 
 @ApiTags('Appointment Queue')
 @Controller('api/appointments/queue')

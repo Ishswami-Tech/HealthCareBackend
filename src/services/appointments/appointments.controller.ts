@@ -33,14 +33,14 @@ import {
   ApiProduces
 } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
-import { Role } from '../../shared/database/prisma/prisma.types';
-import { JwtAuthGuard } from 'src/libs/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/libs/guards/roles.guard';
-import { Roles } from 'src/libs/decorators/roles.decorator';
-import { ClinicGuard } from '../../libs/guards/clinic.guard';
-import { ClinicRoute } from '../../libs/decorators/clinic-route.decorator';
+import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
+import { JwtAuthGuard } from '../../libs/core/guards/jwt-auth.guard';
+import { RolesGuard } from '../../libs/core/guards/roles.guard';
+import { Roles } from '../../libs/core/decorators/roles.decorator';
+import { ClinicGuard } from '../../libs/core/guards/clinic.guard';
+import { ClinicRoute } from '../../libs/core/decorators/clinic-route.decorator';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from '../../shared/interceptors/tenant-context.interceptor';
+import { TenantContextInterceptor } from '../../libs/utils/interceptors/tenant-context.interceptor';
 import { 
   CreateAppointmentDto, 
   UpdateAppointmentDto,
@@ -48,10 +48,10 @@ import {
   AppointmentListResponseDto,
   DoctorAvailabilityResponseDto
 } from './appointment.dto';
-import { PermissionGuard } from '../../libs/guards/permission.guard';
-import { Permission } from '../../shared/permissions';
+import { PermissionGuard } from '../../libs/core/guards/permission.guard';
+import { Permission } from '../../libs/infrastructure/permissions';
 import { FastifyRequest } from 'fastify';
-import { AuthenticatedRequest } from '../../libs/types/clinic.types';
+import { AuthenticatedRequest } from '../../libs/core/types/clinic.types';
 
 @ApiTags('Appointments')
 @Controller('appointments')

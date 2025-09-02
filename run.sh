@@ -180,7 +180,7 @@ start_prisma_studio() {
     exit 1
   else
     echo -e "${YELLOW}Starting Prisma Studio on port 5555...${NC}"
-    docker-compose -f docker-compose.dev.yml exec -d api npx prisma studio --schema=src/shared/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
+    docker-compose -f docker-compose.dev.yml exec -d api npx prisma studio --schema=src/libs/infrastructure/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0
     echo -e "${GREEN}Prisma Studio started! Access it at http://localhost:5555${NC}"
     echo -e "${YELLOW}Press Ctrl+C if this command doesn't return to the prompt automatically.${NC}"
   fi

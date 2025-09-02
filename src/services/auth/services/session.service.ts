@@ -1,7 +1,7 @@
 import { Injectable, Logger, UnauthorizedException, InternalServerErrorException } from '@nestjs/common';
-import { RedisService } from '../../../shared/cache/redis/redis.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogLevel, LogType } from '../../../shared/logging/types/logging.types';
+import { RedisService } from 'src/libs/infrastructure/cache/redis/redis.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogLevel, LogType } from 'src/libs/infrastructure/logging/types/logging.types';
 
 /**
  * Interface representing session information

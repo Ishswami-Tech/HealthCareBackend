@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { PrismaService } from '../../../shared/database/prisma/prisma.service';
-import { LoggingService } from '../../../shared/logging/logging.service';
-import { LogType, LogLevel } from '../../../shared/logging/types/logging.types';
-import { Role } from '../../../shared/database/prisma/prisma.types';
-import { resolveClinicUUID } from '../../../shared/utils/clinic.utils';
+import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
+import { LogType, LogLevel } from 'src/libs/infrastructure/logging/types/logging.types';
+import { Role } from 'src/libs/infrastructure/database/prisma/prisma.types';
+import { resolveClinicUUID } from 'src/libs/utils/clinic.utils';
 
 @Injectable()
 export class ClinicUserService {

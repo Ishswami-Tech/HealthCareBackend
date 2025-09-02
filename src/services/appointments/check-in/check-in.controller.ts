@@ -1,17 +1,17 @@
 import { Controller, Post, Get, Body, Param, UseGuards, Request, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
 import { CheckInService } from './check-in.service';
-import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../libs/guards/roles.guard';
-import { Roles } from '../../../libs/decorators/roles.decorator';
-import { Role } from '../../../shared/database/prisma/prisma.types';
-import { Clinic } from '../../../libs/decorators/clinic.decorator';
-import { ClinicGuard } from '../../../libs/guards/clinic.guard';
-import { PermissionGuard } from '../../../libs/guards/permission.guard';
+import { JwtAuthGuard } from 'src/libs/core/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/libs/core/guards/roles.guard';
+import { Roles } from 'src/libs/core/decorators/roles.decorator';
+import { Role } from 'src/libs/infrastructure/database/prisma/prisma.types';
+import { Clinic } from 'src/libs/core/decorators/clinic.decorator';
+import { ClinicGuard } from 'src/libs/core/guards/clinic.guard';
+import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from '../../../shared/interceptors/tenant-context.interceptor';
+import { TenantContextInterceptor } from 'src/libs/utils/interceptors/tenant-context.interceptor';
 import { ProcessCheckInDto, ReorderQueueDto } from '../appointment.dto';
-import { Permission } from '../../../shared/permissions';
+import { Permission } from 'src/libs/infrastructure/permissions';
 
 @ApiTags('Check-in')
 @Controller('api/check-in')

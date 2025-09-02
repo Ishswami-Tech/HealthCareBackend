@@ -19,18 +19,28 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { CreateUserDto, UserResponseDto, SimpleCreateUserDto } from '../../../libs/dtos/user.dto';
-import { JwtAuthGuard } from '../../../libs/guards/jwt-auth.guard';
-import { Public } from '../../../libs/decorators/public.decorator';
+import { JwtAuthGuard } from 'src/libs/core/guards/jwt-auth.guard';
+import { Public } from 'src/libs/core/decorators/public.decorator';
 import { AuthService } from '../services/auth.service';
-import { EmailService } from '../../../shared/messaging/email/email.service';
 import { Logger } from '@nestjs/common';
-import { LoginDto, LogoutDto, PasswordResetDto, AuthResponse, LoginRequestDto, ForgotPasswordRequestDto, VerifyOtpRequestDto, RequestOtpDto, InvalidateOtpDto, CheckOtpStatusDto, RegisterDto } from '../../../libs/dtos/auth.dtos';
-import { Role } from '../../../shared/database/prisma/prisma.types';
+import { 
+  LoginDto, 
+  LogoutDto, 
+  PasswordResetDto, 
+  RegisterDto,
+  ForgotPasswordRequestDto,
+  RequestOtpDto,
+  VerifyOtpRequestDto,
+  CheckOtpStatusDto,
+  InvalidateOtpDto
+} from '../../../libs/dtos/auth.dto';
+import { Role } from 'src/libs/infrastructure/database/prisma/prisma.types';
 import * as crypto from 'crypto';
 import { SessionService } from '../services/session.service';
-import { ClinicId, OptionalClinicId } from '../../../libs/decorators/clinic.decorator';
-import { PermissionService, Permission } from '../../../shared/permissions';
-import { PermissionGuard } from '../../../libs/guards/permission.guard';
+import { ClinicId, OptionalClinicId } from 'src/libs/core/decorators/clinic.decorator';
+import { PermissionService, Permission } from 'src/libs/infrastructure/permissions';
+import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
+import { EmailService } from 'src/libs/communication/messaging/email/email.service';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -86,16 +96,15 @@ export class AuthController {
     summary: 'Login with password or OTP',
     description: 'Authenticate using either password or OTP. Clinic ID can be provided via X-Clinic-ID header, request body, or query parameter for clinic validation.'
   })
-  @ApiBody({ type: LoginRequestDto })
+  @ApiBody({ type: LoginDto })
   @ApiResponse({ 
     status: 200, 
-    description: 'Login successful',
-    type: AuthResponse
+    description: 'Login successful with user data'
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials or user not associated with clinic' })
   @ApiResponse({ status: 404, description: 'Clinic not found' })
   async login(
-    @Body() body: LoginRequestDto,
+    @Body() body: LoginDto,
     @OptionalClinicId() clinicId?: string,
     @Req() request?: any
   ): Promise<any> {
