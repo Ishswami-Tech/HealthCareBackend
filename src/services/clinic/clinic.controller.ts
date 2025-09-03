@@ -25,7 +25,6 @@ import { RolesGuard } from '../../libs/core/guards/roles.guard';
 import { Roles } from '../../libs/core/decorators/roles.decorator';
 import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
 import { Permission } from '../../libs/infrastructure/permissions';
-import { TenantContextInterceptor } from '../../libs/utils/interceptors/tenant-context.interceptor';
 import { 
   ApiTags, 
   ApiOperation, 
@@ -60,7 +59,6 @@ import { UseInterceptors } from '@nestjs/common';
 @ApiHeader({ name: 'X-Clinic-ID', description: 'Clinic identifier (for clinic-specific endpoints)', required: false })
 @Controller('clinics')
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
-@UseInterceptors(TenantContextInterceptor)
 @UsePipes(new ValidationPipe({ 
   transform: true, 
   whitelist: true, 

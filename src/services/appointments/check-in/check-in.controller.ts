@@ -9,14 +9,12 @@ import { Clinic } from 'src/libs/core/decorators/clinic.decorator';
 import { ClinicGuard } from 'src/libs/core/guards/clinic.guard';
 import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from 'src/libs/utils/interceptors/tenant-context.interceptor';
 import { ProcessCheckInDto, ReorderQueueDto } from '../appointment.dto';
 import { Permission } from 'src/libs/infrastructure/permissions';
 
 @ApiTags('Check-in')
 @Controller('api/check-in')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
-@UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 export class CheckInController {
