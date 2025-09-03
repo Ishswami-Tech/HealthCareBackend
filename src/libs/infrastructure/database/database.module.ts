@@ -4,16 +4,49 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { PrismaModule } from './prisma/prisma.module';
 import { initDatabase } from './scripts/init-db';
+import { healthcareConfig } from './config/healthcare.config';
+import { ConnectionPoolManager } from './connection-pool.manager';
+import { HealthcareQueryOptimizerService } from './query-optimizer.service';
+import { UserRepository } from './repositories/user.repository';
+import { ClinicIsolationService } from './clinic-isolation.service';
+import { SimplePatientRepository } from './repositories/simple-patient.repository';
+import { DatabaseMetricsService } from './database-metrics.service';
+import { DatabaseClientFactory } from './database-client.factory';
 
 @Global()
 @Module({
-  imports: [PrismaModule, ConfigModule],
-  exports: [PrismaModule],
+  imports: [
+    PrismaModule, 
+    ConfigModule.forFeature(healthcareConfig)
+  ],
+  providers: [
+    ConnectionPoolManager,
+    HealthcareQueryOptimizerService,
+    UserRepository,
+    ClinicIsolationService,
+    SimplePatientRepository,
+    DatabaseMetricsService,
+    DatabaseClientFactory,
+  ],
+  exports: [
+    PrismaModule,
+    ConnectionPoolManager,
+    HealthcareQueryOptimizerService,
+    UserRepository,
+    ClinicIsolationService,
+    SimplePatientRepository,
+    DatabaseMetricsService,
+    DatabaseClientFactory,
+  ],
 })
 export class DatabaseModule implements OnModuleInit {
   private readonly logger = new Logger(DatabaseModule.name);
   
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    private connectionPoolManager: ConnectionPoolManager,
+    private clinicIsolationService: ClinicIsolationService,
+  ) {}
 
   async onModuleInit() {
     try {
@@ -45,10 +78,10 @@ export class DatabaseModule implements OnModuleInit {
       } else {
         // Default fallback paths
         if (isDocker) {
-                resolvedSchemaPath = '/app/src/libs/infrastructure/database/prisma/schema.prisma';
-    } else {
-      resolvedSchemaPath = path.resolve(process.cwd(), 'src/libs/infrastructure/database/prisma/schema.prisma');
-    }
+          resolvedSchemaPath = '/app/src/libs/infrastructure/database/prisma/schema.prisma';
+        } else {
+          resolvedSchemaPath = path.resolve(process.cwd(), 'src/libs/infrastructure/database/prisma/schema.prisma');
+        }
       }
       
       // Make sure the path actually exists
@@ -81,8 +114,39 @@ export class DatabaseModule implements OnModuleInit {
       // Initialize the database
       await initDatabase();
       this.logger.log('Database initialization completed successfully');
+      
+      // Initialize enhanced database components
+      await this.initializeEnhancedComponents();
+      
     } catch (error) {
       this.logger.error(`Failed to initialize database module: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  private async initializeEnhancedComponents() {
+    try {
+      // Validate healthcare configuration
+      const { validateHealthcareConfig } = await import('./config/healthcare.config');
+      const healthcareConf = this.configService.get('healthcare');
+      validateHealthcareConfig(healthcareConf);
+      
+      // Initialize clinic isolation service for full data separation
+      await this.clinicIsolationService.initializeClinicCaching();
+      
+      // Log initialization completion
+      const poolMetrics = this.connectionPoolManager.getMetrics();
+      this.logger.log(`Enhanced database components initialized successfully`);
+      this.logger.log(`Connection pool status: ${poolMetrics.totalConnections} connections, healthy: ${poolMetrics.isHealthy}`);
+      
+      // Log healthcare-specific configuration
+      this.logger.log(`Multi-clinic support enabled: ${healthcareConf?.multiClinic?.enabled}`);
+      this.logger.log(`HIPAA compliance enabled: ${healthcareConf?.hipaa?.enabled}`);
+      this.logger.log(`Maximum clinics per app: ${healthcareConf?.multiClinic?.maxClinicsPerApp}`);
+      this.logger.log(`Maximum locations per clinic: ${healthcareConf?.multiClinic?.maxLocationsPerClinic}`);
+      
+    } catch (error) {
+      this.logger.error(`Failed to initialize enhanced database components: ${error.message}`);
       throw error;
     }
   }

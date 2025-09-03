@@ -21,7 +21,7 @@ export class RateLimitService {
   private readonly logger = new Logger(RateLimitService.name);
 
   constructor(
-    private readonly config: RateLimitConfig,
+    public readonly config: RateLimitConfig,
     private readonly eventEmitter?: EventEmitter2
   ) {
     this.setupRateLimitCoordination();
@@ -45,9 +45,7 @@ export class RateLimitService {
     
     // This is a simplified version - in production you'd use Redis for actual rate limiting
     // For development/testing purposes, we'll simulate rate limiting
-    if (process.env.NODE_ENV === 'development') {
-      return { limited: false, remaining: Number.MAX_SAFE_INTEGER };
-    }
+    // Removed early return to test rate limiting in development
 
     // Simulate rate limiting logic
     const key = `rate_limit:${type}:${identifier}`;

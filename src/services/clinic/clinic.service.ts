@@ -9,6 +9,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ClinicLocationService } from './services/clinic-location.service';
 import { PermissionService } from '../../libs/infrastructure/permissions';
 import { resolveClinicUUID } from '../../libs/utils/clinic.utils';
+import { DatabaseClientFactory } from '../../libs/infrastructure/database/database-client.factory';
+import { RepositoryResult } from '../../libs/infrastructure/database/types/repository-result';
 
 @Injectable()
 export class ClinicService {
@@ -20,6 +22,7 @@ export class ClinicService {
     private readonly redis: RedisService,
     private readonly jwtService: JwtService,
     private readonly permissionService: PermissionService,
+    private readonly databaseClientFactory: DatabaseClientFactory,
   ) {}
 
   /**
@@ -1324,6 +1327,313 @@ export class ClinicService {
         'ClinicService',
         'get current user clinic',
         { userId }
+      );
+      throw error;
+    }
+  }
+
+  // ===============================
+  // ENTERPRISE DATABASE METHODS
+  // ===============================
+
+  /**
+   * Get clinic dashboard with enterprise database client
+   * Provides complete data isolation and advanced metrics
+   */
+  async getClinicDashboardEnterprise(clinicId: string, userId: string) {
+    try {
+      // Validate clinic access
+      const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+      
+      // Get enterprise clinic database client
+      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
+      
+      // Execute dashboard operation with data isolation
+      const dashboardResult = await clinicClient.getClinicDashboardStats();
+      
+      if (dashboardResult.isSuccess) {
+        // Get additional metrics
+        const metricsResult = await clinicClient.getClinicMetrics();
+        
+        return {
+          success: true,
+          data: {
+            dashboard: dashboardResult.data,
+            metrics: metricsResult,
+            clinicId: clinicUUID,
+            executionTime: dashboardResult.metadata?.executionTime
+          }
+        };
+      } else {
+        throw dashboardResult.error;
+      }
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get clinic dashboard enterprise',
+        { clinicId, userId }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get clinic patients with enterprise pagination and filtering
+   */
+  async getClinicPatientsEnterprise(
+    clinicId: string, 
+    userId: string,
+    options: {
+      page?: number;
+      limit?: number;
+      locationId?: string;
+      searchTerm?: string;
+    } = {}
+  ) {
+    try {
+      const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
+      
+      const patientsResult = await clinicClient.getClinicPatients({
+        page: options.page || 1,
+        limit: options.limit || 20,
+        locationId: options.locationId,
+        searchTerm: options.searchTerm,
+        includeInactive: false
+      });
+
+      if (patientsResult.isSuccess) {
+        return {
+          success: true,
+          data: patientsResult.data,
+          metadata: {
+            executionTime: patientsResult.metadata?.executionTime,
+            clinicId: clinicUUID
+          }
+        };
+      } else {
+        throw patientsResult.error;
+      }
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get clinic patients enterprise',
+        { clinicId, userId, options }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get clinic appointments with enterprise filtering and isolation
+   */
+  async getClinicAppointmentsEnterprise(
+    clinicId: string,
+    userId: string,
+    filters: {
+      locationId?: string;
+      dateFrom?: Date;
+      dateTo?: Date;
+      status?: string;
+      doctorId?: string;
+      page?: number;
+      limit?: number;
+    } = {}
+  ) {
+    try {
+      const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
+      
+      const appointmentsResult = await clinicClient.getClinicAppointments({
+        page: filters.page || 1,
+        limit: filters.limit || 50,
+        locationId: filters.locationId,
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo,
+        status: filters.status,
+        doctorId: filters.doctorId
+      });
+
+      if (appointmentsResult.isSuccess) {
+        return {
+          success: true,
+          data: appointmentsResult.data,
+          filters,
+          metadata: {
+            executionTime: appointmentsResult.metadata?.executionTime,
+            clinicId: clinicUUID
+          }
+        };
+      } else {
+        throw appointmentsResult.error;
+      }
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get clinic appointments enterprise',
+        { clinicId, userId, filters }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Create patient with enterprise audit trail and PHI protection
+   */
+  async createPatientEnterprise(
+    clinicId: string,
+    userId: string,
+    patientData: any
+  ): Promise<RepositoryResult<any>> {
+    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+    const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
+    
+    // Execute patient creation with clinic context and audit trail
+    return await clinicClient.executeClinicPatientOperation(
+      'new', // patientId for new patient
+      userId,
+      async (prisma) => {
+        return await prisma.patient.create({
+          data: {
+            ...patientData,
+            // Ensure clinic association through appointments or other relations
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+              }
+            }
+          }
+        });
+      },
+      'write'
+    );
+  }
+
+  /**
+   * Get enterprise database health status for clinic
+   */
+  async getClinicDatabaseHealth(clinicId: string): Promise<any> {
+    try {
+      const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
+      
+      const [healthStatus, metrics] = await Promise.all([
+        clinicClient.getHealthStatus(),
+        clinicClient.getClinicMetrics()
+      ]);
+
+      return {
+        success: true,
+        data: {
+          health: healthStatus,
+          metrics,
+          clinicId: clinicUUID,
+          timestamp: new Date()
+        }
+      };
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get clinic database health',
+        { clinicId }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get multi-clinic summary with enterprise isolation
+   */
+  async getMultiClinicSummaryEnterprise(clinicIds: string[], userId: string) {
+    try {
+      // Resolve all clinic UUIDs
+      const resolvedClinicIds = await Promise.all(
+        clinicIds.map(id => resolveClinicUUID(this.prisma, id))
+      );
+      
+      // Create clinic clients batch
+      const clinicClients = this.databaseClientFactory.createClinicClientsBatch(resolvedClinicIds);
+      
+      // Execute parallel operations with proper isolation
+      const summaryPromises = Array.from(clinicClients.entries()).map(async ([clinicId, client]) => {
+        try {
+          const [dashboardResult, metricsResult] = await Promise.all([
+            client.getClinicDashboardStats(),
+            client.getClinicMetrics()
+          ]);
+          
+          return {
+            clinicId,
+            dashboard: dashboardResult.isSuccess ? dashboardResult.data : null,
+            metrics: metricsResult,
+            error: dashboardResult.isFailure ? dashboardResult.error?.message : null
+          };
+        } catch (error) {
+          return {
+            clinicId,
+            dashboard: null,
+            metrics: null,
+            error: error.message
+          };
+        }
+      });
+
+      const results = await Promise.all(summaryPromises);
+      
+      const successful = results.filter(r => !r.error).length;
+      const failed = results.length - successful;
+
+      return {
+        success: true,
+        data: results,
+        summary: {
+          totalClinics: results.length,
+          successful,
+          failed
+        }
+      };
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get multi clinic summary enterprise',
+        { clinicIds, userId }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get enterprise database factory statistics
+   */
+  async getDatabaseFactoryStats() {
+    try {
+      const factoryStats = this.databaseClientFactory.getFactoryStats();
+      const healthCheck = await this.databaseClientFactory.performHealthCheck();
+      
+      return {
+        success: true,
+        data: {
+          factory: factoryStats,
+          health: healthCheck,
+          timestamp: new Date()
+        }
+      };
+    } catch (error) {
+      await this.errorService.logError(
+        error,
+        'ClinicService',
+        'get database factory stats',
+        {}
       );
       throw error;
     }

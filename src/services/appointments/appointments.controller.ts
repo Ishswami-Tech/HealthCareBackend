@@ -40,7 +40,6 @@ import { Roles } from '../../libs/core/decorators/roles.decorator';
 import { ClinicGuard } from '../../libs/core/guards/clinic.guard';
 import { ClinicRoute } from '../../libs/core/decorators/clinic-route.decorator';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from '../../libs/utils/interceptors/tenant-context.interceptor';
 import { 
   CreateAppointmentDto, 
   UpdateAppointmentDto,
@@ -60,7 +59,6 @@ import { RateLimitAPI } from '../../libs/security/rate-limit/rate-limit.decorato
 @ApiSecurity('session-id')
 @ApiHeader({ name: 'X-Clinic-ID', description: 'Clinic identifier', required: true })
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
-@UseInterceptors(TenantContextInterceptor)
 @UsePipes(new ValidationPipe({ 
   transform: true, 
   whitelist: true, 

@@ -50,7 +50,8 @@ export class RateLimitInterceptor implements NestInterceptor {
         );
 
         const response = context.switchToHttp().getResponse();
-        response.setHeader('X-RateLimit-Limit', result.remaining);
+        const limits = this.rateLimitService.config.getLimits(type);
+        response.setHeader('X-RateLimit-Limit', limits.maxRequests);
         response.setHeader('X-RateLimit-Remaining', 0);
         if (result.resetTime) {
           response.setHeader('X-RateLimit-Reset', new Date(result.resetTime).toISOString());
@@ -74,7 +75,8 @@ export class RateLimitInterceptor implements NestInterceptor {
 
       // Set rate limit headers
       const response = context.switchToHttp().getResponse();
-      response.setHeader('X-RateLimit-Limit', result.remaining);
+      const limits = this.rateLimitService.config.getLimits(type);
+      response.setHeader('X-RateLimit-Limit', limits.maxRequests);
       response.setHeader('X-RateLimit-Remaining', result.remaining);
       if (result.resetTime) {
         response.setHeader('X-RateLimit-Reset', new Date(result.resetTime).toISOString());

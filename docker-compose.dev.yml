@@ -27,6 +27,21 @@ services:
       REDIS_COMMANDER_URL: http://redis-commander:8081
       PRISMA_STUDIO_URL: http://api:5555
       PGADMIN_URL: http://pgadmin:80
+      # Enterprise Database Configuration
+      DB_POOL_MIN: 20
+      DB_POOL_MAX: 300
+      DB_POOL_MAX_USES: 7500
+      DB_CONNECTION_TIMEOUT: 10000
+      DB_QUERY_TIMEOUT: 60000
+      DB_MAX_RETRIES: 3
+      DB_ENABLE_METRICS: true
+      DB_ENABLE_CIRCUIT_BREAKER: true
+      # Healthcare Configuration
+      HEALTHCARE_ENABLE_AUDIT_LOGGING: true
+      HEALTHCARE_ENABLE_PHI_PROTECTION: true
+      HEALTHCARE_AUDIT_RETENTION_DAYS: 2555
+      HEALTHCARE_ENCRYPTION_ENABLED: true
+      HEALTHCARE_COMPLIANCE_LEVEL: HIPAA
     volumes:
       - .:/app
       - /app/node_modules
@@ -78,8 +93,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
-      POSTGRES_MAX_CONNECTIONS: 100
-      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_MAX_CONNECTIONS: 300
+      POSTGRES_SHARED_BUFFERS: 512MB
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data_dev:/var/lib/postgresql/data/pgdata
@@ -93,23 +108,26 @@ services:
       start_period: 10s
     restart: unless-stopped
     command: >
-      postgres -c max_connections=100 
-      -c shared_buffers=256MB 
-      -c effective_cache_size=768MB 
-      -c maintenance_work_mem=64MB 
+      postgres -c max_connections=300 
+      -c shared_buffers=512MB 
+      -c effective_cache_size=1536MB 
+      -c maintenance_work_mem=128MB 
       -c checkpoint_completion_target=0.9 
-      -c wal_buffers=16MB 
+      -c wal_buffers=32MB 
       -c default_statistics_target=100 
       -c random_page_cost=1.1 
-      -c effective_io_concurrency=200 
-      -c work_mem=4MB 
-      -c min_wal_size=1GB 
-      -c max_wal_size=4GB
+      -c effective_io_concurrency=300 
+      -c work_mem=8MB 
+      -c min_wal_size=2GB 
+      -c max_wal_size=8GB
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_workers=8
+      -c max_parallel_maintenance_workers=4
 
   redis:
     image: redis:7
     container_name: redis-dev
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru --tcp-backlog 511 --databases 16
     ports:
       - "6379:6379"
     volumes:

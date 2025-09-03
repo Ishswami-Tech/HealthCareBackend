@@ -6,14 +6,12 @@ import { RolesGuard } from 'src/libs/core/guards/roles.guard';
 import { ClinicGuard } from 'src/libs/core/guards/clinic.guard';
 import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from 'src/libs/utils/interceptors/tenant-context.interceptor';
 import { StartConsultationDto } from '../appointment.dto';
 import { Permission } from 'src/libs/infrastructure/permissions';
 
 @ApiTags('Appointment Queue')
 @Controller('api/appointments/queue')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
-@UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 export class AppointmentQueueController {
