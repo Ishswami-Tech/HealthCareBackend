@@ -23,9 +23,11 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
+import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma/prisma.service';
 import { AppointmentStatus } from '../database/prisma/prisma.types';
-import { SERVICE_QUEUE, APPOINTMENT_QUEUE, VIDHAKARMA_QUEUE, PANCHAKARMA_QUEUE, CHEQUP_QUEUE } from './queue.constants';
+import { SERVICE_QUEUE, APPOINTMENT_QUEUE, VIDHAKARMA_QUEUE, PANCHAKARMA_QUEUE, CHEQUP_QUEUE, EMAIL_QUEUE, NOTIFICATION_QUEUE } from './queue.constants';
 
 export enum JobType {
   CREATE = 'create',
@@ -34,13 +36,28 @@ export enum JobType {
   CONFIRM = 'confirm',
   COMPLETE = 'complete',
   NOTIFY = 'notify',
+  
+  // Healthcare-specific job types
+  APPOINTMENT_REMINDER = 'appointment.reminder',
+  APPOINTMENT_FOLLOWUP = 'appointment.followup',
+  PATIENT_REGISTERED = 'patient.registered',
+  MEDICAL_RECORD_CREATED = 'medical_record.created',
+  PRESCRIPTION_REMINDER = 'prescription.reminder',
+  LAB_RESULT_NOTIFICATION = 'lab_result.notification',
+  URGENT_ALERT = 'urgent.alert',
+  CONSENT_VERIFICATION = 'consent.verification',
+  DATA_EXPORT = 'data.export',
+  AUDIT_REPORT = 'audit.report',
+  CACHE_INVALIDATION = 'cache.invalidation',
 }
 
 export enum JobPriority {
-  LOW = 10,
-  NORMAL = 5,
-  HIGH = 1,
-  CRITICAL = 0
+  BACKGROUND = 15,  // System maintenance, analytics
+  LOW = 10,         // Routine tasks, non-urgent reports
+  NORMAL = 5,       // Regular appointments, standard notifications
+  HIGH = 2,         // Same-day appointments, important notifications
+  URGENT = 1,       // Emergency appointments, critical notifications
+  CRITICAL = 0      // Life-threatening situations, system alerts
 }
 
 export interface JobData {
@@ -52,6 +69,31 @@ export interface JobData {
   resourceType?: string;
   resourceId?: string;
   date?: Date;
+  
+  // Healthcare-specific fields
+  patientId?: string;
+  doctorId?: string;
+  appointmentId?: string;
+  clinicId?: string;
+  
+  // Compliance and audit
+  auditTrail?: AuditEntry[];
+  dataClassification?: DataClassification;
+  consentTokens?: ConsentToken[];
+  
+  // Workflow context
+  correlationId?: string;
+  workflowId?: string;
+  stepName?: string;
+  
+  // Scheduling and urgency
+  scheduledFor?: Date;
+  deadline?: Date;
+  urgencyLevel?: 'routine' | 'urgent' | 'emergency';
+  
+  // Integration context
+  source?: 'api' | 'scheduler' | 'integration' | 'system';
+  integrationId?: string;
 }
 
 export interface QueueStats {
@@ -62,12 +104,69 @@ export interface QueueStats {
   delayed: number;
   paused: number;
   timestamp: string;
+  
+  // Enhanced healthcare metrics
+  throughputPerSecond?: number;
+  averageWaitTime?: number;
+  averageProcessingTime?: number;
+  errorRate?: number;
+  criticalJobsWaiting?: number;
+}
+
+// Healthcare-specific types
+export interface AuditEntry {
+  timestamp: Date;
+  action: string;
+  userId?: string;
+  details: Record<string, any>;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export interface ConsentToken {
+  purpose: string;
+  granted: boolean;
+  grantedAt?: Date;
+  expiresAt?: Date;
+  restrictions?: string[];
+}
+
+export enum DataClassification {
+  PUBLIC = 'public',
+  INTERNAL = 'internal', 
+  CONFIDENTIAL = 'confidential',
+  PHI = 'phi',            // Protected Health Information
+  EMERGENCY = 'emergency' // Emergency/critical patient data
+}
+
+export interface HealthcareJobOptions {
+  delay?: number;
+  attempts?: number;
+  backoff?: 'exponential' | 'linear' | 'fixed';
+  removeOnComplete?: boolean;
+  removeOnFail?: boolean;
+  
+  // Healthcare-specific options
+  requireConsent?: boolean;
+  emergencyOverride?: boolean;
+  auditLevel?: 'minimal' | 'standard' | 'detailed' | 'comprehensive';
+  
+  // Integration options
+  timeout?: number;
+  retryableErrors?: string[];
+  nonRetryableErrors?: string[];
+  
+  // Workflow options
+  dependencies?: string[];
+  onSuccess?: string[];
+  onFailure?: string[];
 }
 
 @Injectable()
 export class QueueService implements OnModuleInit {
   private readonly logger = new Logger(QueueService.name);
   private jobCleanupInterval: NodeJS.Timeout;
+  private metricsInterval?: NodeJS.Timeout;
 
   constructor(
     @InjectQueue(SERVICE_QUEUE) private readonly serviceQueue: Queue,
@@ -75,18 +174,24 @@ export class QueueService implements OnModuleInit {
     @InjectQueue(VIDHAKARMA_QUEUE) private readonly vidhakarmaQueue: Queue,
     @InjectQueue(PANCHAKARMA_QUEUE) private readonly panchakarmaQueue: Queue,
     @InjectQueue(CHEQUP_QUEUE) private readonly chequpQueue: Queue,
+    @InjectQueue(EMAIL_QUEUE) private readonly emailQueue: Queue,
+    @InjectQueue(NOTIFICATION_QUEUE) private readonly notificationQueue: Queue,
     private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async onModuleInit() {
-    // NOTE: BullMQ does not support queue.on('failed') directly. Use Worker for job events.
-    // You should move event listeners to Worker-based processors.
-    // this.setupQueueListeners();
     // Setup periodic job cleanup
     this.jobCleanupInterval = setInterval(
       () => this.cleanupOldJobs(), 
       1000 * 60 * 60 * 6 // Run every 6 hours
     );
+    
+    // Setup metrics collection for healthcare monitoring
+    this.startHealthcareMetricsCollection();
+    
+    this.logger.log('Enhanced Healthcare Queue Service initialized');
   }
 
   /**
@@ -94,14 +199,37 @@ export class QueueService implements OnModuleInit {
    */
   private async cleanupOldJobs() {
     try {
-      // BullMQ: use queue.clean for completed/failed jobs
-      await this.serviceQueue.clean(1000 * 60 * 60 * 24 * 14, 'completed' as any);
-      await this.appointmentQueue.clean(1000 * 60 * 60 * 24 * 14, 'completed' as any);
-      await this.serviceQueue.clean(1000 * 60 * 60 * 24 * 14, 'failed' as any);
-      await this.appointmentQueue.clean(1000 * 60 * 60 * 24 * 14, 'failed' as any);
-      this.logger.log('Cleaned up old jobs from the queues');
+      const retentionMs = 1000 * 60 * 60 * 24 * 14; // 14 days
+      const queues = [
+        this.serviceQueue,
+        this.appointmentQueue,
+        this.vidhakarmaQueue,
+        this.panchakarmaQueue,
+        this.chequpQueue,
+        this.emailQueue,
+        this.notificationQueue
+      ];
+
+      // Clean completed and failed jobs from all queues
+      for (const queue of queues) {
+        try {
+          await queue.clean(retentionMs, 'completed' as any);
+          await queue.clean(retentionMs, 'failed' as any);
+        } catch (error) {
+          this.logger.error(`Error cleaning queue ${queue.name}:`, error);
+        }
+      }
+      
+      this.logger.log('Healthcare queue cleanup completed');
+      
+      // Emit cleanup event for monitoring
+      this.eventEmitter.emit('healthcare.queue.cleanup', {
+        timestamp: new Date(),
+        queuesProcessed: queues.length,
+        retentionDays: 14
+      });
     } catch (error) {
-      this.logger.error(`Error cleaning up jobs: ${error.message}`, error.stack);
+      this.logger.error(`Error during queue cleanup: ${error.message}`, error.stack);
     }
   }
 
@@ -156,32 +284,278 @@ export class QueueService implements OnModuleInit {
       throw new Error(`Failed to add job to queue: ${error.message}`);
     }
   }
+
+  /**
+   * Enhanced healthcare job creation with compliance features
+   */
+  async addHealthcareJob(
+    jobData: JobData,
+    options: HealthcareJobOptions = {}
+  ): Promise<string> {
+    try {
+      // Validate healthcare-specific job data
+      this.validateHealthcareJobData(jobData);
+      
+      // Check consent if required
+      if (options.requireConsent && !this.hasValidConsent(jobData)) {
+        throw new Error('Valid consent required for this healthcare operation');
+      }
+      
+      // Add audit entry
+      if (!jobData.auditTrail) {
+        jobData.auditTrail = [];
+      }
+      jobData.auditTrail.push({
+        timestamp: new Date(),
+        action: 'job_queued',
+        details: {
+          jobType: jobData.type,
+          queueName: this.getQueueForJob(jobData).name,
+          emergencyOverride: options.emergencyOverride || false
+        }
+      });
+      
+      // Determine priority based on urgency and data classification
+      const priority = this.calculateHealthcarePriority(jobData, options);
+      
+      const jobId = await this.addJob(jobData.type as string, jobData, {
+        ...options,
+        priority,
+        attempts: this.getHealthcareAttempts(jobData, options),
+        jobId: jobData.id
+      });
+      
+      // Emit healthcare-specific event for monitoring
+      this.eventEmitter.emit('healthcare.job.added', {
+        jobId,
+        jobType: jobData.type,
+        priority,
+        dataClassification: jobData.dataClassification,
+        patientId: jobData.patientId,
+        doctorId: jobData.doctorId,
+        clinicId: jobData.clinicId,
+        urgencyLevel: jobData.urgencyLevel,
+        scheduledFor: jobData.scheduledFor,
+        deadline: jobData.deadline
+      });
+      
+      return jobId;
+      
+    } catch (error) {
+      this.logger.error(`Failed to add healthcare job: ${error.message}`, {
+        jobType: jobData.type,
+        patientId: jobData.patientId,
+        doctorId: jobData.doctorId,
+        error: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Schedule appointment reminder jobs
+   */
+  async scheduleAppointmentReminders(
+    appointmentId: string,
+    patientId: string,
+    doctorId: string,
+    appointmentDate: Date,
+    clinicId: string
+  ): Promise<string[]> {
+    const jobIds: string[] = [];
+    const now = new Date();
+    
+    // Healthcare reminder intervals
+    const reminderIntervals = [
+      { hours: 24, type: 'day_before' },
+      { hours: 2, type: 'two_hours_before' },
+      { hours: 0.5, type: 'thirty_minutes_before' }
+    ];
+    
+    for (const reminder of reminderIntervals) {
+      const reminderTime = new Date(appointmentDate.getTime() - (reminder.hours * 60 * 60 * 1000));
+      
+      if (reminderTime > now) {
+        const jobData: JobData = {
+          id: `reminder_${appointmentId}_${reminder.type}`,
+          type: JobType.APPOINTMENT_REMINDER,
+          patientId,
+          doctorId,
+          appointmentId,
+          clinicId,
+          scheduledFor: reminderTime,
+          urgencyLevel: 'routine',
+          dataClassification: DataClassification.CONFIDENTIAL,
+          source: 'system',
+          auditTrail: [{
+            timestamp: new Date(),
+            action: 'reminder_scheduled',
+            details: { reminderType: reminder.type, scheduledFor: reminderTime }
+          }],
+          metadata: {
+            reminderType: reminder.type,
+            appointmentDate,
+            hoursBeforeAppointment: reminder.hours
+          }
+        };
+        
+        const jobId = await this.addHealthcareJob(jobData, {
+          delay: reminderTime.getTime() - now.getTime(),
+          removeOnComplete: true,
+          auditLevel: 'standard'
+        });
+        
+        jobIds.push(jobId);
+      }
+    }
+    
+    return jobIds;
+  }
+
+  /**
+   * Process urgent patient alert with immediate priority
+   */
+  async processUrgentAlert(
+    patientId: string,
+    alertType: string,
+    alertData: any,
+    clinicId: string
+  ): Promise<string> {
+    const jobData: JobData = {
+      id: `urgent_alert_${patientId}_${Date.now()}`,
+      type: JobType.URGENT_ALERT,
+      patientId,
+      clinicId,
+      urgencyLevel: 'emergency',
+      dataClassification: DataClassification.EMERGENCY,
+      deadline: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes deadline
+      source: 'system',
+      auditTrail: [{
+        timestamp: new Date(),
+        action: 'urgent_alert_created',
+        details: { alertType, patientId, clinicId }
+      }],
+      metadata: {
+        alertType,
+        alertData,
+        timestamp: new Date()
+      }
+    };
+    
+    return this.addHealthcareJob(jobData, {
+      attempts: 5,
+      emergencyOverride: true,
+      auditLevel: 'comprehensive',
+      timeout: 30000 // 30 seconds
+    });
+  }
+
+  /**
+   * Cancel scheduled jobs by correlation ID (e.g., when appointment is cancelled)
+   */
+  async cancelScheduledJobs(correlationId: string): Promise<number> {
+    let cancelledCount = 0;
+    const queues = [
+      this.appointmentQueue,
+      this.serviceQueue,
+      this.emailQueue,
+      this.notificationQueue,
+      this.vidhakarmaQueue,
+      this.panchakarmaQueue,
+      this.chequpQueue
+    ];
+    
+    for (const queue of queues) {
+      try {
+        const [waiting, delayed] = await Promise.all([
+          queue.getWaiting(),
+          queue.getDelayed()
+        ]);
+        
+        const allJobs = [...waiting, ...delayed];
+        
+        for (const job of allJobs) {
+          const jobData = job.data as JobData;
+          if (jobData.correlationId === correlationId) {
+            await job.remove();
+            cancelledCount++;
+            this.logger.debug(`Cancelled job ${job.id} with correlation ID ${correlationId}`);
+          }
+        }
+      } catch (error) {
+        this.logger.error(`Error cancelling jobs in queue ${queue.name}:`, error);
+      }
+    }
+    
+    if (cancelledCount > 0) {
+      this.eventEmitter.emit('healthcare.jobs.cancelled', {
+        correlationId,
+        cancelledCount,
+        timestamp: new Date()
+      });
+    }
+    
+    return cancelledCount;
+  }
   
   /**
    * Determine which queue to use for a job
    */
   private getQueueForJob(data: JobData, queueName?: string): Queue {
-    if (queueName === 'appointment-queue') {
-      return this.appointmentQueue;
-    }
-    if (queueName === 'vidhakarma-queue') {
-      return this.vidhakarmaQueue;
-    }
-    if (queueName === 'panchakarma-queue') {
-      return this.panchakarmaQueue;
-    }
-    if (queueName === 'chequp-queue') {
-      return this.chequpQueue;
-    }
-    if (queueName === 'service-queue') {
-      return this.serviceQueue;
+    // Explicit queue name mapping
+    if (queueName === 'appointment-queue') return this.appointmentQueue;
+    if (queueName === 'service-queue') return this.serviceQueue;
+    if (queueName === 'email-queue') return this.emailQueue;
+    if (queueName === 'notification-queue') return this.notificationQueue;
+    if (queueName === 'vidhakarma-queue') return this.vidhakarmaQueue;
+    if (queueName === 'panchakarma-queue') return this.panchakarmaQueue;
+    if (queueName === 'chequp-queue') return this.chequpQueue;
+    
+    // Healthcare job type routing
+    if (data.type) {
+      const jobType = data.type as JobType;
+      
+      // Appointment-related jobs
+      if (jobType === JobType.APPOINTMENT_REMINDER || 
+          jobType === JobType.APPOINTMENT_FOLLOWUP ||
+          jobType.toString().includes('appointment')) {
+        return this.appointmentQueue;
+      }
+      
+      // Notification jobs
+      if (jobType === JobType.NOTIFY ||
+          jobType === JobType.URGENT_ALERT ||
+          jobType === JobType.LAB_RESULT_NOTIFICATION ||
+          jobType === JobType.PRESCRIPTION_REMINDER) {
+        return this.notificationQueue;
+      }
+      
+      // Email-specific jobs would go to email queue if implemented
+      // For now, route to notification queue
+      
+      // Data processing jobs
+      if (jobType === JobType.DATA_EXPORT ||
+          jobType === JobType.AUDIT_REPORT ||
+          jobType === JobType.CONSENT_VERIFICATION) {
+        return this.serviceQueue;
+      }
     }
     
-    // If resourceType is specified, use that to determine queue
+    // Route based on urgency level for healthcare jobs
+    if (data.urgencyLevel === 'emergency') {
+      return this.notificationQueue; // Emergency alerts need immediate processing
+    }
+    
+    // Resource type routing (legacy support)
     if (data.resourceType) {
       return data.resourceType.includes('appointment') 
         ? this.appointmentQueue 
         : this.serviceQueue;
+    }
+    
+    // Default routing based on data classification
+    if (data.dataClassification === DataClassification.EMERGENCY) {
+      return this.notificationQueue;
     }
     
     // Default to service queue
@@ -378,22 +752,231 @@ export class QueueService implements OnModuleInit {
     }
   }
 
+  // Healthcare-specific helper methods
+
+  /**
+   * Validate healthcare job data
+   */
+  private validateHealthcareJobData(jobData: JobData): void {
+    if (!jobData.id) {
+      throw new Error('Healthcare job ID is required');
+    }
+    if (!jobData.type) {
+      throw new Error('Healthcare job type is required');
+    }
+    if (!jobData.source) {
+      throw new Error('Healthcare job source is required');
+    }
+    
+    // Validate healthcare-specific fields
+    if (jobData.dataClassification === DataClassification.PHI && !jobData.patientId) {
+      throw new Error('Patient ID is required for PHI data');
+    }
+    
+    if (jobData.urgencyLevel === 'emergency' && !jobData.deadline) {
+      throw new Error('Emergency jobs must have a deadline');
+    }
+  }
+
+  /**
+   * Check if job has valid consent tokens
+   */
+  private hasValidConsent(jobData: JobData): boolean {
+    if (!jobData.consentTokens || jobData.consentTokens.length === 0) {
+      return false;
+    }
+    
+    const now = new Date();
+    return jobData.consentTokens.some(token => 
+      token.granted && 
+      (!token.expiresAt || token.expiresAt > now)
+    );
+  }
+
+  /**
+   * Calculate priority based on healthcare context
+   */
+  private calculateHealthcarePriority(jobData: JobData, options: HealthcareJobOptions): JobPriority {
+    // Emergency override takes precedence
+    if (options.emergencyOverride) {
+      return JobPriority.CRITICAL;
+    }
+    
+    // Urgency level mapping
+    switch (jobData.urgencyLevel) {
+      case 'emergency':
+        return JobPriority.CRITICAL;
+      case 'urgent':
+        return JobPriority.URGENT;
+      case 'routine':
+        return JobPriority.NORMAL;
+    }
+    
+    // Data classification priority
+    switch (jobData.dataClassification) {
+      case DataClassification.EMERGENCY:
+        return JobPriority.CRITICAL;
+      case DataClassification.PHI:
+        return JobPriority.HIGH;
+      case DataClassification.CONFIDENTIAL:
+        return JobPriority.NORMAL;
+      default:
+        return JobPriority.NORMAL;
+    }
+  }
+
+  /**
+   * Determine retry attempts based on healthcare context
+   */
+  private getHealthcareAttempts(jobData: JobData, options: HealthcareJobOptions): number {
+    if (options.attempts) {
+      return options.attempts;
+    }
+    
+    // More retries for critical healthcare operations
+    if (jobData.urgencyLevel === 'emergency') {
+      return 5;
+    }
+    
+    if (jobData.dataClassification === DataClassification.PHI) {
+      return 4;
+    }
+    
+    return 3; // Default
+  }
+
+  /**
+   * Start healthcare metrics collection
+   */
+  private startHealthcareMetricsCollection(): void {
+    const intervalMs = this.configService.get('HEALTHCARE_QUEUE_METRICS_INTERVAL', 60000); // 1 minute
+    
+    this.metricsInterval = setInterval(async () => {
+      try {
+        const metrics = await this.getEnhancedQueueMetrics();
+        this.eventEmitter.emit('healthcare.queue.metrics', metrics);
+      } catch (error) {
+        this.logger.error('Error collecting healthcare queue metrics:', error);
+      }
+    }, intervalMs);
+  }
+
+  /**
+   * Get enhanced queue metrics for healthcare monitoring
+   */
+  async getEnhancedQueueMetrics(): Promise<Record<string, QueueStats>> {
+    const queues = [
+      { name: 'appointments', queue: this.appointmentQueue },
+      { name: 'services', queue: this.serviceQueue },
+      { name: 'emails', queue: this.emailQueue },
+      { name: 'notifications', queue: this.notificationQueue },
+      { name: 'vidhakarma', queue: this.vidhakarmaQueue },
+      { name: 'panchakarma', queue: this.panchakarmaQueue },
+      { name: 'chequp', queue: this.chequpQueue }
+    ];
+    
+    const metrics: Record<string, QueueStats> = {};
+    
+    for (const { name, queue } of queues) {
+      try {
+        const [waiting, active, completed, failed, delayed] = await Promise.all([
+          queue.getWaiting(),
+          queue.getActive(), 
+          queue.getCompleted(0, 99),
+          queue.getFailed(0, 99),
+          queue.getDelayed()
+        ]);
+        
+        // Calculate enhanced metrics
+        const oneMinuteAgo = Date.now() - 60000;
+        const recentCompleted = completed.filter(job => 
+          job.finishedOn && job.finishedOn > oneMinuteAgo
+        );
+        
+        const processingTimes = completed.map(job => 
+          job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : 0
+        ).filter(time => time > 0);
+        
+        const waitTimes = completed.map(job => 
+          job.processedOn && job.timestamp ? job.processedOn - job.timestamp : 0
+        ).filter(time => time > 0);
+        
+        const avgProcessingTime = processingTimes.length > 0 
+          ? processingTimes.reduce((sum, time) => sum + time, 0) / processingTimes.length 
+          : 0;
+        
+        const avgWaitTime = waitTimes.length > 0 
+          ? waitTimes.reduce((sum, time) => sum + time, 0) / waitTimes.length 
+          : 0;
+        
+        // Count critical jobs waiting
+        const criticalJobs = waiting.filter(job => {
+          const jobData = job.data as JobData;
+          return jobData.urgencyLevel === 'emergency' || 
+                 jobData.dataClassification === DataClassification.EMERGENCY;
+        });
+        
+        metrics[name] = {
+          waiting: waiting.length,
+          active: active.length,
+          completed: completed.length,
+          failed: failed.length,
+          delayed: delayed.length,
+          paused: 0, // BullMQ doesn't have a direct paused count
+          timestamp: new Date().toISOString(),
+          throughputPerSecond: recentCompleted.length / 60,
+          averageWaitTime: avgWaitTime,
+          averageProcessingTime: avgProcessingTime,
+          errorRate: completed.length > 0 ? (failed.length / (completed.length + failed.length)) * 100 : 0,
+          criticalJobsWaiting: criticalJobs.length
+        };
+        
+      } catch (error) {
+        this.logger.error(`Failed to get metrics for queue ${name}:`, error);
+        metrics[name] = {
+          waiting: 0,
+          active: 0,
+          completed: 0,
+          failed: 0,
+          delayed: 0,
+          paused: 0,
+          timestamp: new Date().toISOString(),
+          throughputPerSecond: 0,
+          averageWaitTime: 0,
+          averageProcessingTime: 0,
+          errorRate: 0,
+          criticalJobsWaiting: 0
+        };
+      }
+    }
+    
+    return metrics;
+  }
+
   /**
    * Clean up resources when the application shuts down
    */
   async onModuleDestroy() {
+    // Clear all intervals
     if (this.jobCleanupInterval) {
       clearInterval(this.jobCleanupInterval);
     }
-    // Gracefully close all queues
-    await Promise.all([
+    if (this.metricsInterval) {
+      clearInterval(this.metricsInterval);
+    }
+    
+    // Gracefully close all queues including the new ones
+    await Promise.allSettled([
       this.serviceQueue.close(),
       this.appointmentQueue.close(),
       this.vidhakarmaQueue.close(),
       this.panchakarmaQueue.close(),
       this.chequpQueue.close(),
+      this.emailQueue.close(),
+      this.notificationQueue.close(),
     ]);
-    this.logger.log('All queues closed');
+    
+    this.logger.log('Enhanced Healthcare Queue Service destroyed - all queues closed');
   }
 
   /**

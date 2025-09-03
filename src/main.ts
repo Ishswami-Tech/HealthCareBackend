@@ -25,7 +25,6 @@ import { Server } from 'socket.io';
 import { createClient } from 'redis';
 import { LoggingInterceptor } from './libs/infrastructure/logging/logging.interceptor';
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 // Store original console methods
 const originalConsole = {

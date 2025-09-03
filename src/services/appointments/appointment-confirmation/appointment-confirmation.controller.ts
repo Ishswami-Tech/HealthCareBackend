@@ -5,7 +5,6 @@ import { RolesGuard } from 'src/libs/core/guards/roles.guard';
 import { ClinicGuard } from 'src/libs/core/guards/clinic.guard';
 import { PermissionGuard } from 'src/libs/core/guards/permission.guard';
 import { UseInterceptors } from '@nestjs/common';
-import { TenantContextInterceptor } from 'src/libs/utils/interceptors/tenant-context.interceptor';
 import { VerifyAppointmentQRDto, CompleteAppointmentDto } from '../appointment.dto';
 import { JwtAuthGuard } from 'src/libs/core/guards/jwt-auth.guard';
 import { Permission } from 'src/libs/infrastructure/permissions';
@@ -13,7 +12,6 @@ import { Permission } from 'src/libs/infrastructure/permissions';
 @ApiTags('Appointment Confirmation')
 @Controller('api/appointments/confirmation')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
-@UseInterceptors(TenantContextInterceptor)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 export class AppointmentConfirmationController {

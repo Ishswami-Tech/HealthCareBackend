@@ -8,7 +8,6 @@ import { CacheModule } from "./libs/infrastructure/cache/cache.module";
 import { WhatsAppModule } from "./libs/communication/messaging/whatsapp/whatsapp.module";
 import { DatabaseModule } from './libs/infrastructure/database/database.module';
 import { ClinicModule } from './services/clinic/clinic.module';
-import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 import { LoggingModule } from './libs/infrastructure/logging/logging.module';
 import { JwtModule } from '@nestjs/jwt';
 import { AppService } from './app.service';
@@ -24,6 +23,7 @@ import { SocketModule } from './libs/communication/socket/socket.module';
 import { AppointmentSocketModule } from './services/appointments/appointment-socket/appointment-socket.module';
 import { SecurityModule } from './libs/security/security.module';
 import { RateLimitInterceptor } from './libs/security/rate-limit/rate-limit.interceptor';
+import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
   imports: [
@@ -114,7 +114,7 @@ import { RateLimitInterceptor } from './libs/security/rate-limit/rate-limit.inte
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    // Apply the clinic context middleware to all routes
+    // Apply clinic context middleware to all routes for clinic isolation
     consumer
       .apply(ClinicContextMiddleware)
       .forRoutes('*');
