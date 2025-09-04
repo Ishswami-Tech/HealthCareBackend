@@ -595,6 +595,22 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(() => this.client.zcard(key));
   }
 
+  async zrevrange(key: string, start: number, stop: number): Promise<string[]> {
+    return this.retryOperation(() => this.client.zrevrange(key, start, stop));
+  }
+
+  async zrangebyscore(key: string, min: string | number, max: string | number): Promise<string[]> {
+    return this.retryOperation(() => this.client.zrangebyscore(key, min, max));
+  }
+
+  async multi(commands: any[]): Promise<any> {
+    return this.retryOperation(async () => {
+      const pipeline = this.client.pipeline();
+      commands.forEach(cmd => pipeline[cmd.command](...cmd.args));
+      return pipeline.exec();
+    });
+  }
+
   // Hash operations for metrics
   async hincrby(key: string, field: string, increment: number): Promise<number> {
     return this.retryOperation(() => this.client.hincrby(key, field, increment));

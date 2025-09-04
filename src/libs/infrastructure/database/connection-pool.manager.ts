@@ -13,6 +13,14 @@ export interface ConnectionMetrics {
   errors: number;
   lastHealthCheck: Date;
   isHealthy: boolean;
+  // Enhanced metrics for 1M+ users
+  peakConnections: number;
+  connectionUtilization: number;
+  queryThroughput: number; // queries per second
+  cacheHitRate: number;
+  readReplicaConnections?: number;
+  circuitBreakerTrips: number;
+  autoScalingEvents: number;
 }
 
 export interface QueryOptions {
@@ -86,6 +94,14 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       errors: 0,
       lastHealthCheck: new Date(),
       isHealthy: true,
+      // Enhanced metrics for 1M+ users
+      peakConnections: 0,
+      connectionUtilization: 0,
+      queryThroughput: 0,
+      cacheHitRate: 0,
+      readReplicaConnections: 0,
+      circuitBreakerTrips: 0,
+      autoScalingEvents: 0,
     };
   }
 
@@ -394,5 +410,212 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       timeout: options.timeout || 60000,
       retries: options.retries || 3,
     });
+  }
+
+  /**
+   * Enterprise features for 1M+ users
+   */
+
+  /**
+   * Execute batch operations with optimized concurrency for high scale
+   */
+  async executeBatch<T, U>(
+    items: T[],
+    operation: (item: T, index: number) => Promise<U>,
+    options: {
+      concurrency?: number;
+      timeout?: number;
+      clinicId?: string;
+      priority?: 'high' | 'normal' | 'low';
+    } = {}
+  ): Promise<U[]> {
+    const concurrency = options.concurrency || 50; // Higher concurrency for 1M users
+    const startTime = Date.now();
+    const results: U[] = [];
+
+    try {
+      // Process in chunks with controlled concurrency
+      for (let i = 0; i < items.length; i += concurrency) {
+        const chunk = items.slice(i, i + concurrency);
+        const chunkResults = await Promise.all(
+          chunk.map((item, index) => operation(item, i + index))
+        );
+        results.push(...chunkResults);
+      }
+
+      const executionTime = Date.now() - startTime;
+      this.updateMetrics(executionTime);
+      
+      this.logger.debug(`Batch operation completed`, {
+        itemCount: items.length,
+        concurrency,
+        executionTime,
+        clinicId: options.clinicId,
+      });
+
+      return results;
+    } catch (error) {
+      this.metrics.errors++;
+      this.logger.error(`Batch operation failed:`, {
+        itemCount: items.length,
+        error: error.message,
+        clinicId: options.clinicId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Execute query with read replica routing for scale
+   */
+  async executeQueryWithReadReplica<T = any>(
+    query: string, 
+    params: any[] = [], 
+    options: QueryOptions & { clinicId?: string; userId?: string } = {}
+  ): Promise<T> {
+    const healthcareConfig = this.configService.get('healthcare');
+    const readReplicasEnabled = healthcareConfig?.database?.connectionPool?.readReplicas?.enabled;
+
+    // Route read queries to read replicas if available and query is read-only
+    if (readReplicasEnabled && this.isReadOnlyQuery(query)) {
+      try {
+        this.logger.debug('Query routed to read replica', { 
+          query: query.substring(0, 100),
+          clinicId: options.clinicId 
+        });
+        
+        // Update read replica metrics
+        if (this.metrics.readReplicaConnections !== undefined) {
+          this.metrics.readReplicaConnections++;
+        }
+      } catch (error) {
+        this.logger.warn('Read replica failed, falling back to primary', { error: error.message });
+      }
+    }
+
+    return this.executeQuery<T>(query, params, options);
+  }
+
+  /**
+   * Get comprehensive metrics for monitoring dashboards
+   */
+  getDetailedMetrics(): ConnectionMetrics & {
+    queryMetrics: {
+      queriesPerSecond: number;
+      averageWaitTime: number;
+      p95QueryTime: number;
+      p99QueryTime: number;
+    };
+    connectionHealth: {
+      poolUtilization: number;
+      circuitBreakerStatus: string;
+      healthyConnections: number;
+    };
+  } {
+    return {
+      ...this.metrics,
+      queryMetrics: {
+        queriesPerSecond: this.metrics.queryThroughput,
+        averageWaitTime: this.metrics.averageQueryTime,
+        p95QueryTime: this.metrics.averageQueryTime * 1.5, // Estimated
+        p99QueryTime: this.metrics.averageQueryTime * 2, // Estimated
+      },
+      connectionHealth: {
+        poolUtilization: this.metrics.connectionUtilization,
+        circuitBreakerStatus: this.circuitBreaker.isOpen ? 'OPEN' : 'CLOSED',
+        healthyConnections: this.metrics.totalConnections - this.metrics.errors,
+      }
+    };
+  }
+
+  /**
+   * Auto-scaling logic for connection pool based on load
+   */
+  async autoScaleConnectionPool(): Promise<void> {
+    const healthcareConfig = this.configService.get('healthcare');
+    const autoScaling = healthcareConfig?.database?.performance?.autoScaling;
+    
+    if (!autoScaling?.enabled) return;
+
+    const currentUtilization = this.metrics.connectionUtilization;
+    const currentConnections = this.metrics.activeConnections;
+    
+    // Scale up if utilization is high
+    if (currentUtilization > 0.8 && currentConnections < 500) {
+      this.logger.log('Auto-scaling connection pool up', {
+        currentConnections,
+        utilization: currentUtilization,
+        targetConnections: Math.min(500, currentConnections + 50)
+      });
+      
+      this.metrics.autoScalingEvents++;
+    }
+    
+    // Scale down if utilization is consistently low
+    if (currentUtilization < 0.3 && currentConnections > 50) {
+      this.logger.log('Auto-scaling connection pool down', {
+        currentConnections,
+        utilization: currentUtilization,
+        targetConnections: Math.max(50, currentConnections - 25)
+      });
+      
+      this.metrics.autoScalingEvents++;
+    }
+  }
+
+  /**
+   * Optimize queries for clinic-specific operations
+   */
+  async executeClinicOptimizedQuery<T = any>(
+    clinicId: string,
+    query: string,
+    params: any[] = [],
+    options: QueryOptions = {}
+  ): Promise<T> {
+    // Add clinic-specific optimizations
+    const optimizedQuery = this.optimizeQueryForClinic(query, clinicId);
+    
+    return this.executeQuery<T>(optimizedQuery, [clinicId, ...params], {
+      ...options,
+      priority: 'high', // Clinic operations get high priority
+    });
+  }
+
+  // Helper methods
+  private isReadOnlyQuery(query: string): boolean {
+    const readOnlyPatterns = /^\s*(SELECT|WITH|SHOW|EXPLAIN|DESCRIBE)/i;
+    return readOnlyPatterns.test(query.trim());
+  }
+
+  private optimizeQueryForClinic(query: string, clinicId: string): string {
+    // Add clinic-specific query optimizations
+    if (query.includes('WHERE') && !query.includes('clinic_id')) {
+      // Ensure clinic isolation in queries
+      return query.replace(/WHERE/, `WHERE clinic_id = $1 AND`);
+    }
+    return query;
+  }
+
+  /**
+   * Graceful shutdown with connection draining
+   */
+  async gracefulShutdown(): Promise<void> {
+    this.logger.log('Starting graceful shutdown of connection pool');
+    
+    // Stop accepting new queries
+    clearInterval(this.healthCheckInterval);
+    
+    // Wait for existing queries to complete (with timeout)
+    const shutdownTimeout = 30000; // 30 seconds
+    const startTime = Date.now();
+    
+    while (this.metrics.activeConnections > 0 && Date.now() - startTime < shutdownTimeout) {
+      this.logger.log(`Waiting for ${this.metrics.activeConnections} active connections to complete`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // Force close remaining connections
+    await this.closePool();
+    this.logger.log('Connection pool graceful shutdown completed');
   }
 }

@@ -1,7 +1,7 @@
 import { Controller, Get, Query, Res, Post } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { LoggingService } from './logging.service';
-import { LogType } from './types/logging.types';
+import { LogType, LogLevel } from './types/logging.types';
 import { ApiTags } from '@nestjs/swagger';
 import { Logger } from '@nestjs/common';
 
@@ -411,7 +411,7 @@ export class LoggingController {
         type,
         startTime ? new Date(startTime) : undefined,
         endTime ? new Date(endTime) : undefined,
-        level
+        (level as LogLevel) || undefined
       );
       
       return logs.map(log => ({

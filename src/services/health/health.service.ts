@@ -295,12 +295,13 @@ export class HealthService {
     const startTime = performance.now();
     try {
       // Check if logger service is running by attempting to get logs
-      const logs = await this.loggingService.getLogs();
+      // This will test the logging service with proper fallback handling
+      const logs = await this.loggingService.getLogs(undefined, undefined, undefined, undefined);
       const isHealthy = Array.isArray(logs);
       
       return {
         status: isHealthy ? 'healthy' : 'unhealthy',
-        details: isHealthy ? 'Logging service is active' : 'Logging service is not responding',
+        details: isHealthy ? `Logging service is active with ${logs.length} logs` : 'Logging service is not responding',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
