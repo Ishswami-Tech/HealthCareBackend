@@ -20,3 +20,4 @@ export const RateLimitTokenRefresh = () => RateLimit({ type: 'auth/refresh' });
 export const RateLimitSocial = () => RateLimit({ type: 'auth/social' });
 export const RateLimitMagicLink = () => RateLimit({ type: 'auth/magic-link' });
 export const RateLimitAPI = () => RateLimit({ type: 'api' });
+
