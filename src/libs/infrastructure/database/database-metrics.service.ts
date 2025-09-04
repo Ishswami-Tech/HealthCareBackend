@@ -682,3 +682,4 @@ export interface ClinicSummary {
   averageQueryTime: number;
   lastUpdated: Date;
 }
+

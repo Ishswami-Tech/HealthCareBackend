@@ -24,16 +24,88 @@ export const healthcareConfig = registerAs('healthcare', () => ({
     maxLocationsPerClinic: parseInt(process.env.MAX_LOCATIONS_PER_CLINIC || '50', 10),
   },
   
-  // Database configuration
+  // Enterprise Database configuration for 1M+ users
   database: {
     url: process.env.DATABASE_URL || 'postgresql://localhost:5432/healthcare',
     schema: 'healthcare',
     ssl: process.env.DATABASE_SSL === 'true' || false,
     connectionPool: {
-      min: parseInt(process.env.DB_POOL_MIN || '10', 10),
-      max: parseInt(process.env.DB_POOL_MAX || '100', 10),
-      acquireTimeout: parseInt(process.env.DB_POOL_ACQUIRE_TIMEOUT || '30000', 10),
-      idleTimeout: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '300000', 10),
+      // Enhanced connection pooling for 1M+ users
+      primary: {
+        min: parseInt(process.env.DB_POOL_MIN || '50', 10),      // Increased for scale
+        max: parseInt(process.env.DB_POOL_MAX || '500', 10),     // Increased for 1M users
+        acquireTimeout: parseInt(process.env.DB_POOL_ACQUIRE_TIMEOUT || '60000', 10),
+        idleTimeout: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '300000', 10),
+        reapInterval: parseInt(process.env.DB_POOL_REAP_INTERVAL || '1000', 10),
+        createTimeout: parseInt(process.env.DB_POOL_CREATE_TIMEOUT || '30000', 10),
+        destroyTimeout: parseInt(process.env.DB_POOL_DESTROY_TIMEOUT || '5000', 10),
+        createRetryInterval: parseInt(process.env.DB_POOL_CREATE_RETRY_INTERVAL || '200', 10),
+      },
+      // Read replica support for scaling reads
+      readReplicas: {
+        enabled: process.env.DB_READ_REPLICAS_ENABLED === 'true' || false,
+        min: parseInt(process.env.DB_READ_POOL_MIN || '25', 10),
+        max: parseInt(process.env.DB_READ_POOL_MAX || '200', 10),
+        loadBalancing: process.env.DB_LOAD_BALANCING || 'round-robin',
+        failover: process.env.DB_FAILOVER === 'true' || true,
+        urls: process.env.READ_REPLICA_URLS ? process.env.READ_REPLICA_URLS.split(',') : [],
+      },
+      // Connection validation for reliability
+      validation: {
+        enabled: true,
+        query: 'SELECT 1',
+        interval: parseInt(process.env.DB_VALIDATION_INTERVAL || '30000', 10),
+        timeout: parseInt(process.env.DB_VALIDATION_TIMEOUT || '5000', 10),
+      },
+    },
+    // Advanced query optimization for 1M users
+    queryOptimization: {
+      enabled: true,
+      batchSize: parseInt(process.env.DB_BATCH_SIZE || '2000', 10), // Larger batches for scale
+      parallelQueries: parseInt(process.env.DB_PARALLEL_QUERIES || '20', 10), // More parallel processing
+      queryCache: {
+        enabled: process.env.DB_QUERY_CACHE === 'true' || true,
+        ttl: parseInt(process.env.DB_QUERY_CACHE_TTL || '300', 10),
+        maxSize: parseInt(process.env.DB_QUERY_CACHE_MAX_SIZE || '50000', 10), // Larger cache
+      },
+      resultCache: {
+        enabled: process.env.DB_RESULT_CACHE === 'true' || true,
+        ttl: parseInt(process.env.DB_RESULT_CACHE_TTL || '600', 10),
+        maxSize: parseInt(process.env.DB_RESULT_CACHE_MAX_SIZE || '100000', 10), // Larger cache
+      },
+      // Circuit breaker for resilience
+      circuitBreaker: {
+        enabled: process.env.DB_CIRCUIT_BREAKER === 'true' || true,
+        failureThreshold: parseInt(process.env.DB_CIRCUIT_BREAKER_THRESHOLD || '5', 10),
+        timeout: parseInt(process.env.DB_CIRCUIT_BREAKER_TIMEOUT || '30000', 10),
+        resetTimeout: parseInt(process.env.DB_CIRCUIT_BREAKER_RESET || '60000', 10),
+      },
+    },
+    // Performance tuning for massive scale
+    performance: {
+      // Memory optimization for large scale
+      memory: {
+        sharedBuffers: process.env.DB_SHARED_BUFFERS || '512MB',
+        effectiveCacheSize: process.env.DB_EFFECTIVE_CACHE_SIZE || '4GB',
+        workMem: process.env.DB_WORK_MEM || '8MB',
+        maintenanceWorkMem: process.env.DB_MAINTENANCE_WORK_MEM || '256MB',
+        maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS || '500', 10),
+      },
+      // WAL configuration for high throughput
+      wal: {
+        enabled: process.env.DB_WAL_ENABLED === 'true' || true,
+        level: process.env.DB_WAL_LEVEL || 'replica',
+        keepSegments: parseInt(process.env.DB_WAL_KEEP_SEGMENTS || '128', 10),
+        archiveTimeout: parseInt(process.env.DB_WAL_ARCHIVE_TIMEOUT || '60', 10),
+      },
+      // Auto-scaling configuration
+      autoScaling: {
+        enabled: process.env.DB_AUTO_SCALING_ENABLED === 'true' || true,
+        cpuThreshold: parseInt(process.env.DB_AUTO_SCALING_CPU_THRESHOLD || '75', 10),
+        connectionThreshold: parseInt(process.env.DB_AUTO_SCALING_CONNECTION_THRESHOLD || '400', 10),
+        scaleUpCooldown: parseInt(process.env.DB_SCALE_UP_COOLDOWN || '300', 10),
+        scaleDownCooldown: parseInt(process.env.DB_SCALE_DOWN_COOLDOWN || '1800', 10),
+      },
     },
   },
   
