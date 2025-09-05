@@ -347,8 +347,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     await this.recordHealthcareMetrics();
 
     // Get query optimizer stats
-    const optimizerStats = this.queryOptimizer.getOptimizerStats();
-    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheStats.hitRate;
+    const optimizerStats = this.queryOptimizer.getQueryMetrics();
+    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheHitRate || 0;
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -682,4 +682,5 @@ export interface ClinicSummary {
   averageQueryTime: number;
   lastUpdated: Date;
 }
+
 

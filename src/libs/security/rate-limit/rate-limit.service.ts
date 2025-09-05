@@ -1,19 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { RateLimitConfig, RateLimitRule } from './rate-limit.config';
+import { RedisService } from '../../infrastructure/cache/redis/redis.service';
+import { LoggingService, LogType, LogLevel } from '../../infrastructure/logging/logging.service';
 
-export interface RateLimitCoordinationEvent {
-  identifier: string;
-  type: string;
-  service: string;
-  action: 'limit_reached' | 'limit_cleared' | 'sync_request';
-  timestamp: Date;
-  metadata?: {
-    requestCount?: number;
-    limit?: number;
-    windowMs?: number;
-  };
+export interface RateLimitOptions {
+  windowMs: number;
+  max: number;
+  keyGenerator?: (req: any) => string;
+  skipIf?: (req: any) => boolean;
+  message?: string;
+}
+
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetTime: Date;
+  total: number;
 }
 
 @Injectable()
@@ -21,150 +22,110 @@ export class RateLimitService {
   private readonly logger = new Logger(RateLimitService.name);
 
   constructor(
-    public readonly config: RateLimitConfig,
-    private readonly eventEmitter?: EventEmitter2
-  ) {
-    this.setupRateLimitCoordination();
-  }
-
-  private setupRateLimitCoordination(): void {
-    if (this.eventEmitter) {
-      this.eventEmitter.on('rate_limit.coordination', (event: RateLimitCoordinationEvent) => {
-        this.logger.log(`Rate limit coordination event: ${event.action} for ${event.identifier}`);
-      });
-    }
-  }
+    private readonly redis: RedisService,
+    private readonly logging: LoggingService,
+  ) {}
 
   async checkRateLimit(
-    identifier: string,
-    type: string = 'api',
-  ): Promise<{ limited: boolean; remaining: number; resetTime?: number }> {
-    // For now, return a simple check - in production this would integrate with Redis
-    const limits = this.config.getLimits(type);
-    const now = Date.now();
-    
-    // This is a simplified version - in production you'd use Redis for actual rate limiting
-    // For development/testing purposes, we'll simulate rate limiting
-    // Removed early return to test rate limiting in development
-
-    // Simulate rate limiting logic
-    const key = `rate_limit:${type}:${identifier}`;
-    const windowMs = limits.windowMs;
-    const windowStart = now - windowMs;
-
+    key: string,
+    options: RateLimitOptions
+  ): Promise<RateLimitResult> {
     try {
-      // In production, this would use Redis operations
-      // For now, we'll return a mock response
-      const mockRequestCount = Math.floor(Math.random() * 10); // Simulate request count
-      const limit = limits.maxRequests;
-      const remaining = Math.max(0, limit - mockRequestCount);
-      const limited = mockRequestCount >= limit;
+      const now = Date.now();
+      const window = Math.floor(now / options.windowMs);
+      const redisKey = `rate_limit:${key}:${window}`;
 
-      if (limited && this.eventEmitter) {
-        this.eventEmitter.emit('rate_limit.coordination', {
-          identifier,
-          type,
-          service: 'healthcare-backend',
-          action: 'limit_reached',
-          timestamp: new Date(),
-          metadata: {
-            requestCount: mockRequestCount,
-            limit,
-            windowMs
-          }
-        });
+      // Get current count
+      const current = await this.redis.get<number>(redisKey) || 0;
+      
+      if (current >= options.max) {
+        // Rate limit exceeded
+        const resetTime = new Date((window + 1) * options.windowMs);
+        
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Rate limit exceeded',
+          'RateLimitService',
+          { key, current, max: options.max, window }
+        );
+
+        return {
+          allowed: false,
+          remaining: 0,
+          resetTime,
+          total: options.max,
+        };
       }
 
-      return { 
-        limited, 
+      // Increment counter
+      const newCount = await this.redis.incr(redisKey);
+      
+      // Set expiration on first increment
+      if (newCount === 1) {
+        await this.redis.expire(redisKey, Math.ceil(options.windowMs / 1000));
+      }
+
+      const resetTime = new Date((window + 1) * options.windowMs);
+      const remaining = Math.max(0, options.max - newCount);
+
+      return {
+        allowed: true,
         remaining,
-        resetTime: now + windowMs
+        resetTime,
+        total: options.max,
       };
     } catch (error) {
-      this.logger.error(`Rate limit check failed for ${identifier}:`, error);
-      return { limited: false, remaining: Number.MAX_SAFE_INTEGER };
-    }
-  }
-
-  async trackMetrics(type: string, wasLimited: boolean): Promise<void> {
-    try {
-      // In production, this would send metrics to your monitoring system
-      this.logger.log(`Rate limit metrics - Type: ${type}, Limited: ${wasLimited}`);
-    } catch (error) {
-      this.logger.error('Failed to track rate limit metrics:', error);
-    }
-  }
-
-  async getRateLimitInfo(identifier: string, type: string = 'api'): Promise<{
-    current: number;
-    limit: number;
-    remaining: number;
-    resetTime: number;
-    windowMs: number;
-  }> {
-    const limits = this.config.getLimits(type);
-    const now = Date.now();
-    const windowMs = limits.windowMs;
-    const windowStart = now - windowMs;
-
-    // Mock implementation - in production this would query Redis
-    const mockCurrent = Math.floor(Math.random() * limits.maxRequests);
-    const remaining = Math.max(0, limits.maxRequests - mockCurrent);
-    const resetTime = now + windowMs;
-
-    return {
-      current: mockCurrent,
-      limit: limits.maxRequests,
-      remaining,
-      resetTime,
-      windowMs
-    };
-  }
-
-  async clearRateLimit(identifier: string, type: string = 'api'): Promise<boolean> {
-    try {
-      // In production, this would clear the rate limit in Redis
-      this.logger.log(`Cleared rate limit for ${identifier} (${type})`);
+      this.logger.error(`Rate limit check failed for key: ${key}`, error.stack);
       
-      if (this.eventEmitter) {
-        this.eventEmitter.emit('rate_limit.coordination', {
-          identifier,
-          type,
-          service: 'healthcare-backend',
-          action: 'limit_cleared',
-          timestamp: new Date()
-        });
-      }
-      
-      return true;
-    } catch (error) {
-      this.logger.error(`Failed to clear rate limit for ${identifier}:`, error);
-      return false;
+      // Fail open - allow request if Redis is down
+      return {
+        allowed: true,
+        remaining: options.max - 1,
+        resetTime: new Date(Date.now() + options.windowMs),
+        total: options.max,
+      };
     }
   }
 
-  async getProgressiveRateLimit(
-    identifier: string, 
-    type: string, 
-    consecutiveFailures: number
-  ): Promise<RateLimitRule> {
-    return this.config.getProgressiveLimit(type, consecutiveFailures);
-  }
-
-  async isBlocked(identifier: string, type: string = 'api'): Promise<boolean> {
+  async resetRateLimit(key: string): Promise<void> {
     try {
-      // In production, this would check Redis for blocked status
-      const limits = this.config.getLimits(type);
-      if (!limits.blockDuration) {
-        return false;
+      const pattern = `rate_limit:${key}:*`;
+      const keys = await this.redis.keys(pattern);
+      
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+        
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.INFO,
+          'Rate limit reset',
+          'RateLimitService',
+          { key, keysCleared: keys.length }
+        );
       }
-
-      // Mock implementation - in production you'd check Redis
-      return false;
     } catch (error) {
-      this.logger.error(`Failed to check blocked status for ${identifier}:`, error);
-      return false;
+      this.logger.error(`Failed to reset rate limit for key: ${key}`, error.stack);
     }
+  }
+
+  generateDefaultKey(req: any): string {
+    return req.ip || req.connection?.remoteAddress || 'unknown';
+  }
+
+  generateUserKey(req: any): string {
+    const userId = req.user?.id || req.user?.userId;
+    if (userId) {
+      return `user:${userId}`;
+    }
+    return this.generateDefaultKey(req);
+  }
+
+  generateAuthKey(req: any): string {
+    const identifier = req.body?.email || req.body?.phone || req.body?.username;
+    if (identifier) {
+      return `auth:${identifier}`;
+    }
+    return this.generateDefaultKey(req);
   }
 }
-

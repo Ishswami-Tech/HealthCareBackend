@@ -1,4 +1,4 @@
-import { IsEmail, IsString, IsNotEmpty, IsBoolean, IsOptional, MinLength, IsUUID, IsEnum, IsObject, ValidateNested, IsArray } from 'class-validator';
+import { IsEmail, IsString, IsNotEmpty, IsBoolean, IsOptional, MinLength, IsUUID, IsEnum, IsObject, ValidateNested, IsArray, IsDateString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
@@ -137,6 +137,84 @@ export class RegisterDto {
   @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
   @IsOptional()
   studioId?: string;
+
+  @ApiProperty({
+    description: 'User role',
+    example: 'PATIENT',
+    enum: ['PATIENT', 'DOCTOR', 'ADMIN', 'RECEPTIONIST', 'NURSE'],
+    required: false
+  })
+  @IsEnum(['PATIENT', 'DOCTOR', 'ADMIN', 'RECEPTIONIST', 'NURSE'], { message: 'Role must be a valid role' })
+  @IsOptional()
+  role?: string;
+
+  @ApiProperty({
+    description: 'User gender',
+    example: 'MALE',
+    enum: ['MALE', 'FEMALE', 'OTHER'],
+    required: false
+  })
+  @IsEnum(['MALE', 'FEMALE', 'OTHER'], { message: 'Gender must be a valid gender' })
+  @IsOptional()
+  gender?: string;
+
+  @ApiProperty({
+    description: 'User date of birth',
+    example: '1990-01-01',
+    required: false
+  })
+  @IsDateString({}, { message: 'Date of birth must be a valid date' })
+  @IsOptional()
+  dateOfBirth?: string;
+
+  @ApiProperty({
+    description: 'User address',
+    example: '123 Main St, City, State 12345',
+    required: false
+  })
+  @IsString({ message: 'Address must be a string' })
+  @IsOptional()
+  address?: string;
+
+  @ApiProperty({
+    description: 'Emergency contact information',
+    example: { name: 'John Doe', phone: '+1234567890', relationship: 'Father' },
+    required: false
+  })
+  @IsObject({ message: 'Emergency contact must be an object' })
+  @IsOptional()
+  emergencyContact?: {
+    name: string;
+    phone: string;
+    relationship: string;
+  };
+
+  @ApiProperty({
+    description: 'Google ID for social authentication',
+    example: 'google_123456789',
+    required: false
+  })
+  @IsString({ message: 'Google ID must be a string' })
+  @IsOptional()
+  googleId?: string;
+
+  @ApiProperty({
+    description: 'Facebook ID for social authentication',
+    example: 'facebook_123456789',
+    required: false
+  })
+  @IsString({ message: 'Facebook ID must be a string' })
+  @IsOptional()
+  facebookId?: string;
+
+  @ApiProperty({
+    description: 'Apple ID for social authentication',
+    example: 'apple_123456789',
+    required: false
+  })
+  @IsString({ message: 'Apple ID must be a string' })
+  @IsOptional()
+  appleId?: string;
 }
 
 /**
@@ -279,6 +357,15 @@ export class ForgotPasswordRequestDto {
   @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }) => value?.toLowerCase().trim())
   email!: string;
+
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
+    required: false
+  })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsOptional()
+  clinicId?: string;
 }
 
 /**
@@ -292,6 +379,15 @@ export class RequestOtpDto {
   @IsString({ message: 'Identifier must be a string' })
   @IsNotEmpty({ message: 'Identifier is required' })
   identifier!: string;
+
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
+    required: false
+  })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsOptional()
+  clinicId?: string;
 }
 
 /**
@@ -315,6 +411,15 @@ export class VerifyOtpRequestDto {
   @IsString({ message: 'OTP must be a string' })
   @IsNotEmpty({ message: 'OTP is required' })
   otp!: string;
+
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
+    required: false
+  })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsOptional()
+  clinicId?: string;
 }
 
 /**
@@ -345,4 +450,36 @@ export class InvalidateOtpDto {
   @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }) => value?.toLowerCase().trim())
   email!: string;
+}
+
+// Type aliases for backward compatibility
+export class LoginRequestDto extends LoginDto {}
+
+export class AuthResponse {
+  @ApiProperty({ description: 'Whether the authentication was successful' })
+  success: boolean;
+
+  @ApiProperty({ description: 'Response message' })
+  message: string;
+
+  @ApiProperty({ description: 'Authenticated user data', required: false })
+  user?: any;
+
+  @ApiProperty({ 
+    description: 'Authentication tokens',
+    required: false
+  })
+  tokens?: {
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+    sessionId: string;
+    tokenType: string;
+  };
+
+  @ApiProperty({ description: 'Session ID', required: false })
+  sessionId?: string;
+
+  @ApiProperty({ description: 'Error message if any', required: false })
+  error?: string;
 }

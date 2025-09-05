@@ -1,40 +1,113 @@
 import { Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { BaseDatabaseClient } from './base-database.client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectionPoolManager } from '../connection-pool.manager';
 import { DatabaseMetricsService } from '../database-metrics.service';
-import { RepositoryResult, HealthcareError } from '../types/repository-result';
+import { ClinicIsolationService } from '../clinic-isolation.service';
+import { RepositoryResult, HealthcareError, ClinicError } from '../types/repository-result';
 import {
   IHealthcareDatabaseClient,
+  DatabaseHealthStatus,
+  DatabaseClientMetrics,
+  HealthcareDatabaseConfig,
   AuditInfo,
   CriticalPriority,
   HIPAAComplianceMetrics,
-  HealthcareDatabaseConfig,
+  ClinicDatabaseMetrics,
 } from '../interfaces/database-client.interface';
 
 /**
- * Healthcare-Specific Database Client
+ * Healthcare Database Client Implementation
  * 
- * Provides HIPAA-compliant database operations with:
- * - Audit trail logging
- * - PHI data protection
- * - Healthcare-specific error handling
- * - Critical operation prioritization
- * - HIPAA compliance metrics
+ * Provides core database operations for healthcare application with:
+ * - Connection pooling for 10M+ users
+ * - Metrics tracking and monitoring
+ * - Error handling with RepositoryResult
+ * - Health monitoring and circuit breakers
+ * - Transaction support with audit trails
+ * - Multi-tenant clinic isolation
+ * - HIPAA compliance features
  */
-export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHealthcareDatabaseClient {
+export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   protected readonly logger = new Logger(HealthcareDatabaseClient.name);
   private auditLog: AuditInfo[] = [];
   private readonly maxAuditLogSize = 10000;
-
+  
   constructor(
-    prismaService: PrismaService,
-    connectionPoolManager: ConnectionPoolManager,
-    metricsService: DatabaseMetricsService,
-    protected readonly healthcareConfig: HealthcareDatabaseConfig,
-  ) {
-    super(prismaService, connectionPoolManager, metricsService, healthcareConfig);
+    protected readonly prismaService: PrismaService,
+    protected readonly connectionPoolManager: ConnectionPoolManager,
+    protected readonly metricsService: DatabaseMetricsService,
+    protected readonly clinicIsolationService: ClinicIsolationService,
+    protected readonly config: HealthcareDatabaseConfig,
+  ) {}
+
+  /**
+   * Get the underlying Prisma client
+   */
+  getPrismaClient(): PrismaClient {
+    return this.prismaService;
+  }
+
+  /**
+   * Execute a raw query with metrics and error handling
+   */
+  async executeRawQuery<T = any>(query: string, params: any[] = []): Promise<T> {
+    const startTime = Date.now();
+    
+    try {
+      const result = await this.connectionPoolManager.executeQuery<T>(
+        query,
+        params,
+        { timeout: this.config.queryTimeout }
+      );
+      
+      const executionTime = Date.now() - startTime;
+      this.metricsService.recordQueryExecution('RAW_QUERY', executionTime, true);
+      
+      return result;
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      this.metricsService.recordQueryExecution('RAW_QUERY', executionTime, false);
+      
+      this.logger.error(`Raw query failed: ${error.message}`, {
+        query: query.substring(0, 100),
+        executionTime,
+        error: error.message
+      });
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Execute operation within a transaction
+   */
+  async executeInTransaction<T>(
+    operation: (client: PrismaClient) => Promise<T>
+  ): Promise<T> {
+    const startTime = Date.now();
+    
+    try {
+      const result = await this.prismaService.$transaction(operation, {
+        maxWait: this.config.connectionTimeout || 10000,
+        timeout: this.config.queryTimeout || 60000,
+      });
+      
+      const executionTime = Date.now() - startTime;
+      this.metricsService.recordQueryExecution('TRANSACTION', executionTime, true);
+      
+      return result;
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      this.metricsService.recordQueryExecution('TRANSACTION', executionTime, false);
+      
+      this.logger.error(`Transaction failed: ${error.message}`, {
+        executionTime,
+        error: error.message
+      });
+      
+      throw error;
+    }
   }
 
   /**
@@ -46,7 +119,6 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
     const startTime = Date.now();
     
     try {
-      // Use optimized read connection
       const result = await this.connectionPoolManager.executeHealthcareRead<T>(
         '', // Query will be executed through Prisma client
         [],
@@ -60,7 +132,7 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
       this.metricsService.recordQueryExecution('HEALTHCARE_READ', executionTime, true);
       
       // Log for HIPAA compliance if PHI data is involved
-      if (this.healthcareConfig.enablePHIProtection) {
+      if (this.config.enablePHIProtection) {
         this.logDataAccess('READ', 'HEALTHCARE_DATA', executionTime);
       }
       
@@ -105,7 +177,7 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
         const operationResult = await operation(client);
         
         // Create audit trail entry
-        if (this.healthcareConfig.enableAuditLogging) {
+        if (this.config.enableAuditLogging) {
           await this.createAuditTrail(auditInfo, 'SUCCESS');
         }
         
@@ -124,7 +196,7 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
       this.metricsService.recordQueryExecution('HEALTHCARE_WRITE', executionTime, false, auditInfo.clinicId, auditInfo.userId);
       
       // Create audit trail for failed operation
-      if (this.healthcareConfig.enableAuditLogging) {
+      if (this.config.enableAuditLogging) {
         try {
           await this.createAuditTrail(auditInfo, 'FAILURE', error.message);
         } catch (auditError) {
@@ -202,6 +274,103 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
   }
 
   /**
+   * Execute operation with clinic isolation context (multi-tenant)
+   */
+  async executeWithClinicContext<T>(
+    clinicId: string,
+    operation: (client: PrismaClient) => Promise<T>
+  ): Promise<T> {
+    const startTime = Date.now();
+    
+    try {
+      const result = await this.clinicIsolationService.executeWithClinicContext(
+        clinicId,
+        async () => {
+          return this.executeHealthcareRead(operation);
+        }
+      );
+      
+      if (!result.success) {
+        throw new ClinicError(
+          `Clinic operation failed: ${result.error}`,
+          'CLINIC_CONTEXT_ERROR',
+          clinicId,
+          { originalError: result.error }
+        );
+      }
+      
+      const executionTime = Date.now() - startTime;
+      this.logger.debug(`Clinic operation completed for ${clinicId} in ${executionTime}ms`);
+      
+      return result.data!;
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      
+      this.logger.error(`Clinic operation failed for ${clinicId}:`, {
+        clinicId,
+        executionTime,
+        error: error.message
+      });
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Get connection health status
+   */
+  async getHealthStatus(): Promise<DatabaseHealthStatus> {
+    try {
+      const connectionMetrics = this.connectionPoolManager.getMetrics();
+      const start = Date.now();
+      
+      // Test database connectivity
+      await this.prismaService.$queryRaw`SELECT 1`;
+      const responseTime = Date.now() - start;
+      
+      return {
+        isHealthy: connectionMetrics.isHealthy && responseTime < 5000,
+        connectionCount: connectionMetrics.totalConnections,
+        activeQueries: connectionMetrics.activeConnections,
+        avgResponseTime: responseTime,
+        lastHealthCheck: new Date(),
+        errors: connectionMetrics.isHealthy ? [] : ['Connection pool unhealthy']
+      };
+    } catch (error) {
+      return {
+        isHealthy: false,
+        connectionCount: 0,
+        activeQueries: 0,
+        avgResponseTime: -1,
+        lastHealthCheck: new Date(),
+        errors: [error.message]
+      };
+    }
+  }
+
+  /**
+   * Get client metrics
+   */
+  async getMetrics(): Promise<DatabaseClientMetrics> {
+    const connectionMetrics = this.connectionPoolManager.getMetrics();
+    const currentMetrics = this.metricsService.getCurrentMetrics();
+    
+    return {
+      totalQueries: currentMetrics.performance.totalQueries,
+      successfulQueries: currentMetrics.performance.successfulQueries,
+      failedQueries: currentMetrics.performance.failedQueries,
+      averageQueryTime: currentMetrics.performance.averageQueryTime,
+      slowQueries: currentMetrics.performance.slowQueries,
+      connectionPool: {
+        total: connectionMetrics.totalConnections,
+        active: connectionMetrics.activeConnections,
+        idle: connectionMetrics.idleConnections,
+        waiting: connectionMetrics.waitingConnections
+      }
+    };
+  }
+
+  /**
    * Get HIPAA compliance metrics
    */
   async getHIPAAMetrics(): Promise<HIPAAComplianceMetrics> {
@@ -221,104 +390,384 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
   }
 
   /**
-   * Execute patient data operation with PHI protection
+   * Get clinic-specific metrics
    */
-  async executePatientOperation<T>(
-    patientId: string,
-    clinicId: string,
-    userId: string,
-    operation: (client: PrismaClient) => Promise<T>,
-    operationType: 'READ' | 'write' | 'delete'
-  ): Promise<RepositoryResult<T>> {
-    const auditInfo: AuditInfo = {
-      userId,
-      userRole: 'HEALTHCARE_PROVIDER', // Would be determined from user context
-      operation: `PATIENT_${operationType.toUpperCase()}`,
-      resourceType: 'PATIENT_DATA',
-      resourceId: patientId,
+  async getClinicMetrics(clinicId: string): Promise<ClinicDatabaseMetrics> {
+    const baseMetrics = await this.getMetrics();
+    const clinicMetrics = this.metricsService.getClinicMetrics(clinicId);
+    
+    // Get clinic info
+    const clinicResult = await this.clinicIsolationService.getClinicContext(clinicId);
+    const clinicName = clinicResult.success ? clinicResult.data!.clinicName : 'Unknown';
+    
+    return {
+      ...baseMetrics,
       clinicId,
-      timestamp: new Date(),
+      clinicName,
+      patientCount: clinicMetrics?.patientCount || 0,
+      appointmentCount: clinicMetrics?.appointmentCount || 0,
+      staffCount: await this.getStaffCount(clinicId),
+      locationCount: await this.getLocationCount(clinicId),
     };
+  }
 
+  /**
+   * Get clinic dashboard statistics
+   */
+  async getClinicDashboardStats(clinicId: string): Promise<any> {
     return this.executeWithResult(
       async () => {
-        if (operationType === 'write') {
-          return this.executeHealthcareWrite(operation, auditInfo);
-        } else {
-          return this.executeHealthcareRead(operation);
-        }
+        return this.executeWithClinicContext(clinicId, async (client) => {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const tomorrow = new Date(today);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          
+          const [
+            totalPatients,
+            totalAppointments,
+            todayAppointments,
+            upcomingAppointments,
+            totalDoctors,
+            totalLocations,
+            recentActivity
+          ] = await Promise.all([
+            // Total patients (through appointments)
+            client.patient.count({
+              where: {
+                appointments: {
+                  some: { clinicId }
+                }
+              }
+            }),
+            
+            // Total appointments
+            client.appointment.count({
+              where: { clinicId }
+            }),
+            
+            // Today's appointments
+            client.appointment.count({
+              where: {
+                clinicId,
+                date: {
+                  gte: today,
+                  lt: tomorrow
+                }
+              }
+            }),
+            
+            // Upcoming appointments (next 7 days)
+            client.appointment.count({
+              where: {
+                clinicId,
+                date: {
+                  gte: new Date(),
+                  lte: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+                },
+                status: {
+                  in: ['SCHEDULED', 'CONFIRMED']
+                }
+              }
+            }),
+            
+            // Total doctors
+            client.doctorClinic.count({
+              where: { clinicId }
+            }),
+            
+            // Total locations
+            client.clinicLocation.count({
+              where: { clinicId }
+            }),
+            
+            // Recent activity (last 10 appointments)
+            client.appointment.findMany({
+              where: { clinicId },
+              include: {
+                patient: {
+                  include: {
+                    user: {
+                      select: {
+                        name: true,
+                        firstName: true,
+                        lastName: true
+                      }
+                    }
+                  }
+                },
+                doctor: {
+                  include: {
+                    user: {
+                      select: {
+                        name: true,
+                        firstName: true,
+                        lastName: true
+                      }
+                    }
+                  }
+                }
+              },
+              orderBy: { updatedAt: 'desc' },
+              take: 10
+            })
+          ]);
+          
+          return {
+            totalPatients,
+            totalAppointments,
+            todayAppointments,
+            upcomingAppointments,
+            totalDoctors,
+            totalLocations,
+            recentActivity
+          };
+        });
       },
-      auditInfo.operation,
-      clinicId,
-      userId
+      'GET_CLINIC_DASHBOARD_STATS',
+      clinicId
     );
   }
 
   /**
-   * Execute appointment operation with scheduling compliance
+   * Get clinic patients with pagination and filtering
    */
-  async executeAppointmentOperation<T>(
-    appointmentId: string,
-    clinicId: string,
-    userId: string,
-    operation: (client: PrismaClient) => Promise<T>,
-    operationType: 'create' | 'update' | 'cancel'
-  ): Promise<RepositoryResult<T>> {
-    const auditInfo: AuditInfo = {
-      userId,
-      userRole: 'HEALTHCARE_PROVIDER',
-      operation: `APPOINTMENT_${operationType.toUpperCase()}`,
-      resourceType: 'APPOINTMENT',
-      resourceId: appointmentId,
-      clinicId,
-      timestamp: new Date(),
-    };
-
+  async getClinicPatients(clinicId: string, options: {
+    page?: number;
+    limit?: number;
+    locationId?: string;
+    searchTerm?: string;
+    includeInactive?: boolean;
+  } = {}): Promise<any> {
+    const { page = 1, limit = 20, locationId, searchTerm, includeInactive = false } = options;
+    
     return this.executeWithResult(
-      async () => this.executeHealthcareWrite(operation, auditInfo),
-      auditInfo.operation,
-      clinicId,
-      userId
+      async () => {
+        return this.executeWithClinicContext(clinicId, async (client) => {
+          const whereClause: any = {
+            appointments: {
+              some: {
+                clinicId,
+                ...(locationId ? { locationId } : {})
+              }
+            }
+          };
+          
+          // Add search filter
+          if (searchTerm) {
+            whereClause.user = {
+              OR: [
+                { name: { contains: searchTerm, mode: 'insensitive' } },
+                { firstName: { contains: searchTerm, mode: 'insensitive' } },
+                { lastName: { contains: searchTerm, mode: 'insensitive' } },
+                { email: { contains: searchTerm, mode: 'insensitive' } },
+                { phone: { contains: searchTerm, mode: 'insensitive' } }
+              ]
+            };
+          }
+          
+          const skip = (page - 1) * limit;
+          
+          const [patients, total] = await Promise.all([
+            client.patient.findMany({
+              where: whereClause,
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                    phone: true,
+                    dateOfBirth: true,
+                    isVerified: true,
+                  }
+                },
+                appointments: {
+                  where: { clinicId },
+                  orderBy: { date: 'desc' },
+                  take: 3,
+                  select: {
+                    id: true,
+                    date: true,
+                    time: true,
+                    status: true,
+                    type: true
+                  }
+                }
+              },
+              orderBy: { createdAt: 'desc' },
+              skip,
+              take: limit,
+            }),
+            client.patient.count({ where: whereClause })
+          ]);
+          
+          const totalPages = Math.ceil(total / limit);
+          
+          return {
+            patients,
+            total,
+            page,
+            totalPages
+          };
+        });
+      },
+      'GET_CLINIC_PATIENTS',
+      clinicId
     );
   }
 
   /**
-   * Bulk operation with HIPAA compliance
+   * Get clinic appointments with advanced filtering
    */
-  async executeBulkHealthcareOperation<T, U>(
-    items: T[],
-    operation: (item: T, client: PrismaClient) => Promise<U>,
-    auditInfo: Omit<AuditInfo, 'resourceId'>,
-    options: {
-      concurrency?: number;
-      operationName: string;
-    }
-  ): Promise<RepositoryResult<U[]>> {
-    const { concurrency = 5, operationName } = options; // Lower concurrency for healthcare
-
-    return this.executeBatch(
-      items,
-      async (item, index) => {
-        const itemAuditInfo: AuditInfo = {
-          ...auditInfo,
-          resourceId: `bulk_${index}`,
-        };
-        
-        return this.executeHealthcareWrite(
-          (client) => operation(item, client),
-          itemAuditInfo
-        );
+  async getClinicAppointments(clinicId: string, options: {
+    page?: number;
+    limit?: number;
+    locationId?: string;
+    dateFrom?: Date;
+    dateTo?: Date;
+    status?: string;
+    doctorId?: string;
+  } = {}): Promise<any> {
+    const { page = 1, limit = 50, locationId, dateFrom, dateTo, status, doctorId } = options;
+    
+    return this.executeWithResult(
+      async () => {
+        return this.executeWithClinicContext(clinicId, async (client) => {
+          const whereClause: any = {
+            clinicId,
+            ...(locationId ? { locationId } : {}),
+            ...(doctorId ? { doctorId } : {}),
+            ...(status ? { status } : {}),
+            ...(dateFrom || dateTo ? {
+              date: {
+                ...(dateFrom ? { gte: dateFrom } : {}),
+                ...(dateTo ? { lte: dateTo } : {})
+              }
+            } : {})
+          };
+          
+          const skip = (page - 1) * limit;
+          
+          const [appointments, total] = await Promise.all([
+            client.appointment.findMany({
+              where: whereClause,
+              include: {
+                patient: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        firstName: true,
+                        lastName: true,
+                        phone: true,
+                        email: true
+                      }
+                    }
+                  }
+                },
+                doctor: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        firstName: true,
+                        lastName: true
+                      }
+                    }
+                  }
+                },
+                location: {
+                  select: {
+                    id: true,
+                    name: true,
+                    address: true
+                  }
+                }
+              },
+              orderBy: { date: 'asc' },
+              skip,
+              take: limit,
+            }),
+            client.appointment.count({ where: whereClause })
+          ]);
+          
+          const totalPages = Math.ceil(total / limit);
+          
+          return {
+            appointments,
+            total,
+            page,
+            totalPages
+          };
+        });
       },
-      {
-        concurrency,
-        operationName: `BULK_${operationName}`,
-        clinicId: auditInfo.clinicId,
-        userId: auditInfo.userId
-      }
+      'GET_CLINIC_APPOINTMENTS',
+      clinicId
     );
   }
 
-  // Private methods
+  /**
+   * Close database connections
+   */
+  async disconnect(): Promise<void> {
+    try {
+      await this.prismaService.$disconnect();
+      this.logger.log('Database client disconnected');
+    } catch (error) {
+      this.logger.error('Failed to disconnect database client:', error);
+      throw error;
+    }
+  }
+
+  // Private helper methods
+
+  private async executeWithResult<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    clinicId?: string,
+    userId?: string
+  ): Promise<RepositoryResult<T>> {
+    const startTime = Date.now();
+    
+    try {
+      const result = await operation();
+      const executionTime = Date.now() - startTime;
+      
+      this.metricsService.recordQueryExecution(operationName, executionTime, true, clinicId, userId);
+      
+      return RepositoryResult.success(result, {
+        executionTime,
+        operation: operationName,
+        clinicId,
+        userId,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      
+      this.metricsService.recordQueryExecution(operationName, executionTime, false, clinicId, userId);
+      
+      this.logger.error(`Operation ${operationName} failed:`, {
+        error: error.message,
+        executionTime,
+        clinicId,
+        userId
+      });
+      
+      return RepositoryResult.failure(error, {
+        executionTime,
+        operation: operationName,
+        clinicId,
+        userId,
+        timestamp: new Date()
+      });
+    }
+  }
 
   private async createAuditTrail(
     auditInfo: AuditInfo,
@@ -355,7 +804,7 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
     executionTime: number,
     auditInfo?: AuditInfo
   ): void {
-    if (this.healthcareConfig.enablePHIProtection) {
+    if (this.config.enablePHIProtection) {
       this.logger.log(`HIPAA Data Access: ${operation} ${resourceType}`, {
         operation,
         resourceType,
@@ -370,7 +819,7 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
 
   private checkDataRetentionCompliance(): boolean {
     // Simplified compliance check - in production would check actual data retention policies
-    const retentionDays = this.healthcareConfig.auditRetentionDays || 2555; // 7 years default
+    const retentionDays = this.config.auditRetentionDays || 2555; // 7 years default
     const oldestAudit = this.auditLog[0];
     
     if (oldestAudit) {
@@ -379,5 +828,35 @@ export class HealthcareDatabaseClient extends BaseDatabaseClient implements IHea
     }
     
     return true;
+  }
+
+  private async getStaffCount(clinicId: string): Promise<number> {
+    try {
+      const result = await this.executeWithClinicContext(clinicId, async (client) => {
+        const [doctors, receptionists, admins] = await Promise.all([
+          client.doctorClinic.count({ where: { clinicId } }),
+          client.receptionistsAtClinic.count({ where: { A: clinicId } }),
+          client.clinicAdmin.count({ where: { clinicId } })
+        ]);
+        
+        return doctors + receptionists + admins;
+      });
+      
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get staff count for clinic ${clinicId}:`, error);
+      return 0;
+    }
+  }
+
+  private async getLocationCount(clinicId: string): Promise<number> {
+    try {
+      return this.executeWithClinicContext(clinicId, async (client) => {
+        return client.clinicLocation.count({ where: { clinicId } });
+      });
+    } catch (error) {
+      this.logger.error(`Failed to get location count for clinic ${clinicId}:`, error);
+      return 0;
+    }
   }
 }

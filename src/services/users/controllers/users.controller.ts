@@ -14,13 +14,11 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiSecurity } from '@nestjs/swagger';
 import { UsersService } from '../users.service';
 import { UpdateUserDto, UserResponseDto, CreateUserDto, UpdateUserRoleDto } from '../../../libs/dtos/user.dto';
-import { JwtAuthGuard } from '../../../libs/core/guards/jwt-auth.guard';
-import { Roles } from '../../../libs/core/decorators/roles.decorator';
+import { JwtAuthGuard, Roles, RolesGuard } from '../../../libs/core';
 import { Role } from '../../../libs/infrastructure/database/prisma/prisma.types';
-import { RolesGuard } from '../../../libs/core/guards/roles.guard';
-import { PermissionGuard } from '../../../libs/core/guards/permission.guard';
-import { Permission } from '../../../libs/infrastructure/permissions';
-import { PermissionService } from '../../../libs/infrastructure/permissions';
+import { RbacGuard } from '../../../libs/core/rbac/rbac.guard';
+import { RequireResourcePermission } from '../../../libs/core/rbac/rbac.decorators';
+import { RbacService } from '../../../libs/core/rbac/rbac.service';
 import { RateLimitAPI } from '../../../libs/security/rate-limit/rate-limit.decorator';
 
 @ApiTags('user')
@@ -31,7 +29,7 @@ import { RateLimitAPI } from '../../../libs/security/rate-limit/rate-limit.decor
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
-    private readonly permissionService: PermissionService,
+    private readonly rbacService: RbacService,
   ) {}
 
   @Get('all')
@@ -87,8 +85,8 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @UseGuards(PermissionGuard)
-  @Permission('edit_profile', 'user', 'id')
+  @UseGuards(RbacGuard)
+  @RequireResourcePermission('users', 'update', { requireOwnership: true })
   @ApiOperation({
     summary: 'Update user',
     description: 'Update user information. Super Admin can update any user. All authenticated users can update their own information.',

@@ -20,7 +20,9 @@ export class QrService {
       const qrCodeDataUrl = await QRCode.toDataURL(token);
       return qrCodeDataUrl;
     } catch (error) {
-      this.logger.error(`Failed to generate QR code: ${error.message}`, error.stack);
+      const message = error instanceof Error ? (error as Error).message : 'Unknown error';
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to generate QR code: ${message}`, stack);
       throw new Error('Failed to generate QR code');
     }
   }
@@ -42,7 +44,9 @@ export class QrService {
       const appointmentId = parts[1];
       return appointmentId;
     } catch (error) {
-      this.logger.error(`Failed to verify QR code: ${error.message}`, error.stack);
+      const message = error instanceof Error ? (error as Error).message : 'Unknown error';
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to verify QR code: ${message}`, stack);
       throw new Error('Failed to verify QR code');
     }
   }
@@ -56,7 +60,8 @@ export class QrService {
     try {
       return await QRCode.toDataURL(data);
     } catch (error) {
-      throw new Error(`Failed to generate QR code: ${error.message}`);
+      const message = error instanceof Error ? (error as Error).message : 'Unknown error';
+      throw new Error(`Failed to generate QR code: ${message}`);
     }
   }
 
@@ -69,7 +74,8 @@ export class QrService {
     try {
       return JSON.parse(qrData);
     } catch (error) {
-      throw new Error(`Invalid QR code data: ${error.message}`);
+      const message = error instanceof Error ? (error as Error).message : 'Unknown error';
+      throw new Error(`Invalid QR code data: ${message}`);
     }
   }
 } 

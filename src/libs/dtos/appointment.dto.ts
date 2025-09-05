@@ -112,7 +112,7 @@ export class CreateAppointmentDto {
 
   @ApiPropertyOptional({
     example: 'clinic-uuid-123',
-    description: 'Studio ID for fashion domain appointments'
+    description: 'Studio ID for clinic domain appointments'
   })
   @IsOptional()
   @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
@@ -121,7 +121,7 @@ export class CreateAppointmentDto {
   @ApiPropertyOptional({
     example: 'healthcare',
     description: 'Application domain for multi-domain setup',
-    enum: ['healthcare', 'fashion']
+    enum: ['healthcare', 'clinic']
   })
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
@@ -283,7 +283,7 @@ export class AppointmentResponseDto {
 
   @ApiPropertyOptional({
     example: 'clinic-uuid-123',
-    description: 'Studio ID for fashion domain appointments'
+    description: 'Studio ID for clinic domain appointments'
   })
   @IsOptional()
   @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
@@ -372,7 +372,7 @@ export class AppointmentSearchDto {
   @ApiPropertyOptional({
     example: 'healthcare',
     description: 'Filter by application domain',
-    enum: ['healthcare', 'fashion']
+    enum: ['healthcare', 'clinic']
   })
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })

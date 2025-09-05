@@ -1,23 +1,60 @@
-import { SetMetadata } from '@nestjs/common';
+import { SetMetadata, applyDecorators } from '@nestjs/common';
+import { UseGuards } from '@nestjs/common';
 
 export const RATE_LIMIT_KEY = 'rate_limit';
 
-export interface RateLimitOptions {
-  type?: string;
-  identifier?: string;
-  maxRequests?: number;
-  windowMs?: number;
-  blockDuration?: number;
+export interface RateLimitConfig {
+  windowMs: number;
+  max: number;
+  keyGenerator?: string;
+  message?: string;
 }
 
-export const RateLimit = (options: RateLimitOptions = {}) => 
-  SetMetadata(RATE_LIMIT_KEY, options);
+export const RateLimit = (config: RateLimitConfig) =>
+  SetMetadata(RATE_LIMIT_KEY, config);
 
-export const RateLimitAuth = () => RateLimit({ type: 'auth/login' });
-export const RateLimitPasswordReset = () => RateLimit({ type: 'auth/password-reset' });
-export const RateLimitOTP = () => RateLimit({ type: 'auth/verify-otp' });
-export const RateLimitTokenRefresh = () => RateLimit({ type: 'auth/refresh' });
-export const RateLimitSocial = () => RateLimit({ type: 'auth/social' });
-export const RateLimitMagicLink = () => RateLimit({ type: 'auth/magic-link' });
-export const RateLimitAPI = () => RateLimit({ type: 'api' });
+// Common rate limit decorators
+export const RateLimitAPI = () =>
+  RateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 100, // 100 requests per minute
+    message: 'Too many API requests',
+  });
 
+export const RateLimitAuth = () =>
+  RateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 auth attempts per 15 minutes
+    keyGenerator: 'auth',
+    message: 'Too many authentication attempts',
+  });
+
+export const RateLimitPasswordReset = () =>
+  RateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 3, // 3 password reset attempts per hour
+    keyGenerator: 'auth',
+    message: 'Too many password reset attempts',
+  });
+
+export const RateLimitOTP = () =>
+  RateLimit({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 3, // 3 OTP attempts per 5 minutes
+    keyGenerator: 'auth',
+    message: 'Too many OTP requests',
+  });
+
+export const RateLimitStrict = () =>
+  RateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 10, // 10 requests per minute
+    message: 'Rate limit exceeded',
+  });
+
+export const RateLimitGenerous = () =>
+  RateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 1000, // 1000 requests per minute
+    message: 'Rate limit exceeded',
+  });

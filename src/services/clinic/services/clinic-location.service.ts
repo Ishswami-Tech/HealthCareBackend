@@ -7,7 +7,7 @@ import { ClinicErrorService } from '../shared/error.utils';
 import { QrService } from '../../../libs/utils/QR/qr.service';
 import { LoggingService } from '../../../libs/infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '../../../libs/infrastructure/logging/types/logging.types';
-import { PermissionService } from '../../../libs/infrastructure/permissions';
+import { RbacService } from '../../../libs/core/rbac/rbac.service';
 import { resolveClinicUUID } from '../../../libs/utils/clinic.utils';
 import { ClinicLocation, QRCodeData } from 'src/libs/core/types/clinic.types';
 
@@ -19,7 +19,7 @@ export class ClinicLocationService {
     private readonly errorService: ClinicErrorService,
     private readonly qrService: QrService,
     private readonly loggingService: LoggingService,
-    private readonly permissionService: PermissionService,
+    private readonly rbacService: RbacService,
   ) {}
 
   private async generateLocationId(): Promise<string> {
@@ -39,7 +39,12 @@ export class ClinicLocationService {
   async createLocation(clinicId: string, createLocationDto: CreateClinicLocationDto, userId: string): Promise<ClinicLocation> {
     try {
       // Check if the user has permission to add locations to this clinic
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicId });
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: 'clinic',
+        action: 'manage_clinic_staff',
+        resourceId: clinicId,
+      });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to add locations to this clinic');
       }
@@ -142,7 +147,12 @@ export class ClinicLocationService {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Check if the user has permission to view this clinic's locations
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicUUID });
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: 'clinic',
+        action: 'manage_clinic_staff',
+        resourceId: clinicUUID,
+      });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to view locations for this clinic');
       }
@@ -210,7 +220,12 @@ export class ClinicLocationService {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Check if the user has permission to view this clinic's locations
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicUUID });
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: 'clinic',
+        action: 'manage_clinic_staff',
+        resourceId: clinicUUID,
+      });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to view locations for this clinic');
       }
@@ -323,7 +338,12 @@ export class ClinicLocationService {
       }
 
       // Check if user has permission to access this clinic's locations
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: data.clinicId });
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: 'clinic',
+        action: 'manage_clinic_staff',
+        resourceId: data.clinicId,
+      });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to access this location');
       }
@@ -357,7 +377,12 @@ export class ClinicLocationService {
   async updateLocation(id: string, clinicId: string, updateLocationDto: UpdateClinicLocationDto, userId: string): Promise<ClinicLocation> {
     try {
       // Check if the user has permission to update this clinic's locations
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicId });
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: 'clinic',
+        action: 'manage_clinic_staff',
+        resourceId: clinicId,
+      });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to update locations for this clinic');
       }
@@ -459,7 +484,12 @@ export class ClinicLocationService {
   async deleteLocation(id: string, clinicId: string, userId: string): Promise<{ message: string }> {
     try {
       // Check if the user has permission to delete locations for this clinic
-      const hasPermission = await this.permissionService.hasPermission({ userId, action: 'manage_clinic_staff', resourceType: 'clinic', resourceId: clinicId });
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: 'clinic',
+        action: 'manage_clinic_staff',
+        resourceId: clinicId,
+      });
       if (!hasPermission) {
         throw new UnauthorizedException('You do not have permission to delete locations for this clinic');
       }

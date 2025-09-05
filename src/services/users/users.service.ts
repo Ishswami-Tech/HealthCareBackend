@@ -1,23 +1,26 @@
 import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
 import { RedisCache } from '../../libs/infrastructure/cache/decorators/redis-cache.decorator';
 import { Injectable, NotFoundException, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { RedisService } from '../../libs/infrastructure/cache/redis/redis.service';
+import { CacheService } from '../../libs/infrastructure/cache';
 import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
 import { EventService } from '../../libs/infrastructure/events/event.service';
 import { LogLevel, LogType } from '../../libs/infrastructure/logging/types/logging.types';
 import { Role, Gender } from '../../libs/infrastructure/database/prisma/prisma.types';
 import type { User } from '../../libs/infrastructure/database/prisma/prisma.types';
-import { PermissionService } from '../../libs/infrastructure/permissions';
+import { RbacService } from '../../libs/core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto } from '../../libs/dtos/user.dto';
+import { ClinicAuthService } from '../auth/implementations/clinic-auth.service';
+import { AuthPluginContext, AuthPluginDomain } from '../auth/core/auth-plugin.interface';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly redis: RedisService,
+    private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
-    private readonly permissionService: PermissionService,
+    private readonly rbacService: RbacService,
+    private readonly clinicAuthService: ClinicAuthService,
   ) {}
 
   @RedisCache({ prefix: "users:all", ttl: 3600, tags: ['users'] })
@@ -102,14 +105,56 @@ export class UsersService {
 
   private async getNextNumericId(): Promise<string> {
     const COUNTER_KEY = 'user:counter';
-    const currentId = await this.redis.get(COUNTER_KEY);
+    const currentId = await this.cacheService.get<string>(COUNTER_KEY);
     const nextId = currentId ? parseInt(currentId) + 1 : 1;
-    await this.redis.set(COUNTER_KEY, nextId.toString());
+    await this.cacheService.set(COUNTER_KEY, nextId.toString());
     return `UID${nextId.toString().padStart(6, '0')}`;
   }
 
   async createUser(data: CreateUserDto): Promise<User> {
     const userId = await this.getNextNumericId();
+    
+    // Create auth context for user registration
+    const context: AuthPluginContext = {
+      domain: AuthPluginDomain.CLINIC,
+      clinicId: data.clinicId,
+      userAgent: 'API',
+      ipAddress: '127.0.0.1',
+      metadata: { 
+        source: 'user_service_registration',
+        originalData: { email: data.email, role: data.role }
+      },
+    };
+
+    // Use clinic auth service for user registration
+    const authResponse = await this.clinicAuthService.register({
+      email: data.email,
+      password: data.password,
+      name: `${data.firstName} ${data.lastName}`.trim(),
+      phone: data.phone,
+      role: (data.role as string) || 'PATIENT',
+      metadata: {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        profilePicture: data.profilePicture,
+        gender: data.gender,
+        dateOfBirth: data.dateOfBirth,
+        address: data.address,
+        city: data.city,
+        state: data.state,
+        country: data.country,
+        zipCode: data.zipCode,
+        age: data.age || 0,
+      },
+      clinicId: context.clinicId,
+      userAgent: context.userAgent,
+      ipAddress: context.ipAddress,
+    });
+
+    if (!authResponse.success) {
+      throw new Error(`User registration failed: ${authResponse.error}`);
+    }
+
     const user = await this.prisma.user.create({
       data: {
         id: userId,
@@ -137,12 +182,18 @@ export class UsersService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'User created successfully',
+      'User created successfully with auth integration',
       'UsersService',
-      { userId: user.id, email: data.email, role: data.role }
+      { userId: user.id, email: data.email, role: data.role, clinicId: data.clinicId }
     );
-    await this.eventService.emit('user.created', { userId: user.id, email: data.email, role: data.role });
-    await this.redis.invalidateCacheByTag('users');
+    await this.eventService.emit('user.created', { 
+      userId: user.id, 
+      email: data.email, 
+      role: data.role,
+      clinicId: data.clinicId,
+      authIntegrated: true
+    });
+    await this.cacheService.invalidateCacheByTag('users');
 
     return user as unknown as User;
   }
@@ -245,9 +296,9 @@ export class UsersService {
 
       // Invalidate cache
       await Promise.all([
-        this.redis.invalidateCache(`users:one:${id}`),
-        this.redis.invalidateCacheByTag('users'),
-        this.redis.invalidateCacheByTag(`user:${id}`),
+        this.cacheService.invalidateCache(`users:one:${id}`),
+        this.cacheService.invalidateCacheByTag('users'),
+        this.cacheService.invalidateCacheByTag(`user:${id}`),
       ]);
 
       await this.loggingService.log(
@@ -338,9 +389,9 @@ export class UsersService {
 
     // Invalidate cache
     await Promise.all([
-      this.redis.invalidateCache(`users:one:${id}`),
-      this.redis.invalidateCacheByTag('users'),
-      this.redis.invalidateCacheByTag(`user:${id}`),
+      this.cacheService.invalidateCache(`users:one:${id}`),
+      this.cacheService.invalidateCacheByTag('users'),
+      this.cacheService.invalidateCacheByTag(`user:${id}`),
     ]);
 
       await this.loggingService.log(
@@ -388,7 +439,7 @@ export class UsersService {
     return this.findAll(Role.CLINIC_ADMIN);
   }
 
-  async logout(userId: string): Promise<void> {
+  async logout(userId: string, sessionId?: string, clinicId?: string): Promise<void> {
     // Check if user exists
     const user = await this.prisma.user.findUnique({
       where: { id: userId }
@@ -399,6 +450,24 @@ export class UsersService {
     }
 
     try {
+      // Create auth context for clinic logout
+      const context: AuthPluginContext = {
+        domain: AuthPluginDomain.CLINIC,
+        clinicId,
+        userAgent: 'API',
+        ipAddress: '127.0.0.1',
+        metadata: { userId },
+      };
+
+      // Use clinic auth service for secure logout
+      await this.clinicAuthService.logout({
+        userId,
+        sessionId,
+        clinicId,
+        userAgent: context.userAgent,
+        ipAddress: context.ipAddress
+      });
+
       // Update last login timestamp
       await this.prisma.user.update({
         where: { id: userId },
@@ -409,10 +478,10 @@ export class UsersService {
 
       // Clear all user-related cache
       await Promise.all([
-        this.redis.del(`users:one:${userId}`),
-        this.redis.del(`users:all`),
-        this.redis.del(`users:${user.role.toLowerCase()}`),
-        this.redis.del(`user:sessions:${userId}`)
+        this.cacheService.del(`users:one:${userId}`),
+        this.cacheService.del(`users:all`),
+        this.cacheService.del(`users:${user.role.toLowerCase()}`),
+        this.cacheService.del(`user:sessions:${userId}`)
       ]);
 
       // Log the logout event
@@ -526,11 +595,11 @@ export class UsersService {
 
     // Invalidate cache
       await Promise.all([
-      this.redis.invalidateCache(`users:one:${id}`),
-        this.redis.invalidateCacheByTag('users'),
-      this.redis.invalidateCacheByTag(`user:${id}`),
-      this.redis.invalidateCacheByTag(`users:${user.role.toLowerCase()}`),
-      this.redis.invalidateCacheByTag(`users:${role.toLowerCase()}`),
+      this.cacheService.invalidateCache(`users:one:${id}`),
+        this.cacheService.invalidateCacheByTag('users'),
+      this.cacheService.invalidateCacheByTag(`user:${id}`),
+      this.cacheService.invalidateCacheByTag(`users:${user.role.toLowerCase()}`),
+      this.cacheService.invalidateCacheByTag(`users:${role.toLowerCase()}`),
     ]);
 
     const { password, ...result } = updatedUser;

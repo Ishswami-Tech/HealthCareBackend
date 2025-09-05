@@ -1,11 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClinicIsolationService } from '../clinic-isolation.service';
-export interface RepositoryResult<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
+import { RepositoryResult } from '../types/repository-result';
 
 export interface PatientWithUser {
   id: string;
@@ -53,7 +49,7 @@ export class SimplePatientRepository {
       includeHealthRecords?: boolean;
     } = {}
   ): Promise<RepositoryResult<{ data: PatientWithUser[]; total: number; page: number; totalPages: number }>> {
-    return this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
+    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
       const { page = 1, limit = 20, includeAppointments = false, includeHealthRecords = false } = options;
       const skip = (page - 1) * limit;
 
@@ -124,6 +120,13 @@ export class SimplePatientRepository {
         totalPages
       };
     });
+
+    // Convert ClinicIsolationResult to RepositoryResult
+    if (result.success && result.data) {
+      return RepositoryResult.success(result.data);
+    } else {
+      return RepositoryResult.failure(new Error(result.error || 'Failed to get patients for clinic'));
+    }
   }
 
   /**
@@ -133,7 +136,7 @@ export class SimplePatientRepository {
     patientId: string,
     clinicId: string
   ): Promise<RepositoryResult<PatientWithUser | null>> {
-    return this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
+    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
       const patient = await this.prisma.patient.findFirst({
         where: {
           id: patientId,
@@ -191,6 +194,13 @@ export class SimplePatientRepository {
 
       return patient as PatientWithUser | null;
     });
+
+    // Convert ClinicIsolationResult to RepositoryResult
+    if (result.success) {
+      return RepositoryResult.success(result.data || null);
+    } else {
+      return RepositoryResult.failure(new Error(result.error || 'Failed to get patient by ID'));
+    }
   }
 
   /**
@@ -201,7 +211,7 @@ export class SimplePatientRepository {
     clinicId: string,
     options: { page?: number; limit?: number } = {}
   ): Promise<RepositoryResult<{ data: PatientWithUser[]; total: number; page: number; totalPages: number }>> {
-    return this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
+    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
       const { page = 1, limit = 20 } = options;
       const skip = (page - 1) * limit;
 
@@ -283,6 +293,13 @@ export class SimplePatientRepository {
         totalPages
       };
     });
+
+    // Convert ClinicIsolationResult to RepositoryResult
+    if (result.success && result.data) {
+      return RepositoryResult.success(result.data);
+    } else {
+      return RepositoryResult.failure(new Error(result.error || 'Failed to search patients'));
+    }
   }
 
   /**
@@ -296,7 +313,7 @@ export class SimplePatientRepository {
     newPatients: number;
     patientsWithRecentAppointments: number;
   }>> {
-    return this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
+    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
       const baseAppointmentWhere = {
         clinicId,
         ...(dateRange && {
@@ -352,5 +369,12 @@ export class SimplePatientRepository {
         patientsWithRecentAppointments
       };
     });
+
+    // Convert ClinicIsolationResult to RepositoryResult
+    if (result.success && result.data) {
+      return RepositoryResult.success(result.data);
+    } else {
+      return RepositoryResult.failure(new Error(result.error || 'Failed to get patient statistics'));
+    }
   }
 }

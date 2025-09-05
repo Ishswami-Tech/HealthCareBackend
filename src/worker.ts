@@ -4,25 +4,25 @@ import {
   APPOINTMENT_QUEUE,
   EMAIL_QUEUE,
   NOTIFICATION_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
-} from 'src/libs/infrastructure/queue/queue.constants';
-import { QueueProcessor } from 'src/libs/infrastructure/queue/queue.processor';
-import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
+  ENHANCED_APPOINTMENT_QUEUE,
+  PAYMENT_PROCESSING_QUEUE,
+  REMINDER_QUEUE
+} from './libs/infrastructure/queue/src/queue.constants';
+import { QueueProcessor } from './libs/infrastructure/queue/src/queue.processor';
+import { PrismaService } from './libs/infrastructure/database/prisma/prisma.service';
 
 // Setup Prisma and processor (adjust as needed for DI)
 const prisma = new PrismaService();
-const processor = new QueueProcessor(prisma);
+const processor = new QueueProcessor(prisma as any);
 
 const queueNames = [
   SERVICE_QUEUE,
   APPOINTMENT_QUEUE,
   EMAIL_QUEUE,
   NOTIFICATION_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
+  ENHANCED_APPOINTMENT_QUEUE,
+  PAYMENT_PROCESSING_QUEUE,
+  REMINDER_QUEUE
 ];
 
 queueNames.forEach((queueName) => {

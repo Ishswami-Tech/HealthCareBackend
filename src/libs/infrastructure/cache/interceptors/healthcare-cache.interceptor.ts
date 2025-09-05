@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { Observable, of, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
-import { HealthcareCacheService } from '../healthcare-cache.service';
+import { CacheService } from '../cache.service';
 import { 
   HEALTHCARE_CACHE_KEY, 
   HEALTHCARE_CACHE_INVALIDATE_KEY,
@@ -21,7 +21,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   private readonly logger = new Logger(HealthcareCacheInterceptor.name);
 
   constructor(
-    private readonly cacheService: HealthcareCacheService,
+    private readonly cacheService: CacheService,
     private readonly reflector: Reflector
   ) {}
 

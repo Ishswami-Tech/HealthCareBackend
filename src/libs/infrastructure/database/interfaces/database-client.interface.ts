@@ -64,52 +64,36 @@ export interface IHealthcareDatabaseClient extends IDatabaseClient {
    * Get HIPAA compliance metrics
    */
   getHIPAAMetrics(): Promise<HIPAAComplianceMetrics>;
-}
-
-/**
- * Clinic-specific database client interface
- */
-export interface IClinicDatabaseClient extends IHealthcareDatabaseClient {
-  /**
-   * Get the clinic ID this client is associated with
-   */
-  getClinicId(): string;
 
   /**
-   * Execute operation with clinic isolation context
+   * Execute operation with clinic isolation context (multi-tenant)
    */
-  executeWithClinicContext<T>(operation: (client: PrismaClient) => Promise<T>): Promise<T>;
+  executeWithClinicContext<T>(
+    clinicId: string,
+    operation: (client: PrismaClient) => Promise<T>
+  ): Promise<T>;
 
   /**
    * Get clinic-specific metrics
    */
-  getClinicMetrics(): Promise<ClinicDatabaseMetrics>;
+  getClinicMetrics(clinicId: string): Promise<ClinicDatabaseMetrics>;
 
   /**
    * Get clinic dashboard statistics
    */
-  getClinicDashboardStats(): Promise<any>;
+  getClinicDashboardStats(clinicId: string): Promise<any>;
 
   /**
    * Get clinic patients with pagination and filtering
    */
-  getClinicPatients(options?: any): Promise<any>;
+  getClinicPatients(clinicId: string, options?: any): Promise<any>;
 
   /**
    * Get clinic appointments with advanced filtering
    */
-  getClinicAppointments(options?: any): Promise<any>;
-
-  /**
-   * Execute clinic patient operation with validation
-   */
-  executeClinicPatientOperation<T>(
-    patientId: string,
-    userId: string,
-    operation: (client: PrismaClient) => Promise<T>,
-    operationType: string
-  ): Promise<any>;
+  getClinicAppointments(clinicId: string, options?: any): Promise<any>;
 }
+
 
 /**
  * Database health status

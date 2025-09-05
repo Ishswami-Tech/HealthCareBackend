@@ -1,13 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
-import { RedisService } from '../../libs/infrastructure/cache/redis/redis.service';
+import { CacheService } from '../../libs/infrastructure/cache';
 import { HealthCheckResponse, DetailedHealthCheckResponse, ServiceHealth } from '../../libs/core/types/health.types';
 import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
-import { QueueService } from '../../libs/infrastructure/queue/queue.service';
+import { QueueService } from '../../libs/infrastructure/queue/src/queue.service';
 import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
-import { SocketService } from '../../libs/communication/socket/socket.service';
+import { SocketService } from '../../libs/communication/socket';
 import { EmailService } from '../../libs/communication/messaging/email/email.service';
 
 @Injectable()
@@ -20,9 +20,9 @@ export class HealthService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly redis: RedisService,
+    private readonly cacheService: CacheService,
     private readonly config: ConfigService,
-    private readonly queueService: QueueService,
+    @Optional() private readonly queueService: QueueService,
     private readonly loggingService: LoggingService,
     private readonly socketService: SocketService,
     private readonly emailService: EmailService,
@@ -225,7 +225,7 @@ export class HealthService {
   private async checkRedisHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
-      await this.redis.ping();
+      await this.cacheService.ping();
       
       return {
         status: 'healthy',
@@ -247,7 +247,7 @@ export class HealthService {
 
   private async getRedisMetrics() {
     try {
-      const info = await this.redis.getCacheDebug();
+      const info = await this.cacheService.getCacheDebug();
       return {
         connectedClients: 1,
         usedMemory: info.info.memoryInfo?.usedMemory || 0,
@@ -268,8 +268,18 @@ export class HealthService {
   private async checkQueueHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
+      // Check if queue service is available
+      if (!this.queueService) {
+        return {
+          status: 'unhealthy',
+          details: 'Queue service is not available',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      }
+
       // Get queue stats using the queue service
-      const stats = await this.queueService.getQueueStatsByLocation('system');
+      const stats = await this.queueService.getLocationQueueStats('system', 'clinic');
       const isHealthy = stats.waiting !== undefined && stats.active !== undefined;
       
       return {
