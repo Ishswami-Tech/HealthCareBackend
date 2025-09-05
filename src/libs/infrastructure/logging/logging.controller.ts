@@ -387,11 +387,6 @@ export class LoggingController {
     return reply.send(this.getHtmlTemplate('logs'));
   }
 
-  @Get('logs')
-  async getLogsPage(@Res() reply: FastifyReply) {
-    reply.header('Content-Type', 'text/html');
-    return reply.send(this.getHtmlTemplate('logs'));
-  }
 
   @Get('events')
   async getEventsPage(@Res() reply: FastifyReply) {

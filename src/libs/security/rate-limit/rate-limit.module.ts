@@ -1,15 +1,18 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { EventEmitterModule } from '@nestjs/event-emitter';
 import { RateLimitService } from './rate-limit.service';
-import { RateLimitConfig } from './rate-limit.config';
+import { RedisModule } from '../../infrastructure/cache/redis/redis.module';
+import { LoggingServiceModule } from "../../infrastructure/logging"
 
 @Module({
   imports: [
-    ConfigModule,
-    EventEmitterModule
+    RedisModule,
+    LoggingServiceModule,
   ],
-  providers: [RateLimitService, RateLimitConfig],
-  exports: [RateLimitService, RateLimitConfig],
+  providers: [
+    RateLimitService,
+  ],
+  exports: [
+    RateLimitService,
+  ],
 })
 export class RateLimitModule {}

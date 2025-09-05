@@ -1,24 +1,442 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
-import { QueueService, JobType } from 'src/libs/infrastructure/queue/queue.service';
-import { QrService } from 'src/libs/utils/QR/qr.service';
-import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
-import { LogLevel, LogType } from 'src/libs/infrastructure/logging/types/logging.types';
-import { AppointmentStatus, AppointmentType } from 'src/libs/infrastructure/database/prisma/prisma.types';
+import { Injectable, Logger, Inject, forwardRef, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 
+// Infrastructure Services
+import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
+import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
+import { LogType, LogLevel } from '../../libs/infrastructure/logging/types/logging.types';
+import { CacheService } from '../../libs/infrastructure/cache/cache.service';
+import { QueueService } from '../../libs/infrastructure/queue/src/queue.service';
+
+// Core Services
+import { CoreAppointmentService, AppointmentContext, AppointmentResult } from './core/core-appointment.service';
+import { ConflictResolutionService } from './core/conflict-resolution.service';
+import { AppointmentWorkflowEngine } from './core/appointment-workflow-engine.service';
+// import { BusinessRulesEngine } from './core/business-rules-engine.service';
+
+// Plugin System
+import { AppointmentEnterprisePluginManager } from './plugins/enterprise-plugin-manager';
+
+// DTOs and Types
+import {
+  CreateAppointmentDto,
+  UpdateAppointmentDto,
+  AppointmentResponseDto,
+  AppointmentListResponseDto,
+  AppointmentFilterDto,
+  Appointment,
+  AppointmentWithRelations,
+  AppointmentStatus,
+  AppointmentPriority,
+  PaymentStatus,
+  PaymentMethod,
+  Language,
+  ProcessCheckInDto,
+  CompleteAppointmentDto,
+  StartConsultationDto
+} from './appointment.dto';
+
+// Legacy imports for backward compatibility
+import { QrService } from '../../libs/utils/QR';
+
+// Auth Integration
+import { ClinicAuthService } from '../auth/implementations/clinic-auth.service';
+import { AuthPluginContext, AuthPluginDomain } from '../auth/core/auth-plugin.interface';
+
+/**
+ * Enhanced Appointments Service
+ * 
+ * This service integrates with the new enhanced service layer architecture:
+ * - Uses CoreAppointmentService for enterprise-grade operations
+ * - Integrates with plugin system for extensible functionality
+ * - Maintains backward compatibility with existing code
+ * - Provides enhanced features through the new architecture
+ */
 @Injectable()
-export class AppointmentService {
+export class AppointmentsService {
+  private readonly logger = new Logger(AppointmentsService.name);
+
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly queueService: QueueService,
-    private readonly qrService: QrService,
+    // Enhanced Services
+    @Inject(forwardRef(() => CoreAppointmentService))
+    private readonly coreAppointmentService: CoreAppointmentService,
+    @Inject(forwardRef(() => ConflictResolutionService))
+    private readonly conflictResolutionService: ConflictResolutionService,
+    @Inject(forwardRef(() => AppointmentWorkflowEngine))
+    private readonly workflowEngine: AppointmentWorkflowEngine,
+    // @Inject(forwardRef(() => BusinessRulesEngine))
+    // private readonly businessRules: BusinessRulesEngine,
+    
+    // Plugin System
+    private readonly pluginManager: AppointmentEnterprisePluginManager,
+    
+    // Infrastructure Services
+    private readonly databaseService: PrismaService,
     private readonly loggingService: LoggingService,
+    private readonly cacheService: CacheService,
+    @Optional() private readonly queueService: QueueService,
+    private readonly configService: ConfigService,
+    private readonly eventEmitter: EventEmitter2,
+    
+    // Legacy Services (for backward compatibility)
+    private readonly qrService: QrService,
+    
+    // Auth Integration
+    private readonly clinicAuthService: ClinicAuthService,
+    
+    // Queue Injections
+    @InjectQueue('clinic-appointment') private readonly appointmentQueue: Queue,
+    @InjectQueue('clinic-notification') private readonly notificationQueue: Queue,
+    @InjectQueue('clinic-analytics') private readonly analyticsQueue: Queue,
   ) {}
 
+  // =============================================
+  // ENHANCED APPOINTMENT OPERATIONS
+  // =============================================
+
   /**
-   * Create a new appointment
+   * Create appointment using enhanced core service with auth integration
    */
-  async createAppointment(data: {
+  async createAppointment(
+    createDto: CreateAppointmentDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<AppointmentResult> {
+    // Validate user access with auth service
+    const authContext: AuthPluginContext = {
+      domain: AuthPluginDomain.CLINIC,
+      clinicId,
+      userAgent: 'API',
+      ipAddress: '127.0.0.1',
+      metadata: { operation: 'create_appointment' },
+    };
+
+    const hasAccess = await this.clinicAuthService.verifyToken(
+      userId,
+      authContext.clinicId
+    );
+
+    if (!hasAccess) {
+      return {
+        success: false,
+        message: 'Insufficient permissions to create appointment',
+        error: 'INSUFFICIENT_PERMISSIONS',
+      };
+    }
+
+    const context: AppointmentContext = {
+      userId,
+      role,
+      clinicId,
+      locationId: createDto.locationId,
+      doctorId: createDto.doctorId,
+      patientId: createDto.patientId
+    };
+
+    const result = await this.coreAppointmentService.createAppointment(createDto, context);
+    
+    // Log security event for appointment creation
+    if (result.success) {
+      // await this.clinicAuthService.logSecurityEvent?.(
+      //   'appointment_created',
+      //   userId,
+      //   {
+      //     appointmentId: result.data?.id,
+      //     doctorId: createDto.doctorId,
+      //     patientId: createDto.patientId,
+      //     appointmentDate: createDto.appointmentDate,
+      //   },
+      //   authContext
+      // );
+    }
+
+    return result;
+  }
+
+  /**
+   * Get appointments using enhanced core service with auth integration
+   */
+  async getAppointments(
+    filters: AppointmentFilterDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER',
+    page: number = 1,
+    limit: number = 20
+  ): Promise<AppointmentResult> {
+    // Validate user access with auth service
+    const authContext: AuthPluginContext = {
+      domain: AuthPluginDomain.CLINIC,
+      clinicId,
+      userAgent: 'API',
+      ipAddress: '127.0.0.1',
+      metadata: { operation: 'read_appointments', filters },
+    };
+
+    const hasAccess = await this.clinicAuthService.verifyToken(
+      userId,
+      authContext.clinicId
+    );
+
+    if (!hasAccess) {
+      return {
+        success: false,
+        message: 'Insufficient permissions to view appointments',
+        error: 'INSUFFICIENT_PERMISSIONS',
+      };
+    }
+
+    const context: AppointmentContext = {
+      userId,
+      role,
+      clinicId,
+      locationId: filters.locationId,
+      doctorId: filters.providerId,
+      patientId: filters.patientId
+    };
+
+    return this.coreAppointmentService.getAppointments(filters, context, page, limit);
+  }
+
+  /**
+   * Update appointment using enhanced core service
+   */
+  async updateAppointment(
+    appointmentId: string,
+    updateDto: UpdateAppointmentDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<AppointmentResult> {
+    const context: AppointmentContext = {
+      userId,
+      role,
+      clinicId
+    };
+
+    return this.coreAppointmentService.updateAppointment(appointmentId, updateDto, context);
+  }
+
+  /**
+   * Cancel appointment using enhanced core service
+   */
+  async cancelAppointment(
+    appointmentId: string,
+    reason: string,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<AppointmentResult> {
+    const context: AppointmentContext = {
+      userId,
+      role,
+      clinicId
+    };
+
+    return this.coreAppointmentService.cancelAppointment(appointmentId, reason, context);
+  }
+
+  /**
+   * Get single appointment by ID
+   */
+  async getAppointmentById(
+    id: string,
+    clinicId: string,
+    userId?: string
+  ): Promise<any> {
+    try {
+      // Use the Prisma service to find the appointment
+      const appointment = await this.databaseService.appointment.findUnique({
+        where: {
+          id,
+          clinicId,
+        },
+        include: {
+          patient: true,
+          doctor: true,
+          location: true,
+        },
+      });
+
+      if (!appointment) {
+        throw new Error('Appointment not found');
+      }
+
+      return appointment;
+    } catch (error) {
+      this.logger.error(`Error getting appointment ${id}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get appointment metrics using enhanced core service
+   */
+  async getAppointmentMetrics(
+    clinicId: string,
+    dateRange: { from: Date; to: Date },
+    userId: string,
+    role: string = 'USER'
+  ): Promise<AppointmentResult> {
+    const context: AppointmentContext = {
+      userId,
+      role,
+      clinicId
+    };
+
+    return this.coreAppointmentService.getAppointmentMetrics(clinicId, dateRange, context);
+  }
+
+  // =============================================
+  // PLUGIN-BASED OPERATIONS
+  // =============================================
+
+  /**
+   * Process appointment check-in through plugins
+   */
+  async processCheckIn(
+    checkInDto: ProcessCheckInDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<any> {
+    try {
+      // Execute through clinic check-in plugin
+      const result = await this.pluginManager.executePluginOperation(
+        'healthcare',
+        'check-in',
+        'process_checkin',
+        checkInDto,
+        { clinicId, userId, role }
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to process check-in through plugin: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Complete appointment through plugins
+   */
+  async completeAppointment(
+    appointmentId: string,
+    completeDto: CompleteAppointmentDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<any> {
+    try {
+      // Execute through clinic confirmation plugin
+      const result = await this.pluginManager.executePluginOperation(
+        'healthcare',
+        'confirmation',
+        'complete_appointment',
+        { appointmentId, ...completeDto },
+        { clinicId, userId, role }
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to complete appointment through plugin: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Start consultation through plugins
+   */
+  async startConsultation(
+    appointmentId: string,
+    startDto: StartConsultationDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<any> {
+    try {
+      // Execute through clinic check-in plugin
+      const result = await this.pluginManager.executePluginOperation(
+        'healthcare',
+        'check-in',
+        'start_consultation',
+        { appointmentId, ...startDto },
+        { clinicId, userId, role }
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to start consultation through plugin: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get queue information through plugins
+   */
+  async getQueueInfo(
+    doctorId: string,
+    date: string,
+    clinicId: string,
+    userId: string,
+    role: string = 'USER'
+  ): Promise<any> {
+    try {
+      // Execute through clinic queue plugin
+      const result = await this.pluginManager.executePluginOperation(
+        'healthcare',
+        'queue',
+        'get_doctor_queue',
+        { doctorId, date },
+        { clinicId, userId, role }
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get queue info through plugin: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get location information through plugins
+   */
+  async getLocationInfo(
+    locationId: string,
+    clinicId: string,
+    userId: string,
+    role: string = 'USER'
+  ): Promise<any> {
+    try {
+      // Execute through clinic location plugin
+      const result = await this.pluginManager.executePluginOperation(
+        'healthcare',
+        'location',
+        'get_location_info',
+        { locationId },
+        { clinicId, userId, role }
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get location info through plugin: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // =============================================
+  // LEGACY METHODS (for backward compatibility)
+  // =============================================
+
+  /**
+   * Legacy create appointment method
+   * @deprecated Use createAppointment with enhanced DTO instead
+   */
+  async createAppointmentLegacy(data: {
     userId: string;
     doctorId: string;
     locationId: string;
@@ -28,292 +446,68 @@ export class AppointmentService {
     type: string;
     notes?: string;
     clinicId: string;
-  }) {
-    try {
-      // Set tenant context for row-level isolation
-      this.prisma.setCurrentTenantId(data.clinicId);
+  }): Promise<any> {
+    this.logger.warn('Using legacy createAppointment method. Please migrate to enhanced version.');
+    
+    // Convert legacy data to enhanced DTO
+    const createDto: CreateAppointmentDto = {
+      patientId: data.userId, // Assuming userId is patientId in legacy
+      doctorId: data.doctorId,
+      locationId: data.locationId,
+      clinicId: data.clinicId,
+      date: data.date,
+      time: data.time,
+      duration: data.duration,
+      type: data.type as any,
+      notes: data.notes,
+      priority: AppointmentPriority.NORMAL,
+      paymentStatus: PaymentStatus.PENDING,
+      paymentMethod: PaymentMethod.CASH,
+      amount: 0,
+      currency: 'INR',
+      language: Language.EN,
+      isRecurring: false
+    };
 
-      // Validate doctor exists and is available at the requested time
-      const isAvailable = await this.checkDoctorAvailability(
-        data.doctorId,
-        data.date,
-        data.time
-      );
-
-      if (!isAvailable) {
-        throw new BadRequestException('Doctor is not available at the requested time');
-      }
-
-      // First fetch the patient record for the user
-      const patient = await this.prisma.patient.findUnique({
-        where: { userId: data.userId }
-      });
-
-      if (!patient) {
-        throw new BadRequestException('User is not registered as a patient');
-      }
-
-      // Create appointment in the database with appropriate type casting
-      const appointment = await this.prisma.appointment.create({
-        data: {
-          doctorId: data.doctorId,
-          patientId: patient.id,
-          locationId: data.locationId,
-          clinicId: data.clinicId,
-          userId: data.userId,
-          date: new Date(data.date),
-          time: data.time,
-          duration: data.duration,
-          type: data.type as AppointmentType,
-          notes: data.notes,
-          status: AppointmentStatus.SCHEDULED
-        },
-        include: {
-          doctor: {
-            include: {
-              user: true
-            }
-          },
-          patient: {
-            include: {
-              user: true
-            }
-          },
-          location: true
-        }
-      });
-
-      // Add to queue for processing
-      await this.queueService.addJob(
-        JobType.CREATE,
-        {
-          id: appointment.id,
-          userId: data.userId,
-          resourceId: appointment.id,
-          resourceType: 'appointment',
-          locationId: appointment.locationId,
-          date: appointment.date,
-        },
-      );
-
-      // Generate QR code for confirmation
-      const qrCode = await this.qrService.generateAppointmentQR(appointment.id);
-
-      // Add notification job
-      await this.queueService.addJob(
-        JobType.NOTIFY,
-        {
-          id: appointment.id,
-          userId: data.userId,
-          resourceId: appointment.id,
-          resourceType: 'appointment',
-          locationId: appointment.locationId,
-          date: appointment.date,
-          metadata: {
-            message: 'Your appointment has been scheduled successfully',
-          },
-        },
-      );
-
-      this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        `Created appointment for user ${data.userId} with doctor ${data.doctorId}`,
-        'AppointmentService',
-        { appointmentId: appointment.id, userId: data.userId, doctorId: data.doctorId }
-      );
-
-      return {
-        appointment,
-        qrCode,
-        message: 'Appointment created successfully',
-      };
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to create appointment: ${error.message}`,
-        'AppointmentService',
-        { userId: data.userId, doctorId: data.doctorId, error: error.stack }
-      );
-      
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new Error(`Failed to create appointment: ${error.message}`);
-    } finally {
-      // Clear tenant context
-      this.prisma.clearTenantId();
-    }
+    return this.createAppointment(createDto, data.userId, data.clinicId);
   }
 
   /**
-   * Get appointments with filtering options
+   * Legacy get appointments method
+   * @deprecated Use getAppointments with enhanced filters instead
    */
-  async getAppointments(filters: {
+  async getAppointmentsLegacy(filters: {
     userId?: string;
     doctorId?: string;
     status?: string;
     locationId?: string;
     date?: string;
-    clinicId: string; // Required for tenant isolation
+    clinicId: string;
     page?: number;
     limit?: number;
-  }) {
-    try {
-      // Set tenant context for row-level isolation
-      this.prisma.setCurrentTenantId(filters.clinicId);
+  }): Promise<any> {
+    this.logger.warn('Using legacy getAppointments method. Please migrate to enhanced version.');
+    
+    // Convert legacy filters to enhanced filters
+    const enhancedFilters: AppointmentFilterDto = {
+      patientId: filters.userId,
+      providerId: filters.doctorId,
+      status: filters.status as any,
+      locationId: filters.locationId,
+      startDate: filters.date,
+      endDate: filters.date,
+      page: filters.page,
+      limit: filters.limit
+    };
 
-      // Build filter conditions
-      const where: any = {};
-
-      if (filters.userId) {
-        // Find the patient record for this user
-        const patient = await this.prisma.patient.findUnique({
-          where: { userId: filters.userId }
-        });
-        
-        if (patient) {
-          where.patientId = patient.id;
-        } else {
-          // If no patient record found, return empty result
-          return {
-            appointments: [],
-            total: 0,
-            page: filters.page || 1,
-            limit: filters.limit || 10,
-            totalPages: 0
-          };
-        }
-      }
-
-      if (filters.doctorId) {
-        where.doctorId = filters.doctorId;
-      }
-
-      if (filters.status) {
-        where.status = filters.status;
-      }
-
-      if (filters.locationId) {
-        where.locationId = filters.locationId;
-      }
-
-      if (filters.date) {
-        where.date = new Date(filters.date);
-      }
-
-      // Calculate pagination
-      const page = Math.max(1, filters.page || 1);
-      const limit = Math.min(100, Math.max(1, filters.limit || 10));
-      const skip = (page - 1) * limit;
-
-      // Get total count for pagination
-      const total = await this.prisma.appointment.count({ where });
-
-      // Get appointments with pagination
-      const appointments = await this.prisma.appointment.findMany({
-        where,
-        include: {
-          doctor: {
-            include: {
-              user: true
-            }
-          },
-          patient: {
-            include: {
-              user: true
-            }
-          },
-          location: true
-        },
-        orderBy: {
-          date: 'asc',
-        },
-        skip,
-        take: limit,
-      });
-
-      const totalPages = Math.ceil(total / limit);
-
-      return {
-        appointments,
-        total,
-        page,
-        limit,
-        totalPages
-      };
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get appointments: ${error.message}`,
-        'AppointmentService',
-        { filters, error: error.stack }
-      );
-      throw new Error(`Failed to get appointments: ${error.message}`);
-    } finally {
-      // Clear tenant context
-      this.prisma.clearTenantId();
-    }
+    return this.getAppointments(enhancedFilters, filters.userId || 'system', filters.clinicId);
   }
 
   /**
-   * Get appointment by ID
+   * Legacy update appointment method
+   * @deprecated Use updateAppointment with enhanced DTO instead
    */
-  async getAppointmentById(appointmentId: string, clinicId: string) {
-    try {
-      // Set tenant context for row-level isolation
-      this.prisma.setCurrentTenantId(clinicId);
-
-      // Get appointment (clinicId filter is automatically added by the middleware)
-      const appointment = await this.prisma.appointment.findFirst({
-        where: {
-          id: appointmentId
-        },
-        include: {
-          doctor: {
-            include: {
-              user: true,
-            },
-          },
-          patient: {
-            include: {
-              user: true,
-            },
-          },
-          location: true,
-        },
-      });
-
-      if (!appointment) {
-        throw new NotFoundException(`Appointment with ID ${appointmentId} not found`);
-      }
-
-      return appointment;
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get appointment: ${error.message}`,
-        'AppointmentService',
-        { appointmentId, error: error.stack }
-      );
-      
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      throw new Error(`Failed to get appointment: ${error.message}`);
-    } finally {
-      // Clear tenant context
-      this.prisma.clearTenantId();
-    }
-  }
-
-  /**
-   * Update appointment with tenant isolation
-   */
-  async updateAppointment(
+  async updateAppointmentLegacy(
     appointmentId: string,
     updateData: {
       date?: string;
@@ -323,469 +517,266 @@ export class AppointmentService {
       notes?: string;
     },
     clinicId: string
-  ) {
-    try {
-      // Set tenant context for row-level isolation
-      this.prisma.setCurrentTenantId(clinicId);
+  ): Promise<any> {
+    this.logger.warn('Using legacy updateAppointment method. Please migrate to enhanced version.');
+    
+    // Convert legacy data to enhanced DTO
+    const updateDto: UpdateAppointmentDto = {
+      date: updateData.date,
+      time: updateData.time,
+      duration: updateData.duration,
+      status: updateData.status as any,
+      notes: updateData.notes
+    };
 
-      // Check if appointment exists and belongs to this clinic
-      const existingAppointment = await this.prisma.appointment.findFirst({
-        where: {
-          id: appointmentId,
-          // clinicId filter is automatically added by the middleware
-        },
-      });
-
-      if (!existingAppointment) {
-        throw new NotFoundException(`Appointment with ID ${appointmentId} not found`);
-      }
-
-      // Prepare update data
-      const data: any = {};
-
-      if (updateData.date) {
-        data.date = new Date(updateData.date);
-      }
-
-      if (updateData.time) {
-        data.time = updateData.time;
-      }
-
-      if (updateData.duration) {
-        data.duration = updateData.duration;
-      }
-
-      if (updateData.status) {
-        data.status = updateData.status as AppointmentStatus;
-      }
-
-      if (updateData.notes) {
-        data.notes = updateData.notes;
-      }
-
-      // Update appointment
-      const updatedAppointment = await this.prisma.appointment.update({
-        where: {
-          id: appointmentId,
-        },
-        data,
-        include: {
-          doctor: {
-            include: {
-              user: true,
-            },
-          },
-          patient: {
-            include: {
-              user: true,
-            },
-          },
-          location: true,
-        },
-      });
-
-      // Add update job to queue
-      await this.queueService.addJob(
-        JobType.UPDATE,
-        {
-          id: updatedAppointment.id,
-          userId: updatedAppointment.patientId, // Use patientId
-          resourceId: updatedAppointment.id,
-          resourceType: 'appointment',
-          locationId: updatedAppointment.locationId || '',
-          date: updatedAppointment.date,
-          metadata: {
-            doctorId: updatedAppointment.doctorId,
-            status: updatedAppointment.status
-          }
-        }
-      );
-
-      // Send notification about update
-      await this.queueService.addJob(
-        JobType.NOTIFY,
-        {
-          id: updatedAppointment.id,
-          userId: updatedAppointment.patientId, // Use patientId
-          resourceId: updatedAppointment.id,
-          resourceType: 'appointment',
-          locationId: updatedAppointment.locationId || '',
-          date: updatedAppointment.date,
-          metadata: {
-            doctorId: updatedAppointment.doctorId,
-            message: 'Your appointment has been updated'
-          }
-        }
-      );
-
-      this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        `Updated appointment ${appointmentId}`,
-        'AppointmentService',
-        { appointmentId, updates: updateData }
-      );
-
-      return {
-        appointment: updatedAppointment,
-        message: 'Appointment updated successfully',
-      };
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to update appointment: ${error.message}`,
-        'AppointmentService',
-        { appointmentId, updateData, error: error.stack }
-      );
-      
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      throw new Error(`Failed to update appointment: ${error.message}`);
-    } finally {
-      // Clear tenant context
-      this.prisma.clearTenantId();
-    }
+    return this.updateAppointment(appointmentId, updateDto, 'system', clinicId);
   }
 
   /**
-   * Cancel appointment with tenant isolation
+   * Legacy cancel appointment method
+   * @deprecated Use cancelAppointment with enhanced parameters instead
    */
-  async cancelAppointment(appointmentId: string, clinicId: string) {
-    try {
-      // Set tenant context for row-level isolation
-      this.prisma.setCurrentTenantId(clinicId);
+  async cancelAppointmentLegacy(appointmentId: string, clinicId: string): Promise<any> {
+    this.logger.warn('Using legacy cancelAppointment method. Please migrate to enhanced version.');
+    
+    return this.cancelAppointment(appointmentId, 'Cancelled via legacy method', 'system', clinicId);
+  }
 
-      // Check if appointment exists and belongs to this clinic
-      const existingAppointment = await this.prisma.appointment.findFirst({
-        where: {
-          id: appointmentId,
-          // clinicId filter is automatically added by the middleware
-        },
-      });
+  // =============================================
+  // UTILITY METHODS
+  // =============================================
 
-      if (!existingAppointment) {
-        throw new NotFoundException(`Appointment with ID ${appointmentId} not found`);
-      }
-
-      // Can't cancel completed appointments
-      if (existingAppointment.status === 'COMPLETED') {
-        throw new BadRequestException('Cannot cancel a completed appointment');
-      }
-
-      // Update appointment status to CANCELLED
-      const cancelledAppointment = await this.prisma.appointment.update({
-        where: {
-          id: appointmentId,
-        },
-        data: {
-          status: AppointmentStatus.CANCELLED,
-        },
-        include: {
-          doctor: {
-            include: {
-              user: true,
-            },
-          },
-          patient: {
-            include: {
-              user: true,
-            },
-          },
-          location: true,
-        },
-      });
-
-      // Send notification about cancellation
-      await this.queueService.addJob(
-        JobType.NOTIFY,
-        {
-          id: cancelledAppointment.id,
-          userId: cancelledAppointment.patientId, // Use patientId
-          resourceId: cancelledAppointment.id,
-          resourceType: 'appointment',
-          locationId: cancelledAppointment.locationId || '',
-          date: cancelledAppointment.date,
-          metadata: {
-            doctorId: cancelledAppointment.doctorId,
-            message: 'Your appointment has been cancelled'
-          }
-        }
-      );
-
-      this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        `Cancelled appointment ${appointmentId}`,
-        'AppointmentService',
-        { appointmentId }
-      );
-
-      return {
-        appointment: cancelledAppointment,
-        message: 'Appointment cancelled successfully',
-      };
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to cancel appointment: ${error.message}`,
-        'AppointmentService',
-        { appointmentId, error: error.stack }
-      );
-      
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new Error(`Failed to cancel appointment: ${error.message}`);
-    } finally {
-      // Clear tenant context
-      this.prisma.clearTenantId();
-    }
+  /**
+   * Get plugin information
+   */
+  async getPluginInfo(): Promise<any> {
+    return this.pluginManager.getPluginInfo();
   }
 
   /**
-   * Check doctor availability for a specific date and time
+   * Get domain features
    */
-  private async checkDoctorAvailability(
+  async getDomainFeatures(domain: string): Promise<string[]> {
+    return this.pluginManager.getDomainFeatures(domain);
+  }
+
+  /**
+   * Execute plugin operation
+   */
+  async executePluginOperation(
+    domain: string,
+    feature: string,
+    operation: string,
+    data: any,
+    context?: any
+  ): Promise<any> {
+    return this.pluginManager.executePluginOperation(domain, feature, operation, data, context);
+  }
+
+  /**
+   * Check if plugin exists
+   */
+  hasPlugin(domain: string, feature: string): boolean {
+    return this.pluginManager.hasPlugin(domain, feature);
+  }
+
+  /**
+   * Get doctor availability (enhanced version)
+   */
+  async getDoctorAvailability(
     doctorId: string,
     date: string,
-    time: string
-  ): Promise<boolean> {
+    clinicId: string,
+    userId: string,
+    role: string = 'USER'
+  ): Promise<any> {
     try {
-      // Note: tenant context should already be set by the calling method
-
-      // Get doctor's working hours
-      const doctor = await this.prisma.doctor.findUnique({
-        where: { id: doctorId },
-      });
-
-      if (!doctor) {
-        throw new NotFoundException(`Doctor with ID ${doctorId} not found`);
-      }
-
-      if (!doctor.isAvailable) {
-        return false;
-      }
-
-      // Check if doctor has an appointment at the requested time
-      const existingAppointment = await this.prisma.appointment.findFirst({
-        where: {
-          doctorId,
-          date: new Date(date),
-          time,
-          status: {
-            notIn: ['CANCELLED'],
-          },
-        },
-      });
-
-      return !existingAppointment;
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to check doctor availability: ${error.message}`,
-        'AppointmentService',
-        { doctorId, date, time, error: error.stack }
+      // Execute through clinic queue plugin
+      const result = await this.pluginManager.executePluginOperation(
+        'healthcare',
+        'queue',
+        'get_doctor_availability',
+        { doctorId, date },
+        { clinicId, userId, role }
       );
-      throw new Error(`Failed to check doctor availability: ${error.message}`);
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get doctor availability through plugin: ${error.message}`);
+      
+      // Fallback to legacy method if plugin fails
+      return this.getDoctorAvailabilityLegacy(doctorId, date);
     }
   }
 
   /**
-   * Get doctor's availability for a specific date
+   * Legacy doctor availability method
+   * @deprecated Use getDoctorAvailability with enhanced parameters instead
    */
-  async getDoctorAvailability(doctorId: string, date: string) {
+  async getDoctorAvailabilityLegacy(doctorId: string, date: string): Promise<any> {
+    this.logger.warn('Using legacy getDoctorAvailability method. Please migrate to enhanced version.');
+    
     try {
-      // Get doctor
-      const doctor = await this.prisma.doctor.findUnique({
-        where: { id: doctorId },
-      });
+      const startDate = new Date(date);
+      const endDate = new Date(date);
+      endDate.setDate(endDate.getDate() + 1);
 
-      if (!doctor) {
-        throw new NotFoundException(`Doctor with ID ${doctorId} not found`);
-      }
-
-      if (!doctor.isAvailable) {
-        return {
-          available: false,
-          message: 'Doctor is not available for appointments',
-          availableSlots: [],
-        };
-      }
-
-      // Get doctor's working hours (this will depend on your doctor schema)
-      const workingHours = doctor.workingHours || {};
-
-      // Get all appointments for the doctor on the specified date
-      const appointments = await this.prisma.appointment.findMany({
+      const appointments = await this.databaseService.appointment.findMany({
         where: {
           doctorId,
-          date: new Date(date),
-          status: {
-            notIn: ['CANCELLED'],
+          date: {
+            gte: startDate,
+            lt: endDate
           },
+          status: {
+            in: ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS']
+          }
         },
-        select: {
-          time: true,
-          duration: true,
-        },
+        orderBy: { time: 'asc' }
       });
 
-      // Convert the date to day of the week (0-6, where 0 is Sunday)
-      const dayOfWeek = new Date(date).getDay();
-      const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-      const today = daysOfWeek[dayOfWeek];
-
-      // Get available time slots based on working hours and existing appointments
-      // This logic will depend on how your working hours are structured
-      const todayHours = workingHours[today] || { start: '09:00', end: '17:00' };
-      
-      // Generate time slots (e.g., 30-minute intervals)
-      const slots = this.generateTimeSlots(todayHours.start, todayHours.end, 30);
-      
-      // Remove booked slots
-      const bookedTimes = new Set(appointments.map(a => a.time));
-      const availableSlots = slots.filter(slot => !bookedTimes.has(slot));
+      // Generate time slots (9 AM to 6 PM)
+      const timeSlots = [];
+      for (let hour = 9; hour < 18; hour++) {
+        for (let minute = 0; minute < 60; minute += 30) {
+          const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+          const isBooked = appointments.some(apt => apt.time === time);
+          
+          timeSlots.push({
+            time,
+            available: !isBooked,
+            appointmentId: isBooked ? appointments.find(apt => apt.time === time)?.id : null
+          });
+        }
+      }
 
       return {
-        available: availableSlots.length > 0,
-        workingHours: todayHours,
-        availableSlots,
-        bookedSlots: Array.from(bookedTimes),
+        doctorId,
+        date,
+        available: timeSlots.some(slot => slot.available),
+        availableSlots: timeSlots.filter(slot => slot.available).map(slot => slot.time),
+        bookedSlots: timeSlots.filter(slot => !slot.available).map(slot => slot.time),
+        workingHours: {
+          start: '09:00',
+          end: '18:00'
+        },
+        message: timeSlots.some(slot => slot.available) 
+          ? 'Doctor has available slots' 
+          : 'Doctor is fully booked for this date'
       };
     } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get doctor availability: ${error.message}`,
-        'AppointmentService',
-        { doctorId, date, error: error.stack }
-      );
-      
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      throw new Error(`Failed to get doctor availability: ${error.message}`);
+      this.logger.error(`Failed to get doctor availability: ${error.message}`);
+      throw error;
     }
   }
 
   /**
-   * Generate time slots based on start and end time
+   * Get user upcoming appointments (enhanced version)
    */
-  private generateTimeSlots(start: string, end: string, intervalMinutes: number): string[] {
-    const slots: string[] = [];
-    const startTime = this.parseTime(start);
-    const endTime = this.parseTime(end);
-    
-    let current = startTime;
-    while (current < endTime) {
-      slots.push(this.formatTime(current));
-      current = new Date(current.getTime() + intervalMinutes * 60000);
-    }
-    
-    return slots;
-  }
-
-  /**
-   * Parse time string to Date object
-   */
-  private parseTime(timeStr: string): Date {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const time = new Date();
-    time.setHours(hours, minutes, 0, 0);
-    return time;
-  }
-
-  /**
-   * Format Date object to time string
-   */
-  private formatTime(date: Date): string {
-    return date.toTimeString().substring(0, 5);
-  }
-
-  /**
-   * Get upcoming appointments for a user
-   */
-  async getUserUpcomingAppointments(userId: string) {
+  async getUserUpcomingAppointments(
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<any> {
     try {
-      const now = new Date();
-      
-      const appointments = await this.prisma.appointment.findMany({
-        where: {
-          patientId: userId, // Use patientId instead of userId
-          OR: [
-            {
-              date: {
-                gte: now,
-              },
-            },
-            {
-              date: now,
-              time: {
-                gte: this.formatTime(now),
-              },
-            },
-          ],
-          status: {
-            notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED],
-          },
-        },
-        include: {
-          doctor: {
-            select: {
-              id: true,
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  profilePicture: true,
-                },
-              },
-              specialization: true,
-            },
-          },
-        },
-        orderBy: [
-          { date: 'asc' },
-          { time: 'asc' },
-        ],
-      });
+      const filters: AppointmentFilterDto = {
+        patientId: userId,
+        startDate: new Date().toISOString().split('T')[0],
+        status: AppointmentStatus.SCHEDULED
+      };
 
-      // For each appointment, get its position in queue if it's scheduled for today
+      const result = await this.getAppointments(filters, userId, clinicId, role, 1, 10);
+      return result;
+    } catch (error) {
+      this.logger.error(`Failed to get user upcoming appointments: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Legacy user upcoming appointments method
+   * @deprecated Use getUserUpcomingAppointments with enhanced parameters instead
+   */
+  async getUserUpcomingAppointmentsLegacy(userId: string): Promise<any> {
+    this.logger.warn('Using legacy getUserUpcomingAppointments method. Please migrate to enhanced version.');
+    
+    try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const appointmentsWithQueue = await Promise.all(
-        appointments.map(async (appointment) => {
-          const appointmentDate = new Date(appointment.date);
-          appointmentDate.setHours(0, 0, 0, 0);
-
-          if (appointmentDate.getTime() === today.getTime() && appointment.status === AppointmentStatus.SCHEDULED) {
-            const queuePosition = await this.queueService.getQueuePosition(appointment.id);
-            return {
-              ...appointment,
-              queuePosition: queuePosition >= 0 ? queuePosition : null,
-            };
+      const appointments = await this.databaseService.appointment.findMany({
+        where: {
+          patientId: userId,
+          date: {
+            gte: today
+          },
+          status: {
+            in: ['SCHEDULED', 'CONFIRMED']
           }
-          return appointment;
-        })
-      );
+        },
+        include: {
+          doctor: {
+            include: {
+              user: true
+            }
+          },
+          location: true,
+          clinic: true
+        },
+        orderBy: [
+          { date: 'asc' },
+          { time: 'asc' }
+        ],
+        take: 10
+      });
 
-      return appointmentsWithQueue;
+      return appointments;
     } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get user appointments: ${error.message}`,
-        'AppointmentService',
-        { userId, error: error.stack }
+      this.logger.error(`Failed to get user upcoming appointments: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // =============================================
+  // PRIVATE HELPER METHODS
+  // =============================================
+
+  /**
+   * Build user context from request
+   */
+  private buildUserContext(userId: string, clinicId: string, role: string = 'USER'): AppointmentContext {
+    return {
+      userId,
+      role,
+      clinicId
+    };
+  }
+
+  /**
+   * Log operation for audit purposes
+   */
+  private async logOperation(
+    operation: string,
+    userId: string,
+    clinicId: string,
+    details: any
+  ): Promise<void> {
+    try {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Appointment operation: ${operation}`,
+        'AppointmentsService',
+        {
+          operation,
+          userId,
+          clinicId,
+          timestamp: new Date().toISOString(),
+          details
+        }
       );
-      throw new Error(`Failed to get user appointments: ${error.message}`);
+    } catch (error) {
+      this.logger.error('Failed to log operation:', error);
     }
   }
 
@@ -794,18 +785,17 @@ export class AppointmentService {
    */
   async getPatientByUserId(userId: string) {
     try {
-      const patient = await this.prisma.patient.findUnique({
-        where: { userId },
-        select: {
-          id: true,
-          userId: true,
+      const patient = await this.databaseService.patient.findUnique({
+        where: {
+          userId: userId
+        },
+        include: {
           user: {
             select: {
               id: true,
+              name: true,
               email: true,
-              firstName: true,
-              lastName: true,
-              role: true
+              phone: true
             }
           }
         }
@@ -813,14 +803,8 @@ export class AppointmentService {
 
       return patient;
     } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get patient by user ID: ${error.message}`,
-        'AppointmentService',
-        { userId, error: error.stack }
-      );
-      throw new Error(`Failed to get patient: ${error.message}`);
+      this.logger.error('Error fetching patient by user ID:', error);
+      throw error;
     }
   }
 } 

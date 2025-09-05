@@ -33,13 +33,17 @@ export class ClinicIsolationService implements OnModuleInit {
   private cacheUpdateInterval: NodeJS.Timeout;
   private maxClinics: number;
   private maxLocationsPerClinic: number;
+  private cacheHitCount = 0;
+  private cacheMissCount = 0;
+  private readonly CACHE_TTL = 300000; // 5 minutes
+  private readonly MAX_CACHE_SIZE = 10000; // Maximum cache entries
 
   constructor(
     private prismaService: PrismaService,
     private configService: ConfigService,
   ) {
-    this.maxClinics = this.configService.get<number>('healthcare.multiClinic.maxClinicsPerApp', 100);
-    this.maxLocationsPerClinic = this.configService.get<number>('healthcare.multiClinic.maxLocationsPerClinic', 20);
+    this.maxClinics = this.configService.get<number>('healthcare.multiClinic.maxClinicsPerApp', 200); // Optimized for 200 clinics
+    this.maxLocationsPerClinic = this.configService.get<number>('healthcare.multiClinic.maxLocationsPerClinic', 50); // Optimized for 50 locations per clinic
   }
 
   async onModuleInit() {
@@ -439,6 +443,140 @@ export class ClinicIsolationService implements OnModuleInit {
         this.logger.error(`Failed to refresh clinic cache: ${error.message}`);
       }
     }, 5 * 60 * 1000);
+  }
+
+  /**
+   * Get cache performance metrics
+   */
+  getCacheMetrics(): {
+    hitRate: number;
+    totalRequests: number;
+    cacheSize: number;
+    clinicCacheSize: number;
+    userCacheSize: number;
+    locationCacheSize: number;
+  } {
+    const totalRequests = this.cacheHitCount + this.cacheMissCount;
+    const hitRate = totalRequests > 0 ? (this.cacheHitCount / totalRequests) * 100 : 0;
+    
+    return {
+      hitRate,
+      totalRequests,
+      cacheSize: this.clinicCache.size + this.userClinicCache.size + this.locationClinicCache.size,
+      clinicCacheSize: this.clinicCache.size,
+      userCacheSize: this.userClinicCache.size,
+      locationCacheSize: this.locationClinicCache.size,
+    };
+  }
+
+  /**
+   * Optimize cache by removing least recently used entries
+   */
+  private optimizeCache(): void {
+    const totalSize = this.clinicCache.size + this.userClinicCache.size + this.locationClinicCache.size;
+    
+    if (totalSize > this.MAX_CACHE_SIZE) {
+      // Remove oldest entries from each cache
+      const entriesToRemove = Math.floor(totalSize * 0.1); // Remove 10% of entries
+      
+      // Remove from clinic cache
+      const clinicEntries = Array.from(this.clinicCache.keys());
+      for (let i = 0; i < Math.min(entriesToRemove / 3, clinicEntries.length); i++) {
+        this.clinicCache.delete(clinicEntries[i]);
+      }
+      
+      // Remove from user cache
+      const userEntries = Array.from(this.userClinicCache.keys());
+      for (let i = 0; i < Math.min(entriesToRemove / 3, userEntries.length); i++) {
+        this.userClinicCache.delete(userEntries[i]);
+      }
+      
+      // Remove from location cache
+      const locationEntries = Array.from(this.locationClinicCache.keys());
+      for (let i = 0; i < Math.min(entriesToRemove / 3, locationEntries.length); i++) {
+        this.locationClinicCache.delete(locationEntries[i]);
+      }
+      
+      this.logger.debug(`Cache optimized: removed ${entriesToRemove} entries`);
+    }
+  }
+
+  /**
+   * Batch validate clinic access for multiple users
+   */
+  async batchValidateClinicAccess(
+    userIds: string[],
+    clinicId: string
+  ): Promise<Map<string, boolean>> {
+    const results = new Map<string, boolean>();
+    
+    // Check cache first
+    const uncachedUserIds: string[] = [];
+    
+    for (const userId of userIds) {
+      const userClinics = this.userClinicCache.get(userId);
+      if (userClinics) {
+        results.set(userId, userClinics.includes(clinicId));
+        this.cacheHitCount++;
+      } else {
+        uncachedUserIds.push(userId);
+        this.cacheMissCount++;
+      }
+    }
+    
+    // Fetch uncached users from database
+    if (uncachedUserIds.length > 0) {
+      try {
+        const users = await this.prismaService.user.findMany({
+          where: {
+            id: { in: uncachedUserIds },
+            clinicAdmins: {
+              some: { clinicId }
+            }
+          },
+          select: { id: true }
+        });
+        
+        const validUserIds = new Set(users.map(u => u.id));
+        
+        for (const userId of uncachedUserIds) {
+          const hasAccess = validUserIds.has(userId);
+          results.set(userId, hasAccess);
+        }
+      } catch (error) {
+        this.logger.error('Batch clinic access validation failed:', error);
+        // Set all uncached users to false on error
+        for (const userId of uncachedUserIds) {
+          results.set(userId, false);
+        }
+      }
+    }
+    
+    return results;
+  }
+
+  /**
+   * Get service health status
+   */
+  async getHealthStatus(): Promise<{
+    status: 'healthy' | 'warning' | 'critical';
+    cacheMetrics: any;
+    lastCacheRefresh: Date;
+    totalClinics: number;
+    totalUsers: number;
+    totalLocations: number;
+  }> {
+    const metrics = this.getCacheMetrics();
+    const status = metrics.hitRate > 80 ? 'healthy' : metrics.hitRate > 60 ? 'warning' : 'critical';
+    
+    return {
+      status,
+      cacheMetrics: metrics,
+      lastCacheRefresh: new Date(),
+      totalClinics: this.clinicCache.size,
+      totalUsers: this.userClinicCache.size,
+      totalLocations: this.locationClinicCache.size,
+    };
   }
 
   // Cleanup

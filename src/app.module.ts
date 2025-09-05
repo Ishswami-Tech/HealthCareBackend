@@ -1,4 +1,4 @@
-import { Module, MiddlewareConsumer, RequestMethod, NestModule, forwardRef } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from "@nestjs/config";
 import { UsersModule } from "./services/users/users.module";
 import { AuthModule } from "./services/auth/auth.module";
@@ -12,18 +12,14 @@ import { LoggingModule } from './libs/infrastructure/logging/logging.module';
 import { JwtModule } from '@nestjs/jwt';
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
-import { BullBoardModule } from './libs/infrastructure/queue/bull-board/bull-board.module';
+import { BullBoardModule } from './libs/infrastructure/queue/src/bull-board/bull-board.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
-import { QueueModule } from './libs/infrastructure/queue/queue.module';
-import { APPOINTMENT_QUEUE, SERVICE_QUEUE } from './libs/infrastructure/queue/queue.constants';
+import { QueueModule } from './libs/infrastructure/queue/src/queue.module';
+import { APPOINTMENT_QUEUE, SERVICE_QUEUE } from './libs/infrastructure/queue/src/queue.constants';
 import configuration from './config/configuration';
 import { HealthController } from './services/health/health.controller';
 import { SocketModule } from './libs/communication/socket/socket.module';
-import { AppointmentSocketModule } from './services/appointments/appointment-socket/appointment-socket.module';
-import { SecurityModule } from './libs/security/security.module';
-import { RateLimitInterceptor } from './libs/security/rate-limit/rate-limit.interceptor';
-import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
   imports: [
@@ -77,14 +73,12 @@ import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.
     }),
     ScheduleModule.forRoot(),
     QueueModule.forRoot(),
-    QueueModule.register(),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
     // Socket modules
     SocketModule,
-    AppointmentSocketModule,
     // Auth and user management
     AuthModule,
     UsersModule,
@@ -100,23 +94,11 @@ import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.
     WhatsAppModule,
     LoggingModule,
     BullBoardModule,
-    forwardRef(() => SecurityModule),
   ],
   controllers: [AppController],
   providers: [
     AppService, 
     HealthController,
-    {
-      provide: 'APP_INTERCEPTOR',
-      useClass: RateLimitInterceptor,
-    },
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    // Apply clinic context middleware to all routes for clinic isolation
-    consumer
-      .apply(ClinicContextMiddleware)
-      .forRoutes('*');
-  }
-}
+export class AppModule {}

@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma/prisma.service';
 import { RedisService } from '../cache/redis/redis.service';
 import { LogType, LogLevel } from './types/logging.types';
+
+// Export types for external use
+export { LogType, LogLevel };
 import { AsyncLocalStorage } from 'async_hooks';
 
 export interface LogContext {

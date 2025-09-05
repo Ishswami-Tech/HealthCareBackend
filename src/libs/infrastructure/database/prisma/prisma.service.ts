@@ -2,15 +2,15 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Scope, Logger } from '@nestj
 import { PrismaClient, Prisma } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
-import { connectionManagementMiddleware } from './middleware/connection-management.middleware';
 
 @Injectable({ scope: Scope.REQUEST })
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
   private currentTenantId: string | null = null;
   private static connectionCount = 0;
-  private static readonly MAX_CONNECTIONS = 90; // Leave some margin for other operations
-  private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
+  private static readonly MAX_CONNECTIONS = 50; // Optimized for 10 lakh+ users
+  private static readonly CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connections
+  private static readonly QUERY_TIMEOUT = 10000; // 10 seconds query timeout
   private static instance: PrismaService | null = null;
   private readonly maxRetries = 3;
   private readonly retryDelay = 1000; // 1 second
@@ -27,6 +27,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         { emit: 'stdout', level: 'warn' },
       ],
       errorFormat: 'minimal',
+      datasources: {
+        db: {
+          url: process.env.DATABASE_URL,
+        },
+      },
     });
 
     // Apply connection management middleware
@@ -66,14 +71,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private async connectWithRetry(retryCount = 0): Promise<void> {
     try {
       await this.$connect();
-      console.log('Successfully connected to database');
+      PrismaService.connectionCount++;
+      this.logger.log(`Successfully connected to database. Active connections: ${PrismaService.connectionCount}`);
     } catch (error) {
       if (retryCount < this.maxRetries) {
-        console.warn(`Failed to connect to database. Retrying in ${this.retryDelay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        this.logger.warn(`Failed to connect to database. Retrying in ${this.retryDelay}ms... (Attempt ${retryCount + 1}/${this.maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * (retryCount + 1))); // Exponential backoff
         await this.connectWithRetry(retryCount + 1);
       } else {
-        console.error('Failed to connect to database after maximum retries');
+        this.logger.error('Failed to connect to database after maximum retries');
         throw error;
       }
     }
@@ -178,5 +184,78 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         },
       },
     });
+  }
+
+  /**
+   * Optimized query execution with timeout and retry logic
+   */
+  async executeOptimizedQuery<T>(
+    queryFn: () => Promise<T>,
+    timeout: number = PrismaService.QUERY_TIMEOUT
+  ): Promise<T> {
+    return Promise.race([
+      queryFn(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Query timeout')), timeout)
+      ),
+    ]);
+  }
+
+  /**
+   * Batch operations for better performance
+   */
+  async executeBatch<T>(
+    operations: (() => Promise<T>)[],
+    batchSize: number = 10
+  ): Promise<T[]> {
+    const results: T[] = [];
+    
+    for (let i = 0; i < operations.length; i += batchSize) {
+      const batch = operations.slice(i, i + batchSize);
+      const batchResults = await Promise.allSettled(
+        batch.map(operation => this.executeWithRetry(operation))
+      );
+      
+      results.push(
+        ...batchResults
+          .filter((result): result is PromiseFulfilledResult<Awaited<T>> => result.status === 'fulfilled')
+          .map(result => result.value)
+      );
+    }
+    
+    return results;
+  }
+
+  /**
+   * Get connection health status
+   */
+  async getConnectionHealth(): Promise<{
+    connected: boolean;
+    connectionCount: number;
+    maxConnections: number;
+    health: 'healthy' | 'warning' | 'critical';
+  }> {
+    try {
+      await this.$queryRaw`SELECT 1`;
+      const health = PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.8 
+        ? 'warning' 
+        : PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.9 
+        ? 'critical' 
+        : 'healthy';
+      
+      return {
+        connected: true,
+        connectionCount: PrismaService.connectionCount,
+        maxConnections: PrismaService.MAX_CONNECTIONS,
+        health,
+      };
+    } catch (error) {
+      return {
+        connected: false,
+        connectionCount: PrismaService.connectionCount,
+        maxConnections: PrismaService.MAX_CONNECTIONS,
+        health: 'critical',
+      };
+    }
   }
 }

@@ -229,14 +229,6 @@ export class SimpleCreateUserDto {
   @IsUUID('4', { message: 'Primary studio ID must be a valid UUID' })
   primaryStudioId?: string;
 
-  @ApiPropertyOptional({ 
-    example: 'healthcare', 
-    description: 'Application name for multi-domain setup',
-    enum: ['healthcare', 'fashion']
-  })
-  @IsOptional()
-  @IsString({ message: 'App name must be a string' })
-  appName?: string;
 }
 
 /**

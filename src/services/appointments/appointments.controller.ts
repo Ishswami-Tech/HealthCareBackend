@@ -18,7 +18,7 @@ import {
   NotFoundException,
   ForbiddenException
 } from '@nestjs/common';
-import { AppointmentService } from './appointments.service';
+import { AppointmentsService } from './appointments.service';
 import { 
   ApiTags, 
   ApiOperation, 
@@ -34,9 +34,7 @@ import {
 } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
-import { JwtAuthGuard } from '../../libs/core/guards/jwt-auth.guard';
-import { RolesGuard } from '../../libs/core/guards/roles.guard';
-import { Roles } from '../../libs/core/decorators/roles.decorator';
+import { JwtAuthGuard, RolesGuard, Roles } from '../../libs/core';
 import { ClinicGuard } from '../../libs/core/guards/clinic.guard';
 import { ClinicRoute } from '../../libs/core/decorators/clinic-route.decorator';
 import { UseInterceptors } from '@nestjs/common';
@@ -47,8 +45,8 @@ import {
   AppointmentListResponseDto,
   DoctorAvailabilityResponseDto
 } from './appointment.dto';
-import { PermissionGuard } from '../../libs/core/guards/permission.guard';
-import { Permission } from '../../libs/infrastructure/permissions';
+import { RbacGuard } from '../../libs/core/rbac/rbac.guard';
+import { RequireResourcePermission } from '../../libs/core/rbac/rbac.decorators';
 import { FastifyRequest } from 'fastify';
 import { AuthenticatedRequest } from '../../libs/core/types/clinic.types';
 import { RateLimitAPI } from '../../libs/security/rate-limit/rate-limit.decorator';
@@ -58,7 +56,7 @@ import { RateLimitAPI } from '../../libs/security/rate-limit/rate-limit.decorato
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 @ApiHeader({ name: 'X-Clinic-ID', description: 'Clinic identifier', required: true })
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, PermissionGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 @UsePipes(new ValidationPipe({ 
   transform: true, 
   whitelist: true, 
@@ -69,7 +67,7 @@ export class AppointmentsController {
   private readonly logger = new Logger(AppointmentsController.name);
 
   constructor(
-    private readonly appointmentService: AppointmentService,
+    private readonly appointmentService: AppointmentsService,
   ) {}
 
   @Post()
@@ -77,7 +75,7 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.CREATED)
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
   @ClinicRoute()
-  @Permission('book_appointments')
+  @RequireResourcePermission('appointments', 'create')
   @ApiOperation({
     summary: 'Create a new appointment',
     description: 'Create a new appointment with the specified details. Patients can create their own appointments, while staff can create appointments for patients. Requires valid clinic context and appropriate permissions.'
@@ -127,19 +125,14 @@ export class AppointmentsController {
 
       this.logger.log(`Creating appointment for user ${userId} in clinic ${clinicId}`);
 
-      const result = await this.appointmentService.createAppointment({
+      const result = await this.appointmentService.createAppointment(
+        appointmentData,
         userId,
-        doctorId: appointmentData.doctorId,
-        locationId: appointmentData.locationId,
-        date: appointmentData.date,
-        time: appointmentData.time,
-        duration: appointmentData.duration,
-        type: appointmentData.type,
-        notes: appointmentData.notes,
         clinicId,
-      });
+        req.user.role || 'USER'
+      );
 
-      this.logger.log(`Appointment created successfully: ${result.appointment.id}`);
+      this.logger.log(`Appointment created successfully: ${result.data?.id}`);
       return result;
     } catch (error) {
       this.logger.error(`Failed to create appointment: ${error.message}`, error.stack);
@@ -160,7 +153,7 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT)
   @ClinicRoute()
-  @Permission('view_own_appointments')
+  @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
   @ApiOperation({
     summary: 'Get current user appointments',
     description: 'Get appointments for the currently authenticated patient. Only returns appointments for the authenticated user.'
@@ -231,9 +224,15 @@ export class AppointmentsController {
         limit: Math.min(100, Math.max(1, limit))
       };
       
-      const result = await this.appointmentService.getAppointments(filters);
+      const result = await this.appointmentService.getAppointments(
+        filters,
+        userId,
+        clinicId,
+        req.user.role || 'USER',
+        filters.page || 1
+      );
       
-      this.logger.log(`Retrieved ${result.appointments?.length || 0} appointments for user ${userId}`);
+      this.logger.log(`Retrieved ${result.data?.length || 0} appointments for user ${userId}`);
       return result;
     } catch (error) {
       this.logger.error(`Failed to get my appointments: ${error.message}`, error.stack);
@@ -245,7 +244,7 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
-  @Permission('view_appointments')
+  @RequireResourcePermission('appointments', 'read')
   @ApiOperation({
     summary: 'Get all appointments',
     description: 'Get all appointments with optional filtering. Only clinic staff can access this endpoint. Supports pagination and various filters.'
@@ -333,9 +332,15 @@ export class AppointmentsController {
         limit: Math.min(100, Math.max(1, limit))
       };
       
-      const result = await this.appointmentService.getAppointments(filters);
+      const result = await this.appointmentService.getAppointments(
+        filters,
+        req.user.sub,
+        clinicId,
+        req.user.role || 'USER',
+        filters.page || 1
+      );
       
-      this.logger.log(`Retrieved ${result.appointments?.length || 0} appointments for clinic ${clinicId}`);
+      this.logger.log(`Retrieved ${result.data?.length || 0} appointments for clinic ${clinicId}`);
       return result;
     } catch (error) {
       this.logger.error(`Failed to get appointments: ${error.message}`, error.stack);
@@ -346,7 +351,7 @@ export class AppointmentsController {
   @Get('doctor/:doctorId/availability')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.CLINIC_ADMIN)
-  @Permission('view_appointments')
+  @RequireResourcePermission('appointments', 'read')
   @ApiOperation({
     summary: 'Get doctor availability',
     description: 'Check a doctor\'s availability for a specific date. Returns available time slots and working hours.'
@@ -406,7 +411,7 @@ export class AppointmentsController {
 
       this.logger.log(`Checking availability for doctor ${doctorId} on ${date}`);
       
-      const result = await this.appointmentService.getDoctorAvailability(doctorId, date);
+      const result = await this.appointmentService.getDoctorAvailability(doctorId, date, req.user.sub, req.user.clinicId || '');
       
       this.logger.log(`Retrieved availability for doctor ${doctorId}: ${result.availableSlots?.length || 0} slots available`);
       return result;
@@ -419,7 +424,7 @@ export class AppointmentsController {
   @Get('user/:userId/upcoming')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
-  @Permission('view_appointments')
+  @RequireResourcePermission('appointments', 'read')
   @ApiOperation({
     summary: 'Get user upcoming appointments',
     description: 'Get upcoming appointments for a specific user. Patients can only access their own upcoming appointments.'
@@ -461,7 +466,7 @@ export class AppointmentsController {
       
       this.logger.log(`Getting upcoming appointments for user ${userId} (requested by ${currentUserId})`);
       
-      const result = await this.appointmentService.getUserUpcomingAppointments(userId);
+      const result = await this.appointmentService.getUserUpcomingAppointments(userId, req.user.clinicId || '');
       
       this.logger.log(`Retrieved ${result?.length || 0} upcoming appointments for user ${userId}`);
       return result;
@@ -475,7 +480,7 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
   @ClinicRoute()
-  @Permission('view_appointments', 'appointment', 'id')
+  @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
   @ApiOperation({
     summary: 'Get an appointment by ID',
     description: 'Get detailed information about a specific appointment. Patients can only access their own appointments.'
@@ -539,7 +544,7 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
   @ClinicRoute()
-  @Permission('manage_appointments', 'appointment', 'id')
+  @RequireResourcePermission('appointments', 'update', { requireOwnership: true })
   @ApiOperation({
     summary: 'Update an appointment',
     description: 'Update an existing appointment\'s details. Patients can only update their own appointments.'
@@ -601,7 +606,7 @@ export class AppointmentsController {
         }
       }
       
-      const result = await this.appointmentService.updateAppointment(id, updateData, clinicId);
+      const result = await this.appointmentService.updateAppointment(id, updateData, req.user.sub, clinicId);
       
       this.logger.log(`Appointment ${id} updated successfully`);
       return result;
@@ -615,7 +620,7 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
   @ClinicRoute()
-  @Permission('manage_appointments', 'appointment', 'id')
+  @RequireResourcePermission('appointments', 'update', { requireOwnership: true })
   @ApiOperation({
     summary: 'Cancel an appointment',
     description: 'Cancel an existing appointment. Patients can only cancel their own appointments. Completed appointments cannot be cancelled.'
@@ -670,7 +675,7 @@ export class AppointmentsController {
         }
       }
       
-      const result = await this.appointmentService.cancelAppointment(id, clinicId);
+      const result = await this.appointmentService.cancelAppointment(id, 'Cancelled by user', req.user.sub, clinicId, req.user?.role);
       
       this.logger.log(`Appointment ${id} cancelled successfully`);
       return result;

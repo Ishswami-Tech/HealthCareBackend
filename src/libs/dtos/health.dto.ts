@@ -195,7 +195,7 @@ export class HealthCheckRequestDto {
   @ApiPropertyOptional({
     example: 'healthcare',
     description: 'Application domain for multi-domain health checks',
-    enum: ['healthcare', 'fashion']
+    enum: ['healthcare', 'clinic']
   })
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })

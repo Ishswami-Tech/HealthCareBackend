@@ -82,6 +82,9 @@ model User {
   insurances             Insurance[]
   medications            Medication[]
   dietaryRestrictions    DietaryRestriction[]
+  
+  // RBAC Relations
+  userRoles              UserRole[]
 
   @@map("users")
   @@index([primaryClinicId])
@@ -139,6 +142,10 @@ model Clinic {
   receptionists         Receptionist[]
   ReceptionistsAtClinic ReceptionistsAtClinic[]
   locations             ClinicLocation[]
+  
+  // RBAC Relations
+  rbacRoles             RbacRole[]
+  userRoles             UserRole[]
 
   @@map("clinics")
   @@index([app_name])
@@ -828,4 +835,89 @@ model DietaryRestriction {
   updatedAt    DateTime  @updatedAt
 
   @@index([userId])
+}
+
+// RBAC Models for Authentication System
+model Permission {
+  id                  String             @id @default(uuid())
+  name                String
+  resource            String
+  action              String
+  description         String?
+  domain              String             @default("healthcare")
+  isSystemPermission  Boolean            @default(false)
+  isActive            Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  
+  // Relations
+  rolePermissions     RolePermission[]
+
+  @@unique([resource, action, domain])
+  @@index([resource, action])
+  @@index([domain])
+}
+
+model RbacRole {
+  id           String           @id @default(uuid())
+  name         String
+  displayName  String
+  description  String?
+  domain       String           @default("healthcare")
+  clinicId     String?
+  isSystemRole Boolean          @default(false)
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  
+  // Relations
+  clinic       Clinic?          @relation(fields: [clinicId], references: [id])
+  userRoles    UserRole[]
+  permissions  RolePermission[]
+
+  @@unique([name, domain, clinicId])
+  @@index([domain, clinicId])
+}
+
+model UserRole {
+  id         String    @id @default(uuid())
+  userId     String
+  roleId     String
+  clinicId   String?
+  assignedBy String    @default("SYSTEM")
+  assignedAt DateTime  @default(now())
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  revokedBy  String?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  
+  // Relations
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       RbacRole  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  clinic     Clinic?   @relation(fields: [clinicId], references: [id])
+
+  @@unique([userId, roleId, clinicId])
+  @@index([userId])
+  @@index([roleId])
+  @@index([clinicId])
+}
+
+model RolePermission {
+  id           String      @id @default(uuid())
+  roleId       String
+  permissionId String
+  assignedAt   DateTime    @default(now())
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  
+  // Relations
+  role         RbacRole    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission  @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
 }

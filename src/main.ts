@@ -17,7 +17,7 @@ import { LogLevel as AppLogLevel } from './libs/infrastructure/logging/types/log
 import developmentConfig from './config/environment/development.config';
 import productionConfig from './config/environment/production.config';
 import { RedisService } from './libs/infrastructure/cache/redis/redis.service';
-import { QueueService } from './libs/infrastructure/queue/queue.service';
+import { QueueService } from './libs/infrastructure/queue/src/queue.service';
 import { PrismaService } from './libs/infrastructure/database/prisma/prisma.service';
 import { EmailModule } from './libs/communication/messaging/email/email.module';
 import { IoAdapter } from '@nestjs/platform-socket.io';

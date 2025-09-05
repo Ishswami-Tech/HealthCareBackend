@@ -20,11 +20,9 @@ import {
   Logger
 } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
-import { JwtAuthGuard } from '../../libs/core/guards/jwt-auth.guard';
-import { RolesGuard } from '../../libs/core/guards/roles.guard';
-import { Roles } from '../../libs/core/decorators/roles.decorator';
+import { JwtAuthGuard, RolesGuard, Roles } from '../../libs/core';
 import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
-import { Permission } from '../../libs/infrastructure/permissions';
+import { RequireResourcePermission } from '../../libs/core/rbac/rbac.decorators';
 import { 
   ApiTags, 
   ApiOperation, 
@@ -47,9 +45,9 @@ import {
   ClinicListResponseDto, 
   AppNameInlineDto 
 } from './dto/clinic-response.dto';
-import { Public } from '../../libs/core/decorators/public.decorator';
+import { Public } from '../../libs/core';
 import { AuthenticatedRequest } from '../../libs/core/types/clinic.types';
-import { PermissionGuard } from '../../libs/core/guards/permission.guard';
+import { RbacGuard } from '../../libs/core/rbac/rbac.guard';
 import { ClinicGuard } from '../../libs/core/guards/clinic.guard';
 import { UseInterceptors } from '@nestjs/common';
 
@@ -58,7 +56,7 @@ import { UseInterceptors } from '@nestjs/common';
 @ApiSecurity('session-id')
 @ApiHeader({ name: 'X-Clinic-ID', description: 'Clinic identifier (for clinic-specific endpoints)', required: false })
 @Controller('clinics')
-@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 @UsePipes(new ValidationPipe({ 
   transform: true, 
   whitelist: true, 
@@ -73,7 +71,7 @@ export class ClinicController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  @Permission('manage_clinics')
+  @RequireResourcePermission('clinics', 'create')
   @ApiOperation({ 
     summary: 'Create a new clinic',
     description: 'Creates a new clinic with its own isolated database. Both Super Admins and Clinic Admins can create clinics. Super Admins must specify a clinicAdminIdentifier (email or ID), while Clinic Admins automatically become the admin of the clinic they create. Requires manage_clinics permission.'
@@ -138,7 +136,7 @@ export class ClinicController {
   @Get()
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  @Permission('manage_clinics')
+  @RequireResourcePermission('clinics', 'create')
   @ApiOperation({ 
     summary: 'Get all clinics',
     description: 'Retrieves all clinics based on user permissions. Super Admin can see all clinics, while Clinic Admin can only see their assigned clinics. Supports pagination.'
@@ -201,7 +199,7 @@ export class ClinicController {
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
-  @Permission('view_clinic_details', 'clinic', 'id')
+  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @ApiOperation({ 
     summary: 'Get a clinic by ID',
     description: 'Retrieves a specific clinic by ID based on user permissions. Super Admin can see any clinic, Clinic Admin can see their assigned clinics, and Patients can see their associated clinic.'
@@ -259,7 +257,7 @@ export class ClinicController {
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN)
-  @Permission('manage_clinics', 'clinic', 'id')
+  @RequireResourcePermission('clinics', 'update', { requireOwnership: true })
   @ApiOperation({ 
     summary: 'Update a clinic',
     description: 'Updates a specific clinic by ID. Super Admin can update any clinic, while Clinic Admin can only update their assigned clinics.' 
@@ -320,7 +318,7 @@ export class ClinicController {
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN)
-  @Permission('manage_clinics', 'clinic', 'id')
+  @RequireResourcePermission('clinics', 'update', { requireOwnership: true })
   @ApiOperation({ 
     summary: 'Delete a clinic',
     description: 'Deletes a specific clinic by ID and its associated database. Only Super Admin can delete clinics.' 
@@ -369,7 +367,7 @@ export class ClinicController {
   @Post('admin')
   @HttpCode(HttpStatus.CREATED)
   @Roles(Role.SUPER_ADMIN)
-  @Permission('manage_clinics')
+  @RequireResourcePermission('clinics', 'create')
   @ApiOperation({ 
     summary: 'Assign a clinic admin',
     description: 'Assigns a user as a clinic admin. Only Super Admin or the clinic owner can assign clinic admins.' 
@@ -470,7 +468,7 @@ export class ClinicController {
   @Get(':id/doctors')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
-  @Permission('view_clinic_details', 'clinic', 'id')
+  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @ApiOperation({ 
     summary: 'Get all doctors for a clinic',
     description: 'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors.' 
@@ -519,7 +517,7 @@ export class ClinicController {
   @Get(':id/patients')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
-  @Permission('view_clinic_details', 'clinic', 'id')
+  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @ApiOperation({ 
     summary: 'Get all patients for a clinic',
     description: 'Retrieves all patients associated with a specific clinic. Super Admin and Clinic Admin can see all patients.' 
@@ -677,7 +675,7 @@ export class ClinicController {
   @Post('associate-user')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
-  @Permission('view_clinic_details')
+  @RequireResourcePermission('clinics', 'read')
   @ApiOperation({ 
     summary: 'Associate user with clinic by app name', 
     description: 'Associates the current user with a clinic by app name. Users can associate themselves with clinics they have access to.'
@@ -738,7 +736,7 @@ export class ClinicController {
   @Get('my-clinic')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
-  @Permission('view_clinic_details')
+  @RequireResourcePermission('clinics', 'read')
   @ApiOperation({ 
     summary: 'Get current user clinic',
     description: 'Get clinic details for the currently authenticated user. Patients, doctors, and staff can access their associated clinic.'

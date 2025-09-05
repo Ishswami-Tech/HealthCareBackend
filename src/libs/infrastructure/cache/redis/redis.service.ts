@@ -19,6 +19,40 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     heavy: { limit: 10, window: 300 }    // 10 heavy operations per 5 minutes
   };
 
+  // Healthcare-specific cache key patterns
+  private readonly HEALTHCARE_CACHE_PATTERNS = {
+    PATIENT_RECORDS: (patientId: string, clinicId: string) => `patient:${patientId}:clinic:${clinicId}:records`,
+    PATIENT_PROFILE: (patientId: string) => `patient:${patientId}:profile`,
+    PATIENT_APPOINTMENTS: (patientId: string, clinicId: string) => `patient:${patientId}:clinic:${clinicId}:appointments`,
+    DOCTOR_PROFILE: (doctorId: string) => `doctor:${doctorId}:profile`,
+    DOCTOR_SCHEDULE: (doctorId: string, date: string) => `doctor:${doctorId}:schedule:${date}`,
+    DOCTOR_APPOINTMENTS: (doctorId: string, clinicId: string) => `doctor:${doctorId}:clinic:${clinicId}:appointments`,
+    CLINIC_INFO: (clinicId: string) => `clinic:${clinicId}:info`,
+    CLINIC_DOCTORS: (clinicId: string) => `clinic:${clinicId}:doctors`,
+    CLINIC_PATIENTS: (clinicId: string) => `clinic:${clinicId}:patients`,
+    MEDICAL_HISTORY: (patientId: string, clinicId: string) => `medical:${patientId}:clinic:${clinicId}:history`,
+    PRESCRIPTIONS: (patientId: string, clinicId: string) => `prescriptions:${patientId}:clinic:${clinicId}`,
+    APPOINTMENT_DETAILS: (appointmentId: string) => `appointment:${appointmentId}:details`,
+    USER_PERMISSIONS: (userId: string, clinicId: string) => `user:${userId}:clinic:${clinicId}:permissions`,
+    EMERGENCY_CONTACTS: (patientId: string) => `patient:${patientId}:emergency_contacts`,
+    VITAL_SIGNS: (patientId: string, date: string) => `patient:${patientId}:vitals:${date}`,
+    LAB_RESULTS: (patientId: string, clinicId: string) => `lab:${patientId}:clinic:${clinicId}:results`,
+  };
+
+  // Healthcare-specific cache tags for grouped invalidation
+  private readonly HEALTHCARE_CACHE_TAGS = {
+    PATIENT: (patientId: string) => `patient:${patientId}`,
+    DOCTOR: (doctorId: string) => `doctor:${doctorId}`,
+    CLINIC: (clinicId: string) => `clinic:${clinicId}`,
+    USER: (userId: string) => `user:${userId}`,
+    APPOINTMENT: (appointmentId: string) => `appointment:${appointmentId}`,
+    MEDICAL_RECORD: (recordId: string) => `medical_record:${recordId}`,
+    PRESCRIPTION: (prescriptionId: string) => `prescription:${prescriptionId}`,
+    EMERGENCY_DATA: 'emergency_data',
+    CRITICAL_PATIENT_DATA: 'critical_patient_data',
+    PHI_DATA: 'phi_data', // Protected Health Information
+  };
+
   constructor(private configService: ConfigService) {
     // Check multiple environment variables to determine development mode
     this.isDevelopment = this.isDevEnvironment();
@@ -181,22 +215,50 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     throw lastError;
   }
 
-  async set(key: string, value: string, ttl?: number): Promise<void> {
-    await this.retryOperation(async () => {
-      if (ttl) {
-        await this.client.setex(key, ttl, value);
-      } else {
-        await this.client.set(key, value);
+  async set(key: string, value: string, ttl?: number): Promise<void>;
+  async set<T>(key: string, value: T, ttl?: number): Promise<void>;
+  async set<T>(key: string, value: T | string, ttl?: number): Promise<void> {
+    try {
+      const serializedValue = typeof value === 'string' ? value : JSON.stringify(value);
+      
+      await this.retryOperation(async () => {
+        if (ttl) {
+          await this.client.setex(key, ttl, serializedValue);
+        } else {
+          await this.client.set(key, serializedValue);
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Failed to set key ${key}:`, error.stack);
+      throw error;
+    }
+  }
+
+  async get(key: string): Promise<string | null>;
+  async get<T>(key: string): Promise<T | null>;
+  async get<T>(key: string): Promise<T | string | null> {
+    try {
+      const result = await this.retryOperation(() => this.client.get(key));
+      if (result === null) return null;
+      
+      try {
+        // Try to parse as JSON first
+        return JSON.parse(result) as T;
+      } catch {
+        // If parsing fails, return as string
+        return result as any;
       }
-    });
+    } catch (error) {
+      this.logger.error(`Failed to get key ${key}:`, error.stack);
+      return null;
+    }
   }
 
-  async get(key: string): Promise<string | null> {
-    return this.retryOperation(() => this.client.get(key));
-  }
-
-  async del(key: string): Promise<void> {
-    await this.retryOperation(() => this.client.del(key));
+  async del(key: string): Promise<void>;
+  async del(...keys: string[]): Promise<void>;
+  async del(...keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    await this.retryOperation(() => this.client.del(...keys));
   }
 
   async keys(pattern: string): Promise<string[]> {
@@ -614,6 +676,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   // Hash operations for metrics
   async hincrby(key: string, field: string, increment: number): Promise<number> {
     return this.retryOperation(() => this.client.hincrby(key, field, increment));
+  }
+
+  async incr(key: string): Promise<number> {
+    return this.retryOperation(() => this.client.incr(key));
   }
 
   /**

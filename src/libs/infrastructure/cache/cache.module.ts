@@ -1,26 +1,18 @@
-import { Module, Global } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { Module } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { RedisService } from './redis/redis.service';
 import { CacheController } from './controllers/cache.controller';
-import { HealthcareCacheService } from './healthcare-cache.service';
+import { CacheServiceModule } from './cache-service.module';
 import { HealthcareCacheInterceptor } from './interceptors/healthcare-cache.interceptor';
 
-@Global()
 @Module({
-  imports: [ConfigModule],
+  imports: [CacheServiceModule],
   controllers: [CacheController],
   providers: [
-    RedisService,
-    HealthcareCacheService,
     {
       provide: APP_INTERCEPTOR,
       useClass: HealthcareCacheInterceptor,
     },
   ],
-  exports: [
-    RedisService, 
-    HealthcareCacheService
-  ],
+  exports: [CacheServiceModule],
 })
 export class CacheModule {} 

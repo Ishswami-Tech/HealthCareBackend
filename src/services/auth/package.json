@@ -1,0 +1,20 @@
+{
+  "name": "@healthcare/auth",
+  "version": "1.0.0",
+  "description": "Authentication service for healthcare and fashion applications",
+  "main": "src/index.ts",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/passport": "^11.0.5",
+    "@healthcare/core": "1.0.0"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^11.0.1"
+  }
+}

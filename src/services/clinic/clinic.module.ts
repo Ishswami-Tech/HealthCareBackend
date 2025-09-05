@@ -4,7 +4,7 @@ import { ClinicController } from './clinic.controller';
 import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
 import { ClinicLocationService } from './services/clinic-location.service';
 import { ClinicLocationController } from './cliniclocation/clinic-location.controller';
-import { LoggingModule } from '../../libs/infrastructure/logging/logging.module';
+import { LoggingServiceModule } from "../../libs/infrastructure/logging";
 import { EventService } from '../../libs/infrastructure/events/event.service';
 import { ConfigModule } from '@nestjs/config';
 import { GuardsModule } from '../../libs/core/guards/guards.module';
@@ -13,22 +13,22 @@ import { RateLimitModule } from '../../libs/utils/rate-limit/rate-limit.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ClinicUserService } from './services/clinic-user.service';
 import { QrModule } from '../../libs/utils/QR/qr.module';
-  import { PermissionsModule } from '../../libs/infrastructure/permissions';
+  import { RbacModule } from '../../libs/core/rbac/rbac.module';
 import { JwtModule } from '@nestjs/jwt';
 import { jwtConfig } from '../../config/jwt.config';
-import { RedisModule } from '../../libs/infrastructure/cache/redis/redis.module';
+import { CacheServiceModule } from '../../libs/infrastructure/cache/cache-service.module';
 
 @Module({
   imports: [
-    LoggingModule,
+    LoggingServiceModule,
     ConfigModule,
     GuardsModule,
     RateLimitModule,
     EventEmitterModule.forRoot(),
     QrModule,
-    PermissionsModule,
+    RbacModule,
     JwtModule.register(jwtConfig),
-    RedisModule
+    CacheServiceModule
   ],
   controllers: [ClinicController, ClinicLocationController],
   providers: [

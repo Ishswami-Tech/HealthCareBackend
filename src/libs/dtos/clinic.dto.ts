@@ -151,7 +151,7 @@ export class CreateClinicDto {
   @ApiPropertyOptional({
     example: 'healthcare',
     description: 'Application domain for multi-domain setup',
-    enum: ['healthcare', 'fashion']
+    enum: ['healthcare', 'clinic']
   })
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
@@ -448,7 +448,7 @@ export class ClinicSearchDto {
   @ApiPropertyOptional({
     example: 'healthcare',
     description: 'Filter by application domain',
-    enum: ['healthcare', 'fashion']
+    enum: ['healthcare', 'clinic']
   })
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
