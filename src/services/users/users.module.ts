@@ -1,23 +1,25 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { UsersService } from "./users.service";
 import { UsersController } from "./controllers/users.controller";
 import { PrismaModule } from "../../libs/infrastructure/database/prisma/prisma.module";
-import { RedisModule } from "../../libs/infrastructure/cache/redis/redis.module";
+import { CacheServiceModule } from "../../libs/infrastructure/cache/cache-service.module";
 import { GuardsModule } from "../../libs/core/guards/guards.module";
 import { RateLimitModule } from "../../libs/utils/rate-limit/rate-limit.module";
-import { LoggingModule } from "../../libs/infrastructure/logging/logging.module";
+import { LoggingServiceModule } from "../../libs/infrastructure/logging";
 import { EventsModule } from "../../libs/infrastructure/events/events.module";
-import { PermissionsModule } from '../../libs/infrastructure/permissions';
+import { RbacModule } from '../../libs/core/rbac/rbac.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     PrismaModule,
-    RedisModule,
+    CacheServiceModule,
     GuardsModule,
     RateLimitModule,
-    LoggingModule,
+    LoggingServiceModule,
     EventsModule,
-    PermissionsModule,
+    RbacModule,
+    forwardRef(() => AuthModule),
   ],
   controllers: [UsersController],
   providers: [UsersService],

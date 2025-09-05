@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../infrastructure/database/prisma/prisma.service';
 import { LoggingService } from '../../infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '../../infrastructure/logging/types/logging.types';
-import { ExtendedClinicContext } from '../../utils/middleware/clinic-context.middleware';
+import { ClinicIsolationService } from '../../infrastructure/database/clinic-isolation.service';
 
 @Injectable()
 export class ClinicGuard implements CanActivate {
@@ -11,12 +11,12 @@ export class ClinicGuard implements CanActivate {
     private reflector: Reflector,
     private prisma: PrismaService,
     private loggingService: LoggingService,
+    private clinicIsolationService: ClinicIsolationService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
-    const clinicContext: ExtendedClinicContext = request.clinicContext;
 
     // Log the request details for debugging
     this.loggingService.log(
@@ -28,13 +28,7 @@ export class ClinicGuard implements CanActivate {
         path: request.url,
         method: request.method,
         userId: user?.id,
-        userRole: user?.role,
-        clinicContext: {
-          identifier: clinicContext?.identifier,
-          clinicId: clinicContext?.clinicId,
-          isValid: clinicContext?.isValid,
-          accessMethod: clinicContext?.accessMethod
-        }
+        userRole: user?.role
       }
     );
 
@@ -53,66 +47,58 @@ export class ClinicGuard implements CanActivate {
       return true;
     }
     
-    // For clinic routes, we need valid clinic context for data isolation
-    if (!clinicContext || !clinicContext.isValid) {
+    // For clinic routes, extract clinic ID from request
+    const clinicId = this.extractClinicId(request);
+    
+    if (!clinicId) {
       this.loggingService.log(
         LogType.AUTH,
         LogLevel.WARN,
-        `Invalid clinic context for clinic route`,
+        `Clinic ID required for clinic route`,
         'ClinicGuard',
-        { 
-          path: request.url, 
-          clinicIdentifier: clinicContext?.identifier,
-          isValid: clinicContext?.isValid
-        }
+        { path: request.url }
       );
-      
-      if (!clinicContext) {
-        throw new ForbiddenException('Clinic context is required. Please provide clinic ID in header, query, or JWT token.');
-      } else if (!clinicContext.identifier) {
-        throw new ForbiddenException('Clinic identifier is required.');
-      } else if (!clinicContext.clinicId) {
-        throw new ForbiddenException(`Clinic not found: ${clinicContext.identifier}`);
-      } else {
-        throw new ForbiddenException('Clinic is not active or accessible');
-      }
+      throw new ForbiddenException('Clinic ID is required. Please provide clinic ID in header, query, or JWT token.');
     }
 
-    // If user is authenticated, ensure they have access to this clinic
-    if (user) {
-      const userId = user.sub || user.id;
-      if (!userId || userId === 'undefined') {
-        throw new UnauthorizedException('User ID is required');
-      }
-      
+    // Validate clinic access using ClinicIsolationService
+    const clinicResult = await this.clinicIsolationService.validateClinicAccess(
+      user?.sub || user?.id || 'anonymous',
+      clinicId
+    );
+
+    if (!clinicResult.success) {
       this.loggingService.log(
         LogType.AUTH,
-        LogLevel.DEBUG,
-        `User authenticated with valid clinic context`,
+        LogLevel.WARN,
+        `Invalid clinic access`,
         'ClinicGuard',
         { 
-          userId: userId,
-          userRole: user.role,
-          clinicId: clinicContext.clinicId,
-          clinicName: clinicContext.clinicName,
-          accessMethod: clinicContext.accessMethod
+          path: request.url,
+          clinicId,
+          error: clinicResult.error
         }
       );
-      
-      return true;
+      throw new ForbiddenException(`Clinic access denied: ${clinicResult.error}`);
     }
 
-    // For routes that don't require authentication but need clinic context
+    // Set clinic context in request for downstream use
+    request.clinicId = clinicId;
+    request.clinicContext = clinicResult.clinicContext;
+
     this.loggingService.log(
       LogType.AUTH,
       LogLevel.DEBUG,
-      `Allowing access with valid clinic context (no auth required)`,
+      `Clinic access validated`,
       'ClinicGuard',
-      {
-        clinicId: clinicContext.clinicId,
-        accessMethod: clinicContext.accessMethod
+      { 
+        userId: user?.sub || user?.id,
+        userRole: user?.role,
+        clinicId,
+        clinicName: clinicResult.clinicContext?.clinicName
       }
     );
+    
     return true;
   }
 
@@ -155,5 +141,39 @@ export class ClinicGuard implements CanActivate {
     ];
 
     return clinicRoutePatterns.some(pattern => pattern.test(path));
+  }
+
+  private extractClinicId(request: any): string | null {
+    // Try to get clinic ID from various sources
+    
+    // 1. From headers
+    const headerClinicId = request.headers['x-clinic-id'] || request.headers['clinic-id'];
+    if (headerClinicId) {
+      return headerClinicId;
+    }
+
+    // 2. From query parameters
+    const queryClinicId = request.query?.clinicId || request.query?.clinic_id;
+    if (queryClinicId) {
+      return queryClinicId;
+    }
+
+    // 3. From JWT token (if user is authenticated)
+    if (request.user?.clinicId) {
+      return request.user.clinicId;
+    }
+
+    // 4. From route parameters
+    const routeClinicId = request.params?.clinicId || request.params?.clinic_id;
+    if (routeClinicId) {
+      return routeClinicId;
+    }
+
+    // 5. From body (for POST/PUT requests)
+    if (request.body?.clinicId) {
+      return request.body.clinicId;
+    }
+
+    return null;
   }
 } 

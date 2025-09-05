@@ -4,25 +4,29 @@ import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
 import { EventService } from '../../libs/infrastructure/events/event.service';
 import { ClinicErrorService } from './shared/error.utils';
 import { RedisCache } from '../../libs/infrastructure/cache/decorators/redis-cache.decorator';
-import { RedisService } from '../../libs/infrastructure/cache/redis/redis.service';
+import { CacheService } from '../../libs/infrastructure/cache';
 import { JwtService } from '@nestjs/jwt';
 import { ClinicLocationService } from './services/clinic-location.service';
-import { PermissionService } from '../../libs/infrastructure/permissions';
+import { RbacService } from '../../libs/core/rbac/rbac.service';
 import { resolveClinicUUID } from '../../libs/utils/clinic.utils';
-import { DatabaseClientFactory } from '../../libs/infrastructure/database/database-client.factory';
+import { HealthcareDatabaseClient } from '../../libs/infrastructure/database/clients/healthcare-database.client';
 import { RepositoryResult } from '../../libs/infrastructure/database/types/repository-result';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class ClinicService {
+  private readonly logger = new Logger(ClinicService.name);
+
   constructor(
     private prisma: PrismaService,
     private readonly eventService: EventService,
     private readonly errorService: ClinicErrorService,
     private readonly clinicLocationService: ClinicLocationService,
-    private readonly redis: RedisService,
+    private readonly cacheService: CacheService,
     private readonly jwtService: JwtService,
-    private readonly permissionService: PermissionService,
-    private readonly databaseClientFactory: DatabaseClientFactory,
+    private readonly rbacService: RbacService,
+    private readonly healthcareDatabaseClient: HealthcareDatabaseClient,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -191,8 +195,8 @@ export class ClinicService {
           subdomain: data.subdomain,
           clinicId: data.subdomain,
           // Use shared database connection for multi-tenancy
-          db_connection_string: process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
-          databaseName: 'userdb', // All clinics share the same database in multi-tenant setup
+          db_connection_string: this.configService.get('DATABASE_URL'),
+          databaseName: this.configService.get('DATABASE_NAME', 'userdb'), // All clinics share the same database in multi-tenant setup
           databaseStatus: 'ACTIVE',
         },
       });
@@ -234,7 +238,7 @@ export class ClinicService {
       });
 
       // Invalidate clinic list cache after creating a new clinic
-      await this.redis.invalidateCacheByTag('clinics');
+      await this.cacheService.invalidateCacheByTag('clinics');
 
       // Return the clinic with its main location
       return {
@@ -297,13 +301,12 @@ export class ClinicService {
       throw new NotFoundException('User not found');
     }
 
-      // For debugging purposes
-      console.log('User found:', {
+      // Log user details for debugging
+      this.logger.debug('User found:', {
         id: user.id,
         email: user.email,
         role: user.role,
         hasSuperAdmin: !!user.superAdmin,
-        superAdmin: user.superAdmin,
         hasClinicAdmin: !!user.clinicAdmins?.length
       });
 
@@ -322,19 +325,19 @@ export class ClinicService {
           const tableInfo = await this.prisma.$queryRaw`
             SELECT tablename FROM pg_tables WHERE schemaname = 'public'
           `;
-          console.log('Tables in database:', tableInfo);
+          this.logger.debug('Tables in database:', tableInfo);
           
           // Check if the clinics table has any data
           const countResult = await this.prisma.$queryRaw`
             SELECT COUNT(*) as count FROM "clinics"
           `;
-          console.log('Number of clinics:', countResult);
+          this.logger.debug('Number of clinics:', countResult);
           
           // Direct query with debug output
           const rawClinics = await this.prisma.$queryRaw`
             SELECT * FROM "clinics"
           `;
-          console.log('Raw clinics data:', rawClinics);
+          this.logger.debug('Raw clinics data:', rawClinics);
           
           // Get admin data separately
           const clinicAdmins = await this.prisma.$queryRaw`
@@ -342,7 +345,7 @@ export class ClinicService {
             FROM "ClinicAdmin" ca 
             JOIN "users" u ON ca."userId" = u.id
           `;
-          console.log('Clinic admins data:', clinicAdmins);
+          this.logger.debug('Clinic admins data:', clinicAdmins);
           
           // Associate admins with their clinics
           clinics = (rawClinics as any[]).map(clinic => ({
@@ -359,7 +362,7 @@ export class ClinicService {
             }))
           }));
         } catch (error) {
-          console.error('Error fetching clinics:', error);
+          this.logger.error('Error fetching clinics:', error);
           // Return empty array to avoid application errors
           clinics = [];
         }
@@ -406,7 +409,7 @@ export class ClinicService {
             }))
           }));
         } catch (error) {
-          console.error('Error fetching clinics for clinic admin:', error);
+          this.logger.error('Error fetching clinics for clinic admin:', error);
           // Return empty array to avoid application errors
           clinics = [];
         }
@@ -497,7 +500,12 @@ export class ClinicService {
       // Use the permission service to validate access
       // For patients, check for view_clinic_details permission, for others check manage_clinics
       const action = user.role === 'PATIENT' ? 'view_clinic_details' : 'manage_clinics';
-      const hasPermission = await this.permissionService.hasPermission({ userId, action, resourceType: 'clinic', resourceId: clinicUUID });
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: 'clinic',
+        action,
+        resourceId: clinicUUID,
+      });
       if (!hasPermission) {
         await this.errorService.logError(
           { message: 'Unauthorized access attempt' },
@@ -719,8 +727,8 @@ export class ClinicService {
       });
 
       // After successfully assigning clinic admin, invalidate clinic caches
-      await this.redis.invalidateCacheByPattern(`clinics:detail:${data.clinicId}:*`);
-      await this.redis.invalidateCacheByTag(`clinic:${data.clinicId}`);
+      await this.cacheService.invalidateByPattern(`clinics:detail:${data.clinicId}:*`);
+      await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
 
       return assignment;
     } catch (error) {
@@ -780,8 +788,8 @@ export class ClinicService {
     }
 
     // After successfully removing clinic admin, invalidate clinic caches
-    await this.redis.invalidateCacheByPattern(`clinics:detail:${clinicAdmin.clinicId}:*`);
-    await this.redis.invalidateCacheByTag(`clinic:${clinicAdmin.clinicId}`);
+    await this.cacheService.invalidateByPattern(`clinics:detail:${clinicAdmin.clinicId}:*`);
+    await this.cacheService.invalidateCacheByTag(`clinic:${clinicAdmin.clinicId}`);
 
     return { success: true, message: 'Clinic admin removed successfully' };
   }
@@ -946,8 +954,8 @@ export class ClinicService {
     // For now, we'll just return a success message
 
     // After successfully registering patient, invalidate patients cache
-    await this.redis.invalidateCacheByTag('clinic-patients');
-    await this.redis.invalidateCacheByTag(`clinic:${clinicUUID}`);
+    await this.cacheService.invalidateCacheByTag('clinic-patients');
+    await this.cacheService.invalidateCacheByTag(`clinic:${clinicUUID}`);
     
     return { success: true, message: 'Patient registered to clinic successfully' };
   }
@@ -1045,10 +1053,10 @@ export class ClinicService {
 
       // After successfully updating clinic, invalidate clinic caches
       await Promise.all([
-        this.redis.invalidateCacheByPattern(`clinics:detail:${clinicUUID}:*`),
-        this.redis.invalidateCacheByPattern(`clinics:appname:${clinic.app_name}`),
-        this.redis.invalidateCacheByTag('clinics'),
-        this.redis.invalidateCacheByTag(`clinic:${clinicUUID}`)
+        this.cacheService.invalidateByPattern(`clinics:detail:${clinicUUID}:*`),
+        this.cacheService.invalidateByPattern(`clinics:appname:${clinic.app_name}`),
+        this.cacheService.invalidateCacheByTag('clinics'),
+        this.cacheService.invalidateCacheByTag(`clinic:${clinicUUID}`)
       ]);
 
       return updatedClinic;
@@ -1126,12 +1134,12 @@ export class ClinicService {
 
       // After successfully deleting clinic, invalidate all clinic-related caches
       await Promise.all([
-        this.redis.invalidateCacheByPattern(`clinics:detail:${clinicUUID}:*`),
-        this.redis.invalidateCacheByPattern(`clinics:appname:${clinic.app_name}`),
-        this.redis.invalidateCacheByTag('clinics'),
-        this.redis.invalidateCacheByTag(`clinic:${clinicUUID}`),
-        this.redis.invalidateCacheByTag('clinic-doctors'),
-        this.redis.invalidateCacheByTag('clinic-patients')
+        this.cacheService.invalidateByPattern(`clinics:detail:${clinicUUID}:*`),
+        this.cacheService.invalidateByPattern(`clinics:appname:${clinic.app_name}`),
+        this.cacheService.invalidateCacheByTag('clinics'),
+        this.cacheService.invalidateCacheByTag(`clinic:${clinicUUID}`),
+        this.cacheService.invalidateCacheByTag('clinic-doctors'),
+        this.cacheService.invalidateCacheByTag('clinic-patients')
       ]);
 
       return { success: true, message: 'Clinic deleted successfully' };
@@ -1345,15 +1353,12 @@ export class ClinicService {
       // Validate clinic access
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
       
-      // Get enterprise clinic database client
-      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
-      
-      // Execute dashboard operation with data isolation
-      const dashboardResult = await clinicClient.getClinicDashboardStats();
+      // Execute dashboard operation with data isolation using healthcare database client
+      const dashboardResult = await this.healthcareDatabaseClient.getClinicDashboardStats(clinicUUID);
       
       if (dashboardResult.isSuccess) {
         // Get additional metrics
-        const metricsResult = await clinicClient.getClinicMetrics();
+        const metricsResult = await this.healthcareDatabaseClient.getClinicMetrics(clinicUUID);
         
         return {
           success: true,
@@ -1393,9 +1398,8 @@ export class ClinicService {
   ) {
     try {
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
       
-      const patientsResult = await clinicClient.getClinicPatients({
+      const patientsResult = await this.healthcareDatabaseClient.getClinicPatients(clinicUUID, {
         page: options.page || 1,
         limit: options.limit || 20,
         locationId: options.locationId,
@@ -1444,9 +1448,8 @@ export class ClinicService {
   ) {
     try {
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
       
-      const appointmentsResult = await clinicClient.getClinicAppointments({
+      const appointmentsResult = await this.healthcareDatabaseClient.getClinicAppointments(clinicUUID, {
         page: filters.page || 1,
         limit: filters.limit || 50,
         locationId: filters.locationId,
@@ -1489,32 +1492,30 @@ export class ClinicService {
     patientData: any
   ): Promise<RepositoryResult<any>> {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-    const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
     
-    // Execute patient creation with clinic context and audit trail
-    return await clinicClient.executeClinicPatientOperation(
-      'new', // patientId for new patient
-      userId,
-      async (prisma) => {
-        return await prisma.patient.create({
-          data: {
-            ...patientData,
-            // Ensure clinic association through appointments or other relations
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true,
-              }
+    try {
+      // Execute patient creation with clinic context and audit trail
+      const patient = await this.prisma.patient.create({
+        data: {
+          ...patientData,
+          // Ensure clinic association through appointments or other relations
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
             }
           }
-        });
-      },
-      'write'
-    );
+        }
+      });
+
+      return RepositoryResult.success(patient);
+    } catch (error) {
+      return RepositoryResult.failure(error as Error);
+    }
   }
 
   /**
@@ -1523,12 +1524,10 @@ export class ClinicService {
   async getClinicDatabaseHealth(clinicId: string): Promise<any> {
     try {
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-      const clinicClient = await this.databaseClientFactory.getClinicClient(clinicUUID);
       
-      const [healthStatus, metrics] = await Promise.all([
-        clinicClient.getHealthStatus(),
-        clinicClient.getClinicMetrics()
-      ]);
+      // Get basic health status using healthcare database client
+      const healthStatus = await this.healthcareDatabaseClient.getHealthStatus();
+      const metrics = await this.healthcareDatabaseClient.getMetrics();
 
       return {
         success: true,
@@ -1560,15 +1559,12 @@ export class ClinicService {
         clinicIds.map(id => resolveClinicUUID(this.prisma, id))
       );
       
-      // Create clinic clients batch
-      const clinicClients = this.databaseClientFactory.createClinicClientsBatch(resolvedClinicIds);
-      
-      // Execute parallel operations with proper isolation
-      const summaryPromises = Array.from(clinicClients.entries()).map(async ([clinicId, client]) => {
+      // Execute parallel operations with proper isolation using healthcare database client
+      const summaryPromises = resolvedClinicIds.map(async (clinicId) => {
         try {
           const [dashboardResult, metricsResult] = await Promise.all([
-            client.getClinicDashboardStats(),
-            client.getClinicMetrics()
+            this.healthcareDatabaseClient.getClinicDashboardStats(clinicId),
+            this.healthcareDatabaseClient.getMetrics()
           ]);
           
           return {
@@ -1617,13 +1613,18 @@ export class ClinicService {
    */
   async getDatabaseFactoryStats() {
     try {
-      const factoryStats = this.databaseClientFactory.getFactoryStats();
-      const healthCheck = await this.databaseClientFactory.performHealthCheck();
+      // Get basic database health and metrics using healthcare database client
+      const healthCheck = await this.healthcareDatabaseClient.getHealthStatus();
+      const metrics = await this.healthcareDatabaseClient.getMetrics();
       
       return {
         success: true,
         data: {
-          factory: factoryStats,
+          factory: {
+            activeConnections: (metrics as any).activeConnections || 0,
+            totalConnections: (metrics as any).totalConnections || 0,
+            connectionPoolSize: (metrics as any).connectionPool?.size || 0
+          },
           health: healthCheck,
           timestamp: new Date()
         }

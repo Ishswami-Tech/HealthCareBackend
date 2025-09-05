@@ -42,6 +42,7 @@ export enum LogType {
   AUDIT = 'AUDIT',
   APPOINTMENT = 'APPOINTMENT',
   BUSINESS = 'BUSINESS',
+  PAYMENT = 'PAYMENT',
   USER_ACTIVITY = 'USER_ACTIVITY',
   
   // HIPAA Compliance - Enterprise Healthcare Features

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RedisService } from '../../infrastructure/cache/redis/redis.service';
+import { CacheService } from '../../infrastructure/cache';
 import { RateLimitConfig, RateLimitRule } from './rate-limit.config';
 
 @Injectable()
@@ -8,40 +8,32 @@ export class RateLimitService {
   private readonly logger = new Logger(RateLimitService.name);
 
   constructor(
-    private readonly redisService: RedisService,
+    private readonly cacheService: CacheService,
     private readonly config: RateLimitConfig
   ) {}
 
-  // Redis operations wrapper methods
+  // Cache operations wrapper methods
   private async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
-    return this.redisService.retryOperation(() => 
-      this.redisService.zremrangebyscore(key, min, max)
-    );
+    return this.cacheService.zremrangebyscore(key, min, max);
   }
 
   private async zadd(key: string, score: number, member: string): Promise<number> {
-    return this.redisService.retryOperation(() => 
-      this.redisService.zadd(key, score, member)
-    );
+    return this.cacheService.zadd(key, score, member);
   }
 
   private async zcard(key: string): Promise<number> {
-    return this.redisService.retryOperation(() => 
-      this.redisService.zcard(key)
-    );
+    return this.cacheService.zcard(key);
   }
 
   private async hincrby(key: string, field: string, increment: number): Promise<number> {
-    return this.redisService.retryOperation(() => 
-      this.redisService.hincrby(key, field, increment)
-    );
+    return this.cacheService.hincrby(key, field, increment);
   }
 
   async isRateLimited(
     identifier: string,
     type: string = 'api',
   ): Promise<{ limited: boolean; remaining: number }> {
-    if (this.redisService.isDevelopmentMode) {
+    if (this.cacheService.isDevelopmentMode) {
       return { limited: false, remaining: Number.MAX_SAFE_INTEGER };
     }
 
@@ -52,16 +44,16 @@ export class RateLimitService {
 
     try {
       // Remove old entries outside the current window
-      await this.redisService.zremrangebyscore(key, 0, windowStart);
+      await this.cacheService.zremrangebyscore(key, 0, windowStart);
 
       // Add current request
-      await this.redisService.zadd(key, now, `${now}`);
+      await this.cacheService.zadd(key, now, `${now}`);
 
       // Get current count in window
-      const requestCount = await this.redisService.zcard(key);
+      const requestCount = await this.cacheService.zcard(key);
 
       // Set expiry on the key
-      await this.redisService.expire(key, Math.ceil(windowMs / 1000));
+      await this.cacheService.expire(key, Math.ceil(windowMs / 1000));
 
       // Track metrics
       await this.trackMetrics(type, requestCount > maxRequests);
@@ -81,11 +73,11 @@ export class RateLimitService {
     const metricsKey = `ratelimit:metrics:${date}`;
 
     try {
-      await this.redisService.hincrby(metricsKey, `${type}:total`, 1);
+      await this.cacheService.hincrby(metricsKey, `${type}:total`, 1);
       if (wasLimited) {
-        await this.redisService.hincrby(metricsKey, `${type}:limited`, 1);
+        await this.cacheService.hincrby(metricsKey, `${type}:limited`, 1);
       }
-      await this.redisService.expire(metricsKey, 86400 * 7); // Keep metrics for 7 days
+      await this.cacheService.expire(metricsKey, 86400 * 7); // Keep metrics for 7 days
     } catch (error) {
       this.logger.warn(`Failed to track rate limit metrics: ${error.message}`);
     }
@@ -122,7 +114,7 @@ export class RateLimitService {
 
     try {
       const results = await Promise.all(
-        keys.map(key => this.redisService.hGetAll(key))
+        keys.map(key => this.cacheService.hGetAll(key))
       );
 
       const totals = results.reduce(
@@ -149,6 +141,6 @@ export class RateLimitService {
 
   async clearRateLimit(key: string, type: string): Promise<void> {
     const rateKey = this.buildRateKey(key, type, {});
-    await this.redisService.del(rateKey);
+    await this.cacheService.del(rateKey);
   }
 } 

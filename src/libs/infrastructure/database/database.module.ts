@@ -11,7 +11,7 @@ import { UserRepository } from './repositories/user.repository';
 import { ClinicIsolationService } from './clinic-isolation.service';
 import { SimplePatientRepository } from './repositories/simple-patient.repository';
 import { DatabaseMetricsService } from './database-metrics.service';
-import { DatabaseClientFactory } from './database-client.factory';
+import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 
 @Global()
 @Module({
@@ -26,7 +26,7 @@ import { DatabaseClientFactory } from './database-client.factory';
     ClinicIsolationService,
     SimplePatientRepository,
     DatabaseMetricsService,
-    DatabaseClientFactory,
+    HealthcareDatabaseClient,
   ],
   exports: [
     PrismaModule,
@@ -36,7 +36,7 @@ import { DatabaseClientFactory } from './database-client.factory';
     ClinicIsolationService,
     SimplePatientRepository,
     DatabaseMetricsService,
-    DatabaseClientFactory,
+    HealthcareDatabaseClient,
   ],
 })
 export class DatabaseModule implements OnModuleInit {
