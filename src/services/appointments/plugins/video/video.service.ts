@@ -28,22 +28,7 @@ export interface VideoCallSettings {
   autoRecord: boolean;
 }
 
-export interface VirtualFitting {
-  id: string;
-  appointmentId: string;
-  customerId: string;
-  stylistId: string;
-  storeId: string;
-  status: 'scheduled' | 'active' | 'completed' | 'cancelled';
-  startTime?: string;
-  endTime?: string;
-  duration?: number;
-  recordingUrl?: string;
-  meetingUrl: string;
-  products: string[];
-  measurements: any;
-  recommendations: string[];
-}
+// VirtualFitting interface removed - healthcare application only
 
 @Injectable()
 export class VideoService {
@@ -108,7 +93,7 @@ export class VideoService {
         LogLevel.ERROR,
         `Failed to create video call: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'VideoService',
-        { appointmentId, patientId, doctorId, clinicId, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, patientId, doctorId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -159,7 +144,7 @@ export class VideoService {
         LogLevel.ERROR,
         `Failed to join video call: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'VideoService',
-        { callId, userId, error: error instanceof Error ? error.stack : undefined }
+        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -207,7 +192,7 @@ export class VideoService {
         LogLevel.ERROR,
         `Failed to start recording: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'VideoService',
-        { callId, userId, error: error instanceof Error ? error.stack : undefined }
+        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -251,7 +236,7 @@ export class VideoService {
         LogLevel.ERROR,
         `Failed to stop recording: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'VideoService',
-        { callId, userId, error: error instanceof Error ? error.stack : undefined }
+        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -306,7 +291,7 @@ export class VideoService {
         LogLevel.ERROR,
         `Failed to end video call: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'VideoService',
-        { callId, userId, error: error instanceof Error ? error.stack : undefined }
+        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -349,63 +334,13 @@ export class VideoService {
         LogLevel.ERROR,
         `Failed to share medical image: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'VideoService',
-        { callId, userId, error: error instanceof Error ? error.stack : undefined }
+        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
   }
 
-  async startVirtualFitting(appointmentId: string, customerId: string, stylistId: string, storeId: string): Promise<any> {
-    const startTime = Date.now();
-
-    try {
-      // Validate appointment exists
-      const appointment = await this.validateFashionAppointment(appointmentId, customerId, stylistId, storeId);
-
-      // Generate unique meeting URL
-      const meetingUrl = await this.generateMeetingUrl(appointmentId);
-
-      // Create virtual fitting session
-      const virtualFitting: VirtualFitting = {
-        id: `vf-${appointmentId}-${Date.now()}`,
-        appointmentId,
-        customerId,
-        stylistId,
-        storeId,
-        status: 'scheduled',
-        meetingUrl,
-        products: [],
-        measurements: {},
-        recommendations: []
-      };
-
-      // Store in database (placeholder implementation)
-      await this.storeVirtualFitting(virtualFitting);
-
-      // Cache the virtual fitting
-      const cacheKey = `virtualfitting:${virtualFitting.id}`;
-      await this.cacheService.set(cacheKey, JSON.stringify(virtualFitting), this.VIDEO_CACHE_TTL);
-
-      this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        'Virtual fitting started successfully',
-        'VideoService',
-        { appointmentId, customerId, stylistId, storeId, responseTime: Date.now() - startTime }
-      );
-
-      return virtualFitting;
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to start virtual fitting: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { appointmentId, customerId, stylistId, storeId, error: error instanceof Error ? error.stack : undefined }
-      );
-      throw error;
-    }
-  }
+  // startVirtualFitting method removed - healthcare application only
 
   async getVideoCallHistory(userId: string, clinicId?: string): Promise<any> {
     const startTime = Date.now();
@@ -447,57 +382,13 @@ export class VideoService {
         LogLevel.ERROR,
         `Failed to get video call history: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'VideoService',
-        { userId, clinicId, error: error instanceof Error ? error.stack : undefined }
+        { userId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
   }
 
-  async getVirtualFittingHistory(customerId: string, storeId?: string): Promise<any> {
-    const startTime = Date.now();
-    const cacheKey = `virtualfitting:history:${customerId}:${storeId || 'all'}`;
-
-    try {
-      // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string);
-      }
-
-      // Get virtual fitting history from database (placeholder implementation)
-      const fittings = await this.fetchVirtualFittingHistory(customerId, storeId);
-
-      const result = {
-        customerId,
-        storeId,
-        fittings,
-        total: fittings.length,
-        retrievedAt: new Date().toISOString()
-      };
-
-      // Cache the result
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.VIDEO_CACHE_TTL);
-
-      this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Virtual fitting history retrieved successfully',
-        'VideoService',
-        { customerId, storeId, count: fittings.length, responseTime: Date.now() - startTime }
-      );
-
-      return result;
-    } catch (error) {
-      this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get virtual fitting history: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { customerId, storeId, error: error instanceof Error ? error.stack : undefined }
-      );
-      throw error;
-    }
-  }
+  // getVirtualFittingHistory method removed - healthcare application only
 
   // Helper methods (placeholder implementations that would integrate with actual services)
   private async validateAppointment(appointmentId: string, patientId: string, doctorId: string, clinicId: string): Promise<any> {
@@ -512,17 +403,7 @@ export class VideoService {
     };
   }
 
-  private async validateFashionAppointment(appointmentId: string, customerId: string, stylistId: string, storeId: string): Promise<any> {
-    // This would integrate with the actual appointment service
-    // For now, return mock data
-    return {
-      id: appointmentId,
-      customerId,
-      stylistId,
-      storeId,
-      status: 'CONFIRMED'
-    };
-  }
+  // validateFashionAppointment method removed - healthcare application only
 
   private async generateMeetingUrl(appointmentId: string): Promise<string> {
     // This would integrate with actual video service (Zoom, Teams, etc.)
@@ -603,11 +484,7 @@ export class VideoService {
     return `https://images.example.com/medical/${callId}/${userId}/${Date.now()}.jpg`;
   }
 
-  private async storeVirtualFitting(virtualFitting: VirtualFitting): Promise<void> {
-    // This would integrate with the actual database
-    // For now, just log
-    this.logger.log(`Stored virtual fitting: ${virtualFitting.id}`);
-  }
+  // storeVirtualFitting method removed - healthcare application only
 
   private async fetchVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCall[]> {
     // This would integrate with the actual database
@@ -637,25 +514,5 @@ export class VideoService {
     ];
   }
 
-  private async fetchVirtualFittingHistory(customerId: string, storeId?: string): Promise<VirtualFitting[]> {
-    // This would integrate with the actual database
-    // For now, return mock data
-    return [
-      {
-        id: 'vf-1',
-        appointmentId: 'app-1',
-        customerId: 'customer-1',
-        stylistId: 'stylist-1',
-        storeId: 'store-1',
-        status: 'completed',
-        startTime: new Date(Date.now() - 1800000).toISOString(),
-        endTime: new Date().toISOString(),
-        duration: 1800,
-        meetingUrl: 'https://meet.example.com/fitting',
-        products: ['product-1', 'product-2'],
-        measurements: { height: 170, weight: 65 },
-        recommendations: ['Try the blue dress', 'Consider the red shoes']
-      }
-    ];
-  }
+  // fetchVirtualFittingHistory method removed - healthcare application only
 }

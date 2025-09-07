@@ -94,7 +94,7 @@ export class AppointmentConfirmationService {
         LogLevel.ERROR,
         `Failed to generate check-in QR: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentConfirmationService',
-        { appointmentId, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -146,7 +146,7 @@ export class AppointmentConfirmationService {
         LogLevel.ERROR,
         `Failed to process check-in: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentConfirmationService',
-        { qrData, appointmentId, domain, error: error instanceof Error ? error.stack : undefined }
+        { qrData, appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -184,7 +184,7 @@ export class AppointmentConfirmationService {
         LogLevel.ERROR,
         `Failed to confirm appointment: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentConfirmationService',
-        { appointmentId, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -215,7 +215,7 @@ export class AppointmentConfirmationService {
         LogLevel.ERROR,
         `Failed to mark appointment completed: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentConfirmationService',
-        { appointmentId, doctorId, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, doctorId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -274,7 +274,7 @@ export class AppointmentConfirmationService {
         LogLevel.ERROR,
         `Failed to generate confirmation QR: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentConfirmationService',
-        { appointmentId, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -324,7 +324,7 @@ export class AppointmentConfirmationService {
         LogLevel.ERROR,
         `Failed to verify appointment QR: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentConfirmationService',
-        { qrData, clinicId, domain, error: error instanceof Error ? error.stack : undefined }
+        { qrData, clinicId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -359,7 +359,7 @@ export class AppointmentConfirmationService {
         LogLevel.ERROR,
         `Failed to invalidate QR cache: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentConfirmationService',
-        { appointmentId, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }

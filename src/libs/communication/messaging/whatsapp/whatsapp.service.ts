@@ -55,7 +55,7 @@ export class WhatsAppService {
       } catch (error) {
         retries++;
         const retryMsg = retries <= maxRetries ? `, retrying (${retries}/${maxRetries})...` : '';
-        this.logger.error(`Failed to send OTP via WhatsApp: ${error.message}${retryMsg}`, error.stack);
+        this.logger.error(`Failed to send OTP via WhatsApp: ${error instanceof Error ? (error as Error).message : 'Unknown error'}${retryMsg}`, error instanceof Error ? (error as Error).stack : undefined);
         
         if (retries <= maxRetries) {
           // Exponential backoff: wait longer between each retry
@@ -111,7 +111,7 @@ export class WhatsAppService {
       this.logger.log(`Appointment reminder sent to ${phoneNumber} via WhatsApp`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send appointment reminder via WhatsApp: ${error.message}`, error.stack);
+      this.logger.error(`Failed to send appointment reminder via WhatsApp: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
       return false;
     }
   }
@@ -160,7 +160,7 @@ export class WhatsAppService {
       this.logger.log(`Prescription notification sent to ${phoneNumber} via WhatsApp`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send prescription notification via WhatsApp: ${error.message}`, error.stack);
+      this.logger.error(`Failed to send prescription notification via WhatsApp: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
       return false;
     }
   }
@@ -202,7 +202,7 @@ export class WhatsAppService {
       this.logger.log(`Custom message sent to ${phoneNumber} via WhatsApp`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send custom message via WhatsApp: ${error.message}`, error.stack);
+      this.logger.error(`Failed to send custom message via WhatsApp: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
       return false;
     }
   }
@@ -217,7 +217,7 @@ export class WhatsAppService {
   private async sendTemplateMessage(
     to: string,
     templateName: string,
-    components: any[]
+    components: Array<{ type: string; parameters: Array<{ type: string; text: string }> }>
   ): Promise<any> {
     try {
       const response = await axios.post(
@@ -245,7 +245,7 @@ export class WhatsAppService {
 
       return response.data;
     } catch (error) {
-      this.logger.error(`WhatsApp template message error: ${error.message}`, error.stack);
+      this.logger.error(`WhatsApp template message error: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
       throw error;
     }
   }
@@ -285,7 +285,7 @@ export class WhatsAppService {
 
       return response.data;
     } catch (error) {
-      this.logger.error(`WhatsApp document message error: ${error.message}`, error.stack);
+      this.logger.error(`WhatsApp document message error: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
       throw error;
     }
   }

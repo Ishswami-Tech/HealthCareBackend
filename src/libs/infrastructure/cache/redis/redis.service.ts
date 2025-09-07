@@ -4,13 +4,13 @@ import Redis from 'ioredis';
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
-  private client: Redis;
+  private client!: Redis;
   private readonly logger = new Logger(RedisService.name);
   private readonly maxRetries = 5;
   private readonly retryDelay = 5000; // 5 seconds
   private readonly SECURITY_EVENT_RETENTION = 30 * 24 * 60 * 60; // 30 days
   private readonly STATS_KEY = 'cache:stats';
-  private readonly isDevelopment: boolean;
+  private readonly isDevelopment!: boolean;
 
   // Rate limiting configuration interface
   private readonly defaultRateLimits = {
@@ -200,7 +200,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Redis operation failed, attempt ${i + 1}/${this.maxRetries}`);
         
         // Check if it's a read-only error and try to fix it
-        if (error.message && error.message.includes('READONLY')) {
+        if ((error as Error).message && (error as Error).message.includes('READONLY')) {
           try {
             await this.resetReadOnlyMode();
           } catch (resetError) {
@@ -229,7 +229,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       });
     } catch (error) {
-      this.logger.error(`Failed to set key ${key}:`, error.stack);
+      this.logger.error(`Failed to set key ${key}:`, (error as Error).stack);
       throw error;
     }
   }
@@ -249,7 +249,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return result as any;
       }
     } catch (error) {
-      this.logger.error(`Failed to get key ${key}:`, error.stack);
+      this.logger.error(`Failed to get key ${key}:`, (error as Error).stack);
       return null;
     }
   }
@@ -525,16 +525,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     // Get default limits if not specified
     const type = key.split(':')[0];
-    const defaultLimit = this.defaultRateLimits[type] || this.defaultRateLimits.api;
-    limit = limit || defaultLimit.limit;
-    windowSeconds = windowSeconds || defaultLimit.window;
+    const defaultLimit = (this.defaultRateLimits as Record<string, any>)[type] || this.defaultRateLimits.api;
+    limit = limit || defaultLimit.limit as number;
+    windowSeconds = windowSeconds || defaultLimit.window as number;
 
     try {
       const multi = this.client.multi();
       const now = Date.now();
-      const windowMs = windowSeconds * 1000;
+      const windowMs = windowSeconds! * 1000;
       const cost = options.cost || 1;
-      const burstLimit = options.burst ? limit + options.burst : limit;
+      const burstLimit = options.burst ? limit! + options.burst : limit!;
 
       // Remove old entries
       multi.zremrangebyscore(key, 0, now - windowMs);
@@ -581,13 +581,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     // Get default limits if not specified
     const type = key.split(':')[0];
-    const defaultLimit = this.defaultRateLimits[type] || this.defaultRateLimits.api;
+    const defaultLimit = (this.defaultRateLimits as Record<string, any>)[type] || this.defaultRateLimits.api;
     limit = limit || defaultLimit.limit;
     windowSeconds = windowSeconds || defaultLimit.window;
 
     try {
       const now = Date.now();
-      const windowMs = windowSeconds * 1000;
+      const windowMs = windowSeconds! * 1000;
 
       // Clean up old entries first
       await this.client.zremrangebyscore(key, 0, now - windowMs);
@@ -598,9 +598,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       ]);
 
       return {
-        remaining: Math.max(0, limit - count),
+        remaining: Math.max(0, limit! - count),
         reset: Math.max(0, ttl),
-        total: limit,
+        total: limit!,
         used: count
       };
     } catch (error) {
@@ -628,14 +628,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     type: string,
     config: { limit: number; window: number }
   ): Promise<void> {
-    this.defaultRateLimits[type] = config;
+    (this.defaultRateLimits as Record<string, any>)[type] = config;
     this.logger.log(`Updated rate limits for ${type}: ${JSON.stringify(config)}`);
   }
 
   // Method to get current rate limit configuration
   getRateLimitConfig(type?: string): any {
     return type 
-      ? this.defaultRateLimits[type]
+      ? (this.defaultRateLimits as Record<string, any>)[type]
       : this.defaultRateLimits;
   }
 
@@ -668,7 +668,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async multi(commands: any[]): Promise<any> {
     return this.retryOperation(async () => {
       const pipeline = this.client.pipeline();
-      commands.forEach(cmd => pipeline[cmd.command](...cmd.args));
+      commands.forEach(cmd => (pipeline as any)[cmd.command](...cmd.args));
       return pipeline.exec();
     });
   }
@@ -759,9 +759,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       staleTime?: number;            // When data becomes stale
       forceRefresh?: boolean;        // Force refresh regardless of cache
       compress?: boolean;            // Compress large data
-      priority?: 'high' | 'low';     // Operation priority  
+      priority?: 'critical' | 'high' | 'normal' | 'low';     // Operation priority  
       enableSwr?: boolean;           // Enable SWR (defaults to true)
       tags?: string[];               // Cache tags for grouped invalidation
+      containsPHI?: boolean;         // Contains Protected Health Information
+      complianceLevel?: 'standard' | 'sensitive' | 'restricted'; // Compliance level
+      emergencyData?: boolean;       // Emergency data flag
+      patientSpecific?: boolean;     // Patient-specific data
+      doctorSpecific?: boolean;      // Doctor-specific data
+      clinicSpecific?: boolean;      // Clinic-specific data
     } = {}
   ): Promise<T> {
     const {
@@ -794,7 +800,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         pipeline.get(key);
         pipeline.ttl(key);
         const results = await pipeline.exec();
-        return results.map(result => result[1]);
+        return results?.map(result => result[1]) || [];
       });
       
       // Convert TTL to number

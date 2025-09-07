@@ -58,3 +58,4 @@ export const RateLimitGenerous = () =>
     max: 1000, // 1000 requests per minute
     message: 'Rate limit exceeded',
   });
+

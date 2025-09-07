@@ -21,8 +21,8 @@ import { ClinicIsolationService } from './clinic-isolation.service';
 @Injectable()
 export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DatabaseMetricsService.name);
-  private metricsInterval: NodeJS.Timeout;
-  private alertInterval: NodeJS.Timeout;
+  private metricsInterval!: NodeJS.Timeout;
+  private alertInterval!: NodeJS.Timeout;
   private readonly metricsHistory: MetricsSnapshot[] = [];
   private readonly maxHistorySize = 1000; // Keep last 1000 snapshots
 
@@ -347,8 +347,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     await this.recordHealthcareMetrics();
 
     // Get query optimizer stats
-    const optimizerStats = this.queryOptimizer.getQueryMetrics();
-    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheHitRate || 0;
+    const optimizerStats = this.queryOptimizer.getOptimizerStats();
+    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheStats.hitRate;
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -682,5 +682,6 @@ export interface ClinicSummary {
   averageQueryTime: number;
   lastUpdated: Date;
 }
+
 
 

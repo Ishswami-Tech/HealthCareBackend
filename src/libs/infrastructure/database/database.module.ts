@@ -11,6 +11,7 @@ import { UserRepository } from './repositories/user.repository';
 import { ClinicIsolationService } from './clinic-isolation.service';
 import { SimplePatientRepository } from './repositories/simple-patient.repository';
 import { DatabaseMetricsService } from './database-metrics.service';
+import { DatabaseClientFactory } from './database-client.factory';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 
 @Global()
@@ -26,6 +27,21 @@ import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
     ClinicIsolationService,
     SimplePatientRepository,
     DatabaseMetricsService,
+    DatabaseClientFactory,
+    {
+      provide: 'HealthcareDatabaseConfig',
+      useValue: {
+        enableAuditLogging: true,
+        enablePHIProtection: true,
+        auditRetentionDays: 2555, // 7 years for HIPAA compliance
+        encryptionEnabled: true,
+        complianceLevel: 'HIPAA',
+        connectionTimeout: 30000,
+        queryTimeout: 15000,
+        maxConnections: 50,
+        healthCheckInterval: 30000,
+      },
+    },
     HealthcareDatabaseClient,
   ],
   exports: [
@@ -36,6 +52,7 @@ import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
     ClinicIsolationService,
     SimplePatientRepository,
     DatabaseMetricsService,
+    DatabaseClientFactory,
     HealthcareDatabaseClient,
   ],
 })
@@ -85,7 +102,7 @@ export class DatabaseModule implements OnModuleInit {
       }
       
       // Make sure the path actually exists
-      if (!fs.existsSync(resolvedSchemaPath)) {
+      if (resolvedSchemaPath && !fs.existsSync(resolvedSchemaPath)) {
         this.logger.warn(`Resolved schema path ${resolvedSchemaPath} does not exist, trying to find alternatives...`);
         
         // Try some alternative paths
@@ -98,7 +115,7 @@ export class DatabaseModule implements OnModuleInit {
         ].filter(Boolean);
         
         for (const alt of alternatives) {
-          if (fs.existsSync(alt)) {
+          if (alt && fs.existsSync(alt)) {
             resolvedSchemaPath = alt;
             this.logger.log(`Found alternative schema path: ${alt}`);
             break;
@@ -119,7 +136,7 @@ export class DatabaseModule implements OnModuleInit {
       await this.initializeEnhancedComponents();
       
     } catch (error) {
-      this.logger.error(`Failed to initialize database module: ${error.message}`, error.stack);
+      this.logger.error(`Failed to initialize database module: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error.stack : undefined);
       throw error;
     }
   }
@@ -146,7 +163,7 @@ export class DatabaseModule implements OnModuleInit {
       this.logger.log(`Maximum locations per clinic: ${healthcareConf?.multiClinic?.maxLocationsPerClinic}`);
       
     } catch (error) {
-      this.logger.error(`Failed to initialize enhanced database components: ${error.message}`);
+      this.logger.error(`Failed to initialize enhanced database components: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }

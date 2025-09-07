@@ -21,12 +21,7 @@ export const REMINDER_QUEUE = 'reminder-queue';
 export const FOLLOW_UP_QUEUE = 'follow-up-queue';
 export const RECURRING_APPOINTMENT_QUEUE = 'recurring-appointment-queue';
 
-// Fashion/Clinic domain specific queues
-export const FASHION_APPOINTMENT_QUEUE = 'fashion-appointment-queue';
-export const FASHION_NOTIFICATION_QUEUE = 'fashion-notification-queue';
-export const FASHION_EMAIL_QUEUE = 'fashion-email-queue';
-export const FASHION_PAYMENT_QUEUE = 'fashion-payment-queue';
-export const FASHION_ANALYTICS_QUEUE = 'fashion-analytics-queue';
+// Removed unused fashion-specific queues - healthcare application only uses general queues
 
 // Additional queue constants for enterprise queue service
 export const PAYMENT_QUEUE = 'payment-queue';

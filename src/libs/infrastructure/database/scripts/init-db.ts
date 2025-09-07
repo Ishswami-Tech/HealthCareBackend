@@ -37,8 +37,8 @@ export async function initDatabase() {
       
       for (const potentialPath of possiblePaths) {
         try {
-          if (fs.existsSync(potentialPath)) {
-            schemaPath = potentialPath;
+          if (fs.existsSync(potentialPath as string)) {
+            schemaPath = potentialPath as string;
             logger.log(`Found Prisma schema at: ${schemaPath}`);
             break;
           }
@@ -77,9 +77,9 @@ export async function initDatabase() {
         if (stderr) logger.warn('Prisma client generation warnings: ' + stderr);
       }
     } catch (error) {
-      logger.error(`Failed to generate Prisma client: ${error.message}`);
-      logger.error(`Command output: ${error.stdout || 'No output'}`);
-      logger.error(`Command error: ${error.stderr || 'No error details'}`);
+      logger.error(`Failed to generate Prisma client: ${(error as Error).message}`);
+      logger.error(`Command output: ${(error as any).stdout || 'No output'}`);
+      logger.error(`Command error: ${(error as any).stderr || 'No error details'}`);
       throw error;
     }
     
@@ -96,16 +96,16 @@ export async function initDatabase() {
       logger.log('Migration output: ' + stdout);
       if (stderr) logger.warn('Migration warnings: ' + stderr);
     } catch (error) {
-      logger.warn(`Migration failed, falling back to prisma db push: ${error.message}`);
+      logger.warn(`Migration failed, falling back to prisma db push: ${(error as Error).message}`);
       // If migration fails, try db push as a fallback (useful for development)
       try {
         const { stdout, stderr } = await execAsync(`npx prisma db push --schema=${schemaPathForCommand}`);
         logger.log('DB Push output: ' + stdout);
         if (stderr) logger.warn('DB Push warnings: ' + stderr);
       } catch (pushError) {
-        logger.error(`DB Push also failed: ${pushError.message}`);
-        logger.error(`Command output: ${pushError.stdout || 'No output'}`);
-        logger.error(`Command error: ${pushError.stderr || 'No error details'}`);
+        logger.error(`DB Push also failed: ${(pushError as any).message}`);
+        logger.error(`Command output: ${(pushError as any).stdout || 'No output'}`);
+        logger.error(`Command error: ${(pushError as any).stderr || 'No error details'}`);
         throw pushError;
       }
     }
@@ -114,7 +114,7 @@ export async function initDatabase() {
     
     return true;
   } catch (error) {
-    logger.error(`Database initialization failed: ${error.message}`, error.stack);
+    logger.error(`Database initialization failed: ${(error as Error).message}`, (error as Error).stack);
     throw error;
   }
 }

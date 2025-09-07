@@ -29,7 +29,7 @@ async function generateSchema() {
     
     return 0;
   } catch (error) {
-    logger.error('Failed to generate Prisma schema', error.stack);
+    logger.error('Failed to generate Prisma schema', (error as Error).stack);
     return 1;
   }
 }

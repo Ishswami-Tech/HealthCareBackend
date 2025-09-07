@@ -14,6 +14,7 @@ export class EventService implements OnModuleInit {
 
   onModuleInit() {
     // Subscribe to all events for logging
+    //@ts-ignore
     this.eventEmitter.onAny((event: string, ...args: any[]) => {
       this.loggingService.log(
         LogType.SYSTEM,
@@ -90,7 +91,7 @@ export class EventService implements OnModuleInit {
         LogLevel.ERROR,
         'Failed to retrieve events',
         'EventService',
-        { error: error.message }
+        { error: (error as Error).message }
       );
       return [];
     }

@@ -87,7 +87,7 @@ export class CacheController {
     };
     
     if (includeDebug) {
-      response['debug'] = await this.redis.getCacheDebug();
+      (response as any)['debug'] = await this.redis.getCacheDebug();
     }
     
     return response;

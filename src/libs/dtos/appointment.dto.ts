@@ -44,7 +44,7 @@ export class CreateAppointmentDto {
   })
   @IsUUID('4', { message: 'Patient ID must be a valid UUID' })
   @IsNotEmpty({ message: 'Patient ID is required' })
-  patientId: string;
+  patientId!: string;
 
   @ApiProperty({
     example: 'doctor-uuid-123',
@@ -52,7 +52,7 @@ export class CreateAppointmentDto {
   })
   @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
   @IsNotEmpty({ message: 'Doctor ID is required' })
-  doctorId: string;
+  doctorId!: string;
 
   @ApiProperty({
     example: 'clinic-uuid-123',
@@ -60,7 +60,7 @@ export class CreateAppointmentDto {
   })
   @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsNotEmpty({ message: 'Clinic ID is required' })
-  clinicId: string;
+  clinicId!: string;
 
   @ApiProperty({
     example: '2024-01-15T10:00:00.000Z',
@@ -69,7 +69,7 @@ export class CreateAppointmentDto {
   })
   @IsDateString({}, { message: 'Appointment date must be a valid date string' })
   @IsNotEmpty({ message: 'Appointment date is required' })
-  appointmentDate: string;
+  appointmentDate!: string;
 
   @ApiProperty({
     example: 30,
@@ -80,7 +80,7 @@ export class CreateAppointmentDto {
   @IsNumber({}, { message: 'Duration must be a number' })
   @Min(15, { message: 'Duration must be at least 15 minutes' })
   @Max(480, { message: 'Duration cannot exceed 8 hours' })
-  duration: number;
+  duration!: number;
 
   @ApiProperty({
     example: 'CONSULTATION',
@@ -89,7 +89,7 @@ export class CreateAppointmentDto {
   })
   @IsEnum(AppointmentType, { message: 'Appointment type must be a valid type' })
   @IsNotEmpty({ message: 'Appointment type is required' })
-  type: AppointmentType;
+  type!: AppointmentType;
 
   @ApiPropertyOptional({
     example: 'MEDIUM',
@@ -201,63 +201,63 @@ export class AppointmentResponseDto {
     description: 'Unique appointment identifier'
   })
   @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({
     example: 'patient-uuid-123',
     description: 'Patient ID for the appointment'
   })
   @IsUUID('4', { message: 'Patient ID must be a valid UUID' })
-  patientId: string;
+  patientId!: string;
 
   @ApiProperty({
     example: 'doctor-uuid-123',
     description: 'Doctor ID for the appointment'
   })
   @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
-  doctorId: string;
+  doctorId!: string;
 
   @ApiProperty({
     example: 'clinic-uuid-123',
     description: 'Clinic ID where appointment takes place'
   })
   @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
-  clinicId: string;
+  clinicId!: string;
 
   @ApiProperty({
     example: '2024-01-15T10:00:00.000Z',
     description: 'Appointment date and time'
   })
   @IsDateString({}, { message: 'Appointment date must be a valid date string' })
-  appointmentDate: string;
+  appointmentDate!: string;
 
   @ApiProperty({
     example: 30,
     description: 'Appointment duration in minutes'
   })
   @IsNumber({}, { message: 'Duration must be a number' })
-  duration: number;
+  duration!: number;
 
   @ApiProperty({
     example: 'CONSULTATION',
     description: 'Type of appointment'
   })
   @IsEnum(AppointmentType, { message: 'Appointment type must be a valid type' })
-  type: AppointmentType;
+  type!: AppointmentType;
 
   @ApiProperty({
     example: 'SCHEDULED',
     description: 'Current appointment status'
   })
   @IsEnum(AppointmentStatus, { message: 'Status must be a valid appointment status' })
-  status: AppointmentStatus;
+  status!: AppointmentStatus;
 
   @ApiProperty({
     example: 'MEDIUM',
     description: 'Appointment priority level'
   })
   @IsEnum(AppointmentPriority, { message: 'Priority must be a valid priority level' })
-  priority: AppointmentPriority;
+  priority!: AppointmentPriority;
 
   @ApiPropertyOptional({
     example: 'Regular checkup appointment',
@@ -272,14 +272,14 @@ export class AppointmentResponseDto {
     description: 'Appointment creation timestamp'
   })
   @IsDateString({}, { message: 'Created at must be a valid date string' })
-  createdAt: string;
+  createdAt!: string;
 
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Appointment last update timestamp'
   })
   @IsDateString({}, { message: 'Updated at must be a valid date string' })
-  updatedAt: string;
+  updatedAt!: string;
 
   @ApiPropertyOptional({
     example: 'clinic-uuid-123',
@@ -390,7 +390,7 @@ export class BulkCreateAppointmentsDto {
   @IsArray({ message: 'Appointments must be an array' })
   @ValidateNested({ each: true })
   @Type(() => CreateAppointmentDto)
-  appointments: CreateAppointmentDto[];
+  appointments!: CreateAppointmentDto[];
 
   @ApiPropertyOptional({
     example: true,
@@ -413,7 +413,7 @@ export class CancelAppointmentDto {
   @IsString({ message: 'Cancellation reason must be a string' })
   @IsNotEmpty({ message: 'Cancellation reason is required' })
   @Transform(({ value }) => value?.trim())
-  reason: string;
+  reason!: string;
 
   @ApiPropertyOptional({
     example: true,
@@ -435,7 +435,7 @@ export class RescheduleAppointmentDto {
   })
   @IsDateString({}, { message: 'New appointment date must be a valid date string' })
   @IsNotEmpty({ message: 'New appointment date is required' })
-  newAppointmentDate: string;
+  newAppointmentDate!: string;
 
   @ApiPropertyOptional({
     example: 'Patient requested reschedule',

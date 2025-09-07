@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { RateLimitService } from './rate-limit.service';
 import { RedisModule } from '../../infrastructure/cache/redis/redis.module';
-import { LoggingServiceModule } from "../../infrastructure/logging"
+import { LoggingModule } from '../../infrastructure/logging/logging.module';
 
 @Module({
   imports: [
     RedisModule,
-    LoggingServiceModule,
+    LoggingModule,
   ],
   providers: [
     RateLimitService,

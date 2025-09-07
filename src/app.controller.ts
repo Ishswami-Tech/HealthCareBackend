@@ -1,4 +1,4 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Res, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
 import { Public } from './libs/core/decorators/public.decorator';
@@ -71,6 +71,8 @@ interface DashboardData {
 @ApiTags('root')
 @Controller()
 export class AppController {
+  private readonly logger = new Logger(AppController.name);
+
   constructor(
     private readonly appService: AppService,
     private readonly configService: ConfigService,
@@ -246,7 +248,7 @@ export class AppController {
       res.header('Content-Type', 'text/html');
       return res.send(html);
     } catch (error) {
-      console.error('Error serving dashboard:', error);
+      this.logger.error('Error serving dashboard:', error);
       return res.send('Error loading dashboard. Please check server logs.');
     }
   }
@@ -504,7 +506,7 @@ export class AppController {
         data: log.metadata || '{}'
       }));
     } catch (error) {
-      console.error('Error fetching logs:', error);
+      this.logger.error('Error fetching logs:', error);
       // Return placeholder data if there's an error
       return Array(limit).fill(null).map((_, i) => ({
         timestamp: new Date(),

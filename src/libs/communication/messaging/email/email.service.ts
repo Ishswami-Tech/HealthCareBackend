@@ -1,16 +1,28 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EmailTemplate, EmailOptions } from '../../../core/types/email.types';
+import { 
+  EmailTemplate, 
+  EmailOptions, 
+  EmailContext,
+  VerificationEmailContext,
+  PasswordResetEmailContext,
+  OTPEmailContext,
+  MagicLinkEmailContext,
+  WelcomeEmailContext,
+  LoginNotificationEmailContext,
+  SecurityAlertEmailContext,
+  SuspiciousActivityEmailContext
+} from '../../../core/types/email.types';
 import * as nodemailer from 'nodemailer';
 import { MailtrapClient } from 'mailtrap';
 
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
-  private transporter: nodemailer.Transporter;
-  private mailtrap: MailtrapClient;
+  private transporter!: nodemailer.Transporter;
+  private mailtrap!: MailtrapClient;
   private isInitialized = false;
-  private provider: 'smtp' | 'api';
+  private provider!: 'smtp' | 'api';
 
   constructor(private configService: ConfigService) {}
 
@@ -48,7 +60,7 @@ export class EmailService implements OnModuleInit {
       this.isInitialized = true;
       this.logger.log('SMTP email server is ready');
     } catch (error) {
-      this.logger.error('Failed to initialize SMTP transporter:', error.message);
+      this.logger.error('Failed to initialize SMTP transporter:', error instanceof Error ? (error as Error).message : 'Unknown error');
       this.isInitialized = false;
     }
   }
@@ -65,7 +77,7 @@ export class EmailService implements OnModuleInit {
       this.isInitialized = true;
       this.logger.log('Mailtrap API client initialized');
     } catch (error) {
-      this.logger.error('Failed to initialize Mailtrap API:', error.message);
+      this.logger.error('Failed to initialize Mailtrap API:', error instanceof Error ? (error as Error).message : 'Unknown error');
       this.isInitialized = false;
     }
   }
@@ -95,7 +107,7 @@ export class EmailService implements OnModuleInit {
       this.logger.debug(`SMTP Email sent: ${info.messageId}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send SMTP email: ${error.message}`, error.stack);
+      this.logger.error(`Failed to send SMTP email: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
       return false;
     }
   }
@@ -117,37 +129,37 @@ export class EmailService implements OnModuleInit {
       this.logger.debug(`API Email sent to ${options.to}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send API email: ${error.message}`, error.stack);
+      this.logger.error(`Failed to send API email: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
       return false;
     }
   }
 
-  private getEmailTemplate(template: EmailTemplate, context: any): string {
+  private getEmailTemplate(template: EmailTemplate, context: EmailContext): string {
     switch (template) {
       case EmailTemplate.VERIFICATION:
-        return this.getVerificationEmailTemplate(context);
+        return this.getVerificationEmailTemplate(context as VerificationEmailContext);
       case EmailTemplate.PASSWORD_RESET:
-        return this.getPasswordResetTemplate(context);
+        return this.getPasswordResetTemplate(context as PasswordResetEmailContext);
       case EmailTemplate.PASSWORD_RESET_CONFIRMATION:
-        return this.getPasswordResetConfirmationTemplate(context);
+        return this.getPasswordResetConfirmationTemplate(context as PasswordResetEmailContext);
       case EmailTemplate.OTP_LOGIN:
-        return this.getOTPLoginTemplate(context);
+        return this.getOTPLoginTemplate(context as OTPEmailContext);
       case EmailTemplate.MAGIC_LINK:
-        return this.getMagicLinkTemplate(context);
+        return this.getMagicLinkTemplate(context as MagicLinkEmailContext);
       case EmailTemplate.WELCOME:
-        return this.getWelcomeTemplate(context);
+        return this.getWelcomeTemplate(context as WelcomeEmailContext);
       case EmailTemplate.LOGIN_NOTIFICATION:
-        return this.getLoginNotificationTemplate(context);
+        return this.getLoginNotificationTemplate(context as LoginNotificationEmailContext);
       case EmailTemplate.SECURITY_ALERT:
-        return this.getSecurityAlertTemplate(context);
+        return this.getSecurityAlertTemplate(context as SecurityAlertEmailContext);
       case EmailTemplate.SUSPICIOUS_ACTIVITY:
-        return this.getSuspiciousActivityTemplate(context);
+        return this.getSuspiciousActivityTemplate(context as SuspiciousActivityEmailContext);
       default:
         throw new Error('Invalid email template');
     }
   }
 
-  private getVerificationEmailTemplate(context: any): string {
+  private getVerificationEmailTemplate(context: VerificationEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #4a4a4a;">Welcome to Healthcare App!</h2>
@@ -173,7 +185,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getPasswordResetTemplate(context: any): string {
+  private getPasswordResetTemplate(context: PasswordResetEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #4a4a4a;">Reset Your Password</h2>
@@ -200,7 +212,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getPasswordResetConfirmationTemplate(context: any): string {
+  private getPasswordResetConfirmationTemplate(context: PasswordResetEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #4a4a4a;">Password Reset Successful</h2>
@@ -225,7 +237,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getOTPLoginTemplate(context: any): string {
+  private getOTPLoginTemplate(context: OTPEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #4a4a4a;">Login Verification Code</h2>
@@ -249,7 +261,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getMagicLinkTemplate(context: { loginUrl: string; name: string; expiryTime: string }): string {
+  private getMagicLinkTemplate(context: MagicLinkEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #4a4a4a;">Login to Healthcare App</h2>
@@ -276,7 +288,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getWelcomeTemplate(context: any): string {
+  private getWelcomeTemplate(context: WelcomeEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #4a4a4a;">Welcome to Healthcare App!</h2>
@@ -310,7 +322,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getLoginNotificationTemplate(context: any): string {
+  private getLoginNotificationTemplate(context: LoginNotificationEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #4a4a4a;">New Login to Your Account</h2>
@@ -338,7 +350,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getSecurityAlertTemplate(context: any): string {
+  private getSecurityAlertTemplate(context: SecurityAlertEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #d32f2f;">Security Alert</h2>
@@ -367,7 +379,7 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
-  private getSuspiciousActivityTemplate(context: any): string {
+  private getSuspiciousActivityTemplate(context: SuspiciousActivityEmailContext): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #ff9800;">Suspicious Activity Detected</h2>

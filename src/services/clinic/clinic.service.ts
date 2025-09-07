@@ -3,7 +3,6 @@ import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.
 import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
 import { EventService } from '../../libs/infrastructure/events/event.service';
 import { ClinicErrorService } from './shared/error.utils';
-import { RedisCache } from '../../libs/infrastructure/cache/decorators/redis-cache.decorator';
 import { CacheService } from '../../libs/infrastructure/cache';
 import { JwtService } from '@nestjs/jwt';
 import { ClinicLocationService } from './services/clinic-location.service';
@@ -12,6 +11,7 @@ import { resolveClinicUUID } from '../../libs/utils/clinic.utils';
 import { HealthcareDatabaseClient } from '../../libs/infrastructure/database/clients/healthcare-database.client';
 import { RepositoryResult } from '../../libs/infrastructure/database/types/repository-result';
 import { ConfigService } from '@nestjs/config';
+import { HealthcareErrorsService } from '../../libs/core/errors';
 
 @Injectable()
 export class ClinicService {
@@ -27,6 +27,7 @@ export class ClinicService {
     private readonly rbacService: RbacService,
     private readonly healthcareDatabaseClient: HealthcareDatabaseClient,
     private readonly configService: ConfigService,
+    private readonly errors: HealthcareErrorsService,
   ) {}
 
   /**
@@ -195,7 +196,7 @@ export class ClinicService {
           subdomain: data.subdomain,
           clinicId: data.subdomain,
           // Use shared database connection for multi-tenancy
-          db_connection_string: this.configService.get('DATABASE_URL'),
+          db_connection_string: this.configService.get('DATABASE_URL') || '',
           databaseName: this.configService.get('DATABASE_NAME', 'userdb'), // All clinics share the same database in multi-tenant setup
           databaseStatus: 'ACTIVE',
         },
@@ -262,13 +263,15 @@ export class ClinicService {
    * SuperAdmin can see all clinics
    * ClinicAdmin can only see their assigned clinics
    */
-  @RedisCache({
-    ttl: 1800,              // 30 minutes cache TTL
-    prefix: 'clinics:list', // Cache key prefix
-    staleTime: 600,         // Data becomes stale after 10 minutes
-    tags: ['clinics']       // Tag for grouped invalidation
-  })
   async getAllClinics(userId: string) {
+    const cacheKey = `clinics:list:${userId}`;
+    
+    // Try to get from cache first
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     try {
       // Check if userId is undefined or empty
       if (!userId) {
@@ -430,6 +433,9 @@ export class ClinicService {
         { userId, count: clinics.length }
       );
 
+      // Cache the result for 30 minutes
+      await this.cacheService.set(cacheKey, clinics, 1800);
+      
       return clinics;
     } catch (error) {
       await this.errorService.logError(
@@ -447,83 +453,88 @@ export class ClinicService {
    * SuperAdmin can see any clinic
    * ClinicAdmin can only see their assigned clinics
    */
-  @RedisCache({
-    ttl: 1800,                      // 30 minutes cache TTL
-    prefix: 'clinics:detail',       // Cache key prefix
-    staleTime: 600,                 // Data becomes stale after 10 minutes
-    tags: ['clinics', 'clinic']     // Tags for grouped invalidation
-  })
   async getClinicById(id: string, userId: string) {
-    const clinicUUID = await resolveClinicUUID(this.prisma, id);
+    const cacheKey = `clinics:detail:${id}:${userId}`;
+    
+    // Try to get from cache first
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     try {
-      // First check if the user exists
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        include: {
-          superAdmin: true,
-          clinicAdmins: true,
-        },
-      });
-
-      if (!user) {
-        await this.errorService.logError(
-          { message: 'User not found' },
-          'ClinicService',
-          'find user',
-          { userId }
-        );
-        throw new NotFoundException('User not found');
-      }
-
-      // Then find the clinic
-      const clinic = await this.prisma.clinic.findUnique({
-        where: { id: clinicUUID },
-        include: {
-          admins: {
+        const clinicUUID = await resolveClinicUUID(this.prisma, id);
+          // First check if the user exists
+          const user = await this.prisma.user.findUnique({
+            where: { id: userId },
             include: {
-              user: true,
+              superAdmin: true,
+              clinicAdmins: true,
             },
-          },
-        },
-      });
+          });
 
-      if (!clinic) {
-        await this.errorService.logError(
-          { message: 'Clinic not found' },
-          'ClinicService',
-          'find clinic',
-          { clinicId: clinicUUID }
-        );
-        throw new NotFoundException('Clinic not found');
-      }
+          if (!user) {
+            await this.errorService.logError(
+              { message: 'User not found' },
+              'ClinicService',
+              'find user',
+              { userId }
+            );
+            throw new NotFoundException('User not found');
+          }
 
-      // Use the permission service to validate access
-      // For patients, check for view_clinic_details permission, for others check manage_clinics
-      const action = user.role === 'PATIENT' ? 'view_clinic_details' : 'manage_clinics';
-      const hasPermission = await this.rbacService.checkPermission({
-        userId,
-        resource: 'clinic',
-        action,
-        resourceId: clinicUUID,
-      });
-      if (!hasPermission) {
-        await this.errorService.logError(
-          { message: 'Unauthorized access attempt' },
-          'ClinicService',
-          'authorize user',
-          { clinicId: clinicUUID, userId, role: user.role }
-        );
-        throw new UnauthorizedException('You do not have permission to view this clinic');
-      }
+          // Then find the clinic
+          const clinic = await this.prisma.clinic.findUnique({
+            where: { id: clinicUUID },
+            include: {
+              admins: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          });
 
-      await this.errorService.logSuccess(
-        'Clinic fetched successfully',
-        'ClinicService',
-        'get clinic by id',
-        { clinicId: clinicUUID, userId }
-      );
-      
-      return clinic;
+          if (!clinic) {
+            await this.errorService.logError(
+              { message: 'Clinic not found' },
+              'ClinicService',
+              'find clinic',
+              { clinicId: clinicUUID }
+            );
+            throw new NotFoundException('Clinic not found');
+          }
+
+          // Use the permission service to validate access
+          // For patients, check for view_clinic_details permission, for others check manage_clinics
+          const action = user.role === 'PATIENT' ? 'view_clinic_details' : 'manage_clinics';
+          const hasPermission = await this.rbacService.checkPermission({
+            userId,
+            resource: 'clinic',
+            action,
+            resourceId: clinicUUID,
+          });
+          if (!hasPermission) {
+            await this.errorService.logError(
+              { message: 'Unauthorized access attempt' },
+              'ClinicService',
+              'authorize user',
+              { clinicId: clinicUUID, userId, role: user.role }
+            );
+            throw new UnauthorizedException('You do not have permission to view this clinic');
+          }
+
+          await this.errorService.logSuccess(
+            'Clinic fetched successfully',
+            'ClinicService',
+            'get clinic by id',
+            { clinicId: clinicUUID, userId }
+          );
+          
+        // Cache the result for 30 minutes
+        await this.cacheService.set(cacheKey, clinic, 1800);
+        
+        return clinic;
     } catch (error) {
       await this.errorService.logError(
         error,
@@ -539,42 +550,47 @@ export class ClinicService {
    * Get a clinic by app name
    * This is used for public access to determine which clinic database to connect to
    */
-  @RedisCache({
-    ttl: 3600,                      // 1 hour cache TTL
-    prefix: 'clinics:appname',      // Cache key prefix
-    staleTime: 1800,                // Data becomes stale after 30 minutes
-    tags: ['clinics', 'clinic']     // Tags for grouped invalidation
-  })
   async getClinicByAppName(appName: string) {
+    const cacheKey = `clinics:appname:${appName}`;
+    
+    // Try to get from cache first
+    const cached = await this.cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     try {
-      const clinic = await this.prisma.clinic.findUnique({
-        where: { email: appName },
-        include: {
-          admins: {
+          const clinic = await this.prisma.clinic.findUnique({
+            where: { email: appName },
             include: {
-              user: true,
+              admins: {
+                include: {
+                  user: true,
+                },
+              },
             },
-          },
-        },
-      });
+          });
 
-      if (!clinic) {
-        await this.errorService.logError(
-          { message: 'Clinic not found' },
-          'ClinicService',
-          'find clinic by app name',
-          { appName }
-        );
-        throw new NotFoundException('Clinic not found');
-      }
+          if (!clinic) {
+            await this.errorService.logError(
+              { message: 'Clinic not found' },
+              'ClinicService',
+              'find clinic by app name',
+              { appName }
+            );
+            throw new NotFoundException('Clinic not found');
+          }
 
-      await this.errorService.logSuccess(
-        'Clinic found by app name',
-        'ClinicService',
-        'get clinic by app name',
-        { clinicId: clinic.id, appName }
-      );
+          await this.errorService.logSuccess(
+            'Clinic found by app name',
+            'ClinicService',
+            'get clinic by app name',
+            { clinicId: clinic.id, appName }
+          );
 
+      // Cache the result for 1 hour
+      await this.cacheService.set(cacheKey, clinic, 3600);
+      
       return clinic;
     } catch (error) {
       await this.errorService.logError(
@@ -798,14 +814,15 @@ export class ClinicService {
    * Get all doctors for a specific clinic
    * SuperAdmin and ClinicAdmin can see all doctors
    */
-  @RedisCache({
-    ttl: 900,                                   // 15 minutes cache TTL
-    prefix: 'clinics:doctors',                  // Cache key prefix
-    staleTime: 300,                             // Data becomes stale after 5 minutes
-    tags: ['clinics', 'clinic', 'clinic-doctors'] // Tags for grouped invalidation
-  })
   async getClinicDoctors(clinicId: string, userId: string) {
-    const user = await this.prisma.user.findUnique({
+    const cacheKey = `clinics:doctors:${clinicId}:${userId}`;
+    
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+
+    try {
+      const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
         superAdmin: true,
@@ -846,31 +863,47 @@ export class ClinicService {
       throw new UnauthorizedException('You do not have permission to view doctors');
     }
 
-    // Get all doctors for this clinic
-    return this.prisma.doctorClinic.findMany({
-      where: { clinicId: clinicUUID },
-      include: {
-        doctor: {
-          include: {
-            user: true,
+      // Get all doctors for this clinic
+      const doctors = await this.prisma.doctorClinic.findMany({
+        where: { clinicId: clinicUUID },
+        include: {
+          doctor: {
+            include: {
+              user: true,
+            },
           },
         },
+      });
+
+        return doctors;
+      } catch (error) {
+        throw error;
+      }
       },
-    });
+      {
+        ttl: 1800, // 30 minutes
+        tags: [`clinic:${clinicId}`, 'doctors', 'clinic_data'],
+        priority: 'high',
+        enableSwr: true,
+        compress: true, // Compress doctor lists
+        containsPHI: false, // Doctor lists don't contain PHI
+      }
+    );
   }
 
   /**
    * Get all patients for a specific clinic
    * SuperAdmin and ClinicAdmin can see all patients
    */
-  @RedisCache({
-    ttl: 600,                                     // 10 minutes cache TTL
-    prefix: 'clinics:patients',                   // Cache key prefix
-    staleTime: 300,                               // Data becomes stale after 5 minutes
-    tags: ['clinics', 'clinic', 'clinic-patients'] // Tags for grouped invalidation
-  })
   async getClinicPatients(clinicId: string, userId: string) {
-    const user = await this.prisma.user.findUnique({
+    const cacheKey = `clinics:patients:${clinicId}:${userId}`;
+    
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+
+    try {
+      const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
         superAdmin: true,
@@ -911,10 +944,25 @@ export class ClinicService {
       throw new UnauthorizedException('You do not have permission to view patients');
     }
 
-    // Connect to the clinic's database to get patients
-    // This is a placeholder - in a real implementation, you would query the clinic's database
-    // For now, we'll just return an empty array
-    return [];
+      // Connect to the clinic's database to get patients
+      // This is a placeholder - in a real implementation, you would query the clinic's database
+      // For now, we'll just return an empty array
+      const patients: any[] = [];
+      
+        return patients;
+      } catch (error) {
+        throw error;
+      }
+      },
+      {
+        ttl: 900, // 15 minutes
+        tags: [`clinic:${clinicId}`, 'patients', 'clinic_data'],
+        priority: 'high',
+        enableSwr: true,
+        compress: true, // Compress patient lists
+        containsPHI: true, // Patient lists contain PHI
+      }
+    );
   }
 
   /**
@@ -1578,7 +1626,7 @@ export class ClinicService {
             clinicId,
             dashboard: null,
             metrics: null,
-            error: error.message
+            error: error instanceof Error ? (error as Error).message : 'Unknown error'
           };
         }
       });

@@ -4,11 +4,15 @@ import { HealthService } from './health.service';
 import { HealthCheckResponse, DetailedHealthCheckResponse } from '../../libs/core/types/health.types';
 import { Public } from '../../libs/core/decorators/public.decorator';
 import { FastifyReply } from 'fastify';
+import { HealthcareErrorsService } from '../../libs/core/errors';
 
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
-  constructor(private readonly healthService: HealthService) {}
+  constructor(
+    private readonly healthService: HealthService,
+    private readonly errors: HealthcareErrorsService,
+  ) {}
 
   @Get()
   @Public()

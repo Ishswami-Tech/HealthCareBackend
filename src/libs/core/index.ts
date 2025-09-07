@@ -15,6 +15,9 @@ export * from './business-rules/business-rules-engine.service';
 // Plugin Interface System
 export * from './plugin-interface';
 
+// Error Handling
+export * from './errors';
+
 // Decorators
 export * from './decorators/clinic-route.decorator';
 export * from './decorators/clinic.decorator';
@@ -57,8 +60,8 @@ export * from './rbac/rbac.service';
 export * from './session/session-management.service';
 export * from './session/session.module';
 
-// Types
+// Types (excluding SessionData to avoid conflict with session service)
+export * from './types/queue.types';
+export * from './types/permission.types';
 export * from './types/clinic.types';
 export * from './types/email.types';
-export * from './types/health.types';
-export * from './types/queue.types';

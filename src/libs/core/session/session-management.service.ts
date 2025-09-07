@@ -51,7 +51,7 @@ export interface SessionSummary {
 @Injectable()
 export class SessionManagementService implements OnModuleInit {
   private readonly logger = new Logger(SessionManagementService.name);
-  private config: SessionConfig;
+  private config!: SessionConfig;
   
   private readonly SESSION_PREFIX = 'session:';
   private readonly USER_SESSIONS_PREFIX = 'user_sessions:';
@@ -91,7 +91,7 @@ export class SessionManagementService implements OnModuleInit {
         partitions: this.config.partitions,
       });
     } catch (error) {
-      this.logger.error('Failed to initialize Session Management Service', error.stack);
+      this.logger.error('Failed to initialize Session Management Service', (error as Error).stack);
       throw error;
     }
   }
@@ -145,7 +145,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return sessionData;
     } catch (error) {
-      this.logger.error(`Failed to create session for user ${createSessionDto.userId}`, error.stack);
+      this.logger.error(`Failed to create session for user ${createSessionDto.userId}`, (error as Error).stack);
       throw error;
     }
   }
@@ -175,7 +175,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return sessionData;
     } catch (error) {
-      this.logger.error(`Failed to get session ${sessionId}`, error.stack);
+      this.logger.error(`Failed to get session ${sessionId}`, (error as Error).stack);
       return null;
     }
   }
@@ -206,7 +206,7 @@ export class SessionManagementService implements OnModuleInit {
       await this.storeSession(session);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to update session activity ${sessionId}`, error.stack);
+      this.logger.error(`Failed to update session activity ${sessionId}`, (error as Error).stack);
       return false;
     }
   }
@@ -246,7 +246,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return true;
     } catch (error) {
-      this.logger.error(`Failed to invalidate session ${sessionId}`, error.stack);
+      this.logger.error(`Failed to invalidate session ${sessionId}`, (error as Error).stack);
       return false;
     }
   }
@@ -273,7 +273,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return sessions.sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
     } catch (error) {
-      this.logger.error(`Failed to get sessions for user ${userId}`, error.stack);
+      this.logger.error(`Failed to get sessions for user ${userId}`, (error as Error).stack);
       return [];
     }
   }
@@ -311,7 +311,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return revokedCount;
     } catch (error) {
-      this.logger.error(`Failed to revoke sessions for user ${userId}`, error.stack);
+      this.logger.error(`Failed to revoke sessions for user ${userId}`, (error as Error).stack);
       return 0;
     }
   }
@@ -339,7 +339,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return cleanedCount;
     } catch (error) {
-      this.logger.error('Failed to cleanup expired sessions', error.stack);
+      this.logger.error('Failed to cleanup expired sessions', (error as Error).stack);
       return 0;
     }
   }
@@ -395,7 +395,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return summary;
     } catch (error) {
-      this.logger.error('Failed to get session statistics', error.stack);
+      this.logger.error('Failed to get session statistics', (error as Error).stack);
       return {
         totalSessions: 0,
         activeSessions: 0,
@@ -460,7 +460,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return { suspicious, reasons };
     } catch (error) {
-      this.logger.error('Failed to detect suspicious sessions', error.stack);
+      this.logger.error('Failed to detect suspicious sessions', (error as Error).stack);
       return { suspicious: [], reasons: {} };
     }
   }
@@ -491,7 +491,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return invalidatedCount;
     } catch (error) {
-      this.logger.error('Failed to invalidate suspicious sessions', error.stack);
+      this.logger.error('Failed to invalidate suspicious sessions', (error as Error).stack);
       return 0;
     }
   }
@@ -585,7 +585,7 @@ export class SessionManagementService implements OnModuleInit {
       try {
         await this.cleanupExpiredSessions();
       } catch (error) {
-        this.logger.error('Session cleanup job failed', error.stack);
+        this.logger.error('Session cleanup job failed', (error as Error).stack);
       }
     }, 60 * 60 * 1000);
 
@@ -597,7 +597,7 @@ export class SessionManagementService implements OnModuleInit {
           this.logger.warn(`Detected ${suspicious.length} suspicious sessions`);
         }
       } catch (error) {
-        this.logger.error('Suspicious session detection failed', error.stack);
+        this.logger.error('Suspicious session detection failed', (error as Error).stack);
       }
     }, 30 * 60 * 1000);
   }
@@ -615,7 +615,7 @@ export class SessionManagementService implements OnModuleInit {
           uniqueClinics: Object.keys(stats.sessionsPerClinic).length,
         });
       } catch (error) {
-        this.logger.error('Session monitoring failed', error.stack);
+        this.logger.error('Session monitoring failed', (error as Error).stack);
       }
     }, 10 * 60 * 1000);
   }

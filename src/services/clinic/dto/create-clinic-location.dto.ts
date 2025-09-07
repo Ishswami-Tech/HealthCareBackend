@@ -8,7 +8,7 @@ export class CreateClinicLocationDto {
     })
     @IsString()
     @Length(2, 100)
-    name: string;
+    name!: string;
 
     @ApiProperty({
         description: 'Street address of the clinic',
@@ -16,7 +16,7 @@ export class CreateClinicLocationDto {
     })
     @IsString()
     @Length(5, 200)
-    address: string;
+    address!: string;
 
     @ApiProperty({
         description: 'City where the clinic is located',
@@ -24,7 +24,7 @@ export class CreateClinicLocationDto {
     })
     @IsString()
     @Length(2, 100)
-    city: string;
+    city!: string;
 
     @ApiProperty({
         description: 'State/Province where the clinic is located',
@@ -32,7 +32,7 @@ export class CreateClinicLocationDto {
     })
     @IsString()
     @Length(2, 100)
-    state: string;
+    state!: string;
 
     @ApiProperty({
         description: 'Country where the clinic is located',
@@ -40,7 +40,7 @@ export class CreateClinicLocationDto {
     })
     @IsString()
     @Length(2, 100)
-    country: string;
+    country!: string;
 
     @ApiProperty({
         description: 'ZIP/Postal code of the clinic',
@@ -48,21 +48,21 @@ export class CreateClinicLocationDto {
     })
     @IsString()
     @Length(5, 20)
-    zipCode: string;
+    zipCode!: string;
 
     @ApiProperty({
         description: 'Contact phone number for the clinic',
         example: '+1-555-555-5555'
     })
     @IsPhoneNumber()
-    phone: string;
+    phone!: string;
 
     @ApiProperty({
         description: 'Contact email for the clinic',
         example: 'main@clinic.com'
     })
     @IsEmail()
-    email: string;
+    email!: string;
 
     @ApiProperty({
         description: 'Timezone of the clinic location',
@@ -70,7 +70,7 @@ export class CreateClinicLocationDto {
     })
     @IsString()
     @Length(3, 50)
-    timezone: string;
+    timezone!: string;
 
     @ApiProperty({
         description: 'Whether the clinic location is active',

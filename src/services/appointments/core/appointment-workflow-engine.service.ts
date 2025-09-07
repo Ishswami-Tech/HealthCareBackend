@@ -31,10 +31,10 @@ export class AppointmentWorkflowEngine {
         data: { processedAt: new Date() }
       };
     } catch (error) {
-      this.logger.error(`Workflow execution failed:`, error.stack);
+      this.logger.error(`Workflow execution failed:`, (error as Error).stack);
       return {
         success: false,
-        message: error.message
+        message: (error as Error).message
       };
     }
   }
@@ -75,10 +75,10 @@ export class AppointmentWorkflowEngine {
 
       return this.executeWorkflowStep(context);
     } catch (error) {
-      this.logger.error(`Failed to initialize workflow:`, error.stack);
+      this.logger.error(`Failed to initialize workflow:`, (error as Error).stack);
       return {
         success: false,
-        message: error.message
+        message: (error as Error).message
       };
     }
   }
@@ -131,10 +131,10 @@ export class AppointmentWorkflowEngine {
 
       return this.executeWorkflowStep(context);
     } catch (error) {
-      this.logger.error(`Failed to transition status:`, error.stack);
+      this.logger.error(`Failed to transition status:`, (error as Error).stack);
       return {
         success: false,
-        message: error.message
+        message: (error as Error).message
       };
     }
   }

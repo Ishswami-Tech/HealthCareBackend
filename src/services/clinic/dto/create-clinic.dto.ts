@@ -10,7 +10,7 @@ export class CreateClinicDto {
   })
   @IsString()
   @IsNotEmpty()
-  name: string;
+  name!: string;
 
   @ApiProperty({
     description: 'The address of the clinic headquarters',
@@ -18,7 +18,7 @@ export class CreateClinicDto {
   })
   @IsString()
   @IsNotEmpty()
-  address: string;
+  address!: string;
 
   @ApiProperty({
     description: 'The phone number of the clinic',
@@ -27,7 +27,7 @@ export class CreateClinicDto {
   @IsString()
   @IsNotEmpty()
   @IsPhoneNumber()
-  phone: string;
+  phone!: string;
 
   @ApiProperty({
     description: 'The email of the clinic (will be used for app subdomain)',
@@ -36,7 +36,7 @@ export class CreateClinicDto {
   @IsString()
   @IsNotEmpty()
   @IsEmail()
-  email: string;
+  email!: string;
 
   @ApiProperty({
     description: 'The subdomain for the clinic app',
@@ -48,7 +48,7 @@ export class CreateClinicDto {
   @Matches(/^[a-z0-9-]+$/, {
     message: 'Subdomain can only contain lowercase letters, numbers, and hyphens',
   })
-  subdomain: string;
+  subdomain!: string;
 
   @ApiProperty({
     description: 'The app name for the clinic (unique identifier)',
@@ -60,7 +60,7 @@ export class CreateClinicDto {
   @Matches(/^[a-z0-9-]+$/, {
     message: 'App name can only contain lowercase letters, numbers, and hyphens',
   })
-  app_name: string;
+  app_name!: string;
 
   @ApiProperty({
     description: 'The database connection string for the clinic',
@@ -79,7 +79,7 @@ export class CreateClinicDto {
   @IsObject()
   @ValidateNested()
   @Type(() => CreateClinicLocationDto)
-  mainLocation: CreateClinicLocationDto;
+  mainLocation!: CreateClinicLocationDto;
 
   @ApiProperty({
     description: 'Identifier of the Clinic Admin (required if Super Admin is creating the clinic). Can be email or ID.',

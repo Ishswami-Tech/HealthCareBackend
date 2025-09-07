@@ -190,31 +190,13 @@ export class RegisterDto {
   };
 
   @ApiProperty({
-    description: 'Google ID for social authentication',
-    example: 'google_123456789',
+    description: 'Google OAuth ID for social registration',
+    example: 'google-oauth-id-123456',
     required: false
   })
   @IsString({ message: 'Google ID must be a string' })
   @IsOptional()
   googleId?: string;
-
-  @ApiProperty({
-    description: 'Facebook ID for social authentication',
-    example: 'facebook_123456789',
-    required: false
-  })
-  @IsString({ message: 'Facebook ID must be a string' })
-  @IsOptional()
-  facebookId?: string;
-
-  @ApiProperty({
-    description: 'Apple ID for social authentication',
-    example: 'apple_123456789',
-    required: false
-  })
-  @IsString({ message: 'Apple ID must be a string' })
-  @IsOptional()
-  appleId?: string;
 }
 
 /**
@@ -452,34 +434,79 @@ export class InvalidateOtpDto {
   email!: string;
 }
 
-// Type aliases for backward compatibility
+/**
+ * Authentication response DTO
+ */
+export class AuthResponse {
+  @ApiProperty({
+    description: 'Access token',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+  })
+  @IsString({ message: 'Access token must be a string' })
+  accessToken!: string;
+
+  @ApiProperty({
+    description: 'Refresh token',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+  })
+  @IsString({ message: 'Refresh token must be a string' })
+  refreshToken!: string;
+
+  @ApiProperty({
+    description: 'User information',
+    example: { id: 'user-123', email: 'user@example.com' }
+  })
+  @IsObject({ message: 'User must be an object' })
+  user!: any;
+}
+
+/**
+ * Login request DTO (alias for LoginDto)
+ */
 export class LoginRequestDto extends LoginDto {}
 
-export class AuthResponse {
-  @ApiProperty({ description: 'Whether the authentication was successful' })
-  success: boolean;
-
-  @ApiProperty({ description: 'Response message' })
-  message: string;
-
-  @ApiProperty({ description: 'Authenticated user data', required: false })
-  user?: any;
-
-  @ApiProperty({ 
-    description: 'Authentication tokens',
+/**
+ * Registration with OAuth DTO
+ */
+export class RegisterDtoWithOAuth extends RegisterDto {
+  @ApiProperty({
+    description: 'Google ID for OAuth registration',
+    example: 'google-oauth-id-123',
     required: false
   })
-  tokens?: {
-    accessToken: string;
-    refreshToken: string;
-    expiresIn: number;
-    sessionId: string;
-    tokenType: string;
-  };
+  @IsString({ message: 'Google ID must be a string' })
+  @IsOptional()
+  googleId?: string;
 
-  @ApiProperty({ description: 'Session ID', required: false })
-  sessionId?: string;
+  @ApiProperty({
+    description: 'Facebook ID for OAuth registration',
+    example: 'facebook-oauth-id-123',
+    required: false
+  })
+  @IsString({ message: 'Facebook ID must be a string' })
+  @IsOptional()
+  facebookId?: string;
 
-  @ApiProperty({ description: 'Error message if any', required: false })
-  error?: string;
+  @ApiProperty({
+    description: 'Apple ID for OAuth registration',
+    example: 'apple-oauth-id-123',
+    required: false
+  })
+  @IsString({ message: 'Apple ID must be a string' })
+  @IsOptional()
+  appleId?: string;
+}
+
+/**
+ * Verify OTP request DTO with clinic context
+ */
+export class VerifyOtpRequestDtoWithClinic extends VerifyOtpRequestDto {
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
+    required: false
+  })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsOptional()
+  clinicId?: string;
 }

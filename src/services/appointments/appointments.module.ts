@@ -1,17 +1,18 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { JwtModule } from '@nestjs/jwt';
 
 // Infrastructure Services
-import { LoggingServiceModule } from '../../libs/infrastructure/logging';
-import { CacheServiceModule } from '../../libs/infrastructure/cache/cache-service.module';
+import { LoggingModule } from '../../libs/infrastructure/logging';
 import { DatabaseModule } from '../../libs/infrastructure/database';
 import { RbacModule } from '../../libs/core/rbac/rbac.module';
-import { RateLimitModule } from '../../libs/utils/rate-limit/rate-limit.module';
-import { AuthModule } from '../auth/auth.module';
 import { QueueModule } from '../../libs/infrastructure/queue';
+import { AuthModule } from '../auth/auth.module';
+import { JwtModule } from '@nestjs/jwt';
+import { RateLimitModule } from '../../libs/utils/rate-limit/rate-limit.module';
+import { GuardsModule } from '../../libs/core/guards/guards.module';
+// import { CommunicationModule } from '../../libs/communication';
 
 // Core Services
 import { AppointmentsController } from './appointments.controller';
@@ -23,17 +24,33 @@ import { ConflictResolutionService } from './core/conflict-resolution.service';
 import { AppointmentWorkflowEngine } from './core/appointment-workflow-engine.service';
 import { BusinessRulesEngine } from './core/business-rules-engine.service';
 
-// Plugin System
-import { AppointmentPluginController } from './plugins/plugin.controller';
+// Plugin System - Updated with new libs structure
+// import { AppointmentPluginRegistry } from './plugins/plugin.registry';
+// import { AppointmentPluginManager } from './plugins/plugin.manager';
 import { AppointmentEnterprisePluginManager } from './plugins/enterprise-plugin-manager';
+import { AppointmentPluginController } from './plugins/plugin.controller';
+// import { AppointmentPluginInitializer } from './plugins/plugin.initializer';
 import { PluginConfigService } from './plugins/config/plugin-config.service';
 import { PluginHealthService } from './plugins/health/plugin-health.service';
 
-// Clinic-Specific Plugins
+// Clinic-Specific Plugins - Updated with new libs structure
 import { ClinicQueuePlugin } from './plugins/queue/clinic-queue.plugin';
+// import { ClinicSocketPlugin } from './plugins/socket/clinic-socket.plugin';
+// Other plugins will be created as needed
+// import { ClinicLocationPlugin } from './plugins/location/clinic-location.plugin';
+// import { ClinicConfirmationPlugin } from './plugins/confirmation/clinic-confirmation.plugin';
+// import { ClinicCheckInPlugin } from './plugins/checkin/clinic-checkin.plugin';
+// import { ClinicPaymentPlugin } from './plugins/payment/clinic-payment.plugin';
+// import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
 
-// Service Dependencies
+// Service Dependencies - Updated with new libs structure
+// import { AppointmentSocketService } from './plugins/socket/appointment-socket.service';
 import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
+// Other services will be created as needed
+// import { VideoService } from './plugins/video/video.service';
+// import { CheckInService } from './plugins/checkin/check-in.service';
+// import { AppointmentConfirmationService } from './plugins/confirmation/appointment-confirmation.service';
+// import { AppointmentLocationService } from './plugins/location/appointment-location.service';
 import { QrService } from '../../libs/utils/QR';
 
 /**
@@ -52,22 +69,15 @@ import { QrService } from '../../libs/utils/QR';
 @Module({
   imports: [
     ConfigModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'default-secret',
-        signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN') || '24h',
-        },
-      }),
-      inject: [ConfigService],
-    }),
-    LoggingServiceModule,
-    CacheServiceModule,
+    LoggingModule,
     DatabaseModule,
     RbacModule,
-    RateLimitModule,
+    QueueModule.forRoot(),
     AuthModule,
+    JwtModule.register({}),
+    RateLimitModule,
+    GuardsModule,
+    // CommunicationModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -112,16 +122,33 @@ import { QrService } from '../../libs/utils/QR';
     ConflictResolutionService,
     AppointmentWorkflowEngine,
     BusinessRulesEngine,
+
     // Plugin System
+    // AppointmentPluginRegistry,
+    // AppointmentPluginManager,
     AppointmentEnterprisePluginManager,
+    // AppointmentPluginInitializer,
     PluginConfigService,
     PluginHealthService,
 
-    // Clinic-Specific Plugins
+    // Clinic-Specific Plugins - Only implemented plugins
     ClinicQueuePlugin,
+    // ClinicSocketPlugin,
+    // Other plugins commented out until implemented
+    // ClinicLocationPlugin,
+    // ClinicConfirmationPlugin,
+    // ClinicCheckInPlugin,
+    // ClinicPaymentPlugin,
+    // ClinicVideoPlugin,
 
-    // Service Dependencies
+    // Service Dependencies - Only implemented services
+    // AppointmentSocketService,
     AppointmentQueueService,
+    // Other services commented out until implemented
+    // VideoService,
+    // CheckInService,
+    // AppointmentConfirmationService,
+    // AppointmentLocationService,
     QrService,
   ],
   exports: [
@@ -131,13 +158,23 @@ import { QrService } from '../../libs/utils/QR';
     ConflictResolutionService,
     AppointmentWorkflowEngine,
     BusinessRulesEngine,
+
     // Plugin System
+    // AppointmentPluginRegistry,
+    // AppointmentPluginManager,
     AppointmentEnterprisePluginManager,
     PluginConfigService,
     PluginHealthService,
 
-    // Clinic Plugins
+    // Clinic Plugins - Only implemented plugins
     ClinicQueuePlugin,
+    // ClinicSocketPlugin,
+    // Other plugins commented out until implemented
+    // ClinicLocationPlugin,
+    // ClinicConfirmationPlugin,
+    // ClinicCheckInPlugin,
+    // ClinicPaymentPlugin,
+    // ClinicVideoPlugin,
   ],
 })
 export class AppointmentsModule {} 

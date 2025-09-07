@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 
 export interface ErrorContext {
   pluginName: string;
@@ -13,7 +13,7 @@ export class PluginErrorHandler {
 
   static handleError(error: unknown, context: ErrorContext): never {
     const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-    const errorStack = error instanceof Error ? error.stack : '';
+    const errorStack = error instanceof Error ? (error as Error).stack : '';
     
     this.logger.error(
       `Plugin error in ${context.pluginName}: ${errorMessage}`,
@@ -24,31 +24,28 @@ export class PluginErrorHandler {
       }
     );
 
-    // Create a standardized error response
-    const standardizedError = new Error(
-      `Plugin operation failed: ${context.operation} in ${context.pluginName} for domain ${context.domain}`
-    );
+    // Create a standardized error response using NestJS exception
+    const standardizedMessage = `Plugin operation failed: ${context.operation} in ${context.pluginName} for domain ${context.domain}`;
     
-    // Preserve original error information
-    (standardizedError as any).originalError = error;
-    (standardizedError as any).context = context;
-    
-    throw standardizedError;
+    // Use appropriate NestJS exception based on error type
+    if (error instanceof BadRequestException) {
+      throw error;
+    } else {
+      throw new InternalServerErrorException(standardizedMessage);
+    }
   }
 
   static validateRequiredFields(data: any, requiredFields: string[], context: ErrorContext): void {
     const missingFields = requiredFields.filter(field => data[field] === undefined);
     
     if (missingFields.length > 0) {
-      const error = new Error(`Missing required fields: ${missingFields.join(', ')}`);
-      this.handleError(error, context);
+      throw new BadRequestException(`Missing required fields: ${missingFields.join(', ')}`);
     }
   }
 
   static validateOperation(operation: string, validOperations: string[], context: ErrorContext): void {
     if (!validOperations.includes(operation)) {
-      const error = new Error(`Invalid operation: ${operation}. Valid operations: ${validOperations.join(', ')}`);
-      this.handleError(error, context);
+      throw new BadRequestException(`Invalid operation: ${operation}. Valid operations: ${validOperations.join(', ')}`);
     }
   }
 

@@ -1,12 +1,12 @@
 export default () => ({
-  port: parseInt(process.env.PORT, 10) || 3000,
+  port: parseInt(process.env.PORT || '3000', 10),
   database: {
     host: process.env.DATABASE_HOST,
-    port: parseInt(process.env.DATABASE_PORT, 10) || 5432,
+    port: parseInt(process.env.DATABASE_PORT || '5432', 10),
   },
   redis: {
     host: process.env.REDIS_HOST || 'redis',
-    port: parseInt(process.env.REDIS_PORT, 10) || 6379,
+    port: parseInt(process.env.REDIS_PORT || '6379', 10),
     password: process.env.REDIS_PASSWORD,
   },
   jwt: {
@@ -15,7 +15,7 @@ export default () => ({
   },
   email: {
     host: process.env.EMAIL_HOST || 'sandbox.smtp.mailtrap.io',
-    port: parseInt(process.env.EMAIL_PORT, 10) || 2525,
+    port: parseInt(process.env.EMAIL_PORT || '2525', 10),
     secure: process.env.EMAIL_SECURE === 'true',
     user: process.env.EMAIL_USER,
     password: process.env.EMAIL_PASSWORD,

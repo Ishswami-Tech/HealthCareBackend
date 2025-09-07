@@ -2,7 +2,7 @@
 // ENTERPRISE QUEUE INFRASTRUCTURE EXPORTS
 // ========================================
 
-// Core queue infrastructure
+// Core queue infrastructure  
 export { QueueModule } from './src/queue.module';
 export { QueueService } from './src/queue.service';
 export { QueueProcessor } from './src/queue.processor';

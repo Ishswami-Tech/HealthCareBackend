@@ -6,11 +6,12 @@ import { ClinicGuard } from './clinic.guard';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RedisModule } from '../../infrastructure/cache/redis/redis.module';
 import { RateLimitModule } from '../../utils/rate-limit/rate-limit.module';
+import { RateLimitService } from '../../utils/rate-limit/rate-limit.service';
 import { PrismaModule } from '../../infrastructure/database/prisma/prisma.module';
-import { LoggingServiceModule } from '../../infrastructure/logging';
 import { LoggingService } from '../../infrastructure/logging/logging.service';
 import { RbacModule } from '../rbac/rbac.module';
 import { Reflector } from '@nestjs/core';
+import { LoggingModule } from 'src/libs/infrastructure/logging';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { Reflector } from '@nestjs/core';
     RedisModule,
     RateLimitModule,
     PrismaModule,
-    LoggingServiceModule,
+    LoggingModule,
     RbacModule,
   ],
   providers: [
@@ -27,8 +28,9 @@ import { Reflector } from '@nestjs/core';
     ClinicGuard, 
     RbacGuard,
     Reflector,
-    LoggingService
+    LoggingService,
+    RateLimitService
   ],
-  exports: [JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, LoggingService, JwtModule, RateLimitModule],
+  exports: [JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, LoggingService, JwtModule, RateLimitModule, RateLimitService],
 })
 export class GuardsModule {} 
