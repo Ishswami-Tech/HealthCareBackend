@@ -111,16 +111,16 @@ export class ClinicLocationService {
         city: location.city,
         state: location.state,
         country: location.country,
-        zipCode: location.zipCode,
-        phone: location.phone,
-        email: location.email,
-        timezone: location.timezone,
+        zipCode: location.zipCode || undefined,
+        phone: location.phone || undefined,
+        email: location.email || undefined,
+        timezone: location.timezone || 'UTC',
         workingHours: location.workingHours as any,
         isActive: location.isActive,
         doctors: location.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture
+          profilePicture: dc.doctor.user.profilePicture || undefined
         }))
       };
 
@@ -193,16 +193,16 @@ export class ClinicLocationService {
         city: location.city,
         state: location.state,
         country: location.country,
-        zipCode: location.zipCode,
-        phone: location.phone,
-        email: location.email,
-        timezone: location.timezone,
+        zipCode: location.zipCode || undefined,
+        phone: location.phone || undefined,
+        email: location.email || undefined,
+        timezone: location.timezone || 'UTC',
         workingHours: location.workingHours as any,
         isActive: location.isActive,
         doctors: location.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture
+          profilePicture: dc.doctor.user.profilePicture || undefined
         }))
       }));
     } catch (error) {
@@ -268,16 +268,16 @@ export class ClinicLocationService {
         city: location.city,
         state: location.state,
         country: location.country,
-        zipCode: location.zipCode,
-        phone: location.phone,
-        email: location.email,
-        timezone: location.timezone,
+        zipCode: location.zipCode || undefined,
+        phone: location.phone || undefined,
+        email: location.email || undefined,
+        timezone: location.timezone || 'UTC',
         workingHours: location.workingHours as any,
         isActive: location.isActive,
         doctors: location.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture
+          profilePicture: dc.doctor.user.profilePicture || undefined
         }))
       };
     } catch (error) {
@@ -316,9 +316,9 @@ export class ClinicLocationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to generate location QR: ${error.message}`,
+        `Failed to generate location QR: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
         'ClinicLocationService',
-        { locationId, error: error.stack }
+        { locationId, error: error instanceof Error ? (error as Error).stack : '' }
       );
       throw error;
     }
@@ -366,9 +366,9 @@ export class ClinicLocationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to verify location QR: ${error.message}`,
+        `Failed to verify location QR: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
         'ClinicLocationService',
-        { error: error.stack }
+        { error: error instanceof Error ? (error as Error).stack : '' }
       );
       throw error;
     }
@@ -458,16 +458,16 @@ export class ClinicLocationService {
         city: updatedLocation.city,
         state: updatedLocation.state,
         country: updatedLocation.country,
-        zipCode: updatedLocation.zipCode,
-        phone: updatedLocation.phone,
-        email: updatedLocation.email,
-        timezone: updatedLocation.timezone,
+        zipCode: updatedLocation.zipCode || undefined,
+        phone: updatedLocation.phone || undefined,
+        email: updatedLocation.email || undefined,
+        timezone: updatedLocation.timezone || 'UTC',
         workingHours: updatedLocation.workingHours as any,
         isActive: updatedLocation.isActive,
         doctors: updatedLocation.doctorClinic.map(dc => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture
+          profilePicture: dc.doctor.user.profilePicture || undefined
         }))
       };
     } catch (error) {

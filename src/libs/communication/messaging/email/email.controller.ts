@@ -4,7 +4,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { EmailTemplate } from '../../../core/types/email.types';
 
 class SendTestEmailDto {
-  to: string;
+  to!: string;
   template?: EmailTemplate;
 }
 

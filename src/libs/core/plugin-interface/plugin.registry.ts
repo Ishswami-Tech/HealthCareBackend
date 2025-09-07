@@ -148,7 +148,7 @@ export class EnterprisePluginRegistry implements PluginRegistry {
         this.pluginHealth.set(name, {
           isHealthy: false,
           lastCheck: new Date(),
-          errors: [error instanceof Error ? error.message : String(error)]
+          errors: [error instanceof Error ? (error as Error).message : String(error)]
         });
       }
     }

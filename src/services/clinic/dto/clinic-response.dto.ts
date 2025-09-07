@@ -2,25 +2,25 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class ClinicResponseDto {
   @ApiProperty({ description: 'Clinic ID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({ description: 'Clinic name' })
-  name: string;
+  name!: string;
 
   @ApiProperty({ description: 'Clinic address' })
-  address: string;
+  address!: string;
 
   @ApiProperty({ description: 'Clinic phone number' })
-  phone: string;
+  phone!: string;
 
   @ApiProperty({ description: 'Clinic email' })
-  email: string;
+  email!: string;
 
   @ApiProperty({ description: 'Clinic subdomain' })
-  subdomain: string;
+  subdomain!: string;
 
   @ApiProperty({ description: 'Clinic app name' })
-  app_name: string;
+  app_name!: string;
 
   @ApiProperty({ description: 'Clinic logo URL', required: false })
   logo?: string;
@@ -32,45 +32,45 @@ export class ClinicResponseDto {
   description?: string;
 
   @ApiProperty({ description: 'Clinic timezone' })
-  timezone: string;
+  timezone!: string;
 
   @ApiProperty({ description: 'Clinic currency' })
-  currency: string;
+  currency!: string;
 
   @ApiProperty({ description: 'Clinic language' })
-  language: string;
+  language!: string;
 
   @ApiProperty({ description: 'Whether clinic is active' })
-  isActive: boolean;
+  isActive!: boolean;
 
   @ApiProperty({ description: 'Clinic admins', type: [Object] })
-  admins: any[];
+  admins!: any[];
 
   @ApiProperty({ description: 'Created at timestamp' })
-  createdAt: Date;
+  createdAt!: Date;
 
   @ApiProperty({ description: 'Updated at timestamp' })
-  updatedAt: Date;
+  updatedAt!: Date;
 }
 
 export class ClinicListResponseDto {
   @ApiProperty({ description: 'List of clinics', type: [ClinicResponseDto] })
-  clinics: ClinicResponseDto[];
+  clinics!: ClinicResponseDto[];
 
   @ApiProperty({ description: 'Total count of clinics' })
-  total: number;
+  total!: number;
 
   @ApiProperty({ description: 'Current page number' })
-  page: number;
+  page!: number;
 
   @ApiProperty({ description: 'Number of items per page' })
-  limit: number;
+  limit!: number;
 
   @ApiProperty({ description: 'Total number of pages' })
-  totalPages: number;
+  totalPages!: number;
 }
 
 export class AppNameInlineDto {
   @ApiProperty({ description: 'App name (subdomain)', example: 'myclinic' })
-  appName: string;
+  appName!: string;
 } 

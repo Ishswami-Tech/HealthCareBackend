@@ -39,9 +39,9 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
   private failureThreshold = 50;
 
   // Performance monitoring
-  private performanceInterval: NodeJS.Timeout;
-  private cleanupInterval: NodeJS.Timeout;
-  private bufferFlushInterval: NodeJS.Timeout;
+  private performanceInterval!: NodeJS.Timeout;
+  private cleanupInterval!: NodeJS.Timeout;
+  private bufferFlushInterval!: NodeJS.Timeout;
 
   constructor(
     private readonly eventEmitter: EventEmitter2,
@@ -90,7 +90,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogLevel.ERROR,
         'Failed to create event indices',
         'EnterpriseEventService',
-        { error: error.message }
+        { error: (error as Error).message }
       );
     }
   }
@@ -208,8 +208,8 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         eventId: payload?.eventId || 'unknown',
         error: {
           code: 'EVENT_PROCESSING_ERROR',
-          message: error.message,
-          stack: error.stack,
+          message: (error as Error).message,
+          stack: (error as Error).stack,
           retryable: true
         },
         processingTime: Date.now() - startTime,
@@ -252,7 +252,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogLevel.ERROR,
         'Failed to process critical event immediately',
         'EnterpriseEventService',
-        { eventId: event.eventId, error: error.message }
+        { eventId: event.eventId, error: (error as Error).message }
       );
     }
   }
@@ -288,7 +288,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogLevel.ERROR,
         'Failed to store event in cache',
         'EnterpriseEventService',
-        { eventId: event.eventId, error: error.message }
+        { eventId: event.eventId, error: (error as Error).message }
       );
     }
   }
@@ -329,7 +329,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogLevel.ERROR,
         'Failed to flush event buffer',
         'EnterpriseEventService',
-        { error: error.message, bufferSize: this.eventBuffer.length }
+        { error: (error as Error).message, bufferSize: this.eventBuffer.length }
       );
     }
   }
@@ -395,7 +395,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogLevel.ERROR,
         'Failed to query events',
         'EnterpriseEventService',
-        { error: error.message, filter }
+        { error: (error as Error).message, filter }
       );
       return [];
     }
@@ -431,7 +431,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogLevel.ERROR,
         'Failed to get event metrics',
         'EnterpriseEventService',
-        { error: error.message }
+        { error: (error as Error).message }
       );
       
       return {
@@ -507,7 +507,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
   private async queryByCategory(filter: EventFilter): Promise<string[]> {
     const results: string[] = [];
-    for (const category of filter.category) {
+    for (const category of filter.category || []) {
       const categoryKey = `events:category:${category}`;
       const ids = await this.redisService.zrevrange(categoryKey, 0, -1);
       results.push(...ids);
@@ -598,7 +598,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogLevel.ERROR,
         'Failed to cleanup expired events',
         'EnterpriseEventService',
-        { error: error.message }
+        { error: (error as Error).message }
       );
     }
   }

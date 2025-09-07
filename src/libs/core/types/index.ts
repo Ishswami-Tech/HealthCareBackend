@@ -77,6 +77,17 @@ export interface TokenPayload {
   exp?: number;
 }
 
+export interface AuthenticatedRequest {
+  user: TokenPayload & { id?: string };
+  sessionId?: string;
+  clinicId?: string;
+  // Basic Express Request properties needed
+  params?: any;
+  query?: any;
+  body?: any;
+  headers?: any;
+}
+
 export interface DomainValidationResult {
   isValid: boolean;
   message?: string;

@@ -1,16 +1,26 @@
-import { SetMetadata, applyDecorators } from '@nestjs/common';
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { SetMetadata, applyDecorators, createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 
-export const HEALTHCARE_CACHE_KEY = 'healthcare_cache';
-export const HEALTHCARE_CACHE_INVALIDATE_KEY = 'healthcare_cache_invalidate';
+/**
+ * Unified Cache Decorator for Enterprise Healthcare Applications
+ * 
+ * Combines Redis caching with healthcare-specific features:
+ * - SWR (Stale-While-Revalidate) support
+ * - HIPAA compliance and PHI protection
+ * - Healthcare-specific cache patterns
+ * - Performance optimization for 10M+ users
+ */
+
+export const CACHE_KEY = 'cache';
+export const CACHE_INVALIDATE_KEY = 'cache_invalidate';
 export const PHI_CACHE_KEY = 'phi_cache'; // Protected Health Information
 
-export interface HealthcareCacheOptions {
+export interface UnifiedCacheOptions {
   /**
    * Cache key template with placeholders for dynamic values
    * Example: 'patient:{patientId}:records' 
    */
-  keyTemplate: string;
+  keyTemplate?: string;
   
   /**
    * Cache TTL in seconds
@@ -18,9 +28,44 @@ export interface HealthcareCacheOptions {
   ttl?: number;
   
   /**
+   * Cache key prefix for namespacing
+   */
+  prefix?: string;
+  
+  /**
+   * Custom function to generate cache keys
+   */
+  keyGenerator?: (...args: any[]) => string;
+  
+  /**
+   * Whether to use Stale-While-Revalidate strategy (default: true)
+   */
+  useSwr?: boolean;
+  
+  /**
+   * How long data is considered fresh before revalidation (in seconds)
+   */
+  staleTime?: number;
+  
+  /**
+   * Force data refresh regardless of cache status
+   */
+  forceRefresh?: boolean;
+  
+  /**
    * Cache tags for grouped invalidation
    */
   tags?: string[];
+  
+  /**
+   * Whether to compress large cache entries
+   */
+  compress?: boolean;
+  
+  /**
+   * Processing priority for cache operations
+   */
+  priority?: 'critical' | 'high' | 'normal' | 'low';
   
   /**
    * Whether this contains PHI (Protected Health Information)
@@ -29,24 +74,14 @@ export interface HealthcareCacheOptions {
   containsPHI?: boolean;
   
   /**
-   * Cache priority for load balancing
-   */
-  priority?: 'critical' | 'high' | 'normal' | 'low';
-  
-  /**
    * Enable compression for large data
    */
-  compress?: boolean;
+  enableCompression?: boolean;
   
   /**
    * Enable stale-while-revalidate pattern
    */
   enableSWR?: boolean;
-  
-  /**
-   * Stale time in seconds (for SWR)
-   */
-  staleTime?: number;
   
   /**
    * Condition function to determine if caching should be applied
@@ -56,7 +91,7 @@ export interface HealthcareCacheOptions {
   /**
    * Custom key generator function
    */
-  keyGenerator?: (context: ExecutionContext, ...args: any[]) => string;
+  customKeyGenerator?: (context: ExecutionContext, ...args: any[]) => string;
   
   /**
    * Clinic-specific caching (multi-tenant support)
@@ -127,14 +162,14 @@ export interface CacheInvalidationOptions {
 }
 
 /**
- * Healthcare-specific cache decorator with HIPAA compliance features
+ * Unified cache decorator with healthcare and enterprise features
  */
-export const HealthcareCache = (options: HealthcareCacheOptions) => {
+export const Cache = (options: UnifiedCacheOptions = {}) => {
   return applyDecorators(
-    SetMetadata(HEALTHCARE_CACHE_KEY, {
+    SetMetadata(CACHE_KEY, {
       ...options,
       timestamp: Date.now(),
-      type: 'healthcare'
+      type: 'unified_cache'
     })
   );
 };
@@ -142,8 +177,8 @@ export const HealthcareCache = (options: HealthcareCacheOptions) => {
 /**
  * PHI (Protected Health Information) cache decorator with enhanced security
  */
-export const PHICache = (options: Omit<HealthcareCacheOptions, 'containsPHI' | 'complianceLevel'>) => {
-  return HealthcareCache({
+export const PHICache = (options: Omit<UnifiedCacheOptions, 'containsPHI' | 'complianceLevel'>) => {
+  return Cache({
     ...options,
     containsPHI: true,
     complianceLevel: 'sensitive',
@@ -155,8 +190,8 @@ export const PHICache = (options: Omit<HealthcareCacheOptions, 'containsPHI' | '
 /**
  * Patient-specific cache decorator
  */
-export const PatientCache = (options: Omit<HealthcareCacheOptions, 'patientSpecific'>) => {
-  return HealthcareCache({
+export const PatientCache = (options: Omit<UnifiedCacheOptions, 'patientSpecific'>) => {
+  return Cache({
     ...options,
     patientSpecific: true,
     containsPHI: true,
@@ -167,8 +202,8 @@ export const PatientCache = (options: Omit<HealthcareCacheOptions, 'patientSpeci
 /**
  * Doctor-specific cache decorator
  */
-export const DoctorCache = (options: Omit<HealthcareCacheOptions, 'doctorSpecific'>) => {
-  return HealthcareCache({
+export const DoctorCache = (options: Omit<UnifiedCacheOptions, 'doctorSpecific'>) => {
+  return Cache({
     ...options,
     doctorSpecific: true,
     tags: [...(options.tags || []), 'doctor_data']
@@ -178,8 +213,8 @@ export const DoctorCache = (options: Omit<HealthcareCacheOptions, 'doctorSpecifi
 /**
  * Appointment-specific cache decorator
  */
-export const AppointmentCache = (options: HealthcareCacheOptions) => {
-  return HealthcareCache({
+export const AppointmentCache = (options: UnifiedCacheOptions) => {
+  return Cache({
     ...options,
     tags: [...(options.tags || []), 'appointment_data'],
     ttl: options.ttl || 1800, // 30 minutes default for appointments
@@ -190,8 +225,8 @@ export const AppointmentCache = (options: HealthcareCacheOptions) => {
 /**
  * Emergency data cache decorator with minimal TTL
  */
-export const EmergencyCache = (options: Omit<HealthcareCacheOptions, 'emergencyData' | 'priority'>) => {
-  return HealthcareCache({
+export const EmergencyCache = (options: Omit<UnifiedCacheOptions, 'emergencyData' | 'priority'>) => {
+  return Cache({
     ...options,
     emergencyData: true,
     priority: 'critical',
@@ -204,8 +239,8 @@ export const EmergencyCache = (options: Omit<HealthcareCacheOptions, 'emergencyD
 /**
  * Medical history cache decorator with compression
  */
-export const MedicalHistoryCache = (options: HealthcareCacheOptions) => {
-  return HealthcareCache({
+export const MedicalHistoryCache = (options: UnifiedCacheOptions) => {
+  return Cache({
     ...options,
     compress: true, // Medical history can be large
     containsPHI: true,
@@ -218,8 +253,8 @@ export const MedicalHistoryCache = (options: HealthcareCacheOptions) => {
 /**
  * Prescription cache decorator
  */
-export const PrescriptionCache = (options: HealthcareCacheOptions) => {
-  return HealthcareCache({
+export const PrescriptionCache = (options: UnifiedCacheOptions) => {
+  return Cache({
     ...options,
     containsPHI: true,
     complianceLevel: 'sensitive',
@@ -232,8 +267,8 @@ export const PrescriptionCache = (options: HealthcareCacheOptions) => {
 /**
  * Lab results cache decorator
  */
-export const LabResultsCache = (options: HealthcareCacheOptions) => {
-  return HealthcareCache({
+export const LabResultsCache = (options: UnifiedCacheOptions) => {
+  return Cache({
     ...options,
     containsPHI: true,
     complianceLevel: 'sensitive',
@@ -246,12 +281,12 @@ export const LabResultsCache = (options: HealthcareCacheOptions) => {
 /**
  * Cache invalidation decorator for healthcare operations
  */
-export const InvalidateHealthcareCache = (options: CacheInvalidationOptions) => {
+export const InvalidateCache = (options: CacheInvalidationOptions) => {
   return applyDecorators(
-    SetMetadata(HEALTHCARE_CACHE_INVALIDATE_KEY, {
+    SetMetadata(CACHE_INVALIDATE_KEY, {
       ...options,
       timestamp: Date.now(),
-      type: 'healthcare_invalidation'
+      type: 'cache_invalidation'
     })
   );
 };
@@ -260,7 +295,7 @@ export const InvalidateHealthcareCache = (options: CacheInvalidationOptions) => 
  * Invalidate patient cache decorator
  */
 export const InvalidatePatientCache = (options: Omit<CacheInvalidationOptions, 'invalidatePatient'>) => {
-  return InvalidateHealthcareCache({
+  return InvalidateCache({
     ...options,
     invalidatePatient: true,
     patterns: [...(options.patterns || []), 'patient:*']
@@ -271,7 +306,7 @@ export const InvalidatePatientCache = (options: Omit<CacheInvalidationOptions, '
  * Invalidate appointment cache decorator
  */
 export const InvalidateAppointmentCache = (options: CacheInvalidationOptions) => {
-  return InvalidateHealthcareCache({
+  return InvalidateCache({
     ...options,
     patterns: [...(options.patterns || []), 'appointment:*', '*:appointments'],
     tags: [...(options.tags || []), 'appointment_data']
@@ -282,7 +317,7 @@ export const InvalidateAppointmentCache = (options: CacheInvalidationOptions) =>
  * Invalidate clinic cache decorator
  */
 export const InvalidateClinicCache = (options: Omit<CacheInvalidationOptions, 'invalidateClinic'>) => {
-  return InvalidateHealthcareCache({
+  return InvalidateCache({
     ...options,
     invalidateClinic: true,
     patterns: [...(options.patterns || []), 'clinic:*', '*:clinic:*']
@@ -489,3 +524,8 @@ export const HealthcareKeyGenerators = {
     return `daily:${date}:${entityId}:${method}`;
   }
 };
+
+// Legacy exports for backward compatibility
+export const RedisCache = Cache;
+export const HealthcareCache = Cache;
+export const InvalidateHealthcareCache = InvalidateCache;

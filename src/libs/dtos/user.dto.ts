@@ -345,7 +345,7 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
     description: 'Unique user identifier'
   })
   @IsUUID('4', { message: 'User ID must be a valid UUID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({ 
     example: '2024-01-01T00:00:00.000Z', 
@@ -353,7 +353,7 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   })
   @IsDate({ message: 'Created at must be a valid date' })
   @Type(() => Date)
-  createdAt: Date;
+  createdAt!: Date;
 
   @ApiProperty({ 
     example: '2024-01-01T00:00:00.000Z', 
@@ -361,21 +361,21 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   })
   @IsDate({ message: 'Updated at must be a valid date' })
   @Type(() => Date)
-  updatedAt: Date;
+  updatedAt!: Date;
 
   @ApiProperty({ 
     example: true, 
     description: 'Whether user email is verified'
   })
   @IsBoolean({ message: 'Is verified must be a boolean' })
-  isVerified: boolean;
+  isVerified!: boolean;
 
   @ApiProperty({ 
     example: true, 
     description: 'Whether user account is active'
   })
   @IsBoolean({ message: 'Is active must be a boolean' })
-  isActive: boolean;
+  isActive!: boolean;
 
   @ApiPropertyOptional({ 
     example: 'clinic-token-123', 
@@ -396,25 +396,25 @@ export class UserListResponseDto {
   })
   @ValidateNested({ each: true })
   @Type(() => UserResponseDto)
-  users: UserResponseDto[];
+  users!: UserResponseDto[];
 
   @ApiProperty({ 
     description: 'Total number of users'
   })
   @IsNumber({}, { message: 'Total must be a number' })
-  total: number;
+  total!: number;
 
   @ApiProperty({ 
     description: 'Current page number'
   })
   @IsNumber({}, { message: 'Page must be a number' })
-  page: number;
+  page!: number;
 
   @ApiProperty({ 
     description: 'Items per page'
   })
   @IsNumber({}, { message: 'Limit must be a number' })
-  limit: number;
+  limit!: number;
 }
 
 /**
@@ -596,7 +596,7 @@ export class UpdateUserRoleDto {
   })
   @IsEnum(Role, { message: 'Role must be a valid role' })
   @IsNotEmpty({ message: 'Role is required' })
-  role: Role;
+  role!: Role;
 
   @ApiPropertyOptional({
     example: 'clinic-id-123',

@@ -176,11 +176,11 @@ export class JwtAuthGuard implements CanActivate {
       }
       return payload;
     } catch (error) {
-      logger.log(LogType.AUTH, LogLevel.ERROR, `Token verification failed: ${error.name}`, 'JwtAuthGuard', { error: error.message });
-      if (error.name === 'TokenExpiredError') {
+      logger.log(LogType.AUTH, LogLevel.ERROR, `Token verification failed: ${error instanceof Error ? error.name : 'Unknown'}`, 'JwtAuthGuard', { error: error instanceof Error ? (error as Error).message : 'Unknown error' });
+      if (error instanceof Error && error.name === 'TokenExpiredError') {
         throw new UnauthorizedException('Token has expired');
       }
-      if (error.name === 'JsonWebTokenError') {
+      if (error instanceof Error && error.name === 'JsonWebTokenError') {
         throw new UnauthorizedException('Invalid token format');
       }
       throw new UnauthorizedException('Token validation failed');
@@ -378,7 +378,7 @@ export class JwtAuthGuard implements CanActivate {
 
     // Track security event
     await this.trackSecurityEvent(clientIp, 'AUTHENTICATION_FAILURE', {
-      error: error.message,
+      error: (error as Error).message,
       path: request.raw.url,
       method: request.method
     });
@@ -387,7 +387,7 @@ export class JwtAuthGuard implements CanActivate {
     if (error instanceof UnauthorizedException) {
       const lockoutStatus = await this.checkLockoutStatus(clientIp);
       if (lockoutStatus.isLocked) {
-        error.message = `Account is temporarily locked. Please try again in ${lockoutStatus.remainingMinutes} minutes.`;
+        (error as Error).message = `Account is temporarily locked. Please try again in ${lockoutStatus.remainingMinutes} minutes.`;
       }
     }
   }

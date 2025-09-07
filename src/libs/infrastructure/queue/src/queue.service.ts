@@ -42,7 +42,6 @@ export enum JobPriority {
 
 export enum DomainType {
   CLINIC = 'clinic',
-  FASHION = 'clinic',
   WORKER = 'worker'
 }
 
@@ -144,13 +143,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       this.initializeQueues();
     } catch (error) {
-      this.logger.error(`Failed to initialize queues: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Failed to initialize queues: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`);
     }
     
     try {
       this.initializeWorkers();
     } catch (error) {
-      this.logger.error(`Failed to initialize workers: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Failed to initialize workers: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`);
     }
     
     // Enhanced health monitoring for 10 lakh+ users
@@ -214,15 +213,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           FOLLOW_UP_QUEUE,
           RECURRING_APPOINTMENT_QUEUE
         ];
-      case DomainType.FASHION:
-        return [
-          ...baseQueues,
-          APPOINTMENT_QUEUE,
-          NOTIFICATION_QUEUE,
-          EMAIL_QUEUE,
-          PAYMENT_PROCESSING_QUEUE,
-          ANALYTICS_QUEUE
-        ];
+      // FASHION domain removed - healthcare application only
       case DomainType.WORKER:
         // Worker can access all queues
         return [
@@ -270,7 +261,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`✅ Initialized queue: ${queue.name} for domain: ${this.getCurrentDomain()}`);
         initializedCount++;
       } catch (error) {
-        this.logger.error(`❌ Failed to initialize queue at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        this.logger.error(`❌ Failed to initialize queue at index ${index}: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`);
       }
     });
     
@@ -296,7 +287,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`✅ Initialized worker: ${worker.name} for domain: ${this.getCurrentDomain()}`);
         initializedCount++;
       } catch (error) {
-        this.logger.error(`❌ Failed to initialize worker at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        this.logger.error(`❌ Failed to initialize worker at index ${index}: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`);
       }
     });
     
@@ -315,8 +306,6 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     const startTime = Date.now();
     
     try {
-      // Domain validation removed for single application
-      // this.validateDomainAccess(queueName, options.domain);
       
       const queue = this.queues.get(queueName);
       if (!queue) {
@@ -361,7 +350,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Failed to add job to queue ${queueName}: ${error instanceof Error ? (error as Error).message : String(error)}`, {
         queueName,
         domain: this.getCurrentDomain(),
-        error: error instanceof Error ? error.stack : String(error),
+        error: error instanceof Error ? (error as Error).stack : String(error),
         responseTime: Date.now() - startTime,
       });
       throw error;
@@ -378,10 +367,6 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     const startTime = Date.now();
     
     try {
-      // Domain validation removed for single application
-      // jobs.forEach(job => {
-      //   this.validateDomainAccess(queueName, job.options?.domain);
-      // });
 
       const queue = this.queues.get(queueName);
       if (!queue) {
@@ -434,7 +419,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Failed to add bulk jobs to queue ${queueName}: ${error instanceof Error ? (error as Error).message : String(error)}`, {
         queueName,
         domain: this.getCurrentDomain(),
-        error: error instanceof Error ? error.stack : String(error),
+        error: error instanceof Error ? (error as Error).stack : String(error),
         responseTime: Date.now() - startTime,
       });
       throw error;
@@ -449,8 +434,6 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     filters: QueueFilters = {}
   ): Promise<Job[]> {
     try {
-      // Domain validation removed for single application
-      // this.validateDomainAccess(queueName, filters.domain);
 
       const queue = this.queues.get(queueName);
       if (!queue) {
@@ -482,7 +465,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Failed to get jobs from queue ${queueName}: ${error instanceof Error ? (error as Error).message : String(error)}`, {
         queueName,
         domain: this.getCurrentDomain(),
-        error: error instanceof Error ? error.stack : String(error),
+        error: error instanceof Error ? (error as Error).stack : String(error),
       });
       throw error;
     }
@@ -493,8 +476,6 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   async getQueueMetrics(queueName: string): Promise<QueueMetrics> {
     try {
-      // Domain validation removed for single application
-      // this.validateDomainAccess(queueName);
 
       const queue = this.queues.get(queueName);
       if (!queue) {
@@ -528,7 +509,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Failed to get metrics for queue ${queueName}: ${error instanceof Error ? (error as Error).message : String(error)}`, {
         queueName,
         domain: this.getCurrentDomain(),
-        error: error instanceof Error ? error.stack : String(error),
+        error: error instanceof Error ? (error as Error).stack : String(error),
       });
       throw error;
     }
@@ -561,7 +542,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.error(`Failed to get health status: ${error instanceof Error ? (error as Error).message : String(error)}`, {
         domain: this.getCurrentDomain(),
-        error: error instanceof Error ? error.stack : String(error),
+        error: error instanceof Error ? (error as Error).stack : String(error),
       });
       throw error;
     }
@@ -893,7 +874,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.error(`Failed to update health status: ${error instanceof Error ? (error as Error).message : String(error)}`, {
         domain: this.getCurrentDomain(),
-        error: error instanceof Error ? error.stack : String(error),
+        error: error instanceof Error ? (error as Error).stack : String(error),
       });
     }
   }
@@ -909,7 +890,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.error(`Failed to update queue metrics: ${error instanceof Error ? (error as Error).message : String(error)}`, {
         domain: this.getCurrentDomain(),
-        error: error instanceof Error ? error.stack : String(error),
+        error: error instanceof Error ? (error as Error).stack : String(error),
       });
     }
   }

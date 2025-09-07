@@ -2,14 +2,14 @@
 export * from './cache.module';
 export * from './cache.service';
 
-// Redis exports
-export * from './redis/redis.service';
+// Only export CacheService as the single entry point
+export { CacheService } from './cache.service';
 
-// Interceptor exports - commented out until implemented
-// export * from './interceptors/cache.interceptor';
+// Interceptor exports
+export * from './interceptors/healthcare-cache.interceptor';
 
-// Decorator exports - commented out until implemented
-// export * from './decorators/cache.decorator';
+// Unified decorator exports
+export * from './decorators/cache.decorator';
 
 // Controller exports
 export * from './controllers/cache.controller';

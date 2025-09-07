@@ -76,7 +76,7 @@ export class RateLimitService {
         total: options.max,
       };
     } catch (error) {
-      this.logger.error(`Rate limit check failed for key: ${key}`, error.stack);
+      this.logger.error(`Rate limit check failed for key: ${key}`, error instanceof Error ? error.stack : undefined);
       
       // Fail open - allow request if Redis is down
       return {
@@ -105,7 +105,7 @@ export class RateLimitService {
         );
       }
     } catch (error) {
-      this.logger.error(`Failed to reset rate limit for key: ${key}`, error.stack);
+      this.logger.error(`Failed to reset rate limit for key: ${key}`, error instanceof Error ? error.stack : undefined);
     }
   }
 
@@ -129,3 +129,4 @@ export class RateLimitService {
     return this.generateDefaultKey(req);
   }
 }
+

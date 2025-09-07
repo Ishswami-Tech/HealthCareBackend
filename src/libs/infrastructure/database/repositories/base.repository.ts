@@ -38,10 +38,10 @@ export class RepositoryResult<T, E = Error> {
     clinicId?: string,
     userId?: string
   ): RepositoryResult<T, E> {
-    return new RepositoryResult(
+    return new RepositoryResult<T, E>(
       true,
       data,
-      undefined,
+      undefined as E | undefined,
       metadata,
       executionTime,
       operationType,
@@ -58,9 +58,9 @@ export class RepositoryResult<T, E = Error> {
     clinicId?: string,
     userId?: string
   ): RepositoryResult<T, E> {
-    return new RepositoryResult(
+    return new RepositoryResult<T, E>(
       false,
-      undefined,
+      undefined as T | undefined,
       error,
       metadata,
       executionTime,
@@ -517,7 +517,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'CREATE',
@@ -578,7 +578,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
           executionTime,
           source: 'base_repository',
           dataCount: data.length,
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'CREATE_MANY',
@@ -624,7 +624,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'FIND_BY_ID',
@@ -669,7 +669,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'FIND_UNIQUE',
@@ -713,7 +713,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'FIND_FIRST',
@@ -757,7 +757,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'FIND_MANY',
@@ -840,7 +840,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'FIND_MANY_PAGINATED',
@@ -921,7 +921,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'UPDATE',
@@ -966,7 +966,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'UPDATE_MANY',
@@ -1041,7 +1041,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'DELETE',
@@ -1083,7 +1083,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'DELETE_MANY',
@@ -1127,7 +1127,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'COUNT',
@@ -1167,7 +1167,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message
+          error: error instanceof Error ? error.message : String(error)
         },
         executionTime,
         context?.operationType || 'EXISTS',
@@ -1214,7 +1214,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
         {
           executionTime,
           source: 'base_repository',
-          error: error.message,
+          error: error instanceof Error ? error.message : String(error),
           transaction: true
         },
         executionTime,
@@ -1346,7 +1346,7 @@ export abstract class BaseRepository<TEntity extends { id: TId }, TCreateInput, 
    */
   protected handleError(operation: string, error: any): Error {
     const message = `${this.entityName}Repository.${operation} failed: ${(error as Error).message || error}`;
-    this.logger.error(message, error.stack);
+    this.logger.error(message, error instanceof Error ? error.stack : undefined);
     return new Error(message);
   }
 }

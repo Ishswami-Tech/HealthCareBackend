@@ -410,7 +410,7 @@ async function main() {
         });
       } catch (error) {
         // Skip if relationship already exists
-        if (error.code !== 'P2002') {
+        if ((error as any).code !== 'P2002') {
           throw error;
         }
       }
@@ -748,7 +748,7 @@ async function cleanDatabase() {
 
     for (const table of tables) {
       try {
-        await prisma[table].deleteMany({});
+        await (prisma as any)[table].deleteMany({});
         console.log(`Cleaned ${table} table`);
       } catch (error) {
         // Skip if table doesn't exist

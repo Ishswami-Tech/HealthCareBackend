@@ -91,7 +91,7 @@ export class EnterprisePluginManager implements PluginManager {
       
       if (error instanceof PluginTimeoutError) {
         // Mark plugin as unhealthy
-        await this.markPluginUnhealthy(pluginName, error.message);
+        await this.markPluginUnhealthy(pluginName, (error as Error).message);
       }
       
       throw error;
@@ -120,7 +120,7 @@ export class EnterprisePluginManager implements PluginManager {
         return await this.executePlugin(plugin.name, operation, data);
       } catch (error) {
         this.logger.error(`❌ Plugin ${plugin.name} failed for feature ${feature}:`, error);
-        return { error: error instanceof Error ? error.message : String(error) };
+        return { error: error instanceof Error ? (error as Error).message : String(error) };
       }
     });
 
@@ -289,7 +289,7 @@ export class EnterprisePluginManager implements PluginManager {
         results.push(result);
       } catch (error) {
         this.logger.error(`❌ Sequential execution failed for plugin ${pluginName}:`, error);
-        results.push({ error: error instanceof Error ? error.message : String(error) });
+        results.push({ error: error instanceof Error ? (error as Error).message : String(error) });
         // Continue with next plugin
       }
     }

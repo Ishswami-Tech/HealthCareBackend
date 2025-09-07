@@ -57,7 +57,7 @@ export class PluginHealthService {
         return JSON.parse(cached as string);
       }
 
-      const pluginInfo = []; // Mock plugin info array since registry is not available
+      const pluginInfo: any[] = []; // Mock plugin info array since registry is not available
       const healthMetrics: PluginHealthMetrics[] = [];
 
       for (const plugin of pluginInfo) {
@@ -87,7 +87,7 @@ export class PluginHealthService {
         return JSON.parse(cached as string);
       }
 
-      const pluginInfo = []; // Mock plugin info array since registry is not available
+      const pluginInfo: any[] = []; // Mock plugin info array since registry is not available
       const plugin = pluginInfo.find(p => p.name === pluginName);
       
       if (!plugin) {
@@ -248,7 +248,7 @@ export class PluginHealthService {
       await this.cacheService.del(this.HEALTH_CACHE_KEY);
       
       // Invalidate individual plugin metrics
-      const pluginInfo = []; // Mock plugin info array since registry is not available
+      const pluginInfo: any[] = []; // Mock plugin info array since registry is not available
       for (const plugin of pluginInfo) {
         const cacheKey = `${this.METRICS_CACHE_PREFIX}${plugin.name}`;
         await this.cacheService.del(cacheKey);

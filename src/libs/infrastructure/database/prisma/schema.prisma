@@ -11,52 +11,52 @@ datasource db {
 }
 
 model User {
-  id                     String                  @id @default(uuid())
-  userid                 String                  @unique
-  email                  String                  @unique
-  password               String
-  name                   String
-  age                    Int
-  firstName              String?
-  lastName               String?
-  phone                  String?
-  role                   Role                    @default(PATIENT)
-  profilePicture         String?
-  gender                 String?
-  dateOfBirth            DateTime?
-  address                String?
-  city                   String?
-  state                  String?
-  country                String?
-  zipCode                String?
-  emergencyContact       String?
-  isVerified             Boolean                 @default(false)
-  lastLogin              DateTime?
-  lastLoginIP            String?
-  lastLoginDevice        String?
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  passwordChangedAt      DateTime?
-  googleId               String?
-  facebookId             String?
-  appleId                String?
-  appName                String?
-  medicalConditions      String?
-  
+  id                String    @id @default(uuid())
+  userid            String    @unique
+  email             String    @unique
+  password          String
+  name              String
+  age               Int
+  firstName         String?
+  lastName          String?
+  phone             String?
+  role              Role      @default(PATIENT)
+  profilePicture    String?
+  gender            String?
+  dateOfBirth       DateTime?
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  zipCode           String?
+  emergencyContact  String?
+  isVerified        Boolean   @default(false)
+  lastLogin         DateTime?
+  lastLoginIP       String?
+  lastLoginDevice   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  passwordChangedAt DateTime?
+  googleId          String?
+  facebookId        String?
+  appleId           String?
+  appName           String?
+  medicalConditions String?
+
   // Primary clinic association
-  primaryClinicId        String?                 // Primary clinic for the user
-  primaryClinic          Clinic?                 @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
-  
+  primaryClinicId String? // Primary clinic for the user
+  primaryClinic   Clinic? @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
+
   // Many-to-many clinic associations
-  clinics                Clinic[]                @relation("UserClinics")
-  
+  clinics Clinic[] @relation("UserClinics")
+
   // Role-specific clinic associations
-  clinicAdmins           ClinicAdmin[]
-  receptionists          Receptionist[]
-  
+  clinicAdmins  ClinicAdmin[]
+  receptionists Receptionist[]
+
   // Clinics created by this user
-  createdClinics         Clinic[]                @relation("UserCreatedClinics")
-  
+  createdClinics Clinic[] @relation("UserCreatedClinics")
+
   // Other relationships
   appointments           Appointment[]
   auditLogs              AuditLog[]
@@ -82,14 +82,14 @@ model User {
   insurances             Insurance[]
   medications            Medication[]
   dietaryRestrictions    DietaryRestriction[]
-  
-  // RBAC Relations
-  userRoles              UserRole[]
 
-  @@map("users")
+  // RBAC Relations
+  userRoles UserRole[]
+
   @@index([primaryClinicId])
   @@index([email])
   @@index([role])
+  @@map("users")
 }
 
 model Receptionist {
@@ -105,36 +105,36 @@ model Receptionist {
 }
 
 model Clinic {
-  id                    String                  @id @default(uuid())
-  clinicId              String                  @unique
-  name                  String
-  address               String
-  phone                 String
-  email                 String                  @unique
-  app_name              String                  @unique
-  db_connection_string  String
-  databaseName          String?
-  databaseStatus        DatabaseStatus          @default(CREATING)
-  databaseCreatedAt     DateTime?
-  databaseLastSync      DateTime?
-  isActive              Boolean                 @default(true)
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
-  createdBy             String
-  subdomain             String?                 @unique
-  logo                  String?
-  website               String?
-  description           String?
-  timezone              String?                 @default("UTC")
-  currency              String?                 @default("INR")
-  language              String?                 @default("en")
-  settings              Json?
-  
+  id                   String         @id @default(uuid())
+  clinicId             String         @unique
+  name                 String
+  address              String
+  phone                String
+  email                String         @unique
+  app_name             String         @unique
+  db_connection_string String
+  databaseName         String?
+  databaseStatus       DatabaseStatus @default(CREATING)
+  databaseCreatedAt    DateTime?
+  databaseLastSync     DateTime?
+  isActive             Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  createdBy            String
+  subdomain            String?        @unique
+  logo                 String?
+  website              String?
+  description          String?
+  timezone             String?        @default("UTC")
+  currency             String?        @default("INR")
+  language             String?        @default("en")
+  settings             Json?
+
   // Multi-tenant relationships
-  primaryUsers          User[]                  @relation("UserPrimaryClinic")
-  users                 User[]                  @relation("UserClinics")
-  createdByUser         User                    @relation("UserCreatedClinics", fields: [createdBy], references: [id])
-  
+  primaryUsers  User[] @relation("UserPrimaryClinic")
+  users         User[] @relation("UserClinics")
+  createdByUser User   @relation("UserCreatedClinics", fields: [createdBy], references: [id])
+
   // Role-specific relationships
   appointments          Appointment[]
   admins                ClinicAdmin[]
@@ -142,14 +142,14 @@ model Clinic {
   receptionists         Receptionist[]
   ReceptionistsAtClinic ReceptionistsAtClinic[]
   locations             ClinicLocation[]
-  
-  // RBAC Relations
-  rbacRoles             RbacRole[]
-  userRoles             UserRole[]
 
-  @@map("clinics")
+  // RBAC Relations
+  rbacRoles RbacRole[]
+  userRoles UserRole[]
+
   @@index([app_name])
   @@index([isActive])
+  @@map("clinics")
 }
 
 model ClinicLocation {
@@ -232,32 +232,38 @@ model Patient {
 }
 
 model Appointment {
-  id          String            @id @default(uuid())
-  type        AppointmentType
-  doctorId    String
-  patientId   String
-  locationId  String
-  clinicId    String
-  date        DateTime
-  time        String
-  duration    Int
-  status      AppointmentStatus
-  notes       String?
-  userId      String
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  therapyId   String?
-  startedAt   DateTime?
-  checkedInAt DateTime?
-  completedAt DateTime?
-  clinic      Clinic            @relation(fields: [clinicId], references: [id])
-  doctor      Doctor            @relation(fields: [doctorId], references: [id])
-  location    ClinicLocation    @relation(fields: [locationId], references: [id])
-  patient     Patient           @relation(fields: [patientId], references: [id])
-  therapy     Therapy?          @relation(fields: [therapyId], references: [id])
-  user        User              @relation(fields: [userId], references: [id])
-  payment     Payment?
-  queue       Queue?
+  id                 String            @id @default(uuid())
+  type               AppointmentType
+  doctorId           String
+  patientId          String
+  locationId         String
+  clinicId           String
+  date               DateTime
+  time               String
+  duration           Int
+  status             AppointmentStatus
+  priority           String?           @default("NORMAL")
+  notes              String?
+  userId             String
+  updatedBy          String?
+  cancellationReason String?
+  metadata           Json?
+  cancelledBy        String?
+  cancelledAt        DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  therapyId          String?
+  startedAt          DateTime?
+  checkedInAt        DateTime?
+  completedAt        DateTime?
+  clinic             Clinic            @relation(fields: [clinicId], references: [id])
+  doctor             Doctor            @relation(fields: [doctorId], references: [id])
+  location           ClinicLocation    @relation(fields: [locationId], references: [id])
+  patient            Patient           @relation(fields: [patientId], references: [id])
+  therapy            Therapy?          @relation(fields: [therapyId], references: [id])
+  user               User              @relation(fields: [userId], references: [id])
+  payment            Payment?
+  queue              Queue?
 
   @@index([doctorId])
   @@index([patientId])
@@ -839,19 +845,19 @@ model DietaryRestriction {
 
 // RBAC Models for Authentication System
 model Permission {
-  id                  String             @id @default(uuid())
-  name                String
-  resource            String
-  action              String
-  description         String?
-  domain              String             @default("healthcare")
-  isSystemPermission  Boolean            @default(false)
-  isActive            Boolean            @default(true)
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-  
+  id                 String   @id @default(uuid())
+  name               String
+  resource           String
+  action             String
+  description        String?
+  domain             String   @default("healthcare")
+  isSystemPermission Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
   // Relations
-  rolePermissions     RolePermission[]
+  rolePermissions RolePermission[]
 
   @@unique([resource, action, domain])
   @@index([resource, action])
@@ -859,21 +865,21 @@ model Permission {
 }
 
 model RbacRole {
-  id           String           @id @default(uuid())
+  id           String   @id @default(uuid())
   name         String
   displayName  String
   description  String?
-  domain       String           @default("healthcare")
+  domain       String   @default("healthcare")
   clinicId     String?
-  isSystemRole Boolean          @default(false)
-  isActive     Boolean          @default(true)
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  
+  isSystemRole Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
   // Relations
-  clinic       Clinic?          @relation(fields: [clinicId], references: [id])
-  userRoles    UserRole[]
-  permissions  RolePermission[]
+  clinic      Clinic?          @relation(fields: [clinicId], references: [id])
+  userRoles   UserRole[]
+  permissions RolePermission[]
 
   @@unique([name, domain, clinicId])
   @@index([domain, clinicId])
@@ -892,11 +898,11 @@ model UserRole {
   isActive   Boolean   @default(true)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
-  
+
   // Relations
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role       RbacRole  @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  clinic     Clinic?   @relation(fields: [clinicId], references: [id])
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   RbacRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  clinic Clinic?  @relation(fields: [clinicId], references: [id])
 
   @@unique([userId, roleId, clinicId])
   @@index([userId])
@@ -905,17 +911,17 @@ model UserRole {
 }
 
 model RolePermission {
-  id           String      @id @default(uuid())
+  id           String   @id @default(uuid())
   roleId       String
   permissionId String
-  assignedAt   DateTime    @default(now())
-  isActive     Boolean     @default(true)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  
+  assignedAt   DateTime @default(now())
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
   // Relations
-  role         RbacRole    @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   Permission  @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role       RbacRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, permissionId])
   @@index([roleId])

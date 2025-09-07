@@ -19,7 +19,7 @@ export class ClinicErrorService {
       LogLevel.ERROR,
       `Failed to ${operation}`,
       service,
-      { error: error.message, ...metadata }
+      { error: (error as Error).message, ...metadata }
     );
   }
 

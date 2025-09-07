@@ -115,7 +115,7 @@ export class RbacGuard implements CanActivate {
         throw error;
       }
 
-      this.logger.error('RBAC guard validation failed', error.stack);
+      this.logger.error('RBAC guard validation failed', error instanceof Error ? (error as Error).stack : 'No stack trace available');
       throw new ForbiddenException('Permission validation failed');
     }
   }
@@ -203,7 +203,7 @@ export class RbacGuard implements CanActivate {
           return resourceId === userId;
       }
     } catch (error) {
-      this.logger.error(`Ownership check failed for ${requirement.resource}`, error.stack);
+      this.logger.error(`Ownership check failed for ${requirement.resource}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
       return false;
     }
   }
@@ -237,7 +237,7 @@ export class RbacGuard implements CanActivate {
       // In a real implementation, you would inject the appointment service
       return true; // Placeholder implementation
     } catch (error) {
-      this.logger.error(`Failed to check appointment ownership`, error.stack);
+      this.logger.error(`Failed to check appointment ownership`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
       return false;
     }
   }
@@ -250,7 +250,7 @@ export class RbacGuard implements CanActivate {
       // This would typically query the database to check if the user owns the medical record
       return true; // Placeholder implementation
     } catch (error) {
-      this.logger.error(`Failed to check medical record ownership`, error.stack);
+      this.logger.error(`Failed to check medical record ownership`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
       return false;
     }
   }
@@ -263,7 +263,7 @@ export class RbacGuard implements CanActivate {
       // Check if the user is the patient or has access to the patient
       return patientId === userId; // Simplified check
     } catch (error) {
-      this.logger.error(`Failed to check patient ownership`, error.stack);
+      this.logger.error(`Failed to check patient ownership`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
       return false;
     }
   }

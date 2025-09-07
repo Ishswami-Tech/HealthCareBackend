@@ -45,8 +45,8 @@ export interface CircuitBreakerState {
 @Injectable()
 export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ConnectionPoolManager.name);
-  private metrics: ConnectionMetrics;
-  private circuitBreaker: CircuitBreakerState;
+  private metrics!: ConnectionMetrics;
+  private circuitBreaker!: CircuitBreakerState;
   private queryQueue: Array<{
     query: string;
     params: any[];
@@ -56,7 +56,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     timestamp: Date;
   }> = [];
   private isProcessingQueue = false;
-  private healthCheckInterval: NodeJS.Timeout;
+  private healthCheckInterval!: NodeJS.Timeout;
   private slowQueryThreshold = 1000; // 1 second
   private circuitBreakerThreshold = 5;
   private circuitBreakerTimeout = 30000; // 30 seconds
@@ -158,7 +158,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       // Retry logic
       const retries = options.retries || 0;
       if (retries > 0) {
-        this.logger.warn(`Query failed, retrying (${retries} attempts left): ${error.message}`);
+        this.logger.warn(`Query failed, retrying (${retries} attempts left): ${(error as Error).message}`);
         await this.delay(1000 * (4 - retries)); // Exponential backoff
         return this.executeQuery<T>(query, params, { ...options, retries: retries - 1 });
       }
@@ -340,7 +340,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   }
 
   private shouldAttemptHalfOpen(): boolean {
-    return this.circuitBreaker.halfOpenTime && new Date() >= this.circuitBreaker.halfOpenTime;
+    return !!(this.circuitBreaker.halfOpenTime && new Date() >= this.circuitBreaker.halfOpenTime);
   }
 
   private delay(ms: number): Promise<void> {
@@ -458,7 +458,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       this.metrics.errors++;
       this.logger.error(`Batch operation failed:`, {
         itemCount: items.length,
-        error: error.message,
+        error: (error as Error).message,
         clinicId: options.clinicId,
       });
       throw error;
@@ -489,7 +489,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
           this.metrics.readReplicaConnections++;
         }
       } catch (error) {
-        this.logger.warn('Read replica failed, falling back to primary', { error: error.message });
+        this.logger.warn('Read replica failed, falling back to primary', { error: (error as Error).message });
       }
     }
 

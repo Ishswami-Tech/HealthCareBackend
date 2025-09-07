@@ -78,14 +78,14 @@ export class LoggingInterceptor implements NestInterceptor {
           this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
-            `${method} ${url} failed: ${error.message}`,
+            `${method} ${url} failed: ${(error as Error).message}`,
             'API',
             {
               method,
               url,
               duration: `${duration}ms`,
               error: {
-                message: error.message,
+                message: (error as Error).message,
                 code: error.code || 'UNKNOWN_ERROR',
                 statusCode: error.status || 500
               }
