@@ -57,8 +57,8 @@ type Environment = typeof validEnvironments[number];
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  let app: NestFastifyApplication & INestApplication;
-  let loggingService: LoggingService;
+  let app: NestFastifyApplication & INestApplication | undefined;
+  let loggingService: LoggingService | undefined;
   
   try {
     logger.log('Starting application bootstrap...');
@@ -71,10 +71,10 @@ async function bootstrap() {
     const envConfig = environment === 'production' ? productionConfig() : developmentConfig();
 
     // Configure Fastify logger based on environment
-    const loggerConfig = {
+    const loggerConfig: any = {
       level: process.env.NODE_ENV === 'production' ? 'warn' : 'info',
       serializers: {
-        req: (req) => {
+        req: (req: any) => {
           // Skip detailed logging for health check and common endpoints
           if (req.url === '/health' || req.url === '/api-health' || req.url.includes('socket.io') || req.url.includes('/logs/')) {
             return { method: req.method, url: req.url, skip: true }; // Return minimal info but mark for skipping
@@ -85,8 +85,8 @@ async function bootstrap() {
             headers: req.headers
           };
         },
-        res: (res) => ({ statusCode: res.statusCode }),
-        err: (err) => ({
+        res: (res: any) => ({ statusCode: res.statusCode }),
+        err: (err: any) => ({
           type: 'ERROR',
           message: err.message,
           stack: err.stack || 'No stack trace'
@@ -129,10 +129,14 @@ async function bootstrap() {
     const eventEmitter = new EventEmitter2();
     
     // Set up console redirection to the logging service
-    setupConsoleRedirect(loggingService);
+    if (loggingService) {
+      setupConsoleRedirect(loggingService);
+    }
 
     // Apply global interceptor for logging
-    app.useGlobalInterceptors(new LoggingInterceptor(loggingService));
+    if (loggingService) {
+      app.useGlobalInterceptors(new LoggingInterceptor(loggingService));
+    }
 
     // Apply global pipes and filters with error logging
     app.useGlobalPipes(new ValidationPipe({
@@ -144,13 +148,15 @@ async function bootstrap() {
           constraints: error.constraints
         }));
         
-        loggingService.log(
-          LogType.ERROR,
-          AppLogLevel.ERROR,
-          'Validation failed',
-          'ValidationPipe',
-          { errors: formattedErrors }
-        );
+        if (loggingService) {
+          loggingService.log(
+            LogType.ERROR,
+            AppLogLevel.ERROR,
+            'Validation failed',
+            'ValidationPipe',
+            { errors: formattedErrors }
+          );
+        }
         
         return {
           type: 'VALIDATION_ERROR',
@@ -164,13 +170,15 @@ async function bootstrap() {
     logger.log('Global pipes and filters configured');
 
     // Log application startup
-    await loggingService.log(
-      LogType.SYSTEM,
-      AppLogLevel.INFO,
-      'Application bootstrap started',
-      'Bootstrap',
-      { timestamp: new Date() }
-    );
+    if (loggingService) {
+      await loggingService.log(
+        LogType.SYSTEM,
+        AppLogLevel.INFO,
+        'Application bootstrap started',
+        'Bootstrap',
+        { timestamp: new Date() }
+      );
+    }
 
     // Set up WebSocket adapter with Redis
     try {
@@ -229,8 +237,8 @@ async function bootstrap() {
       };
 
         // Set up event handlers
-      pubClient.on('error', (err) => handleRedisError('Pub', err));
-      subClient.on('error', (err) => handleRedisError('Sub', err));
+      pubClient.on('error', (err: any) => handleRedisError('Pub', err));
+      subClient.on('error', (err: any) => handleRedisError('Sub', err));
       pubClient.on('connect', () => handleRedisConnect('Pub'));
       subClient.on('connect', () => handleRedisConnect('Sub'));
       
@@ -283,7 +291,7 @@ async function bootstrap() {
           server.adapter(this.adapterConstructor);
 
             // Health check endpoint
-          server.of('/health').on('connection', (socket) => {
+          server.of('/health').on('connection', (socket: any) => {
               socket.emit('health', { 
                 status: 'healthy', 
                 timestamp: new Date(),
@@ -292,7 +300,7 @@ async function bootstrap() {
             });
             
             // Test namespace with improved error handling
-          server.of('/test').on('connection', (socket) => {
+          server.of('/test').on('connection', (socket: any) => {
             logger.log('Client connected to test namespace');
             
               let heartbeat: NodeJS.Timeout;
@@ -321,7 +329,7 @@ async function bootstrap() {
             });
             
               // Echo messages with error handling
-            socket.on('message', (data) => {
+            socket.on('message', (data: any) => {
                 try {
               socket.emit('echo', { 
                 original: data,
@@ -338,7 +346,7 @@ async function bootstrap() {
               });
               
               // Handle errors
-              socket.on('error', (error) => {
+              socket.on('error', (error: any) => {
                 logger.error('Socket error:', error);
                 clearInterval(heartbeat);
             });
@@ -374,9 +382,9 @@ async function bootstrap() {
       await loggingService?.log(
         LogType.ERROR,
         AppLogLevel.ERROR,
-        `WebSocket adapter initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `WebSocket adapter initialization failed: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
         'WebSocket',
-        { error: error instanceof Error ? error.stack : 'No stack trace available' }
+        { error: error instanceof Error ? (error as Error).stack : 'No stack trace available' }
       );
       // Don't throw, continue without WebSocket
       logger.warn('Continuing without WebSocket support');
@@ -593,7 +601,7 @@ async function bootstrap() {
           
           try {
             // Close WebSocket connections gracefully
-            if (customWebSocketAdapter) {
+            if (customWebSocketAdapter && app) {
               logger.log('Closing WebSocket connections...');
               try {
                 const httpServer = app.getHttpServer();
@@ -623,10 +631,12 @@ async function bootstrap() {
             
             // Close database connections
             try {
-              const prismaService = await app.resolve(PrismaService);
-              if (prismaService) {
-                logger.log('Closing database connections...');
-                await prismaService.$disconnect();
+              if (app) {
+                const prismaService = await app.resolve(PrismaService);
+                if (prismaService) {
+                  logger.log('Closing database connections...');
+                  await prismaService.$disconnect();
+                }
               }
             } catch (prismaError) {
               logger.warn('Error closing database connections:', prismaError);
@@ -643,7 +653,9 @@ async function bootstrap() {
             }
             
             // Close the app
-            await app.close();
+            if (app) {
+              await app.close();
+            }
             
             clearTimeout(shutdownTimeout);
             logger.log('Application shut down successfully');
@@ -660,11 +672,11 @@ async function bootstrap() {
       await loggingService?.log(
         LogType.ERROR,
         AppLogLevel.ERROR,
-        `Failed to start server: ${listenError.message}`,
+        `Failed to start server: ${listenError instanceof Error ? listenError.message : 'Unknown error'}`,
         'Bootstrap',
-        { error: listenError.stack }
+        { error: listenError instanceof Error ? listenError.stack : '' }
       );
-      throw new Error(`Server startup failed: ${listenError.message}`);
+      throw new Error(`Server startup failed: ${listenError instanceof Error ? listenError.message : 'Unknown error'}`);
     }
 
     // Enhanced error handling for uncaught exceptions
@@ -673,9 +685,9 @@ async function bootstrap() {
         await loggingService?.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
-          `Uncaught Exception: ${error.message}`,
+          `Uncaught Exception: ${(error as Error).message}`,
           'Process',
-          { error: error.stack }
+          { error: (error as Error).stack }
         );
       } catch (logError) {
         console.error('Failed to log uncaught exception:', logError);
@@ -709,11 +721,11 @@ async function bootstrap() {
         await loggingService.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
-          `Failed to start application: ${error.message}`,
+          `Failed to start application: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
           'Bootstrap',
           { 
-            error: error instanceof Error ? error.message : 'Unknown error',
-            stack: error instanceof Error ? error.stack : 'No stack trace available',
+            error: error instanceof Error ? (error as Error).message : 'Unknown error',
+            stack: error instanceof Error ? (error as Error).stack : 'No stack trace available',
             details: error
           }
         );

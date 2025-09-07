@@ -17,7 +17,7 @@ export interface IDatabaseClient {
   /**
    * Execute query within a transaction
    */
-  executeInTransaction<T>(operation: (client: PrismaClient) => Promise<T>): Promise<T>;
+  executeInTransaction<T>(operation: (client: Omit<PrismaClient, "$on" | "$connect" | "$disconnect" | "$transaction" | "$extends">) => Promise<T>): Promise<T>;
 
   /**
    * Get connection health status
@@ -42,13 +42,13 @@ export interface IHealthcareDatabaseClient extends IDatabaseClient {
   /**
    * Execute healthcare-specific read operations with HIPAA compliance
    */
-  executeHealthcareRead<T>(operation: (client: PrismaClient) => Promise<T>): Promise<T>;
+  executeHealthcareRead<T>(operation: (client: Omit<PrismaClient, "$on" | "$connect" | "$disconnect" | "$transaction" | "$extends">) => Promise<T>): Promise<T>;
 
   /**
    * Execute healthcare-specific write operations with audit trails
    */
   executeHealthcareWrite<T>(
-    operation: (client: PrismaClient) => Promise<T>,
+    operation: (client: Omit<PrismaClient, "$on" | "$connect" | "$disconnect" | "$transaction" | "$extends">) => Promise<T>,
     auditInfo: AuditInfo
   ): Promise<T>;
 
@@ -56,7 +56,7 @@ export interface IHealthcareDatabaseClient extends IDatabaseClient {
    * Execute critical healthcare operations (emergency scenarios)
    */
   executeCriticalOperation<T>(
-    operation: (client: PrismaClient) => Promise<T>,
+    operation: (client: Omit<PrismaClient, "$on" | "$connect" | "$disconnect" | "$transaction" | "$extends">) => Promise<T>,
     priority: CriticalPriority
   ): Promise<T>;
 
@@ -70,7 +70,7 @@ export interface IHealthcareDatabaseClient extends IDatabaseClient {
    */
   executeWithClinicContext<T>(
     clinicId: string,
-    operation: (client: PrismaClient) => Promise<T>
+    operation: (client: Omit<PrismaClient, "$on" | "$connect" | "$disconnect" | "$transaction" | "$extends">) => Promise<T>
   ): Promise<T>;
 
   /**

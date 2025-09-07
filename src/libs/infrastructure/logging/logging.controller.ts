@@ -320,7 +320,7 @@ export class LoggingController {
               clearInterval(refreshInterval);
               updateRefreshStatus(false, 'Auto-refresh stopped due to errors. Click Refresh to try again.');
             } else {
-              updateRefreshStatus(false, error.message);
+              updateRefreshStatus(false, (error as Error).message);
             }
           } finally {
             isRefreshing = false;
@@ -414,7 +414,7 @@ export class LoggingController {
         disabled: false // Ensure disabled property is always set
       }));
     } catch (error) {
-      this.logger.error(`Failed to fetch logs: ${error.message}`);
+      this.logger.error(`Failed to fetch logs: ${(error as Error).message}`);
       return []; // Return empty array instead of null
     }
   }

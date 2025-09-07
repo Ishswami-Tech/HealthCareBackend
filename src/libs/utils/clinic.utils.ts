@@ -1,5 +1,6 @@
+import { PrismaClient } from '@prisma/client';
 // Utility to resolve a clinic identifier (UUID or code) to the UUID
-export async function resolveClinicUUID(prisma, clinicIdOrUUID: string): Promise<string> {
+export async function resolveClinicUUID(prisma: PrismaClient, clinicIdOrUUID: string): Promise<string> {
   if (!clinicIdOrUUID) {
     throw new Error('Clinic ID is required');
   }
@@ -34,9 +35,9 @@ export async function resolveClinicUUID(prisma, clinicIdOrUUID: string): Promise
     // If still not found, provide detailed error
     throw new Error(`Clinic not found with identifier: ${clinicIdOrUUID}. Please check if the clinic exists and is active.`);
   } catch (error) {
-    if (error.message.includes('Clinic not found') || error.message.includes('is inactive')) {
+    if ((error as Error).message.includes('Clinic not found') || (error as Error).message.includes('is inactive')) {
       throw error;
     }
-    throw new Error(`Failed to resolve clinic UUID: ${error.message}`);
+    throw new Error(`Failed to resolve clinic UUID: ${(error as Error).message}`);
   }
 } 

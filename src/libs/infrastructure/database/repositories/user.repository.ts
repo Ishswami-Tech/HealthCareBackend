@@ -1,8 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { BaseRepository, RepositoryResult, QueryOptions } from './base.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { User, Prisma } from '@prisma/client';
+import { User as PrismaUser, Prisma } from '@prisma/client';
 import { CreateUserDto, UpdateUserDto } from '../../../dtos/user.dto';
+
+// Define User interface locally to match the expected return type
+interface User {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  name: string;
+  role: string;
+  isVerified: boolean;
+  phone?: string;
+  avatar?: string;
+  lastLoginAt?: Date;
+}
 
 export interface UserWithProfile extends User {
   profile?: any;
@@ -40,7 +54,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         where: { email },
         ...this.buildQueryOptions(options),
       });
-      return RepositoryResult.success(user);
+      // Convert null values to undefined for compatibility
+      const convertedUser = user ? {
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      } : null;
+      return RepositoryResult.success(convertedUser);
     } catch (error) {
       this.logger.error('Failed to find user by email:', error);
       return RepositoryResult.failure(error as Error);
@@ -57,7 +78,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         where: { phone },
         ...this.buildQueryOptions(options),
       });
-      return RepositoryResult.success(user);
+      // Convert null values to undefined for compatibility
+      const convertedUser = user ? {
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      } : null;
+      return RepositoryResult.success(convertedUser);
     } catch (error) {
       this.logger.error('Failed to find user by phone:', error);
       return RepositoryResult.failure(error as Error);
@@ -127,7 +155,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
       });
 
       this.logger.debug(`Found ${users.length} users matching search criteria`);
-      return RepositoryResult.success(users as UserWithProfile[]);
+      // Convert null values to undefined for compatibility
+      const convertedUsers = users.map(user => ({
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      }));
+      return RepositoryResult.success(convertedUsers as UserWithProfile[]);
     } catch (error) {
       this.logger.error('Failed to search users:', error);
       return RepositoryResult.failure(error as Error);
@@ -144,7 +179,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         where: { role },
         ...this.buildQueryOptions(options)
       });
-      return RepositoryResult.success(users);
+      // Convert null values to undefined for compatibility
+      const convertedUsers = users.map(user => ({
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      }));
+      return RepositoryResult.success(convertedUsers);
     } catch (error) {
       this.logger.error('Failed to find users by role:', error);
       return RepositoryResult.failure(error as Error);
@@ -173,7 +215,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         },
         ...this.buildQueryOptions(options)
       });
-      return RepositoryResult.success(doctors as UserWithProfile[]);
+      // Convert null values to undefined for compatibility
+      const convertedDoctors = doctors.map(doctor => ({
+        ...doctor,
+        firstName: doctor.firstName || undefined,
+        lastName: doctor.lastName || undefined,
+        phone: doctor.phone || undefined,
+      }));
+      return RepositoryResult.success(convertedDoctors as UserWithProfile[]);
     } catch (error) {
       this.logger.error('Failed to find active doctors:', error);
       return RepositoryResult.failure(error as Error);
@@ -243,7 +292,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
           passwordChangedAt: new Date()
         }
       });
-      return RepositoryResult.success(user);
+      // Convert null values to undefined for compatibility
+      const convertedUser = {
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      };
+      return RepositoryResult.success(convertedUser);
     } catch (error) {
       this.logger.error('Failed to update user password:', error);
       return RepositoryResult.failure(error as Error);
@@ -259,7 +315,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         where: { id },
         data: { lastLogin: new Date() }
       });
-      return RepositoryResult.success(user);
+      // Convert null values to undefined for compatibility
+      const convertedUser = {
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      };
+      return RepositoryResult.success(convertedUser);
     } catch (error) {
       this.logger.error('Failed to update last login:', error);
       return RepositoryResult.failure(error as Error);
@@ -279,7 +342,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
           updatedAt: new Date()
         }
       });
-      return RepositoryResult.success(user);
+      // Convert null values to undefined for compatibility
+      const convertedUser = {
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      };
+      return RepositoryResult.success(convertedUser);
     } catch (error) {
       this.logger.error('Failed to toggle user status:', error);
       return RepositoryResult.failure(error as Error);
@@ -320,7 +390,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         }
       });
 
-      return RepositoryResult.success(users as UserWithProfile[]);
+      // Convert null values to undefined for compatibility
+      const convertedUsers = users.map(user => ({
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      }));
+      return RepositoryResult.success(convertedUsers as UserWithProfile[]);
     } catch (error) {
       this.logger.error('Failed to get users with upcoming appointments:', error);
       return RepositoryResult.failure(error as Error);
@@ -374,7 +451,14 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
       });
 
       this.logger.debug(`Soft deleted user: ${id}`);
-      return user;
+      // Convert null values to undefined for compatibility
+      const convertedUser = {
+        ...user,
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        phone: user.phone || undefined,
+      };
+      return convertedUser;
     });
   }
 }

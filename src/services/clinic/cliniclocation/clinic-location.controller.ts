@@ -26,7 +26,7 @@ export class ClinicLocationController {
   async create(
     @Param('clinicId') clinicId: string,
     @Body() createLocationDto: CreateClinicLocationDto,
-    @Request() req,
+    @Request() req: any,
   ) {
     return this.locationService.createLocation(clinicId, createLocationDto, req.user.id);
   }
@@ -36,7 +36,7 @@ export class ClinicLocationController {
   @ApiOperation({ summary: 'Get all locations for a clinic' })
   @ApiResponse({ status: 200, description: 'Return all locations for the specified clinic.' })
   @ApiParam({ name: 'clinicId', description: 'ID of the clinic' })
-  async findAll(@Param('clinicId') clinicId: string, @Request() req) {
+  async findAll(@Param('clinicId') clinicId: string, @Request() req: any) {
     return this.locationService.getLocations(clinicId, req.user.id);
   }
 
@@ -50,7 +50,7 @@ export class ClinicLocationController {
   async findOne(
     @Param('id') id: string,
     @Param('clinicId') clinicId: string,
-    @Request() req,
+    @Request() req: any,
   ) {
     return this.locationService.getLocationById(id, clinicId, req.user.id);
   }
@@ -68,7 +68,7 @@ export class ClinicLocationController {
     @Param('id') id: string,
     @Param('clinicId') clinicId: string,
     @Body() updateLocationDto: UpdateClinicLocationDto,
-    @Request() req,
+    @Request() req: any,
   ) {
     return this.locationService.updateLocation(id, clinicId, updateLocationDto, req.user.id);
   }
@@ -84,7 +84,7 @@ export class ClinicLocationController {
   async remove(
     @Param('id') id: string,
     @Param('clinicId') clinicId: string,
-    @Request() req,
+    @Request() req: any,
   ) {
     return this.locationService.deleteLocation(id, clinicId, req.user.id);
   }

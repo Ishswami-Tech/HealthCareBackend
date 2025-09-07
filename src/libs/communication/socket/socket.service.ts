@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
 
+export interface SocketEventData {
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class SocketService {
   private readonly logger = new Logger(SocketService.name);
-  private server: Server;
+  private server!: Server;
   private isServerInitialized = false;
-  private healthCheckInterval: NodeJS.Timeout;
+  private healthCheckInterval!: NodeJS.Timeout;
   private readonly HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
 
   setServer(server: Server) {
@@ -20,12 +24,12 @@ export class SocketService {
       
       // Add error handlers
       this.server.on('error', (error: Error) => {
-        this.logger.error(`Socket.IO server error: ${error?.message || 'Unknown error'}`, error?.stack);
+        this.logger.error(`Socket.IO server error: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
         this.handleServerError(error);
       });
 
       this.server.on('connection_error', (error: Error) => {
-        this.logger.error(`Socket.IO connection error: ${error?.message || 'Unknown error'}`, error?.stack);
+        this.logger.error(`Socket.IO connection error: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`, error instanceof Error ? (error as Error).stack : undefined);
         this.handleConnectionError(error);
       });
 
@@ -34,7 +38,7 @@ export class SocketService {
 
       this.logger.log('SocketService initialized successfully');
     } catch (error) {
-      this.logger.error(`Failed to initialize SocketService: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Failed to initialize SocketService: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`);
       this.isServerInitialized = false;
       throw error;
     }
@@ -62,7 +66,7 @@ export class SocketService {
       this.logger.debug(`Server health check: ${connectedClients.size} clients connected`);
       return true;
     } catch (error) {
-      this.logger.error(`Server health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(`Server health check failed: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`);
       return false;
     }
   }
@@ -95,7 +99,7 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  sendToRoom(room: string, event: string, data: any) {
+  sendToRoom(room: string, event: string, data: SocketEventData) {
     try {
       this.ensureInitialized();
       
@@ -106,8 +110,8 @@ export class SocketService {
       this.server.to(room).emit(event, data);
       this.logger.debug(`Event ${event} sent to room ${room}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error sending event to room: ${errorMessage}`, error instanceof Error ? error.stack : undefined);
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      this.logger.error(`Error sending event to room: ${errorMessage}`, error instanceof Error ? (error as Error).stack : undefined);
       throw error; // Re-throw to let the caller handle it
     }
   }
@@ -118,15 +122,15 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  sendToUser(userId: string, event: string, data: any) {
+  sendToUser(userId: string, event: string, data: SocketEventData) {
     try {
       if (!userId) {
         throw new Error('User ID must be provided');
       }
       this.sendToRoom(`user:${userId}`, event, data);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error sending event to user: ${errorMessage}`, error instanceof Error ? error.stack : undefined);
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      this.logger.error(`Error sending event to user: ${errorMessage}`, error instanceof Error ? (error as Error).stack : undefined);
       throw error;
     }
   }
@@ -138,15 +142,15 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  sendToResource(resourceType: string, resourceId: string, event: string, data: any) {
+  sendToResource(resourceType: string, resourceId: string, event: string, data: SocketEventData) {
     try {
       if (!resourceType || !resourceId) {
         throw new Error('Resource type and ID must be provided');
       }
       this.sendToRoom(`${resourceType}:${resourceId}`, event, data);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error sending event to resource: ${errorMessage}`, error instanceof Error ? error.stack : undefined);
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      this.logger.error(`Error sending event to resource: ${errorMessage}`, error instanceof Error ? (error as Error).stack : undefined);
       throw error;
     }
   }
@@ -157,15 +161,15 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  sendToLocation(locationId: string, event: string, data: any) {
+  sendToLocation(locationId: string, event: string, data: SocketEventData) {
     try {
       if (!locationId) {
         throw new Error('Location ID must be provided');
       }
       this.sendToRoom(`location:${locationId}`, event, data);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error sending event to location: ${errorMessage}`, error instanceof Error ? error.stack : undefined);
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      this.logger.error(`Error sending event to location: ${errorMessage}`, error instanceof Error ? (error as Error).stack : undefined);
       throw error;
     }
   }
@@ -175,7 +179,7 @@ export class SocketService {
    * @param event - Event name 
    * @param data - Event data
    */
-  broadcast(event: string, data: any) {
+  broadcast(event: string, data: SocketEventData) {
     try {
       this.ensureInitialized();
       
@@ -186,8 +190,8 @@ export class SocketService {
       this.server.emit(event, data);
       this.logger.debug(`Event ${event} broadcasted to all clients`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error broadcasting event: ${errorMessage}`, error instanceof Error ? error.stack : undefined);
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      this.logger.error(`Error broadcasting event: ${errorMessage}`, error instanceof Error ? (error as Error).stack : undefined);
       throw error;
     }
   }

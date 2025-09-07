@@ -16,19 +16,21 @@ import { QrModule } from '../../libs/utils/QR/qr.module';
   import { RbacModule } from '../../libs/core/rbac/rbac.module';
 import { JwtModule } from '@nestjs/jwt';
 import { jwtConfig } from '../../config/jwt.config';
-import { CacheServiceModule } from '../../libs/infrastructure/cache/cache-service.module';
+import { ErrorsModule } from '../../libs/core/errors/errors.module';
+import { DatabaseModule } from '../../libs/infrastructure/database/database.module';
 
 @Module({
   imports: [
     LoggingServiceModule,
     ConfigModule,
+    DatabaseModule,
     GuardsModule,
     RateLimitModule,
     EventEmitterModule.forRoot(),
     QrModule,
     RbacModule,
     JwtModule.register(jwtConfig),
-    CacheServiceModule
+    ErrorsModule
   ],
   controllers: [ClinicController, ClinicLocationController],
   providers: [

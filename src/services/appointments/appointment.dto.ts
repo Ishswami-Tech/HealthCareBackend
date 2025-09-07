@@ -139,37 +139,37 @@ export enum Language {
 export class CreateAppointmentDto {
   @ApiProperty({ description: 'Patient ID', example: 'patient-uuid' })
   @IsUUID()
-  patientId: string;
+  patientId!: string;
 
   @ApiProperty({ description: 'Doctor ID', example: 'doctor-uuid' })
   @IsUUID()
-  doctorId: string;
+  doctorId!: string;
 
   @ApiProperty({ description: 'Location ID', example: 'location-uuid' })
   @IsUUID()
-  locationId: string;
+  locationId!: string;
 
   @ApiProperty({ description: 'Clinic ID', example: 'clinic-uuid' })
   @IsUUID()
-  clinicId: string;
+  clinicId!: string;
 
   @ApiProperty({ description: 'Appointment date (YYYY-MM-DD)', example: '2024-06-01' })
   @IsDateString()
   @Transform(({ value }) => value?.trim())
-  date: string;
+  date!: string;
 
   @ApiProperty({ description: 'Appointment time (HH:mm)', example: '10:00' })
   @IsString()
   @Transform(({ value }) => value?.trim())
-  time: string;
+  time!: string;
 
   @ApiProperty({ description: 'Duration in minutes', example: 30 })
   @IsNumber()
-  duration: number;
+  duration!: number;
 
   @ApiProperty({ description: 'Appointment type', enum: AppointmentType, example: 'GENERAL_CONSULTATION' })
   @IsEnum(AppointmentType)
-  type: AppointmentType;
+  type!: AppointmentType;
 
   @ApiProperty({ description: 'Appointment priority', enum: AppointmentPriority, example: 'NORMAL' })
   @IsEnum(AppointmentPriority)
@@ -327,37 +327,37 @@ export class UpdateAppointmentDto {
 
 export class AppointmentResponseDto {
   @ApiProperty({ description: 'Appointment ID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({ description: 'Appointment type', enum: AppointmentType })
-  type: AppointmentType;
+  type!: AppointmentType;
 
   @ApiProperty({ description: 'Appointment status', enum: AppointmentStatus })
-  status: AppointmentStatus;
+  status!: AppointmentStatus;
 
   @ApiProperty({ description: 'Appointment priority', enum: AppointmentPriority })
-  priority: AppointmentPriority;
+  priority!: AppointmentPriority;
 
   @ApiProperty({ description: 'Appointment date' })
-  date: Date;
+  date!: Date;
 
   @ApiProperty({ description: 'Appointment time' })
-  time: string;
+  time!: string;
 
   @ApiProperty({ description: 'Duration in minutes' })
-  duration: number;
+  duration!: number;
 
   @ApiProperty({ description: 'Payment status', enum: PaymentStatus })
-  paymentStatus: PaymentStatus;
+  paymentStatus!: PaymentStatus;
 
   @ApiProperty({ description: 'Payment method', enum: PaymentMethod })
-  paymentMethod: PaymentMethod;
+  paymentMethod!: PaymentMethod;
 
   @ApiProperty({ description: 'Amount' })
-  amount: number;
+  amount!: number;
 
   @ApiProperty({ description: 'Currency' })
-  currency: string;
+  currency!: string;
 
   @ApiProperty({ description: 'Video call status', enum: VideoCallStatus })
   videoCallStatus?: VideoCallStatus;
@@ -369,10 +369,10 @@ export class AppointmentResponseDto {
   symptoms?: string;
 
   @ApiProperty({ description: 'Created at' })
-  createdAt: Date;
+  createdAt!: Date;
 
   @ApiProperty({ description: 'Updated at' })
-  updatedAt: Date;
+  updatedAt!: Date;
 
   @ApiProperty({ description: 'Started at' })
   startedAt?: Date;
@@ -384,7 +384,7 @@ export class AppointmentResponseDto {
   completedAt?: Date;
 
   @ApiProperty({ description: 'Doctor information' })
-  doctor: {
+  doctor!: {
     id: string;
     name: string;
     email: string;
@@ -395,7 +395,7 @@ export class AppointmentResponseDto {
   };
 
   @ApiProperty({ description: 'Patient information' })
-  patient: {
+  patient!: {
     id: string;
     name: string;
     email: string;
@@ -406,7 +406,7 @@ export class AppointmentResponseDto {
   };
 
   @ApiProperty({ description: 'Location information' })
-  location: {
+  location!: {
     id: string;
     name: string;
     address: string;
@@ -415,7 +415,7 @@ export class AppointmentResponseDto {
   };
 
   @ApiProperty({ description: 'Clinic information' })
-  clinic: {
+  clinic!: {
     id: string;
     name: string;
     subdomain: string;
@@ -426,36 +426,36 @@ export class AppointmentResponseDto {
 
 export class AppointmentListResponseDto {
   @ApiProperty({ description: 'List of appointments', type: [AppointmentResponseDto] })
-  appointments: AppointmentResponseDto[];
+  appointments!: AppointmentResponseDto[];
 
   @ApiProperty({ description: 'Total count of appointments' })
-  total: number;
+  total!: number;
 
   @ApiProperty({ description: 'Current page number' })
-  page: number;
+  page!: number;
 
   @ApiProperty({ description: 'Number of items per page' })
-  limit: number;
+  limit!: number;
 
   @ApiProperty({ description: 'Total number of pages' })
-  totalPages: number;
+  totalPages!: number;
 
   @ApiProperty({ description: 'Has next page' })
-  hasNext: boolean;
+  hasNext!: boolean;
 
   @ApiProperty({ description: 'Has previous page' })
-  hasPrev: boolean;
+  hasPrev!: boolean;
 }
 
 export class DoctorAvailabilityResponseDto {
   @ApiProperty({ description: 'Whether doctor is available' })
-  available: boolean;
+  available!: boolean;
 
   @ApiProperty({ description: 'Available time slots', type: [String] })
-  availableSlots: string[];
+  availableSlots!: string[];
 
   @ApiProperty({ description: 'Booked time slots', type: [String] })
-  bookedSlots: string[];
+  bookedSlots!: string[];
 
   @ApiProperty({ description: 'Working hours for the day' })
   workingHours: any;
@@ -470,7 +470,7 @@ export class DoctorAvailabilityResponseDto {
 export class ProcessCheckInDto {
   @ApiProperty({ description: 'Appointment ID to check in' })
   @IsUUID()
-  appointmentId: string;
+  appointmentId!: string;
 
   @ApiProperty({ description: 'QR code for verification', required: false })
   @IsOptional()
@@ -492,7 +492,7 @@ export class ReorderQueueDto {
   @ApiProperty({ description: 'Ordered list of appointment IDs', type: [String] })
   @IsArray()
   @IsUUID('4', { each: true })
-  appointmentOrder: string[];
+  appointmentOrder!: string[];
 
   @ApiProperty({ description: 'Reason for reordering', required: false })
   @IsOptional()
@@ -503,19 +503,19 @@ export class ReorderQueueDto {
 export class VerifyAppointmentQRDto {
   @ApiProperty({ description: 'QR data string' })
   @IsString()
-  qrData: string;
+  qrData!: string;
 
   @ApiProperty({ description: 'Location ID' })
   @IsUUID()
-  locationId: string;
+  locationId!: string;
 
   @ApiProperty({ description: 'Clinic ID' })
   @IsUUID()
-  clinicId: string;
+  clinicId!: string;
 
   @ApiProperty({ description: 'Timestamp' })
   @IsString()
-  timestamp: string;
+  timestamp!: string;
 
   @ApiProperty({ description: 'Appointment ID', required: false })
   @IsOptional()
@@ -526,7 +526,7 @@ export class VerifyAppointmentQRDto {
 export class CompleteAppointmentDto {
   @ApiProperty({ description: 'Doctor ID' })
   @IsUUID()
-  doctorId: string;
+  doctorId!: string;
 
   @ApiProperty({ description: 'Completion notes', required: false })
   @IsOptional()
@@ -557,7 +557,7 @@ export class CompleteAppointmentDto {
 export class StartConsultationDto {
   @ApiProperty({ description: 'Doctor ID' })
   @IsUUID()
-  doctorId: string;
+  doctorId!: string;
 
   @ApiProperty({ description: 'Consultation type', required: false })
   @IsOptional()

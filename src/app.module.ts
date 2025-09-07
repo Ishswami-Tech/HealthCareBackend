@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, MiddlewareConsumer, RequestMethod, NestModule, forwardRef } from '@nestjs/common';
 import { ConfigModule } from "@nestjs/config";
 import { UsersModule } from "./services/users/users.module";
 import { AuthModule } from "./services/auth/auth.module";
@@ -20,6 +20,7 @@ import { APPOINTMENT_QUEUE, SERVICE_QUEUE } from './libs/infrastructure/queue/sr
 import configuration from './config/configuration';
 import { HealthController } from './services/health/health.controller';
 import { SocketModule } from './libs/communication/socket/socket.module';
+// import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
   imports: [
@@ -72,7 +73,7 @@ import { SocketModule } from './libs/communication/socket/socket.module';
       verboseMemoryLeak: true,
     }),
     ScheduleModule.forRoot(),
-    QueueModule.forRoot(),
+    QueueModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
@@ -101,4 +102,12 @@ import { SocketModule } from './libs/communication/socket/socket.module';
     HealthController,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Apply clinic context middleware to all routes for clinic isolation
+    // ClinicContextMiddleware implementation - currently using auth-based clinic isolation
+    // consumer
+    //   .apply(ClinicContextMiddleware)
+    //   .forRoutes('*');
+  }
+}

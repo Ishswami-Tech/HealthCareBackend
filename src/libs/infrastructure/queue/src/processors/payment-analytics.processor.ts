@@ -112,7 +112,7 @@ export class PaymentAnalyticsProcessor {
     // Analyze error patterns and trends
     const errorData = {
       errorType: error.name || 'UnknownError',
-      errorMessage: error.message,
+      errorMessage: (error as Error).message,
       userId: paymentDto.userId,
       amount: paymentDto.amount,
       gateway: paymentDto.gateway,

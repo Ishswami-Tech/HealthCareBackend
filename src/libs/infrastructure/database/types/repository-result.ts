@@ -419,8 +419,8 @@ export class RepositoryResult<TData, TError = Error> {
     if (error instanceof Error) {
       return {
         name: error.name,
-        message: error.message,
-        stack: error.stack
+        message: (error as Error).message,
+        stack: (error as Error).stack
       };
     }
     return error;
@@ -430,7 +430,7 @@ export class RepositoryResult<TData, TError = Error> {
     if (serialized && typeof serialized === 'object' && serialized.name && serialized.message) {
       const error = new Error(serialized.message);
       error.name = serialized.name;
-      error.stack = serialized.stack;
+      (error as Error).stack = serialized.stack;
       return error;
     }
     return new Error(String(serialized));

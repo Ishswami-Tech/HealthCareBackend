@@ -1,26 +1,34 @@
 // Database infrastructure exports
 export * from './database.module';
-export * from './clients/healthcare-database.client';
+export * from './database-client.factory';
 export * from './database-metrics.service';
 export * from './connection-pool.manager';
 export * from './query-optimizer.service';
 export * from './clinic-isolation.service';
 
-// Prisma exports
-export * from './prisma/prisma.service';
-export * from './prisma/prisma.module';
-export * from './prisma/prisma.types';
-
-// Repository exports
-export { BaseRepository } from './repositories/base.repository';
-export * from './repositories/user.repository';
-export * from './repositories/simple-patient.repository';
+// Client exports
+export * from './clients/healthcare-database.client';
 
 // Interface exports
 export * from './interfaces/database-client.interface';
 
-// Type exports
-export * from './types/repository-result';
+// Prisma exports
+export * from './prisma/prisma.service';
 
-// Config exports
-export * from './config/healthcare.config';
+// Type aliases for backwards compatibility (following DRY principle)
+export { HealthcareDatabaseClient as DatabaseClient } from './clients/healthcare-database.client';
+export type { DatabaseHealthStatus } from './interfaces/database-client.interface';
+
+// Repository exports - commented out until implemented
+// export * from './repositories/base.repository';
+
+// Config exports - commented out until implemented
+// export * from './config/database.config';
+
+// Interface exports - commented out until implemented
+// export * from './interfaces/database.interface';
+// export * from './interfaces/connection.interface';
+
+// Type exports - commented out until implemented
+// export * from './types/database.types';
+// export * from './types/connection.types';

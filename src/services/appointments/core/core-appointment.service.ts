@@ -1,15 +1,15 @@
-import { Injectable, Logger, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 
 // Infrastructure Services
+// DatabaseService removed - using PrismaService directly
+import { LoggingService, LogType, LogLevel } from '../../../libs/infrastructure/logging';
+import { CacheService } from '../../../libs/infrastructure/cache';
+import { QueueService } from '../../../libs/infrastructure/queue';
 import { PrismaService } from '../../../libs/infrastructure/database/prisma/prisma.service';
-import { LoggingService } from '../../../libs/infrastructure/logging/logging.service';
-import { LogType, LogLevel } from '../../../libs/infrastructure/logging/types/logging.types';
-import { CacheService } from '../../../libs/infrastructure/cache/cache.service';
-import { QueueService } from '../../../libs/infrastructure/queue/src/queue.service';
 
 // Core Services
 import { ConflictResolutionService } from './conflict-resolution.service';
@@ -53,8 +53,6 @@ export interface AppointmentResult {
     warnings?: string[];
     auditTrail?: any[];
     alternatives?: any[];
-    appliedRules?: string[];
-    violations?: string[];
   };
 }
 
@@ -88,10 +86,10 @@ export class CoreAppointmentService {
   private readonly METRICS_CACHE_TTL = 600; // 10 minutes
 
   constructor(
-    private readonly prismaService: PrismaService,
+    private readonly prisma: PrismaService,
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
-    @Optional() private readonly queueService: QueueService,
+    private readonly queueService: QueueService,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
     @Inject(forwardRef(() => ConflictResolutionService))
@@ -126,8 +124,7 @@ export class CoreAppointmentService {
           message: businessRuleValidation.violations.join(', '),
           metadata: {
             processingTime: Date.now() - startTime,
-            appliedRules: businessRuleValidation.appliedRules,
-            violations: businessRuleValidation.violations
+            warnings: businessRuleValidation.violations
           }
         };
       }
@@ -161,25 +158,22 @@ export class CoreAppointmentService {
         };
       }
 
-      // 3. Create appointment with only valid Prisma fields
+      // 3. Create appointment with enhanced metadata
       const appointmentData = {
-        type: createDto.type,
-        doctorId: createDto.doctorId,
-        patientId: createDto.patientId,
-        locationId: createDto.locationId,
-        clinicId: createDto.clinicId,
-        date: createDto.date,
-        time: createDto.time,
-        duration: createDto.duration || 30,
+        ...createDto,
+        userId: context.userId, // Add required userId
         status: AppointmentStatus.SCHEDULED,
-        notes: createDto.notes,
-        userId: context.userId,
-        therapyId: createDto.therapyId,
+        priority: createDto.priority || AppointmentPriority.NORMAL,
+        paymentStatus: createDto.paymentStatus || PaymentStatus.PENDING,
+        paymentMethod: createDto.paymentMethod || PaymentMethod.CASH,
+        amount: createDto.amount || 0,
+        currency: createDto.currency || 'INR',
+        language: createDto.language || Language.EN,
+        isRecurring: createDto.isRecurring || false
       };
 
-      const client = this.prismaService;
-      const appointment = await client.appointment.create({
-        data: appointmentData as any, // Type assertion to bypass complex Prisma typing
+      const appointment = await this.prisma.appointment.create({
+        data: appointmentData as any,
         include: {
           patient: true,
           doctor: true,
@@ -230,12 +224,12 @@ export class CoreAppointmentService {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      this.logger.error(`Failed to create appointment: ${error.message}`, error.stack);
+      this.logger.error(`Failed to create appointment: ${error instanceof Error ? error.message : 'Unknown error'}`, error instanceof Error ? error.stack : '');
       
       // HIPAA audit log for failure
       await this.hipaaAuditLog('CREATE_APPOINTMENT', context, {
         outcome: 'FAILURE',
-        error: error.message
+        error: error instanceof Error ? error.message : 'Unknown error'
       });
 
       return {
@@ -277,10 +271,9 @@ export class CoreAppointmentService {
       const where = this.buildAppointmentWhereClause(filters, context);
       
       const offset = (page - 1) * limit;
-      const client = this.prismaService;
 
       const [appointments, total] = await Promise.all([
-        client.appointment.findMany({
+        this.prisma.appointment.findMany({
           where,
           include: {
             patient: true,
@@ -289,14 +282,14 @@ export class CoreAppointmentService {
             location: true,
           },
           orderBy: [
+            { priority: 'desc' },
             { date: 'asc' },
-            { time: 'asc' },
-            { createdAt: 'desc' }
+            { time: 'asc' }
           ],
           skip: offset,
           take: limit,
         }),
-        client.appointment.count({ where })
+        this.prisma.appointment.count({ where })
       ]);
 
       const result = {
@@ -331,7 +324,7 @@ export class CoreAppointmentService {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      this.logger.error(`Failed to get appointments: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get appointments: ${error instanceof Error ? error.message : 'Unknown error'}`, error instanceof Error ? error.stack : '');
       
       return {
         success: false,
@@ -354,8 +347,8 @@ export class CoreAppointmentService {
     
     try {
       // 1. Get existing appointment
-      const client = this.prismaService;
-      const existingAppointment = await client.appointment.findUnique({
+      // Using prisma directly instead of databaseService
+      const existingAppointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId, clinicId: context.clinicId },
         include: { patient: true, doctor: true }
       });
@@ -394,7 +387,7 @@ export class CoreAppointmentService {
             clinicId: existingAppointment.clinicId,
             requestedTime: new Date(`${newDate}T${newTime}`),
             duration: updateDto.duration || existingAppointment.duration,
-            priority: 'regular', // Adding required priority field
+            priority: this.mapPriority(existingAppointment.priority as any),
             serviceType: existingAppointment.type,
             notes: updateDto.notes
           },
@@ -416,17 +409,12 @@ export class CoreAppointmentService {
       }
 
       // 4. Update appointment
-      const updatedAppointment = await client.appointment.update({
+      const updatedAppointment = await this.prisma.appointment.update({
         where: { id: appointmentId, clinicId: context.clinicId },
         data: {
-          ...(updateDto.date && { date: updateDto.date }),
-          ...(updateDto.time && { time: updateDto.time }),
-          ...(updateDto.duration && { duration: updateDto.duration }),
-          ...(updateDto.status && { status: updateDto.status }),
-          ...(updateDto.notes && { notes: updateDto.notes }),
-          // ...(updateDto.therapyId && { therapyId: updateDto.therapyId }), // therapyId not in UpdateAppointmentDto
-          updatedAt: new Date(),
-        } as any, // Type assertion for complex Prisma typing
+          ...updateDto,
+          updatedAt: new Date()
+        } as any,
         include: {
           patient: true,
           doctor: true,
@@ -475,7 +463,7 @@ export class CoreAppointmentService {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      this.logger.error(`Failed to update appointment: ${error.message}`, error.stack);
+      this.logger.error(`Failed to update appointment: ${error instanceof Error ? error.message : 'Unknown error'}`, error instanceof Error ? error.stack : '');
       
       return {
         success: false,
@@ -498,8 +486,8 @@ export class CoreAppointmentService {
     
     try {
       // 1. Get existing appointment
-      const client = this.prismaService;
-      const existingAppointment = await client.appointment.findUnique({
+      // Using prisma directly instead of databaseService
+      const existingAppointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId, clinicId: context.clinicId },
         include: { patient: true, doctor: true }
       });
@@ -524,13 +512,15 @@ export class CoreAppointmentService {
       }
 
       // 3. Cancel appointment
-      const cancelledAppointment = await client.appointment.update({
+      const cancelledAppointment = await this.prisma.appointment.update({
         where: { id: appointmentId, clinicId: context.clinicId },
         data: {
           status: AppointmentStatus.CANCELLED,
-          notes: reason, // Store cancellation reason in notes field
-          updatedAt: new Date(),
-        } as any, // Type assertion for complex Prisma typing
+          cancellationReason: reason,
+          cancelledBy: context.userId,
+          cancelledAt: new Date(),
+          updatedAt: new Date()
+        },
         include: {
           patient: true,
           doctor: true,
@@ -552,7 +542,6 @@ export class CoreAppointmentService {
         doctorId: cancelledAppointment.doctorId,
         patientId: cancelledAppointment.patientId,
         reason: reason,
-        cancelledBy: context.userId,
         context
       });
 
@@ -577,7 +566,7 @@ export class CoreAppointmentService {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      this.logger.error(`Failed to cancel appointment: ${error.message}`, error.stack);
+      this.logger.error(`Failed to cancel appointment: ${error instanceof Error ? error.message : 'Unknown error'}`, error instanceof Error ? error.stack : '');
       
       return {
         success: false,
@@ -612,10 +601,10 @@ export class CoreAppointmentService {
         };
       }
 
-      const client = this.prismaService;
+      // Using prisma directly instead of databaseService
       
       // Get appointments in date range
-      const appointments = await client.appointment.findMany({
+      const appointments = await this.prisma.appointment.findMany({
         where: {
           clinicId,
           date: {
@@ -625,11 +614,11 @@ export class CoreAppointmentService {
         },
         select: {
           status: true,
-          // priority: true, // Field doesn't exist in schema
           duration: true,
           createdAt: true,
           checkedInAt: true,
-          completedAt: true
+          completedAt: true,
+          priority: true
         }
       });
 
@@ -649,7 +638,7 @@ export class CoreAppointmentService {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      this.logger.error(`Failed to get appointment metrics: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get appointment metrics: ${error instanceof Error ? error.message : 'Unknown error'}`, error instanceof Error ? error.stack : '');
       
       return {
         success: false,
@@ -665,9 +654,9 @@ export class CoreAppointmentService {
   // =============================================
 
   private async getExistingTimeSlots(doctorId: string, clinicId: string, date: Date): Promise<any[]> {
-    const client = this.prismaService;
+    // Using prisma directly instead of databaseService
     
-    return client.appointment.findMany({
+    return this.prisma.appointment.findMany({
       where: {
         doctorId,
         clinicId,
@@ -682,7 +671,7 @@ export class CoreAppointmentService {
         time: true,
         duration: true,
         status: true,
-        // priority: true // Field doesn't exist in schema
+        priority: true,
       }
     });
   }
@@ -715,7 +704,7 @@ export class CoreAppointmentService {
     if (filters.status) where.status = filters.status;
     if (filters.type) where.type = filters.type;
     if (filters.priority) where.priority = filters.priority;
-    // if (filters.doctorId) where.doctorId = filters.doctorId; // doctorId not in AppointmentFilterDto
+    // Note: doctorId filter removed as it's not in the AppointmentFilterDto interface
     if (filters.patientId) where.patientId = filters.patientId;
     if (filters.locationId) where.locationId = filters.locationId;
     
@@ -768,7 +757,7 @@ export class CoreAppointmentService {
       });
 
     } catch (error) {
-      this.logger.error(`Failed to queue background operations: ${error.message}`);
+      this.logger.error(`Failed to queue background operations: ${error instanceof Error ? error.message : 'Unknown error'}`);
       // Don't throw error as background operations shouldn't break main flow
     }
   }
@@ -785,7 +774,7 @@ export class CoreAppointmentService {
         await this.cacheService.delPattern(pattern);
       }
     } catch (error) {
-      this.logger.error(`Failed to invalidate cache: ${error.message}`);
+      this.logger.error(`Failed to invalidate cache: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

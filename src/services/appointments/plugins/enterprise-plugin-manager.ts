@@ -123,7 +123,7 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
       };
     } catch (error) {
       const executionTime = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? (error as Error).message : String(error);
       
       this.updatePluginMetrics(pluginName, false, executionTime);
       this.logger.error(`Plugin operation failed: ${pluginName}.${operation}`, error);
@@ -305,7 +305,7 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
     } catch (error) {
         healthStatus.healthy = false;
         healthStatus.lastCheck = new Date();
-        healthStatus.error = error instanceof Error ? error.message : String(error);
+        healthStatus.error = error instanceof Error ? (error as Error).message : String(error);
         this.logger.warn(`Health check failed for plugin ${pluginName}:`, error);
       }
     }

@@ -37,6 +37,10 @@ import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
 import { JwtAuthGuard, RolesGuard, Roles } from '../../libs/core';
 import { ClinicGuard } from '../../libs/core/guards/clinic.guard';
 import { ClinicRoute } from '../../libs/core/decorators/clinic-route.decorator';
+import { HealthcareErrorsService, HealthcareError } from '../../libs/core/errors';
+import { LoggingService, LogType, LogLevel } from '../../libs/infrastructure/logging';
+import { CacheService } from '../../libs/infrastructure/cache/cache.service';
+import { Cache, InvalidateCache, PatientCache, InvalidatePatientCache } from '../../libs/infrastructure/cache/decorators/cache.decorator';
 import { UseInterceptors } from '@nestjs/common';
 import { 
   CreateAppointmentDto, 
@@ -68,6 +72,9 @@ export class AppointmentsController {
 
   constructor(
     private readonly appointmentService: AppointmentsService,
+    private readonly errors: HealthcareErrorsService,
+    private readonly loggingService: LoggingService,
+    private readonly cacheService: CacheService,
   ) {}
 
   @Post()
@@ -129,19 +136,19 @@ export class AppointmentsController {
         appointmentData,
         userId,
         clinicId,
-        req.user.role || 'USER'
+        req.user?.role || 'USER'
       );
 
-      this.logger.log(`Appointment created successfully: ${result.data?.id}`);
+      this.logger.log(`Appointment created successfully: ${result.success ? 'Success' : 'Failed'}`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to create appointment: ${error.message}`, error.stack);
+      this.logger.error(`Failed to create appointment: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error.stack : undefined);
       
       if (error instanceof BadRequestException) {
         throw error;
       }
       
-      if (error.message.includes('not available')) {
+      if (error instanceof Error && error.message.includes('not available')) {
         throw new BadRequestException(error.message);
       }
       
@@ -154,6 +161,15 @@ export class AppointmentsController {
   @Roles(Role.PATIENT)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'appointments:my:{userId}:{clinicId}',
+    ttl: 300,
+    tags: ['appointments', 'patient_appointments'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true
+  })
   @ApiOperation({
     summary: 'Get current user appointments',
     description: 'Get appointments for the currently authenticated patient. Only returns appointments for the authenticated user.'
@@ -224,18 +240,12 @@ export class AppointmentsController {
         limit: Math.min(100, Math.max(1, limit))
       };
       
-      const result = await this.appointmentService.getAppointments(
-        filters,
-        userId,
-        clinicId,
-        req.user.role || 'USER',
-        filters.page || 1
-      );
+      const result = await this.appointmentService.getAppointments(filters, userId, clinicId, req.user?.role || 'USER', filters.page || 1, filters.limit || 20);
       
       this.logger.log(`Retrieved ${result.data?.length || 0} appointments for user ${userId}`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to get my appointments: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get my appointments: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error.stack : undefined);
       throw error;
     }
   }
@@ -245,6 +255,16 @@ export class AppointmentsController {
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
+  @Cache({
+    keyTemplate: 'appointments:list:{clinicId}:{filters}',
+    ttl: 300,
+    staleTime: 60,
+    tags: ['appointments', 'clinic_appointments'],
+    priority: 'normal',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true
+  })
   @ApiOperation({
     summary: 'Get all appointments',
     description: 'Get all appointments with optional filtering. Only clinic staff can access this endpoint. Supports pagination and various filters.'
@@ -310,16 +330,29 @@ export class AppointmentsController {
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10
   ) {
+    const context = 'AppointmentsController.getAppointments';
+    
     try {
       const clinicId = req.clinicContext?.clinicId;
+      const currentUserId = req.user?.sub;
       
       if (!clinicId) {
-        throw new BadRequestException('Clinic context is required');
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
       }
       
-      this.logger.log(`Getting appointments for clinic ${clinicId} with filters`, {
-        userId, doctorId, status, date, locationId, page, limit
-      });
+      // Log the operation with proper structure
+      await this.loggingService.log(
+        LogType.REQUEST,
+        LogLevel.INFO,
+        'Retrieving appointments list',
+        context,
+        {
+          userId: currentUserId,
+          clinicId,
+          filters: { userId, doctorId, status, date, locationId, page, limit },
+          operation: 'getAppointments'
+        }
+      );
       
       const filters: any = {
         userId,
@@ -332,19 +365,47 @@ export class AppointmentsController {
         limit: Math.min(100, Math.max(1, limit))
       };
       
-      const result = await this.appointmentService.getAppointments(
-        filters,
-        req.user.sub,
-        clinicId,
-        req.user.role || 'USER',
-        filters.page || 1
+      const result = await this.appointmentService.getAppointments(filters, clinicId, currentUserId);
+      
+      // Log successful operation
+      await this.loggingService.log(
+        LogType.RESPONSE,
+        LogLevel.INFO,
+        `Retrieved ${result.data?.length || 0} appointments successfully`,
+        context,
+        {
+          userId: currentUserId,
+          clinicId,
+          appointmentCount: result.data?.length || 0,
+          operation: 'getAppointments'
+        }
       );
       
-      this.logger.log(`Retrieved ${result.data?.length || 0} appointments for clinic ${clinicId}`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to get appointments: ${error.message}`, error.stack);
-      throw error;
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
+        throw error;
+      }
+      
+      // Log the error with proper structure
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to retrieve appointments: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        context,
+        {
+          userId: req.user?.sub,
+          clinicId: req.clinicContext?.clinicId,
+          filters: { userId, doctorId, status, date, locationId, page, limit },
+          error: error instanceof Error ? error.stack : String(error),
+          operation: 'getAppointments'
+        }
+      );
+      
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 
@@ -352,6 +413,15 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.CLINIC_ADMIN)
   @RequireResourcePermission('appointments', 'read')
+  @Cache({
+    keyTemplate: 'appointments:availability:{doctorId}:{date}',
+    ttl: 180,
+    tags: ['appointments', 'doctor_availability'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: false,
+    compress: false
+  })
   @ApiOperation({
     summary: 'Get doctor availability',
     description: 'Check a doctor\'s availability for a specific date. Returns available time slots and working hours.'
@@ -390,6 +460,8 @@ export class AppointmentsController {
     @Request() req: AuthenticatedRequest
   ) {
     try {
+      const clinicId = req.user?.clinicId || req.headers?.['clinic-id'] as string;
+      
       if (!date) {
         throw new BadRequestException('Date parameter is required');
       }
@@ -411,12 +483,12 @@ export class AppointmentsController {
 
       this.logger.log(`Checking availability for doctor ${doctorId} on ${date}`);
       
-      const result = await this.appointmentService.getDoctorAvailability(doctorId, date, req.user.sub, req.user.clinicId || '');
+      const result = await this.appointmentService.getDoctorAvailability(doctorId, date, clinicId, req.user?.sub, req.user?.role || 'USER');
       
       this.logger.log(`Retrieved availability for doctor ${doctorId}: ${result.availableSlots?.length || 0} slots available`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to get doctor availability: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get doctor availability: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error.stack : undefined);
       throw error;
     }
   }
@@ -425,6 +497,15 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
   @RequireResourcePermission('appointments', 'read')
+  @PatientCache({
+    keyTemplate: 'appointments:upcoming:{userId}',
+    ttl: 600,
+    tags: ['appointments', 'upcoming_appointments'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true
+  })
   @ApiOperation({
     summary: 'Get user upcoming appointments',
     description: 'Get upcoming appointments for a specific user. Patients can only access their own upcoming appointments.'
@@ -458,6 +539,7 @@ export class AppointmentsController {
   ) {
     try {
       const currentUserId = req.user?.sub;
+      const clinicId = req.user?.clinicId || req.headers?.['clinic-id'] as string;
       
       // Patients can only access their own upcoming appointments
       if (req.user?.role === 'PATIENT' && currentUserId !== userId) {
@@ -466,12 +548,12 @@ export class AppointmentsController {
       
       this.logger.log(`Getting upcoming appointments for user ${userId} (requested by ${currentUserId})`);
       
-      const result = await this.appointmentService.getUserUpcomingAppointments(userId, req.user.clinicId || '');
+      const result = await this.appointmentService.getUserUpcomingAppointments(userId, clinicId, req.user?.role || 'USER');
       
       this.logger.log(`Retrieved ${result?.length || 0} upcoming appointments for user ${userId}`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to get user appointments: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get user appointments: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error.stack : undefined);
       throw error;
     }
   }
@@ -481,6 +563,15 @@ export class AppointmentsController {
   @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'appointments:detail:{id}',
+    ttl: 1800,
+    tags: ['appointments', 'appointment_details'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true
+  })
   @ApiOperation({
     summary: 'Get an appointment by ID',
     description: 'Get detailed information about a specific appointment. Patients can only access their own appointments.'
@@ -535,7 +626,7 @@ export class AppointmentsController {
       this.logger.log(`Retrieved appointment ${id} successfully`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to get appointment ${id}: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get appointment ${id}: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error.stack : undefined);
       throw error;
     }
   }
@@ -545,6 +636,10 @@ export class AppointmentsController {
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', { requireOwnership: true })
+  @InvalidatePatientCache({
+    patterns: ['appointments:detail:{id}', 'appointments:my:*', 'appointments:upcoming:*', 'appointments:list:*'],
+    tags: ['appointments', 'appointment_details', 'patient_appointments', 'upcoming_appointments', 'clinic_appointments']
+  })
   @ApiOperation({
     summary: 'Update an appointment',
     description: 'Update an existing appointment\'s details. Patients can only update their own appointments.'
@@ -606,12 +701,12 @@ export class AppointmentsController {
         }
       }
       
-      const result = await this.appointmentService.updateAppointment(id, updateData, req.user.sub, clinicId);
+      const result = await this.appointmentService.updateAppointment(id, updateData, currentUserId, clinicId, req.user?.role || 'USER');
       
       this.logger.log(`Appointment ${id} updated successfully`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to update appointment ${id}: ${error.message}`, error.stack);
+      this.logger.error(`Failed to update appointment ${id}: ${error instanceof Error ? error.message : String(error)}`, error instanceof Error ? error.stack : undefined);
       throw error;
     }
   }
@@ -621,6 +716,10 @@ export class AppointmentsController {
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', { requireOwnership: true })
+  @InvalidatePatientCache({
+    patterns: ['appointments:detail:{id}', 'appointments:my:*', 'appointments:upcoming:*', 'appointments:list:*', 'appointments:availability:*'],
+    tags: ['appointments', 'appointment_details', 'patient_appointments', 'upcoming_appointments', 'clinic_appointments', 'doctor_availability']
+  })
   @ApiOperation({
     summary: 'Cancel an appointment',
     description: 'Cancel an existing appointment. Patients can only cancel their own appointments. Completed appointments cannot be cancelled.'
@@ -656,32 +755,86 @@ export class AppointmentsController {
     @Param('id', ParseUUIDPipe) id: string, 
     @Request() req: AuthenticatedRequest
   ) {
+    const context = 'AppointmentsController.cancelAppointment';
+    
     try {
       const clinicId = req.clinicContext?.clinicId;
       const currentUserId = req.user?.sub;
       
       if (!clinicId) {
-        throw new BadRequestException('Clinic context is required');
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
       }
       
-      this.logger.log(`Cancelling appointment ${id} by user ${currentUserId} in clinic ${clinicId}`);
+      // Log the operation with proper structure
+      await this.loggingService.log(
+        LogType.REQUEST,
+        LogLevel.INFO,
+        'Cancelling appointment',
+        context,
+        {
+          appointmentId: id,
+          userId: currentUserId,
+          clinicId,
+          operation: 'cancelAppointment'
+        }
+      );
       
       // Additional security check for patients
       if (req.user?.role === 'PATIENT') {
         const patient = await this.appointmentService.getPatientByUserId(currentUserId);
         const appointment = await this.appointmentService.getAppointmentById(id, clinicId);
         if (appointment.patientId !== patient?.id) {
-          throw new ForbiddenException('Patients can only cancel their own appointments');
+          throw this.errors.insufficientPermissions('Patients can only cancel their own appointments');
         }
       }
       
-      const result = await this.appointmentService.cancelAppointment(id, 'Cancelled by user', req.user.sub, clinicId, req.user?.role);
+      const result = await this.appointmentService.cancelAppointment(
+        id, 
+        'Cancelled by user', 
+        currentUserId, 
+        clinicId, 
+        req.user?.role || 'USER'
+      );
       
-      this.logger.log(`Appointment ${id} cancelled successfully`);
+      // Log successful operation
+      await this.loggingService.log(
+        LogType.RESPONSE,
+        LogLevel.INFO,
+        'Appointment cancelled successfully',
+        context,
+        {
+          appointmentId: id,
+          userId: currentUserId,
+          clinicId,
+          operation: 'cancelAppointment'
+        }
+      );
+      
       return result;
     } catch (error) {
-      this.logger.error(`Failed to cancel appointment ${id}: ${error.message}`, error.stack);
-      throw error;
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
+        throw error;
+      }
+      
+      // Log the error with proper structure
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to cancel appointment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        context,
+        {
+          appointmentId: id,
+          userId: req.user?.sub,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : String(error),
+          operation: 'cancelAppointment'
+        }
+      );
+      
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 

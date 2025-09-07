@@ -1,17 +1,12 @@
 import { Controller, Get, Post, Body, Param, Logger, UseGuards, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
-// import { JwtAuthGuard, RolesGuard, ClinicGuard } from '../../../../libs/core'; // Commented out due to import issues
 import { UseInterceptors } from '@nestjs/common';
-// TenantContextInterceptor removed - functionality consolidated in TenantIsolationService
 import { AppointmentEnterprisePluginManager } from './enterprise-plugin-manager';
 import { PluginConfigService } from './config/plugin-config.service';
 import { PluginHealthService } from './health/plugin-health.service';
-// import { Roles } from '../../../../libs/core'; // Commented out due to import issues
 
 @ApiTags('Appointment Plugins')
 @Controller('api/appointments/plugins')
-// @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard) // Commented out due to import issues
-// TenantContextInterceptor removed - functionality consolidated
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 export class AppointmentPluginController {
@@ -29,7 +24,6 @@ export class AppointmentPluginController {
     description: 'Get information about all registered plugins'
   })
   @ApiResponse({ status: 200, description: 'Plugin information retrieved successfully' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getPluginInfo() {
     const startTime = Date.now();
 
@@ -47,7 +41,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get plugin info: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -60,7 +54,6 @@ export class AppointmentPluginController {
   })
   @ApiResponse({ status: 200, description: 'Domain plugins retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getDomainPlugins(@Param('domain') domain: string) {
     const startTime = Date.now();
 
@@ -72,19 +65,19 @@ export class AppointmentPluginController {
 
       return {
         domain,
-        plugins: plugins.map(plugin => ({
+        plugins: plugins.map((plugin: any) => ({
           name: plugin.name,
           version: plugin.version,
           features: plugin.features || []
         })),
-        features: plugins.map(p => p.features || []).flat(),
+        features: plugins.map((p: any) => p.features || []).flat(),
         total: plugins.length,
         retrievedAt: new Date().toISOString(),
       };
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get domain plugins: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -97,7 +90,6 @@ export class AppointmentPluginController {
   })
   @ApiResponse({ status: 200, description: 'Domain features retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getDomainFeatures(@Param('domain') domain: string) {
     const startTime = Date.now();
 
@@ -116,7 +108,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get domain features: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -130,7 +122,6 @@ export class AppointmentPluginController {
   @ApiResponse({ status: 200, description: 'Plugin operation executed successfully' })
   @ApiResponse({ status: 400, description: 'Invalid operation or data' })
   @ApiResponse({ status: 404, description: 'Plugin not found' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async executePluginOperation(
     @Body() body: {
       domain: string;
@@ -174,7 +165,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to execute plugin operation: ${errorMessage}`, errorStack);
       
       // Update health metrics for failed operation
@@ -204,7 +195,6 @@ export class AppointmentPluginController {
   })
   @ApiResponse({ status: 200, description: 'Plugin operations executed successfully' })
   @ApiResponse({ status: 400, description: 'Invalid operations or data' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async executePluginOperations(
     @Body() body: {
       operations: Array<{
@@ -244,7 +234,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to execute batch plugin operations: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -256,13 +246,12 @@ export class AppointmentPluginController {
     description: 'Get health status of the plugin system'
   })
   @ApiResponse({ status: 200, description: 'Plugin system health retrieved successfully' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getPluginSystemHealth() {
     const startTime = Date.now();
 
     try {
       const pluginInfo = this.enterprisePluginManager.getEnterpriseRegistry().getPluginInfo();
-      const domains = [...new Set(pluginInfo.map(p => p.domain))];
+      const domains = [...new Set(pluginInfo.map((p: any) => p.domain))];
       const healthSummary = await this.pluginHealthService.getPluginHealthSummary();
       
       const health = {
@@ -270,7 +259,7 @@ export class AppointmentPluginController {
         totalPlugins: pluginInfo.length,
         domains: domains.map(domain => ({
           domain,
-          plugins: pluginInfo.filter(p => p.domain === domain).length,
+          plugins: pluginInfo.filter((p: any) => p.domain === domain).length,
           features: this.enterprisePluginManager.getEnterpriseRegistry().getPluginsByFeature(domain)
         })),
         healthSummary,
@@ -285,7 +274,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get plugin system health: ${errorMessage}`, errorStack);
       
       return {
@@ -303,7 +292,6 @@ export class AppointmentPluginController {
     description: 'Get detailed health metrics for all plugins'
   })
   @ApiResponse({ status: 200, description: 'Plugin health metrics retrieved successfully' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getPluginHealthMetrics() {
     const startTime = Date.now();
 
@@ -322,7 +310,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get plugin health metrics: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -335,7 +323,6 @@ export class AppointmentPluginController {
   })
   @ApiResponse({ status: 200, description: 'Domain plugin health retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Domain not found' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getDomainPluginHealth(@Param('domain') domain: string) {
     const startTime = Date.now();
 
@@ -355,7 +342,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get domain plugin health: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -367,7 +354,6 @@ export class AppointmentPluginController {
     description: 'Get performance alerts for plugins'
   })
   @ApiResponse({ status: 200, description: 'Plugin alerts retrieved successfully' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getPluginAlerts() {
     const startTime = Date.now();
 
@@ -389,7 +375,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get plugin alerts: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -401,7 +387,6 @@ export class AppointmentPluginController {
     description: 'Get all plugin configurations'
   })
   @ApiResponse({ status: 200, description: 'Plugin configurations retrieved successfully' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getPluginConfigs() {
     const startTime = Date.now();
 
@@ -420,7 +405,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get plugin configurations: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -433,7 +418,6 @@ export class AppointmentPluginController {
   })
   @ApiResponse({ status: 200, description: 'Plugin configuration retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Plugin not found' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async getPluginConfig(@Param('pluginName') pluginName: string) {
     const startTime = Date.now();
 
@@ -461,7 +445,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to get plugin configuration: ${errorMessage}`, errorStack);
       throw error;
     }
@@ -474,7 +458,6 @@ export class AppointmentPluginController {
   })
   @ApiResponse({ status: 200, description: 'Plugin configuration updated successfully' })
   @ApiResponse({ status: 404, description: 'Plugin not found' })
-  // @Roles('SUPER_ADMIN', 'CLINIC_ADMIN') // Commented out due to import issues
   async updatePluginConfig(
     @Param('pluginName') pluginName: string,
     @Body() config: any
@@ -496,7 +479,7 @@ export class AppointmentPluginController {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-      const errorStack = error instanceof Error ? error.stack : '';
+      const errorStack = error instanceof Error ? (error as Error).stack : '';
       this.logger.error(`Failed to update plugin configuration: ${errorMessage}`, errorStack);
       throw error;
     }

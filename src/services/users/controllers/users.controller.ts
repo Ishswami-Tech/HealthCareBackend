@@ -14,12 +14,13 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiSecurity } from '@nestjs/swagger';
 import { UsersService } from '../users.service';
 import { UpdateUserDto, UserResponseDto, CreateUserDto, UpdateUserRoleDto } from '../../../libs/dtos/user.dto';
-import { JwtAuthGuard, Roles, RolesGuard } from '../../../libs/core';
+import { JwtAuthGuard, Roles, RolesGuard, AuthenticatedRequest } from '../../../libs/core';
 import { Role } from '../../../libs/infrastructure/database/prisma/prisma.types';
 import { RbacGuard } from '../../../libs/core/rbac/rbac.guard';
 import { RequireResourcePermission } from '../../../libs/core/rbac/rbac.decorators';
 import { RbacService } from '../../../libs/core/rbac/rbac.service';
 import { RateLimitAPI } from '../../../libs/security/rate-limit/rate-limit.decorator';
+import { Cache, InvalidateCache, PatientCache, InvalidatePatientCache } from '../../../libs/infrastructure/cache/decorators/cache.decorator';
 
 @ApiTags('user')
 @Controller('user')
@@ -36,6 +37,15 @@ export class UsersController {
   @RateLimitAPI()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @PatientCache({
+    keyTemplate: 'users:all:{role}',
+    ttl: 1800, // 30 minutes
+    tags: ['users', 'user_lists'],
+    priority: 'normal',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true
+  })
   @ApiOperation({ 
     summary: 'Get all users',
     description: 'Retrieve a list of all users. Only accessible by Super Admin and Clinic Admin.'
@@ -61,8 +71,8 @@ export class UsersController {
     description: 'User profile retrieved successfully',
     type: UserResponseDto 
   })
-  async getProfile(@Request() req): Promise<UserResponseDto> {
-    const userId = req.user.sub || req.user.id;
+  async getProfile(@Request() req: AuthenticatedRequest): Promise<UserResponseDto> {
+    const userId = req.user.sub;
     if (!userId) {
       throw new ForbiddenException('User ID not found in token');
     }
@@ -70,6 +80,15 @@ export class UsersController {
   }
 
   @Get(':id')
+  @PatientCache({
+    keyTemplate: 'users:one:{id}',
+    ttl: 3600, // 1 hour
+    tags: ['users', 'user_details'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true
+  })
   @ApiOperation({ 
     summary: 'Get user by ID',
     description: 'Retrieve a specific user by their unique identifier'
@@ -87,6 +106,10 @@ export class UsersController {
   @Patch(':id')
   @UseGuards(RbacGuard)
   @RequireResourcePermission('users', 'update', { requireOwnership: true })
+  @InvalidatePatientCache({
+    patterns: ['users:one:{id}', 'users:all:*', 'user:{id}:*'],
+    tags: ['users', 'user_details', 'user_lists']
+  })
   @ApiOperation({
     summary: 'Update user',
     description: 'Update user information. Super Admin can update any user. All authenticated users can update their own information.',
@@ -99,14 +122,14 @@ export class UsersController {
   async update(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
   ): Promise<UserResponseDto> {
     if (!id || id === 'undefined') {
       throw new BadRequestException('User ID is required in the URL');
     }
     const loggedInUser = req.user;
     // Use user.sub (JWT subject) as userId, fallback to user.id
-    const loggedInUserId = loggedInUser.sub || loggedInUser.id;
+    const loggedInUserId = loggedInUser.sub;
     
     // Allow Super Admin to update any user
     if (loggedInUser.role === Role.SUPER_ADMIN) {

@@ -8,5 +8,5 @@ export class RegisterPatientDto {
   })
   @IsString()
   @IsNotEmpty()
-  appName: string;
+  appName!: string;
 } 

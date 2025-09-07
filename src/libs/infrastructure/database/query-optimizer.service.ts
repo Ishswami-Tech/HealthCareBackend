@@ -39,4 +39,18 @@ export class HealthcareQueryOptimizerService {
       cacheHitRate: 0
     };
   }
+
+  /**
+   * Get optimizer statistics
+   */
+  getOptimizerStats(): Record<string, any> {
+    return {
+      totalQueries: 0,
+      optimizedQueries: 0,
+      averageOptimizationTime: 0,
+      cacheHitRate: 0,
+      indexRecommendations: [],
+      slowQueries: []
+    };
+  }
 }

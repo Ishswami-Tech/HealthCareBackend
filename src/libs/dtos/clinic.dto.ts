@@ -36,7 +36,7 @@ export class CreateClinicDto {
   @Min(2, { message: 'Clinic name must be at least 2 characters long' })
   @Max(100, { message: 'Clinic name cannot exceed 100 characters' })
   @Transform(({ value }) => value?.trim())
-  name: string;
+  name!: string;
 
   @ApiProperty({
     example: 'GENERAL',
@@ -45,7 +45,7 @@ export class CreateClinicDto {
   })
   @IsEnum(ClinicType, { message: 'Clinic type must be a valid type' })
   @IsNotEmpty({ message: 'Clinic type is required' })
-  type: ClinicType;
+  type!: ClinicType;
 
   @ApiProperty({
     example: '123 Main Street',
@@ -58,7 +58,7 @@ export class CreateClinicDto {
   @Min(5, { message: 'Address must be at least 5 characters long' })
   @Max(200, { message: 'Address cannot exceed 200 characters' })
   @Transform(({ value }) => value?.trim())
-  address: string;
+  address!: string;
 
   @ApiProperty({
     example: 'New York',
@@ -71,7 +71,7 @@ export class CreateClinicDto {
   @Min(2, { message: 'City must be at least 2 characters long' })
   @Max(50, { message: 'City cannot exceed 50 characters' })
   @Transform(({ value }) => value?.trim())
-  city: string;
+  city!: string;
 
   @ApiProperty({
     example: 'NY',
@@ -84,7 +84,7 @@ export class CreateClinicDto {
   @Min(2, { message: 'State must be at least 2 characters long' })
   @Max(50, { message: 'State cannot exceed 50 characters' })
   @Transform(({ value }) => value?.trim())
-  state: string;
+  state!: string;
 
   @ApiProperty({
     example: 'USA',
@@ -97,7 +97,7 @@ export class CreateClinicDto {
   @Min(2, { message: 'Country must be at least 2 characters long' })
   @Max(50, { message: 'Country cannot exceed 50 characters' })
   @Transform(({ value }) => value?.trim())
-  country: string;
+  country!: string;
 
   @ApiProperty({
     example: '10001',
@@ -110,7 +110,7 @@ export class CreateClinicDto {
   @Min(3, { message: 'Zip code must be at least 3 characters long' })
   @Max(20, { message: 'Zip code cannot exceed 20 characters' })
   @Transform(({ value }) => value?.trim())
-  zipCode: string;
+  zipCode!: string;
 
   @ApiProperty({
     example: '+1234567890',
@@ -119,7 +119,7 @@ export class CreateClinicDto {
   })
   @IsString({ message: 'Phone number must be a string' })
   @IsNotEmpty({ message: 'Phone number is required' })
-  phone: string;
+  phone!: string;
 
   @ApiProperty({
     example: 'info@mainstreetmedical.com',
@@ -129,7 +129,7 @@ export class CreateClinicDto {
   @IsString({ message: 'Email must be a string' })
   @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }) => value?.toLowerCase().trim())
-  email: string;
+  email!: string;
 
   @ApiPropertyOptional({
     example: 'https://www.mainstreetmedical.com',
@@ -288,70 +288,70 @@ export class ClinicResponseDto {
     description: 'Unique clinic identifier'
   })
   @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
-  id: string;
+  id!: string;
 
   @ApiProperty({
     example: 'Main Street Medical Center',
     description: 'Clinic name'
   })
   @IsString({ message: 'Clinic name must be a string' })
-  name: string;
+  name!: string;
 
   @ApiProperty({
     example: 'GENERAL',
     description: 'Type of clinic'
   })
   @IsEnum(ClinicType, { message: 'Clinic type must be a valid type' })
-  type: ClinicType;
+  type!: ClinicType;
 
   @ApiProperty({
     example: '123 Main Street',
     description: 'Clinic address'
   })
   @IsString({ message: 'Address must be a string' })
-  address: string;
+  address!: string;
 
   @ApiProperty({
     example: 'New York',
     description: 'Clinic city'
   })
   @IsString({ message: 'City must be a string' })
-  city: string;
+  city!: string;
 
   @ApiProperty({
     example: 'NY',
     description: 'Clinic state/province'
   })
   @IsString({ message: 'State must be a string' })
-  state: string;
+  state!: string;
 
   @ApiProperty({
     example: 'USA',
     description: 'Clinic country'
   })
   @IsString({ message: 'Country must be a string' })
-  country: string;
+  country!: string;
 
   @ApiProperty({
     example: '10001',
     description: 'Clinic zip/postal code'
   })
   @IsString({ message: 'Zip code must be a string' })
-  zipCode: string;
+  zipCode!: string;
 
   @ApiProperty({
     example: '+1234567890',
     description: 'Clinic phone number'
   })
   @IsString({ message: 'Phone number must be a string' })
-  phone: string;
+  phone!: string;
 
   @ApiProperty({
     example: 'info@mainstreetmedical.com',
     description: 'Clinic email address'
   })
   @IsString({ message: 'Email must be a string' })
-  email: string;
+  email!: string;
 
   @ApiPropertyOptional({
     example: 'https://www.mainstreetmedical.com',
@@ -374,21 +374,21 @@ export class ClinicResponseDto {
     description: 'Current clinic status'
   })
   @IsEnum(ClinicStatus, { message: 'Status must be a valid clinic status' })
-  status: ClinicStatus;
+  status!: ClinicStatus;
 
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Clinic creation timestamp'
   })
   @IsString({ message: 'Created at must be a string' })
-  createdAt: string;
+  createdAt!: string;
 
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Clinic last update timestamp'
   })
   @IsString({ message: 'Updated at must be a string' })
-  updatedAt: string;
+  updatedAt!: string;
 
   @ApiPropertyOptional({
     example: 'healthcare',
@@ -465,23 +465,23 @@ export class ClinicListResponseDto {
   })
   @ValidateNested({ each: true })
   @Type(() => ClinicResponseDto)
-  clinics: ClinicResponseDto[];
+  clinics!: ClinicResponseDto[];
 
   @ApiProperty({
     description: 'Total number of clinics'
   })
   @IsNumber({}, { message: 'Total must be a number' })
-  total: number;
+  total!: number;
 
   @ApiProperty({
     description: 'Current page number'
   })
   @IsNumber({}, { message: 'Page must be a number' })
-  page: number;
+  page!: number;
 
   @ApiProperty({
     description: 'Items per page'
   })
   @IsNumber({}, { message: 'Limit must be a number' })
-  limit: number;
+  limit!: number;
 }

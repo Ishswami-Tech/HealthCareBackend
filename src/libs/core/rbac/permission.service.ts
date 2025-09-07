@@ -74,7 +74,7 @@ export class PermissionService {
 
       return this.mapToPermission(permission);
     } catch (error) {
-      this.logger.error(`Failed to create permission: ${createPermissionDto.name}`, error.stack);
+      this.logger.error(`Failed to create permission: ${createPermissionDto.name}`, (error as Error).stack);
       throw error;
     }
   }
@@ -105,7 +105,7 @@ export class PermissionService {
 
       return mappedPermission;
     } catch (error) {
-      this.logger.error(`Failed to get permission by ID: ${permissionId}`, error.stack);
+      this.logger.error(`Failed to get permission by ID: ${permissionId}`, (error as Error).stack);
       return null;
     }
   }
@@ -144,7 +144,7 @@ export class PermissionService {
 
       return mappedPermission;
     } catch (error) {
-      this.logger.error(`Failed to get permission: ${resource}:${action}`, error.stack);
+      this.logger.error(`Failed to get permission: ${resource}:${action}`, (error as Error).stack);
       return null;
     }
   }
@@ -179,7 +179,7 @@ export class PermissionService {
 
       return mappedPermissions;
     } catch (error) {
-      this.logger.error('Failed to get permissions', error.stack);
+      this.logger.error('Failed to get permissions', (error as Error).stack);
       return [];
     }
   }
@@ -217,7 +217,7 @@ export class PermissionService {
 
       return this.mapToPermission(permission);
     } catch (error) {
-      this.logger.error(`Failed to update permission: ${permissionId}`, error.stack);
+      this.logger.error(`Failed to update permission: ${permissionId}`, (error as Error).stack);
       throw error;
     }
   }
@@ -264,7 +264,7 @@ export class PermissionService {
 
       this.logger.log(`Permission deleted: ${permission.name} (${permission.id})`);
     } catch (error) {
-      this.logger.error(`Failed to delete permission: ${permissionId}`, error.stack);
+      this.logger.error(`Failed to delete permission: ${permissionId}`, (error as Error).stack);
       throw error;
     }
   }
@@ -294,7 +294,7 @@ export class PermissionService {
 
       return permissions.map(permission => this.mapToPermission(permission));
     } catch (error) {
-      this.logger.error('Failed to get system permissions', error.stack);
+      this.logger.error('Failed to get system permissions', (error as Error).stack);
       return [];
     }
   }
@@ -398,7 +398,7 @@ export class PermissionService {
 
       await this.clearPermissionCache();
     } catch (error) {
-      this.logger.error('Failed to initialize system permissions', error.stack);
+      this.logger.error('Failed to initialize system permissions', (error as Error).stack);
       throw error;
     }
   }
@@ -415,13 +415,13 @@ export class PermissionService {
           const permission = await this.createPermission(permissionData);
           results.push(permission);
         } catch (error) {
-          this.logger.warn(`Failed to create permission: ${permissionData.name}`, error.message);
+          this.logger.warn(`Failed to create permission: ${permissionData.name}`, (error as Error).message);
         }
       }
 
       return results;
     } catch (error) {
-      this.logger.error('Bulk permission creation failed', error.stack);
+      this.logger.error('Bulk permission creation failed', (error as Error).stack);
       throw error;
     }
   }
@@ -459,7 +459,7 @@ export class PermissionService {
 
       return summary;
     } catch (error) {
-      this.logger.error('Failed to get permissions summary', error.stack);
+      this.logger.error('Failed to get permissions summary', (error as Error).stack);
       throw error;
     }
   }
@@ -492,7 +492,7 @@ export class PermissionService {
         await this.redis.del(...keys);
       }
     } catch (error) {
-      this.logger.error('Failed to clear permission cache', error.stack);
+      this.logger.error('Failed to clear permission cache', (error as Error).stack);
     }
   }
 }

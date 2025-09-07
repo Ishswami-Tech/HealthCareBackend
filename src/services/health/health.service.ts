@@ -9,6 +9,7 @@ import { QueueService } from '../../libs/infrastructure/queue/src/queue.service'
 import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
 import { SocketService } from '../../libs/communication/socket';
 import { EmailService } from '../../libs/communication/messaging/email/email.service';
+import { HealthcareErrorsService } from '../../libs/core/errors';
 
 @Injectable()
 export class HealthService {
@@ -26,6 +27,7 @@ export class HealthService {
     private readonly loggingService: LoggingService,
     private readonly socketService: SocketService,
     private readonly emailService: EmailService,
+    private readonly errors: HealthcareErrorsService,
   ) {}
 
   private getSystemMetrics() {
@@ -142,7 +144,9 @@ export class HealthService {
         pid: process.pid,
         ppid: process.ppid,
         platform: process.platform,
-        versions: process.versions,
+        versions: Object.fromEntries(
+          Object.entries(process.versions).filter(([_, value]) => value !== undefined)
+        ) as Record<string, string>,
       },
       memory: {
         heapUsed: memoryUsage.heapUsed,
@@ -215,7 +219,7 @@ export class HealthService {
       
       return {
         status: 'unhealthy',
-        error: error.message,
+        error: error instanceof Error ? (error as Error).message : 'Unknown error',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -238,7 +242,7 @@ export class HealthService {
       
       return {
         status: 'unhealthy',
-        error: error.message,
+        error: error instanceof Error ? (error as Error).message : 'Unknown error',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -268,7 +272,6 @@ export class HealthService {
   private async checkQueueHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
-      // Check if queue service is available
       if (!this.queueService) {
         return {
           status: 'unhealthy',
@@ -294,7 +297,7 @@ export class HealthService {
       this.logger.error('Queue health check failed:', error);
       return {
         status: 'unhealthy',
-        error: error.message,
+        error: error instanceof Error ? (error as Error).message : 'Unknown error',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -319,7 +322,7 @@ export class HealthService {
       this.logger.error('Logger health check failed:', error);
       return {
         status: 'unhealthy',
-        error: error.message,
+        error: error instanceof Error ? (error as Error).message : 'Unknown error',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -356,7 +359,7 @@ export class HealthService {
       this.logger.error('Socket health check failed:', error);
       return {
         status: 'unhealthy',
-        error: error.message,
+        error: error instanceof Error ? (error as Error).message : 'Unknown error',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -378,7 +381,7 @@ export class HealthService {
       this.logger.error('Email health check failed:', error);
       return {
         status: 'unhealthy',
-        error: error.message,
+        error: error instanceof Error ? (error as Error).message : 'Unknown error',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };

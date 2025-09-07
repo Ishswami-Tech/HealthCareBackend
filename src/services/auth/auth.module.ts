@@ -1,32 +1,30 @@
-import { Module, OnModuleInit, forwardRef } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { CacheServiceModule } from '../../libs/infrastructure/cache/cache-service.module';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+
+// Core modules
 import { DatabaseModule } from '../../libs/infrastructure/database';
 import { RbacModule } from '../../libs/core/rbac/rbac.module';
 import { SessionModule } from '../../libs/core/session/session.module';
-import { ResilienceModule } from '../../libs/core/resilience/resilience.module';
 import { GuardsModule } from '../../libs/core/guards/guards.module';
 import { EmailModule } from '../../libs/communication/messaging/email/email.module';
-import { ModuleRef } from '@nestjs/core';
+import { LoggingServiceModule } from '../../libs/infrastructure/logging';
+
+// Cache interceptor
+import { HealthcareCacheInterceptor } from '../../libs/infrastructure/cache/interceptors/healthcare-cache.interceptor';
+
+// Auth services
+import { AuthService } from './auth.service';
+import { AuthController } from './auth.controller';
 
 // Core auth services
-import { BaseAuthService } from './core/base-auth.service';
-import { PluginManagerService } from './core/plugin-manager.service';
+import { JwtAuthService } from './core/jwt.service';
+import { OtpService } from './core/otp.service';
+import { PasswordService } from './core/password.service';
+import { SocialAuthService } from './core/social-auth.service';
 
-// Auth plugins
-import { ClinicAuthPlugin } from './plugins/clinic-auth.plugin';
-import { SharedAuthPlugin } from './plugins/shared-auth.plugin';
-
-// Auth implementations
-import { ClinicAuthService } from './implementations/clinic-auth.service';
-
-// Services
-import { SessionService } from './services/session.service';
-
-// Controllers
-import { AuthController } from './controllers/auth.controller';
-import { ClinicAuthController } from './controllers/clinic-auth.controller';
+// Guards - using shared guards from libs
 
 @Module({
   imports: [
@@ -35,62 +33,47 @@ import { ClinicAuthController } from './controllers/clinic-auth.controller';
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET') || 'default-secret',
         signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN') || '24h',
+          expiresIn: configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m',
         },
       }),
       inject: [ConfigService],
     }),
-    CacheServiceModule,
     DatabaseModule,
-    forwardRef(() => RbacModule),
+    RbacModule,
     SessionModule,
-    ResilienceModule,
     GuardsModule,
     EmailModule,
+    LoggingServiceModule,
   ],
-  controllers: [AuthController, ClinicAuthController],
+  controllers: [AuthController],
   providers: [
-    // Foundation services first (no dependencies)
-    BaseAuthService,
+    // Main auth service
+    AuthService,
     
-    // Plugin manager (initialized first, discovers plugins later)
-    PluginManagerService,
+    // Core auth services
+    JwtAuthService,
+    OtpService,
+    PasswordService,
+    SocialAuthService,
     
-    // Auth plugins (depend on BaseAuthService, no circular deps)
-    ClinicAuthPlugin,
-    SharedAuthPlugin,
-    
-    // High-level services (depend on plugin manager)
-    ClinicAuthService,
-    
-    // Session management
-    SessionService,
+    // Healthcare cache interceptor
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HealthcareCacheInterceptor,
+    },
   ],
   exports: [
-    BaseAuthService,
-    PluginManagerService,
-    ClinicAuthService,
-    SessionService,
+    AuthService,
+    JwtAuthService,
+    OtpService,
+    PasswordService,
+    SocialAuthService,
   ],
 })
 export class AuthModule implements OnModuleInit {
-  constructor(
-    private readonly moduleRef: ModuleRef,
-    private readonly pluginManager: PluginManagerService,
-  ) {}
+  constructor() {}
 
   async onModuleInit() {
-    // Register plugins after all dependencies are available
-    try {
-      const clinicPlugin = this.moduleRef.get(ClinicAuthPlugin);
-      const sharedPlugin = this.moduleRef.get(SharedAuthPlugin);
-
-      await this.pluginManager.registerPlugin(clinicPlugin);
-      await this.pluginManager.registerPlugin(sharedPlugin);
-      
-      console.log('✅ Auth plugins registered successfully');
-    } catch (error) {
-      console.error('❌ Failed to register auth plugins:', error);
-    }
+    console.log('✅ Auth Module initialized successfully');
   }
 }

@@ -61,9 +61,9 @@ export class ClinicUserService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users: ${error.message}`,
+        `Failed to get clinic users: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
         'ClinicUserService',
-        { clinicId, error: error.stack }
+        { clinicId, error: error instanceof Error ? (error as Error).stack : 'No stack trace available' }
       );
       throw error;
     }
@@ -114,9 +114,9 @@ export class ClinicUserService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users by role: ${error.message}`,
+        `Failed to get clinic users by role: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
         'ClinicUserService',
-        { clinicId, role, error: error.stack }
+        { clinicId, role, error: error instanceof Error ? (error as Error).stack : 'No stack trace available' }
       );
       throw error;
     }

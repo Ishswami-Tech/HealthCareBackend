@@ -43,11 +43,12 @@ export class BusinessRulesEngine {
         actions: []
       };
     } catch (error) {
-      this.logger.error(`Rule evaluation failed:`, error.stack);
+      this.logger.error(`Rule evaluation failed:`, error instanceof Error ? (error as Error).stack : '');
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       return {
         valid: false,
-        violations: [error.message],
-        warnings: [],
+        violations: [error instanceof Error ? (error as Error).message : 'Unknown error'],
+        warnings: [errorMessage],
         actions: []
       };
     }

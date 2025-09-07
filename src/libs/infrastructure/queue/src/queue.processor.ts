@@ -21,7 +21,7 @@ export class QueueProcessor {
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing create job: ${(error as Error).message}`, error.stack);
+        this.logger.error(`Error processing create job: ${(error as Error).message}`, (error as Error).stack);
       } else {
         this.logger.error(`Error processing create job: ${String(error)}`);
       }
@@ -45,7 +45,7 @@ export class QueueProcessor {
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing update job: ${(error as Error).message}`, error.stack);
+        this.logger.error(`Error processing update job: ${(error as Error).message}`, (error as Error).stack);
       } else {
         this.logger.error(`Error processing update job: ${String(error)}`);
       }
@@ -64,7 +64,7 @@ export class QueueProcessor {
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing confirm job: ${(error as Error).message}`, error.stack);
+        this.logger.error(`Error processing confirm job: ${(error as Error).message}`, (error as Error).stack);
       } else {
         this.logger.error(`Error processing confirm job: ${String(error)}`);
       }
@@ -83,7 +83,7 @@ export class QueueProcessor {
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing complete job: ${(error as Error).message}`, error.stack);
+        this.logger.error(`Error processing complete job: ${(error as Error).message}`, (error as Error).stack);
       } else {
         this.logger.error(`Error processing complete job: ${String(error)}`);
       }
@@ -110,7 +110,7 @@ export class QueueProcessor {
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing notification job: ${(error as Error).message}`, error.stack);
+        this.logger.error(`Error processing notification job: ${(error as Error).message}`, (error as Error).stack);
       } else {
         this.logger.error(`Error processing notification job: ${String(error)}`);
       }

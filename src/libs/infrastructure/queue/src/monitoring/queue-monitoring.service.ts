@@ -237,9 +237,9 @@ export class QueueMonitoringService {
     const queues = queueName ? [this.metrics.get(queueName)].filter(Boolean) : Array.from(this.metrics.values());
     
     return {
-      healthy: queues.filter(q => q.health === 'healthy').length,
-      degraded: queues.filter(q => q.health === 'degraded').length,
-      unhealthy: queues.filter(q => q.health === 'unhealthy').length,
+      healthy: queues.filter(q => q?.health === 'healthy').length,
+      degraded: queues.filter(q => q?.health === 'degraded').length,
+      unhealthy: queues.filter(q => q?.health === 'unhealthy').length,
       total: queues.length
     };
   }
@@ -391,11 +391,11 @@ export class QueueMonitoringService {
       return 'healthy';
     }
 
-    if (metrics.errorRate > 10 || metrics.throughput === 0) {
+    if ((metrics.errorRate || 0) > 10 || (metrics.throughput || 0) === 0) {
       return 'unhealthy';
     }
 
-    if (metrics.errorRate > 5 || metrics.throughput < 5) {
+    if ((metrics.errorRate || 0) > 5 || (metrics.throughput || 0) < 5) {
       return 'degraded';
     }
 

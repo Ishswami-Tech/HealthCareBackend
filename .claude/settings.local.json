@@ -4,7 +4,22 @@
       "Bash(docker logs:*)",
       "Bash(docker exec:*)",
       "Bash(docker restart:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Read(//d/Projects/**)",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(docker-compose:*)",
+      "Bash(npm run build:*)",
+      "Bash(docker ps:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 30 npm start)",
+      "Bash(npm start)",
+      "Bash(dir:*)",
+      "Bash(yarn build)",
+      "Bash(timeout 15 npm start)",
+      "Bash(npm search:*)",
+      "Bash(npm install:*)",
+      "Bash(yarn add:*)"
     ],
     "deny": [],
     "ask": []

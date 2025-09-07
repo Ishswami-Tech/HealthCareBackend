@@ -1,10 +1,9 @@
-import { Module, DynamicModule, forwardRef, Global } from '@nestjs/common';
+import { Module, DynamicModule, forwardRef } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { QueueService } from './queue.service';
 import { QueueProcessor } from './queue.processor';
 import { SharedWorkerService } from './shared-worker.service';
-import { QueueMonitoringService } from './monitoring/queue-monitoring.service';
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
@@ -33,8 +32,6 @@ import {
 } from './queue.constants';
 import { Queue, Worker } from 'bullmq';
 import { DatabaseModule, PrismaService } from '../../database';
-import { LoggingServiceModule } from '../../logging';
-import { CacheServiceModule } from '../../cache/cache-service.module';
 
 @Module({})
 export class QueueModule {
@@ -73,10 +70,10 @@ export class QueueModule {
       queueNames = clinicQueues;
       // Fashion-specific Redis configuration
       redisConfig = {
-        host: process.env.FASHION_REDIS_HOST || process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.FASHION_REDIS_PORT || process.env.REDIS_PORT || '6379'),
-        password: process.env.FASHION_REDIS_PASSWORD || process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.FASHION_REDIS_DB || '2'), // Separate DB for clinic
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379'),
+        password: process.env.REDIS_PASSWORD,
+        db: parseInt(process.env.REDIS_DB || '2'), // Database for queue operations
       };
     } else if (serviceName === 'worker') {
       // Worker processes ALL queues from both services
@@ -105,8 +102,6 @@ export class QueueModule {
       imports: [
         forwardRef(() => DatabaseModule),
         ConfigModule,
-        forwardRef(() => LoggingServiceModule),
-        forwardRef(() => CacheServiceModule),
         QueueMonitoringModule,
         BullModule.forRootAsync({
           imports: [ConfigModule],
@@ -174,17 +169,26 @@ export class QueueModule {
       providers: [
         QueueService,
         QueueProcessor,
-        QueueMonitoringService,
         ...(serviceName === 'worker' ? [SharedWorkerService] : []),
-        QueueStatusGateway,
+        ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
         {
           provide: 'BullBoard',
           useFactory: (...queues: Queue[]) => {
             const serverAdapter = new FastifyAdapter();
             
-            // Show all queues for single application (domain filtering removed)
+            // Domain-aware Bull Board - only show queues for current domain
+            const domainQueues = queues.filter(queue => {
+              const queueName = queue.name;
+              if (serviceName === 'clinic') {
+                return queueName.includes('clinic');
+              } else if (serviceName === 'worker') {
+                return true; // Worker sees all queues
+              }
+              return true; // Worker sees all queues
+            });
+            
             createBullBoard({
-              queues: queues.map(queue => new BullMQAdapter(queue)),
+              queues: domainQueues.map(queue => new BullMQAdapter(queue)),
               serverAdapter,
               // Enhanced Bull Board configuration
               options: {
@@ -284,7 +288,12 @@ export class QueueModule {
           useValue: []
         }] : [])
       ],
-      exports: [QueueService, QueueMonitoringService, BullModule, ...(serviceName === 'worker' ? [SharedWorkerService] : []), QueueStatusGateway]
+      exports: [
+        QueueService, 
+        BullModule, 
+        SharedWorkerService, 
+        ...(serviceName !== 'worker' ? [QueueStatusGateway] : [])
+      ]
     };
   }
 
@@ -293,8 +302,6 @@ export class QueueModule {
       module: QueueModule,
       imports: [
         forwardRef(() => DatabaseModule),
-        forwardRef(() => LoggingServiceModule),
-        forwardRef(() => CacheServiceModule),
         BullModule.registerQueue({
           name: SERVICE_QUEUE,
         }),

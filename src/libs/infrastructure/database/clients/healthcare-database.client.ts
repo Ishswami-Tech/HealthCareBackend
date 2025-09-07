@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectionPoolManager } from '../connection-pool.manager';
@@ -28,6 +28,7 @@ import {
  * - Multi-tenant clinic isolation
  * - HIPAA compliance features
  */
+@Injectable()
 export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   protected readonly logger = new Logger(HealthcareDatabaseClient.name);
   private auditLog: AuditInfo[] = [];
@@ -38,7 +39,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     protected readonly connectionPoolManager: ConnectionPoolManager,
     protected readonly metricsService: DatabaseMetricsService,
     protected readonly clinicIsolationService: ClinicIsolationService,
-    protected readonly config: HealthcareDatabaseConfig,
+    @Inject('HealthcareDatabaseConfig') protected readonly config: HealthcareDatabaseConfig,
   ) {}
 
   /**
@@ -69,10 +70,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       const executionTime = Date.now() - startTime;
       this.metricsService.recordQueryExecution('RAW_QUERY', executionTime, false);
       
-      this.logger.error(`Raw query failed: ${error.message}`, {
+      this.logger.error(`Raw query failed: ${(error as Error).message}`, {
         query: query.substring(0, 100),
         executionTime,
-        error: error.message
+        error: (error as Error).message
       });
       
       throw error;
@@ -83,7 +84,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
    * Execute operation within a transaction
    */
   async executeInTransaction<T>(
-    operation: (client: PrismaClient) => Promise<T>
+    operation: (client: Omit<PrismaClient, "$on" | "$connect" | "$disconnect" | "$transaction" | "$extends">) => Promise<T>
   ): Promise<T> {
     const startTime = Date.now();
     
@@ -96,14 +97,14 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       const executionTime = Date.now() - startTime;
       this.metricsService.recordQueryExecution('TRANSACTION', executionTime, true);
       
-      return result;
+      return result as T;
     } catch (error) {
       const executionTime = Date.now() - startTime;
       this.metricsService.recordQueryExecution('TRANSACTION', executionTime, false);
       
-      this.logger.error(`Transaction failed: ${error.message}`, {
+      this.logger.error(`Transaction failed: ${(error as Error).message}`, {
         executionTime,
-        error: error.message
+        error: (error as Error).message
       });
       
       throw error;
@@ -141,15 +142,15 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       const executionTime = Date.now() - startTime;
       this.metricsService.recordQueryExecution('HEALTHCARE_READ', executionTime, false);
       
-      this.logger.error(`Healthcare read operation failed: ${error.message}`, {
+      this.logger.error(`Healthcare read operation failed: ${(error as Error).message}`, {
         executionTime,
-        error: error.message
+        error: (error as Error).message
       });
       
       throw new HealthcareError(
-        `Healthcare read operation failed: ${error.message}`,
+        `Healthcare read operation failed: ${(error as Error).message}`,
         'HEALTHCARE_READ_ERROR',
-        { executionTime, originalError: error.message },
+        { executionTime, originalError: (error as Error).message },
         false
       );
     }
@@ -174,7 +175,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       
       // Execute within transaction for data consistency
       const data = await this.executeInTransaction(async (client) => {
-        const operationResult = await operation(client);
+        const operationResult = await operation(client as any);
         
         // Create audit trail entry
         if (this.config.enableAuditLogging) {
@@ -198,22 +199,22 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       // Create audit trail for failed operation
       if (this.config.enableAuditLogging) {
         try {
-          await this.createAuditTrail(auditInfo, 'FAILURE', error.message);
+          await this.createAuditTrail(auditInfo, 'FAILURE', (error as Error).message);
         } catch (auditError) {
           this.logger.error('Failed to create audit trail for failed operation:', auditError);
         }
       }
       
-      this.logger.error(`Healthcare write operation failed: ${error.message}`, {
+      this.logger.error(`Healthcare write operation failed: ${(error as Error).message}`, {
         executionTime,
         auditInfo,
-        error: error.message
+        error: (error as Error).message
       });
       
       throw new HealthcareError(
-        `Healthcare write operation failed: ${error.message}`,
+        `Healthcare write operation failed: ${(error as Error).message}`,
         'HEALTHCARE_WRITE_ERROR',
-        { executionTime, auditInfo, originalError: error.message },
+        { executionTime, auditInfo, originalError: (error as Error).message },
         false
       );
     }
@@ -258,16 +259,16 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       const executionTime = Date.now() - startTime;
       this.metricsService.recordQueryExecution('CRITICAL_OPERATION', executionTime, false);
       
-      this.logger.error(`Critical healthcare operation failed: ${error.message}`, {
+      this.logger.error(`Critical healthcare operation failed: ${(error as Error).message}`, {
         priority,
         executionTime,
-        error: error.message
+        error: (error as Error).message
       });
       
       throw new HealthcareError(
-        `Critical healthcare operation failed: ${error.message}`,
+        `Critical healthcare operation failed: ${(error as Error).message}`,
         'CRITICAL_OPERATION_ERROR',
-        { priority, executionTime, originalError: error.message },
+        { priority, executionTime, originalError: (error as Error).message },
         priority !== CriticalPriority.EMERGENCY // Retry unless emergency
       );
     }
@@ -309,7 +310,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       this.logger.error(`Clinic operation failed for ${clinicId}:`, {
         clinicId,
         executionTime,
-        error: error.message
+        error: (error as Error).message
       });
       
       throw error;
@@ -343,7 +344,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         activeQueries: 0,
         avgResponseTime: -1,
         lastHealthCheck: new Date(),
-        errors: [error.message]
+        errors: [(error as Error).message]
       };
     }
   }
@@ -753,13 +754,13 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       this.metricsService.recordQueryExecution(operationName, executionTime, false, clinicId, userId);
       
       this.logger.error(`Operation ${operationName} failed:`, {
-        error: error.message,
+        error: (error as Error).message,
         executionTime,
         clinicId,
         userId
       });
       
-      return RepositoryResult.failure(error, {
+      return RepositoryResult.failure(error as Error, {
         executionTime,
         operation: operationName,
         clinicId,
@@ -860,3 +861,4 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     }
   }
 }
+

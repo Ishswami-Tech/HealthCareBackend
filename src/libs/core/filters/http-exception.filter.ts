@@ -93,7 +93,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
     
     // Enhanced error response with more context
-    const errorResponse = {
+    const errorResponse: any = {
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,

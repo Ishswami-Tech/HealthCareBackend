@@ -90,7 +90,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to check in: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { appointmentId, userId, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -135,7 +135,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to get checked-in appointments: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { clinicId, error: error instanceof Error ? error.stack : undefined }
+        { clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -175,7 +175,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to process check-in: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { appointmentId, clinicId, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -224,7 +224,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to get patient queue position: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { appointmentId, clinicId, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -261,7 +261,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to start consultation: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { appointmentId, clinicId, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -307,7 +307,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to get doctor active queue: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { doctorId, clinicId, error: error instanceof Error ? error.stack : undefined }
+        { doctorId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -341,7 +341,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to reorder queue: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { clinicId, appointmentOrder, error: error instanceof Error ? error.stack : undefined }
+        { clinicId, appointmentOrder, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -386,7 +386,7 @@ export class CheckInService {
         LogLevel.ERROR,
         `Failed to get location queue: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'CheckInService',
-        { clinicId, error: error instanceof Error ? error.stack : undefined }
+        { clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }

@@ -210,11 +210,11 @@ export class ConflictResolutionService {
       return result;
 
     } catch (error) {
-      this.logger.error(`❌ Conflict resolution failed: ${error.message}`);
+      this.logger.error(`❌ Conflict resolution failed: ${(error as Error).message}`);
       result.conflicts.push({
         type: 'business_rule',
         severity: 'critical',
-        description: `System error during conflict resolution: ${error.message}`,
+        description: `System error during conflict resolution: ${(error as Error).message}`,
         affectedResources: ['system']
       });
       return result;

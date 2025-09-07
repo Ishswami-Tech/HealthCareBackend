@@ -51,7 +51,7 @@ export class LoggingService {
   private serviceName: string;
   private readonly maxBufferSize = 10000; // Increased for 1M users
   private readonly flushInterval = 5000; // 5 seconds for 1M users
-  private metricsFlushInterval: NodeJS.Timeout;
+  private metricsFlushInterval!: NodeJS.Timeout;
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -200,7 +200,7 @@ export class LoggingService {
             } catch (auditError) {
               // For 1M users, we need resilient logging
               if (process.env.NODE_ENV === 'development') {
-                console.debug('Audit log creation failed (development mode):', auditError.message);
+                console.debug('Audit log creation failed (development mode):', (auditError as Error).message);
               }
             }
           }
@@ -371,7 +371,7 @@ export class LoggingService {
 
         return result;
       } catch (error) {
-        this.logger.error('Database query failed, falling back to Redis', error.message);
+        this.logger.error('Database query failed, falling back to Redis', (error as Error).message);
         
         // Fallback to Redis-only logs
         try {
@@ -386,7 +386,7 @@ export class LoggingService {
           
           return parsedLogs;
         } catch (redisError) {
-          this.logger.error('Redis fallback also failed', redisError.message);
+          this.logger.error('Redis fallback also failed', (redisError as Error).message);
           return [];
         }
       }

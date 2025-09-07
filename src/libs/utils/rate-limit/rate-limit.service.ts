@@ -63,7 +63,7 @@ export class RateLimitService {
         remaining: Math.max(0, maxRequests - requestCount),
       };
     } catch (error) {
-      this.logger.error(`Rate limiting error: ${error.message}`, error.stack);
+      this.logger.error(`Rate limiting error: ${(error as Error).message}`, (error as Error).stack);
       return { limited: false, remaining: maxRequests }; // Fail open in case of Redis errors
     }
   }
@@ -79,7 +79,7 @@ export class RateLimitService {
       }
       await this.cacheService.expire(metricsKey, 86400 * 7); // Keep metrics for 7 days
     } catch (error) {
-      this.logger.warn(`Failed to track rate limit metrics: ${error.message}`);
+      this.logger.warn(`Failed to track rate limit metrics: ${(error as Error).message}`);
     }
   }
 

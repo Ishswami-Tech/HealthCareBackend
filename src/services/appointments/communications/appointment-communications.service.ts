@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SocketService } from '../../../libs/communication/socket/socket.service';
+import { SocketService, SocketEventData } from '../../../libs/communication/socket/socket.service';
 import { CacheService } from '../../../libs/infrastructure/cache/cache.service';
 import { LoggingService } from '../../../libs/infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '../../../libs/infrastructure/logging/types/logging.types';
 
-export interface AppointmentSocketMessage {
+export interface AppointmentSocketMessage extends SocketEventData {
   type: 'queue_update' | 'appointment_status' | 'video_call' | 'notification';
   appointmentId: string;
   clinicId: string;
@@ -72,9 +72,9 @@ export class AppointmentCommunicationsService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send queue update: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send queue update: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentCommunicationsService',
-        { clinicId, doctorId, queueData, error: error instanceof Error ? error.stack : undefined }
+        { clinicId, doctorId, queueData, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -124,9 +124,9 @@ export class AppointmentCommunicationsService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send appointment status update: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send appointment status update: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentCommunicationsService',
-        { appointmentId, clinicId, userId, statusData, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, clinicId, userId, statusData, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -180,9 +180,9 @@ export class AppointmentCommunicationsService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send video call notification: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send video call notification: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentCommunicationsService',
-        { appointmentId, clinicId, patientId, doctorId, callData, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, clinicId, patientId, doctorId, callData, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -232,9 +232,9 @@ export class AppointmentCommunicationsService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send notification: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send notification: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentCommunicationsService',
-        { userId, clinicId, notificationData, error: error instanceof Error ? error.stack : undefined }
+        { userId, clinicId, notificationData, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -283,9 +283,9 @@ export class AppointmentCommunicationsService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get active connections: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get active connections: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentCommunicationsService',
-        { clinicId, error: error instanceof Error ? error.stack : undefined }
+        { clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -325,9 +325,9 @@ export class AppointmentCommunicationsService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to join appointment room: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to join appointment room: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentCommunicationsService',
-        { userId, appointmentId, clinicId, error: error instanceof Error ? error.stack : undefined }
+        { userId, appointmentId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -366,9 +366,9 @@ export class AppointmentCommunicationsService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to leave appointment room: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to leave appointment room: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentCommunicationsService',
-        { userId, appointmentId, error: error instanceof Error ? error.stack : undefined }
+        { userId, appointmentId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }

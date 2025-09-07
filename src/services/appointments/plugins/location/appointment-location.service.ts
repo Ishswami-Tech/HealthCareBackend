@@ -108,7 +108,7 @@ export class AppointmentLocationService {
         LogLevel.ERROR,
         `Failed to get locations: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentLocationService',
-        { domain, error: error instanceof Error ? error.stack : undefined }
+        { domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -156,7 +156,7 @@ export class AppointmentLocationService {
         LogLevel.ERROR,
         `Failed to get location: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentLocationService',
-        { locationId, domain, error: error instanceof Error ? error.stack : undefined }
+        { locationId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -202,7 +202,7 @@ export class AppointmentLocationService {
         LogLevel.ERROR,
         `Failed to get doctors: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentLocationService',
-        { locationId, domain, error: error instanceof Error ? error.stack : undefined }
+        { locationId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -247,7 +247,7 @@ export class AppointmentLocationService {
         LogLevel.ERROR,
         `Failed to get location stats: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentLocationService',
-        { locationId, domain, error: error instanceof Error ? error.stack : undefined }
+        { locationId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -284,7 +284,7 @@ export class AppointmentLocationService {
         LogLevel.ERROR,
         `Failed to invalidate location cache: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentLocationService',
-        { domain, error: error instanceof Error ? error.stack : undefined }
+        { domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -319,7 +319,7 @@ export class AppointmentLocationService {
         LogLevel.ERROR,
         `Failed to invalidate doctors cache: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentLocationService',
-        { locationId, domain, error: error instanceof Error ? error.stack : undefined }
+        { locationId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }

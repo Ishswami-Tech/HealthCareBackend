@@ -30,7 +30,6 @@ export class BullBoardService {
    */
   getQueues() {
     const queues: Record<string, Queue | undefined> = {};
-    
     if (this.serviceQueue) queues[SERVICE_QUEUE] = this.serviceQueue;
     if (this.appointmentQueue) queues[APPOINTMENT_QUEUE] = this.appointmentQueue;
     if (this.emailQueue) queues[EMAIL_QUEUE] = this.emailQueue;
@@ -38,7 +37,6 @@ export class BullBoardService {
     if (this.vidhakarmaQueue) queues[VIDHAKARMA_QUEUE] = this.vidhakarmaQueue;
     if (this.panchakarmaQueue) queues[PANCHAKARMA_QUEUE] = this.panchakarmaQueue;
     if (this.chequpQueue) queues[CHEQUP_QUEUE] = this.chequpQueue;
-    
     return queues;
   }
 
@@ -47,14 +45,14 @@ export class BullBoardService {
    */
   async getQueueStats() {
     const queues = this.getQueues();
-    const stats = {};
+    const stats: Record<string, any> = {};
 
     for (const [name, queue] of Object.entries(queues)) {
       if (!queue) {
         stats[name] = { error: 'Queue not available' };
         continue;
       }
-      
+
       try {
         const [waiting, active, completed, failed, delayed] = await Promise.all([
           queue.getWaiting(),
@@ -73,8 +71,8 @@ export class BullBoardService {
           total: waiting.length + active.length + completed.length + failed.length + delayed.length,
         };
       } catch (error) {
-        this.logger.error(`Failed to get stats for queue ${name}:`, error.stack);
-        stats[name] = { error: error.message };
+        this.logger.error(`Failed to get stats for queue ${name}:`, error instanceof Error ? (error as Error).stack : '');
+        stats[name] = { error: error instanceof Error ? (error as Error).message : 'Unknown error' };
       }
     }
 
@@ -116,7 +114,7 @@ export class BullBoardService {
         },
       };
     } catch (error) {
-      this.logger.error(`Failed to get details for queue ${queueName}:`, error.stack);
+      this.logger.error(`Failed to get details for queue ${queueName}:`, error instanceof Error ? (error as Error).stack : '');
       throw error;
     }
   }
@@ -157,7 +155,7 @@ export class BullBoardService {
         return results;
       }
     } catch (error) {
-      this.logger.error(`Failed to retry jobs in queue ${queueName}:`, error.stack);
+      this.logger.error(`Failed to retry jobs in queue ${queueName}:`, error instanceof Error ? (error as Error).stack : '');
       throw error;
     }
   }
@@ -186,7 +184,7 @@ export class BullBoardService {
       }
       return results;
     } catch (error) {
-      this.logger.error(`Failed to remove jobs from queue ${queueName}:`, error.stack);
+      this.logger.error(`Failed to remove jobs from queue ${queueName}:`, error instanceof Error ? (error as Error).stack : '');
       throw error;
     }
   }
@@ -212,7 +210,7 @@ export class BullBoardService {
       }
       return { queueName, paused: pause };
     } catch (error) {
-      this.logger.error(`Failed to ${pause ? 'pause' : 'resume'} queue ${queueName}:`, error.stack);
+      this.logger.error(`Failed to ${pause ? 'pause' : 'resume'} queue ${queueName}:`, error instanceof Error ? (error as Error).stack : '');
       throw error;
     }
   }
@@ -223,9 +221,9 @@ export class BullBoardService {
   async getQueueHealth() {
     const stats = await this.getQueueStats();
     const health = {
-      overall: 'healthy',
-      queues: {},
-      issues: [],
+      overall: 'healthy' as string,
+      queues: {} as Record<string, string>,
+      issues: [] as string[],
     };
 
     for (const [queueName, queueStats] of Object.entries(stats)) {

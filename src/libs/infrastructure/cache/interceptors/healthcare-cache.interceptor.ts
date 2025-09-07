@@ -10,11 +10,11 @@ import { Observable, of, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { CacheService } from '../cache.service';
 import { 
-  HEALTHCARE_CACHE_KEY, 
-  HEALTHCARE_CACHE_INVALIDATE_KEY,
-  HealthcareCacheOptions,
+  CACHE_KEY, 
+  CACHE_INVALIDATE_KEY,
+  UnifiedCacheOptions,
   CacheInvalidationOptions
-} from '../decorators/healthcare-cache.decorator';
+} from '../decorators/cache.decorator';
 
 @Injectable()
 export class HealthcareCacheInterceptor implements NestInterceptor {
@@ -26,8 +26,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
-    const cacheOptions = this.reflector.get<HealthcareCacheOptions>(HEALTHCARE_CACHE_KEY, context.getHandler());
-    const invalidationOptions = this.reflector.get<CacheInvalidationOptions>(HEALTHCARE_CACHE_INVALIDATE_KEY, context.getHandler());
+    const cacheOptions = this.reflector.get<UnifiedCacheOptions>(CACHE_KEY, context.getHandler());
+    const invalidationOptions = this.reflector.get<CacheInvalidationOptions>(CACHE_INVALIDATE_KEY, context.getHandler());
 
     // If no cache configuration, proceed normally
     if (!cacheOptions && !invalidationOptions) {
@@ -54,7 +54,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   private async handleCacheRead(
     context: ExecutionContext,
     next: CallHandler,
-    options: HealthcareCacheOptions
+    options: UnifiedCacheOptions
   ): Promise<Observable<any>> {
     try {
       const cacheKey = this.generateCacheKey(context, options);
@@ -132,13 +132,18 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     );
   }
 
-  private generateCacheKey(context: ExecutionContext, options: HealthcareCacheOptions): string | null {
+  private generateCacheKey(context: ExecutionContext, options: UnifiedCacheOptions): string | null {
     try {
       const request = context.switchToHttp().getRequest();
 
       // Use custom key generator if provided
+      if (options.customKeyGenerator) {
+        return options.customKeyGenerator(context);
+      }
+      
+      // Use legacy keyGenerator for backward compatibility
       if (options.keyGenerator) {
-        return options.keyGenerator(context);
+        return options.keyGenerator();
       }
 
       // Use key template with parameter substitution
@@ -186,7 +191,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
   }
 
-  private async getCachedValue(cacheKey: string, options: HealthcareCacheOptions): Promise<any> {
+  private async getCachedValue(cacheKey: string, options: UnifiedCacheOptions): Promise<any> {
     try {
       // Route to appropriate cache method based on healthcare data type
       if (options.patientSpecific) {
@@ -222,7 +227,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   private async setCacheValue(
     cacheKey: string, 
     value: any, 
-    options: HealthcareCacheOptions,
+    options: UnifiedCacheOptions,
     context: ExecutionContext
   ): Promise<void> {
     try {
@@ -242,9 +247,9 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         await this.cacheService['redisService'].set(cacheKey, serializedValue, emergencyTTL);
       } else {
         // Standard caching with SWR support
-        await this.cacheService['redisService'].cache(cacheKey, () => Promise.resolve(value), {
+        await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {
           ttl,
-          compress: options.compress,
+          compress: options.compress || options.enableCompression,
           priority: this.mapPriority(options.priority),
           enableSwr: options.enableSWR !== false,
           staleTime: options.staleTime,
@@ -289,10 +294,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
 
       // Invalidate by tags
-      if (options.tags?.length > 0) {
-        for (const tag of options.tags) {
-          await this.cacheService['redisService'].invalidateCacheByTag(tag);
-          this.logger.debug(`Invalidated cache tag: ${tag}`);
+      if (options.tags && options.tags.length > 0) {        for (const tag of options.tags) {          await this.cacheService['redisService'].invalidateCacheByTag(tag);          this.logger.debug(`Invalidated cache tag: ${tag}`);
         }
       }
 
@@ -321,7 +323,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
   }
 
-  private calculateTTL(options: HealthcareCacheOptions, context: ExecutionContext): number {
+  private calculateTTL(options: UnifiedCacheOptions, context: ExecutionContext): number {
     if (options.ttl) {
       return options.ttl;
     }
@@ -388,7 +390,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   /**
    * Check if current request should bypass cache based on various factors
    */
-  private shouldBypassCache(context: ExecutionContext, options: HealthcareCacheOptions): boolean {
+  private shouldBypassCache(context: ExecutionContext, options: UnifiedCacheOptions): boolean {
     const request = context.switchToHttp().getRequest();
     
     // Always bypass cache for emergency users when dealing with patient data

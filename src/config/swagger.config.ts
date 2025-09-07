@@ -96,7 +96,9 @@ ${getEnvironmentConfig().app.environment !== 'production' ? `
 
 // Add servers after building the config
 getApiServers().forEach(server => {
-  swaggerConfig.servers.push(server);
+  if (swaggerConfig.servers) {
+    swaggerConfig.servers.push(server);
+  }
 });
 
 export const swaggerCustomOptions: SwaggerCustomOptions = {

@@ -11,7 +11,7 @@ import {
 } from '@nestjs/websockets';
 import { Logger, Injectable, Inject, Optional } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { SocketService } from './socket.service';
+import { SocketService, SocketEventData } from './socket.service';
 
 @Injectable()
 @WebSocketGateway({
@@ -24,7 +24,7 @@ import { SocketService } from './socket.service';
 })
 export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer()
-  protected server: Server;
+  protected server!: Server;
 
   protected logger: Logger;
   protected readonly roomsByClient: Map<string, Set<string>> = new Map();
@@ -64,14 +64,14 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       
       // Set up error handling for the server
       this.server.on('error', (error: Error) => {
-        const errorMessage = error?.message || 'Unknown error';
-        const errorStack = error?.stack || '';
+        const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+        const errorStack = error instanceof Error ? (error as Error).stack || '' : '';
         this.logger.error(`Socket.IO server error: ${errorMessage}`, errorStack);
       });
 
       this.server.on('connection_error', (error: Error) => {
-        const errorMessage = error?.message || 'Unknown error';
-        const errorStack = error?.stack || '';
+        const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+        const errorStack = error instanceof Error ? (error as Error).stack || '' : '';
         this.logger.error(`Socket.IO connection error: ${errorMessage}`, errorStack);
       });
 
@@ -84,8 +84,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
 
       this.logger.log('WebSocket server initialized successfully');
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error?.stack || '';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      const errorStack = error instanceof Error ? (error as Error).stack || '' : '';
       this.logger.error(`Failed to initialize WebSocket server: ${errorMessage}`, errorStack);
       this.logger.warn('Continuing with limited functionality due to initialization failure');
     }
@@ -101,7 +101,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         this.initializationAttempts++;
         this.logger.warn(
           `Failed to initialize SocketService (attempt ${this.initializationAttempts}/${this.MAX_INITIALIZATION_ATTEMPTS}):`,
-          error instanceof Error ? error.message : 'Unknown error'
+          error instanceof Error ? (error as Error).message : 'Unknown error'
         );
         
         if (this.initializationAttempts < this.MAX_INITIALIZATION_ATTEMPTS) {
@@ -130,7 +130,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
 
       return { event: 'connected', data: { clientId } };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error handling connection: ${errorMessage}`);
       return { event: 'error', data: { message: 'Connection error' } };
     }
@@ -156,7 +156,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         }
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error handling disconnection: ${errorMessage}`);
     }
   }
@@ -177,7 +177,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         client.disconnect();
       }
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error in handleSocketError: ${errorMessage}`);
     }
   }
@@ -194,7 +194,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         }, this.RECONNECT_INTERVAL);
       }
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error in handleReconnection: ${errorMessage}`);
     }
   }
@@ -209,8 +209,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       await this.joinRoom(client, room);
       return { event: 'joinRoom', data: { success: true, room } };
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
-      const errorStack = error?.stack || '';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      const errorStack = error instanceof Error ? (error as Error).stack || '' : '';
       this.logger.error(`Error joining room: ${errorMessage}`, errorStack);
       return { event: 'joinRoom', data: { success: false, error: errorMessage } };
     }
@@ -226,8 +226,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       await this.leaveRoom(client, room);
       return { event: 'leaveRoom', data: { success: true, room } };
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
-      const errorStack = error?.stack || '';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      const errorStack = error instanceof Error ? (error as Error).stack || '' : '';
       this.logger.error(`Error leaving room: ${errorMessage}`, errorStack);
       return { event: 'leaveRoom', data: { success: false, error: errorMessage } };
     }
@@ -247,12 +247,12 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       if (!this.clientsByRoom.has(room)) {
         this.clientsByRoom.set(room, new Set());
       }
-      this.clientsByRoom.get(room).add(client.id);
+      this.clientsByRoom.get(room)?.add(client.id);
       
       this.logger.log(`Client ${client.id} joined room: ${room}`);
       return { success: true };
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error in joinRoom: ${errorMessage}`);
       return { success: false };
     }
@@ -280,7 +280,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       this.logger.log(`Client ${client.id} left room: ${room}`);
       return { success: true };
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error in leaveRoom: ${errorMessage}`);
       return { success: false };
     }
@@ -299,7 +299,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         await this.leaveRoom(client, room);
       }
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error in leaveAllRooms: ${errorMessage}`);
     }
   }
@@ -312,17 +312,17 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
     return this.clientMetadata.get(clientId);
   }
   
-  protected broadcastToRoom(room: string, event: string, data: any): void {
+  protected broadcastToRoom(room: string, event: string, data: SocketEventData): void {
     try {
       this.server.to(room).emit(event, data);
       this.logger.debug(`Broadcasted ${event} to room ${room}`);
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error in broadcastToRoom: ${errorMessage}`);
     }
   }
   
-  protected sendToUser(clientId: string, event: string, data: any): void {
+  protected sendToUser(clientId: string, event: string, data: SocketEventData): void {
     try {
       const socket = this.server.sockets.sockets.get(clientId);
       if (socket) {
@@ -332,7 +332,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         this.logger.warn(`Client ${clientId} not found for sending ${event}`);
       }
     } catch (error) {
-      const errorMessage = error?.message || 'Unknown error';
+      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
       this.logger.error(`Error in sendToUser: ${errorMessage}`);
     }
   }

@@ -28,35 +28,35 @@ export class HealthCheckResponseDto {
     enum: HealthStatus
   })
   @IsEnum(HealthStatus, { message: 'Status must be a valid health status' })
-  status: HealthStatus;
+  status!: HealthStatus;
 
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Timestamp of the health check'
   })
   @IsDateString({}, { message: 'Timestamp must be a valid date string' })
-  timestamp: string;
+  timestamp!: string;
 
   @ApiProperty({
     example: 'Healthcare Backend API',
     description: 'Name of the service being checked'
   })
   @IsString({ message: 'Service name must be a string' })
-  service: string;
+  service!: string;
 
   @ApiProperty({
     example: '1.0.0',
     description: 'Version of the service'
   })
   @IsString({ message: 'Version must be a string' })
-  version: string;
+  version!: string;
 
   @ApiProperty({
     example: 'healthcare-backend',
     description: 'Environment where the service is running'
   })
   @IsString({ message: 'Environment must be a string' })
-  environment: string;
+  environment!: string;
 
   @ApiPropertyOptional({
     example: 'uptime: 24h, memory: 512MB',
@@ -77,7 +77,7 @@ export class DetailedHealthCheckResponseDto extends HealthCheckResponseDto {
     additionalProperties: true
   })
   @IsObject({ message: 'Services must be an object' })
-  services: Record<string, ServiceHealthDto>;
+  services!: Record<string, ServiceHealthDto>;
 
   @ApiProperty({
     description: 'System metrics and performance data',
@@ -85,14 +85,14 @@ export class DetailedHealthCheckResponseDto extends HealthCheckResponseDto {
     additionalProperties: true
   })
   @IsObject({ message: 'Metrics must be an object' })
-  metrics: SystemMetricsDto;
+  metrics!: SystemMetricsDto;
 
   @ApiProperty({
     example: 'healthcare',
     description: 'Application domain for multi-domain setup'
   })
   @IsString({ message: 'App domain must be a string' })
-  appDomain: string;
+  appDomain!: string;
 }
 
 /**
@@ -105,14 +105,14 @@ export class ServiceHealthDto {
     enum: ServiceStatus
   })
   @IsEnum(ServiceStatus, { message: 'Service status must be a valid status' })
-  status: ServiceStatus;
+  status!: ServiceStatus;
 
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Last check timestamp for this service'
   })
   @IsDateString({}, { message: 'Last check must be a valid date string' })
-  lastCheck: string;
+  lastCheck!: string;
 
   @ApiPropertyOptional({
     example: 'Response time: 15ms',
@@ -140,42 +140,42 @@ export class SystemMetricsDto {
     description: 'System uptime in hours'
   })
   @IsNumber({}, { message: 'Uptime must be a number' })
-  uptime: number;
+  uptime!: number;
 
   @ApiProperty({
     example: 512,
     description: 'Memory usage in MB'
   })
   @IsNumber({}, { message: 'Memory usage must be a number' })
-  memoryUsage: number;
+  memoryUsage!: number;
 
   @ApiProperty({
     example: 2.5,
     description: 'CPU usage percentage'
   })
   @IsNumber({}, { message: 'CPU usage must be a number' })
-  cpuUsage: number;
+  cpuUsage!: number;
 
   @ApiProperty({
     example: 1000,
     description: 'Total requests processed'
   })
   @IsNumber({}, { message: 'Total requests must be a number' })
-  totalRequests: number;
+  totalRequests!: number;
 
   @ApiProperty({
     example: 50,
     description: 'Active connections'
   })
   @IsNumber({}, { message: 'Active connections must be a number' })
-  activeConnections: number;
+  activeConnections!: number;
 
   @ApiProperty({
     example: 99.9,
     description: 'System availability percentage'
   })
   @IsNumber({}, { message: 'Availability must be a number' })
-  availability: number;
+  availability!: number;
 }
 
 /**
@@ -221,7 +221,7 @@ export class ServiceHealthUpdateDto {
   })
   @IsString({ message: 'Service name must be a string' })
   @IsNotEmpty({ message: 'Service name is required' })
-  serviceName: string;
+  serviceName!: string;
 
   @ApiProperty({
     example: 'up',
@@ -230,7 +230,7 @@ export class ServiceHealthUpdateDto {
   })
   @IsEnum(ServiceStatus, { message: 'Service status must be a valid status' })
   @IsNotEmpty({ message: 'Service status is required' })
-  status: ServiceStatus;
+  status!: ServiceStatus;
 
   @ApiPropertyOptional({
     example: 'Connection restored',
@@ -314,40 +314,40 @@ export class HealthCheckSummaryDto {
     enum: HealthStatus
   })
   @IsEnum(HealthStatus, { message: 'Overall status must be a valid health status' })
-  overallStatus: HealthStatus;
+  overallStatus!: HealthStatus;
 
   @ApiProperty({
     example: 5,
     description: 'Total number of services monitored'
   })
   @IsNumber({}, { message: 'Total services must be a number' })
-  totalServices: number;
+  totalServices!: number;
 
   @ApiProperty({
     example: 4,
     description: 'Number of healthy services'
   })
   @IsNumber({}, { message: 'Healthy services must be a number' })
-  healthyServices: number;
+  healthyServices!: number;
 
   @ApiProperty({
     example: 1,
     description: 'Number of unhealthy services'
   })
   @IsNumber({}, { message: 'Unhealthy services must be a number' })
-  unhealthyServices: number;
+  unhealthyServices!: number;
 
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Last health check timestamp'
   })
   @IsDateString({}, { message: 'Last check must be a valid date string' })
-  lastCheck: string;
+  lastCheck!: string;
 
   @ApiProperty({
     example: 99.8,
     description: 'System availability percentage'
   })
   @IsNumber({}, { message: 'Availability must be a number' })
-  availability: number;
+  availability!: number;
 }

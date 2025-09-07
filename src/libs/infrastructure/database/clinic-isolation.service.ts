@@ -30,7 +30,7 @@ export class ClinicIsolationService implements OnModuleInit {
   private clinicCache = new Map<string, ClinicContext>();
   private userClinicCache = new Map<string, string[]>(); // userId -> clinicIds[]
   private locationClinicCache = new Map<string, string>(); // locationId -> clinicId
-  private cacheUpdateInterval: NodeJS.Timeout;
+  private cacheUpdateInterval!: NodeJS.Timeout;
   private maxClinics: number;
   private maxLocationsPerClinic: number;
   private cacheHitCount = 0;
@@ -80,7 +80,7 @@ export class ClinicIsolationService implements OnModuleInit {
         const clinicContext: ClinicContext = {
           clinicId: clinic.id,
           clinicName: clinic.name,
-          subdomain: clinic.subdomain,
+          subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
           locations: clinic.locations.map(loc => loc.id),
           isActive: clinic.isActive,
@@ -101,7 +101,7 @@ export class ClinicIsolationService implements OnModuleInit {
 
       this.logger.log(`Initialized clinic cache with ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`);
     } catch (error) {
-      this.logger.error(`Failed to initialize clinic caching: ${error.message}`);
+      this.logger.error(`Failed to initialize clinic caching: ${(error as Error).message}`);
       throw error;
     }
   }
@@ -136,7 +136,7 @@ export class ClinicIsolationService implements OnModuleInit {
         clinicContext = {
           clinicId: clinic.id,
           clinicName: clinic.name,
-          subdomain: clinic.subdomain,
+          subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
           locations: clinic.locations.map(loc => loc.id),
           isActive: clinic.isActive,
@@ -145,7 +145,7 @@ export class ClinicIsolationService implements OnModuleInit {
         };
 
         // Cache for future use
-        this.clinicCache.set(clinicId, clinicContext);
+        this.clinicCache.set(clinicId, clinicContext!);
       }
 
       return {
@@ -154,10 +154,10 @@ export class ClinicIsolationService implements OnModuleInit {
         clinicContext
       };
     } catch (error) {
-      this.logger.error(`Failed to get clinic context for ${clinicId}: ${error.message}`);
+      this.logger.error(`Failed to get clinic context for ${clinicId}: ${(error as Error).message}`);
       return {
         success: false,
-        error: error.message
+        error: (error as Error).message
       };
     }
   }
@@ -219,10 +219,10 @@ export class ClinicIsolationService implements OnModuleInit {
         clinicContext: clinicResult.data
       };
     } catch (error) {
-      this.logger.error(`Failed to validate clinic access for user ${userId}, clinic ${clinicId}: ${error.message}`);
+      this.logger.error(`Failed to validate clinic access for user ${userId}, clinic ${clinicId}: ${(error as Error).message}`);
       return {
         success: false,
-        error: error.message
+        error: (error as Error).message
       };
     }
   }
@@ -286,17 +286,17 @@ export class ClinicIsolationService implements OnModuleInit {
 
       const clinicContexts = userClinics
         .map(clinicId => this.clinicCache.get(clinicId))
-        .filter(context => context && context.isActive);
+        .filter(context => context && context.isActive) as ClinicContext[];
 
       return {
         success: true,
         data: clinicContexts
       };
     } catch (error) {
-      this.logger.error(`Failed to get user clinics for ${userId}: ${error.message}`);
+      this.logger.error(`Failed to get user clinics for ${userId}: ${(error as Error).message}`);
       return {
         success: false,
-        error: error.message
+        error: (error as Error).message
       };
     }
   }
@@ -328,10 +328,10 @@ export class ClinicIsolationService implements OnModuleInit {
 
       return this.getClinicContext(clinicId);
     } catch (error) {
-      this.logger.error(`Failed to get clinic by location ${locationId}: ${error.message}`);
+      this.logger.error(`Failed to get clinic by location ${locationId}: ${(error as Error).message}`);
       return {
         success: false,
-        error: error.message
+        error: (error as Error).message
       };
     }
   }
@@ -366,10 +366,10 @@ export class ClinicIsolationService implements OnModuleInit {
       }
     } catch (error) {
       this.clearClinicContext();
-      this.logger.error(`Failed to execute operation with clinic context ${clinicId}: ${error.message}`);
+      this.logger.error(`Failed to execute operation with clinic context ${clinicId}: ${(error as Error).message}`);
       return {
         success: false,
-        error: error.message
+        error: (error as Error).message
       };
     }
   }
@@ -440,7 +440,7 @@ export class ClinicIsolationService implements OnModuleInit {
         await this.initializeClinicCaching();
         this.logger.debug('Clinic cache refreshed');
       } catch (error) {
-        this.logger.error(`Failed to refresh clinic cache: ${error.message}`);
+        this.logger.error(`Failed to refresh clinic cache: ${(error as Error).message}`);
       }
     }, 5 * 60 * 1000);
   }

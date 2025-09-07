@@ -63,18 +63,7 @@ export class PluginConfigService {
           features: ['queue-management', 'priority-queues', 'emergency-handling'],
           domain: 'healthcare'
         },
-        'fashion-queue-plugin': {
-          enabled: this.configService.get('FASHION_QUEUE_PLUGIN_ENABLED', true),
-          priority: this.configService.get('FASHION_QUEUE_PLUGIN_PRIORITY', 1),
-          settings: {
-            maxQueueSize: this.configService.get('FASHION_MAX_QUEUE_SIZE', 30),
-            defaultWaitTime: this.configService.get('FASHION_DEFAULT_WAIT_TIME', 10),
-            sessionDuration: this.configService.get('FASHION_SESSION_DURATION', 60),
-            autoConfirmation: this.configService.get('FASHION_AUTO_CONFIRMATION', true)
-          },
-          features: ['queue-management', 'stylist-queues', 'clinic-scheduling'],
-          domain: 'clinic'
-        },
+        // Fashion queue plugin removed - healthcare application only
         'clinic-location-plugin': {
           enabled: this.configService.get('CLINIC_LOCATION_PLUGIN_ENABLED', true),
           priority: this.configService.get('CLINIC_LOCATION_PLUGIN_PRIORITY', 1),
@@ -87,17 +76,7 @@ export class PluginConfigService {
           features: ['location-management', 'qr-codes', 'multi-location'],
           domain: 'healthcare'
         },
-        'fashion-location-plugin': {
-          enabled: this.configService.get('FASHION_LOCATION_PLUGIN_ENABLED', true),
-          priority: this.configService.get('FASHION_LOCATION_PLUGIN_PRIORITY', 1),
-          settings: {
-            cacheEnabled: this.configService.get('FASHION_LOCATION_CACHE_ENABLED', true),
-            cacheTTL: this.configService.get('FASHION_LOCATION_CACHE_TTL', 3600),
-            studioManagement: this.configService.get('FASHION_STUDIO_MANAGEMENT', true)
-          },
-          features: ['location-management', 'studio-locations', 'clinic-spaces'],
-          domain: 'clinic'
-        },
+        // Fashion location plugin removed - healthcare application only
         'clinic-confirmation-plugin': {
           enabled: this.configService.get('CLINIC_CONFIRMATION_PLUGIN_ENABLED', true),
           priority: this.configService.get('CLINIC_CONFIRMATION_PLUGIN_PRIORITY', 1),
@@ -110,17 +89,7 @@ export class PluginConfigService {
           features: ['qr-generation', 'check-in', 'confirmation', 'completion'],
           domain: 'healthcare'
         },
-        'fashion-confirmation-plugin': {
-          enabled: this.configService.get('FASHION_CONFIRMATION_PLUGIN_ENABLED', true),
-          priority: this.configService.get('FASHION_CONFIRMATION_PLUGIN_PRIORITY', 1),
-          settings: {
-            autoCheckIn: this.configService.get('FASHION_AUTO_CHECKIN', false),
-            checkInWindow: this.configService.get('FASHION_CHECKIN_WINDOW', 10),
-            sessionConfirmation: this.configService.get('FASHION_SESSION_CONFIRMATION', true)
-          },
-          features: ['check-in', 'confirmation', 'completion'],
-          domain: 'clinic'
-        },
+        // Fashion confirmation plugin removed - healthcare application only
         'clinic-checkin-plugin': {
           enabled: this.configService.get('CLINIC_CHECKIN_PLUGIN_ENABLED', true),
           priority: this.configService.get('CLINIC_CHECKIN_PLUGIN_PRIORITY', 1),
@@ -132,16 +101,7 @@ export class PluginConfigService {
           features: ['check-in', 'queue-management', 'consultation-start'],
           domain: 'healthcare'
         },
-        'fashion-checkin-plugin': {
-          enabled: this.configService.get('FASHION_CHECKIN_PLUGIN_ENABLED', true),
-          priority: this.configService.get('FASHION_CHECKIN_PLUGIN_PRIORITY', 1),
-          settings: {
-            autoQueue: this.configService.get('FASHION_AUTO_QUEUE', true),
-            sessionPreparation: this.configService.get('FASHION_SESSION_PREPARATION', true)
-          },
-          features: ['check-in', 'session-management', 'stylist-queue'],
-          domain: 'clinic'
-        },
+        // Fashion checkin plugin removed - healthcare application only
         'clinic-socket-plugin': {
           enabled: this.configService.get('CLINIC_SOCKET_PLUGIN_ENABLED', true),
           priority: this.configService.get('CLINIC_SOCKET_PLUGIN_PRIORITY', 1),
@@ -153,17 +113,7 @@ export class PluginConfigService {
           features: ['real-time-updates', 'queue-notifications', 'appointment-status'],
           domain: 'healthcare'
         },
-        'fashion-socket-plugin': {
-          enabled: this.configService.get('FASHION_SOCKET_PLUGIN_ENABLED', true),
-          priority: this.configService.get('FASHION_SOCKET_PLUGIN_PRIORITY', 1),
-          settings: {
-            realTimeUpdates: this.configService.get('FASHION_REALTIME_UPDATES', true),
-            sessionNotifications: this.configService.get('FASHION_SESSION_NOTIFICATIONS', true),
-            stylistStatus: this.configService.get('FASHION_STYLIST_STATUS', true)
-          },
-          features: ['real-time-updates', 'session-notifications', 'stylist-status'],
-          domain: 'clinic'
-        },
+        // Fashion socket plugin removed - healthcare application only
         'clinic-payment-plugin': {
           enabled: this.configService.get('CLINIC_PAYMENT_PLUGIN_ENABLED', true),
           priority: this.configService.get('CLINIC_PAYMENT_PLUGIN_PRIORITY', 1),
@@ -176,17 +126,7 @@ export class PluginConfigService {
           features: ['payment-processing', 'insurance-claims', 'refunds', 'billing'],
           domain: 'healthcare'
         },
-        'fashion-payment-plugin': {
-          enabled: this.configService.get('FASHION_PAYMENT_PLUGIN_ENABLED', true),
-          priority: this.configService.get('FASHION_PAYMENT_PLUGIN_PRIORITY', 1),
-          settings: {
-            designerPayout: this.configService.get('FASHION_DESIGNER_PAYOUT', true),
-            commissionEnabled: this.configService.get('FASHION_COMMISSION_ENABLED', true),
-            installmentEnabled: this.configService.get('FASHION_INSTALLMENT_ENABLED', false)
-          },
-          features: ['payment-processing', 'designer-payouts', 'commissions', 'installments'],
-          domain: 'clinic'
-        },
+        // Fashion payment plugin removed - healthcare application only
         'clinic-video-plugin': {
           enabled: this.configService.get('CLINIC_VIDEO_PLUGIN_ENABLED', true),
           priority: this.configService.get('CLINIC_VIDEO_PLUGIN_PRIORITY', 1),
@@ -199,18 +139,7 @@ export class PluginConfigService {
           features: ['video-calls', 'screen-sharing', 'recording', 'medical-images'],
           domain: 'healthcare'
         },
-        'fashion-video-plugin': {
-          enabled: this.configService.get('FASHION_VIDEO_PLUGIN_ENABLED', true),
-          priority: this.configService.get('FASHION_VIDEO_PLUGIN_PRIORITY', 1),
-          settings: {
-            virtualFitting: this.configService.get('FASHION_VIRTUAL_FITTING', true),
-            productShowcase: this.configService.get('FASHION_PRODUCT_SHOWCASE', true),
-            designPortfolio: this.configService.get('FASHION_DESIGN_PORTFOLIO', true),
-            collaborationMode: this.configService.get('FASHION_COLLABORATION_MODE', true)
-          },
-          features: ['video-calls', 'virtual-fitting', 'product-showcase', 'design-portfolio'],
-          domain: 'clinic'
-        }
+        // Fashion video plugin removed - healthcare application only
       };
 
       // Cache the configurations

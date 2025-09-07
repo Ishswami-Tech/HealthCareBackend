@@ -71,7 +71,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to process payment: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { paymentId, error: error instanceof Error ? error.stack : undefined }
+        { paymentId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -106,7 +106,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to refund payment: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { paymentId: refundData.paymentId, error: error instanceof Error ? error.stack : undefined }
+        { paymentId: refundData.paymentId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -152,7 +152,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to get payment status: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { paymentId, error: error instanceof Error ? error.stack : undefined }
+        { paymentId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -186,7 +186,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to process subscription payment: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { subscriptionId, error: error instanceof Error ? error.stack : undefined }
+        { subscriptionId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -219,7 +219,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to cancel subscription: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { subscriptionId, error: error instanceof Error ? error.stack : undefined }
+        { subscriptionId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -252,7 +252,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to process insurance claim: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { claimData, error: error instanceof Error ? error.stack : undefined }
+        { claimData, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -287,7 +287,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to process designer payout: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { providerId: payoutData.providerId, error: error instanceof Error ? error.stack : undefined }
+        { providerId: payoutData.providerId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -323,7 +323,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to generate receipt: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { paymentId, error: error instanceof Error ? error.stack : undefined }
+        { paymentId, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -359,7 +359,7 @@ export class PaymentService {
         LogLevel.ERROR,
         `Failed to get payment analytics: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'PaymentService',
-        { analyticsParams, error: error instanceof Error ? error.stack : undefined }
+        { analyticsParams, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }

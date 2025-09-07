@@ -97,7 +97,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to get doctor queue: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { doctorId, date, domain, error: error instanceof Error ? error.stack : undefined }
+        { doctorId, date, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -171,7 +171,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to get patient queue position: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { appointmentId, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -219,7 +219,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to confirm appointment: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { appointmentId, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -267,7 +267,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to start consultation: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { appointmentId, doctorId, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, doctorId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -315,7 +315,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to reorder queue: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { reorderData, domain, error: error instanceof Error ? error.stack : undefined }
+        { reorderData, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -390,7 +390,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to get location queue stats: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { locationId, domain, error: error instanceof Error ? error.stack : undefined }
+        { locationId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -440,7 +440,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to get queue metrics: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { locationId, domain, period, error: error instanceof Error ? error.stack : undefined }
+        { locationId, domain, period, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
@@ -494,7 +494,7 @@ export class AppointmentQueueService {
         LogLevel.ERROR,
         `Failed to handle emergency appointment: ${error instanceof Error ? (error as Error).message : String(error)}`,
         'AppointmentQueueService',
-        { appointmentId, priority, domain, error: error instanceof Error ? error.stack : undefined }
+        { appointmentId, priority, domain, error: error instanceof Error ? (error as Error).stack : undefined }
       );
       throw error;
     }
