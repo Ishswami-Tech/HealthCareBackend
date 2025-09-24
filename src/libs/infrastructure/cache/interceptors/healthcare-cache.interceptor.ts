@@ -4,17 +4,17 @@ import {
   ExecutionContext,
   CallHandler,
   Logger,
-} from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { Observable, of, throwError } from 'rxjs';
-import { tap, catchError } from 'rxjs/operators';
-import { CacheService } from '../cache.service';
-import { 
-  CACHE_KEY, 
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { Observable, of, throwError } from "rxjs";
+import { tap, catchError } from "rxjs/operators";
+import { CacheService } from "../cache.service";
+import {
+  CACHE_KEY,
   CACHE_INVALIDATE_KEY,
   UnifiedCacheOptions,
-  CacheInvalidationOptions
-} from '../decorators/cache.decorator';
+  CacheInvalidationOptions,
+} from "../decorators/cache.decorator";
 
 @Injectable()
 export class HealthcareCacheInterceptor implements NestInterceptor {
@@ -22,12 +22,21 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
   constructor(
     private readonly cacheService: CacheService,
-    private readonly reflector: Reflector
+    private readonly reflector: Reflector,
   ) {}
 
-  async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
-    const cacheOptions = this.reflector.get<UnifiedCacheOptions>(CACHE_KEY, context.getHandler());
-    const invalidationOptions = this.reflector.get<CacheInvalidationOptions>(CACHE_INVALIDATE_KEY, context.getHandler());
+  async intercept(
+    context: ExecutionContext,
+    next: CallHandler,
+  ): Promise<Observable<any>> {
+    const cacheOptions = this.reflector.get<UnifiedCacheOptions>(
+      CACHE_KEY,
+      context.getHandler(),
+    );
+    const invalidationOptions = this.reflector.get<CacheInvalidationOptions>(
+      CACHE_INVALIDATE_KEY,
+      context.getHandler(),
+    );
 
     // If no cache configuration, proceed normally
     if (!cacheOptions && !invalidationOptions) {
@@ -38,12 +47,15 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     const response = context.switchToHttp().getResponse();
 
     // Handle cache read operations
-    if (cacheOptions && request.method === 'GET') {
+    if (cacheOptions && request.method === "GET") {
       return this.handleCacheRead(context, next, cacheOptions);
     }
 
     // Handle cache invalidation operations
-    if (invalidationOptions && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
+    if (
+      invalidationOptions &&
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)
+    ) {
       return this.handleCacheInvalidation(context, next, invalidationOptions);
     }
 
@@ -54,13 +66,15 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   private async handleCacheRead(
     context: ExecutionContext,
     next: CallHandler,
-    options: UnifiedCacheOptions
+    options: UnifiedCacheOptions,
   ): Promise<Observable<any>> {
     try {
       const cacheKey = this.generateCacheKey(context, options);
-      
+
       if (!cacheKey) {
-        this.logger.debug('Could not generate cache key, proceeding without cache');
+        this.logger.debug(
+          "Could not generate cache key, proceeding without cache",
+        );
         return next.handle();
       }
 
@@ -72,7 +86,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
             if (options.condition!(context, result)) {
               await this.setCacheValue(cacheKey, result, options, context);
             }
-          })
+          }),
         );
       }
 
@@ -91,13 +105,15 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           }
         }),
         catchError((error) => {
-          this.logger.error(`Error in healthcare cache operation for key ${cacheKey}:`, error);
+          this.logger.error(
+            `Error in healthcare cache operation for key ${cacheKey}:`,
+            error,
+          );
           return throwError(() => error);
-        })
+        }),
       );
-
     } catch (error) {
-      this.logger.error('Error in healthcare cache read handler:', error);
+      this.logger.error("Error in healthcare cache read handler:", error);
       return next.handle();
     }
   }
@@ -105,7 +121,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   private async handleCacheInvalidation(
     context: ExecutionContext,
     next: CallHandler,
-    options: CacheInvalidationOptions
+    options: CacheInvalidationOptions,
   ): Promise<Observable<any>> {
     return next.handle().pipe(
       tap(async (result) => {
@@ -117,22 +133,30 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
           await this.performCacheInvalidation(context, result, options);
         } catch (error) {
-          this.logger.error('Error in cache invalidation:', error);
+          this.logger.error("Error in cache invalidation:", error);
           // Don't throw error here to avoid affecting the main operation
         }
       }),
       catchError((error) => {
         // Even if the operation fails, we might want to invalidate cache
         // to prevent serving stale data
-        this.performCacheInvalidation(context, null, options).catch(invalidationError => {
-          this.logger.error('Error in error-case cache invalidation:', invalidationError);
-        });
+        this.performCacheInvalidation(context, null, options).catch(
+          (invalidationError) => {
+            this.logger.error(
+              "Error in error-case cache invalidation:",
+              invalidationError,
+            );
+          },
+        );
         return throwError(() => error);
-      })
+      }),
     );
   }
 
-  private generateCacheKey(context: ExecutionContext, options: UnifiedCacheOptions): string | null {
+  private generateCacheKey(
+    context: ExecutionContext,
+    options: UnifiedCacheOptions,
+  ): string | null {
     try {
       const request = context.switchToHttp().getRequest();
 
@@ -140,7 +164,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       if (options.customKeyGenerator) {
         return options.customKeyGenerator(context);
       }
-      
+
       // Use legacy keyGenerator for backward compatibility
       if (options.keyGenerator) {
         return options.keyGenerator();
@@ -150,7 +174,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       if (options.keyTemplate) {
         let key = options.keyTemplate;
         const params = { ...request.params, ...request.query };
-        
+
         // Add user context
         if (request.user) {
           params.userId = request.user.id;
@@ -177,38 +201,43 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Generate default key based on route and parameters
       const route = request.route?.path || request.url;
-      const paramsStr = Object.keys(request.params || {}).length > 0 
-        ? JSON.stringify(request.params) 
-        : '';
-      const queryStr = Object.keys(request.query || {}).length > 0 
-        ? JSON.stringify(request.query) 
-        : '';
-      
+      const paramsStr =
+        Object.keys(request.params || {}).length > 0
+          ? JSON.stringify(request.params)
+          : "";
+      const queryStr =
+        Object.keys(request.query || {}).length > 0
+          ? JSON.stringify(request.query)
+          : "";
+
       return `healthcare:${route}:${paramsStr}:${queryStr}`;
     } catch (error) {
-      this.logger.error('Error generating cache key:', error);
+      this.logger.error("Error generating cache key:", error);
       return null;
     }
   }
 
-  private async getCachedValue(cacheKey: string, options: UnifiedCacheOptions): Promise<any> {
+  private async getCachedValue(
+    cacheKey: string,
+    options: UnifiedCacheOptions,
+  ): Promise<any> {
     try {
       // Route to appropriate cache method based on healthcare data type
       if (options.patientSpecific) {
         // This would use the healthcare cache service with patient-specific logic
         // For now, we'll use the basic Redis cache
-        return await this.cacheService['redisService'].get(cacheKey);
+        return await this.cacheService["redisService"].get(cacheKey);
       }
 
       if (options.emergencyData) {
         // Emergency data uses minimal caching
-        const cached = await this.cacheService['redisService'].get(cacheKey);
+        const cached = await this.cacheService["redisService"].get(cacheKey);
         // Double-check TTL for emergency data
         if (cached) {
-          const ttl = await this.cacheService['redisService'].ttl(cacheKey);
+          const ttl = await this.cacheService["redisService"].ttl(cacheKey);
           if (ttl > (options.ttl || 300)) {
             // TTL too long for emergency data, invalidate
-            await this.cacheService['redisService'].del(cacheKey);
+            await this.cacheService["redisService"].del(cacheKey);
             return null;
           }
         }
@@ -216,19 +245,22 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
 
       // Standard cache retrieval
-      const cachedValue = await this.cacheService['redisService'].get(cacheKey);
+      const cachedValue = await this.cacheService["redisService"].get(cacheKey);
       return cachedValue ? JSON.parse(cachedValue) : null;
     } catch (error) {
-      this.logger.error(`Error retrieving cached value for key ${cacheKey}:`, error);
+      this.logger.error(
+        `Error retrieving cached value for key ${cacheKey}:`,
+        error,
+      );
       return null;
     }
   }
 
   private async setCacheValue(
-    cacheKey: string, 
-    value: any, 
+    cacheKey: string,
+    value: any,
     options: UnifiedCacheOptions,
-    context: ExecutionContext
+    context: ExecutionContext,
   ): Promise<void> {
     try {
       const ttl = this.calculateTTL(options, context);
@@ -237,14 +269,22 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       // Apply healthcare-specific caching logic
       if (options.containsPHI) {
         // PHI data gets additional security measures
-        await this.cacheService['redisService'].set(cacheKey, serializedValue, ttl);
-        
+        await this.cacheService["redisService"].set(
+          cacheKey,
+          serializedValue,
+          ttl,
+        );
+
         // Track PHI cache access for compliance
-        await this.trackPHIAccess(cacheKey, context, 'cache_set');
+        await this.trackPHIAccess(cacheKey, context, "cache_set");
       } else if (options.emergencyData) {
         // Emergency data uses minimal TTL
         const emergencyTTL = Math.min(ttl, 300); // Max 5 minutes
-        await this.cacheService['redisService'].set(cacheKey, serializedValue, emergencyTTL);
+        await this.cacheService["redisService"].set(
+          cacheKey,
+          serializedValue,
+          emergencyTTL,
+        );
       } else {
         // Standard caching with SWR support
         await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {
@@ -253,20 +293,25 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           priority: this.mapPriority(options.priority),
           enableSwr: options.enableSWR !== false,
           staleTime: options.staleTime,
-          tags: options.tags
+          tags: options.tags,
         });
       }
 
-      this.logger.debug(`Healthcare data cached with key: ${cacheKey}, TTL: ${ttl}s`);
+      this.logger.debug(
+        `Healthcare data cached with key: ${cacheKey}, TTL: ${ttl}s`,
+      );
     } catch (error) {
-      this.logger.error(`Error caching healthcare data for key ${cacheKey}:`, error);
+      this.logger.error(
+        `Error caching healthcare data for key ${cacheKey}:`,
+        error,
+      );
     }
   }
 
   private async performCacheInvalidation(
     context: ExecutionContext,
     result: any,
-    options: CacheInvalidationOptions
+    options: CacheInvalidationOptions,
   ): Promise<void> {
     try {
       const request = context.switchToHttp().getRequest();
@@ -281,20 +326,28 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       if (options.patterns?.length > 0) {
         for (const pattern of options.patterns) {
           let resolvedPattern = pattern;
-          
+
           // Replace placeholders in pattern
           const params = { ...request.params, ...request.body };
           for (const [param, value] of Object.entries(params)) {
-            resolvedPattern = resolvedPattern.replace(`{${param}}`, String(value));
+            resolvedPattern = resolvedPattern.replace(
+              `{${param}}`,
+              String(value),
+            );
           }
-          
-          await this.cacheService['redisService'].invalidateCacheByPattern(resolvedPattern);
+
+          await this.cacheService["redisService"].invalidateCacheByPattern(
+            resolvedPattern,
+          );
           this.logger.debug(`Invalidated cache pattern: ${resolvedPattern}`);
         }
       }
 
       // Invalidate by tags
-      if (options.tags && options.tags.length > 0) {        for (const tag of options.tags) {          await this.cacheService['redisService'].invalidateCacheByTag(tag);          this.logger.debug(`Invalidated cache tag: ${tag}`);
+      if (options.tags && options.tags.length > 0) {
+        for (const tag of options.tags) {
+          await this.cacheService["redisService"].invalidateCacheByTag(tag);
+          this.logger.debug(`Invalidated cache tag: ${tag}`);
         }
       }
 
@@ -302,28 +355,30 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       if (options.invalidatePatient && request.params?.patientId) {
         await this.cacheService.invalidatePatientCache(
           request.params.patientId,
-          request.params?.clinicId
+          request.params?.clinicId,
         );
       }
 
       if (options.invalidateDoctor && request.params?.doctorId) {
         await this.cacheService.invalidateDoctorCache(
           request.params.doctorId,
-          request.params?.clinicId
+          request.params?.clinicId,
         );
       }
 
       if (options.invalidateClinic && request.params?.clinicId) {
         await this.cacheService.invalidateClinicCache(request.params.clinicId);
       }
-
     } catch (error) {
-      this.logger.error('Error performing cache invalidation:', error);
+      this.logger.error("Error performing cache invalidation:", error);
       throw error;
     }
   }
 
-  private calculateTTL(options: UnifiedCacheOptions, context: ExecutionContext): number {
+  private calculateTTL(
+    options: UnifiedCacheOptions,
+    context: ExecutionContext,
+  ): number {
     if (options.ttl) {
       return options.ttl;
     }
@@ -337,29 +392,33 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
     // Compliance-based TTL
     switch (options.complianceLevel) {
-      case 'restricted': return 900; // 15 minutes
-      case 'sensitive': return 1800; // 30 minutes
-      case 'standard': return 3600; // 1 hour
-      default: return 3600;
+      case "restricted":
+        return 900; // 15 minutes
+      case "sensitive":
+        return 1800; // 30 minutes
+      case "standard":
+        return 3600; // 1 hour
+      default:
+        return 3600;
     }
   }
 
-  private mapPriority(priority?: string): 'high' | 'low' {
+  private mapPriority(priority?: string): "high" | "low" {
     switch (priority) {
-      case 'critical':
-      case 'high':
-        return 'high';
-      case 'normal':
-      case 'low':
+      case "critical":
+      case "high":
+        return "high";
+      case "normal":
+      case "low":
       default:
-        return 'high'; // Healthcare data defaults to high priority
+        return "high"; // Healthcare data defaults to high priority
     }
   }
 
   private async trackPHIAccess(
     cacheKey: string,
     context: ExecutionContext,
-    operation: 'cache_get' | 'cache_set'
+    operation: "cache_get" | "cache_set",
   ): Promise<void> {
     try {
       const request = context.switchToHttp().getRequest();
@@ -370,43 +429,54 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         userId: request.user?.id,
         userRole: request.user?.role,
         ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
-        clinicId: request.params?.clinicId || request.body?.clinicId
+        userAgent: request.headers["user-agent"],
+        clinicId: request.params?.clinicId || request.body?.clinicId,
       };
 
       // Log PHI access for compliance
-      await this.cacheService['redisService'].rPush(
-        'phi:access:audit',
-        JSON.stringify(auditData)
+      await this.cacheService["redisService"].rPush(
+        "phi:access:audit",
+        JSON.stringify(auditData),
       );
 
       // Trim audit log to prevent unlimited growth
-      await this.cacheService['redisService'].lTrim('phi:access:audit', -10000, -1);
+      await this.cacheService["redisService"].lTrim(
+        "phi:access:audit",
+        -10000,
+        -1,
+      );
     } catch (error) {
-      this.logger.error('Error tracking PHI access:', error);
+      this.logger.error("Error tracking PHI access:", error);
     }
   }
 
   /**
    * Check if current request should bypass cache based on various factors
    */
-  private shouldBypassCache(context: ExecutionContext, options: UnifiedCacheOptions): boolean {
+  private shouldBypassCache(
+    context: ExecutionContext,
+    options: UnifiedCacheOptions,
+  ): boolean {
     const request = context.switchToHttp().getRequest();
-    
+
     // Always bypass cache for emergency users when dealing with patient data
-    if (options.patientSpecific && request.user?.role === 'EMERGENCY_RESPONDER') {
+    if (
+      options.patientSpecific &&
+      request.user?.role === "EMERGENCY_RESPONDER"
+    ) {
       return true;
     }
 
     // Bypass cache if force refresh header is present
-    if (request.headers['x-force-refresh'] === 'true') {
+    if (request.headers["x-force-refresh"] === "true") {
       return true;
     }
 
     // Bypass cache for emergency data during off-hours
     if (options.emergencyData) {
       const hour = new Date().getHours();
-      if (hour < 6 || hour > 22) { // 6 AM to 10 PM
+      if (hour < 6 || hour > 22) {
+        // 6 AM to 10 PM
         return true;
       }
     }

@@ -1,10 +1,19 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Scope, Logger } from '@nestjs/common';
-import { PrismaClient, Prisma } from '@prisma/client';
-import * as fs from 'fs';
-import * as path from 'path';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Scope,
+  Logger,
+} from "@nestjs/common";
+import { PrismaClient, Prisma } from "@prisma/client";
+import * as fs from "fs";
+import * as path from "path";
 
 @Injectable({ scope: Scope.REQUEST })
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(PrismaService.name);
   private currentTenantId: string | null = null;
   private static connectionCount = 0;
@@ -23,10 +32,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     super({
       log: [
-        { emit: 'stdout', level: 'error' },
-        { emit: 'stdout', level: 'warn' },
+        { emit: "stdout", level: "error" },
+        { emit: "stdout", level: "warn" },
       ],
-      errorFormat: 'minimal',
+      errorFormat: "minimal",
       datasources: {
         db: {
           url: process.env.DATABASE_URL,
@@ -40,7 +49,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // Database events monitoring removed as $on is deprecated
 
     // Monitor queries only in development
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== "production") {
       // Query monitoring will be handled via extensions
     }
 
@@ -61,10 +70,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         await this.$disconnect();
         PrismaService.connectionCount--;
         PrismaService.instance = null; // Clear the singleton instance
-        this.logger.log(`Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`);
+        this.logger.log(
+          `Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`,
+        );
       }
     } catch (error) {
-      this.logger.error('Error disconnecting from database:', error);
+      this.logger.error("Error disconnecting from database:", error);
     }
   }
 
@@ -72,14 +83,22 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     try {
       await this.$connect();
       PrismaService.connectionCount++;
-      this.logger.log(`Successfully connected to database. Active connections: ${PrismaService.connectionCount}`);
+      this.logger.log(
+        `Successfully connected to database. Active connections: ${PrismaService.connectionCount}`,
+      );
     } catch (error) {
       if (retryCount < this.maxRetries) {
-        this.logger.warn(`Failed to connect to database. Retrying in ${this.retryDelay}ms... (Attempt ${retryCount + 1}/${this.maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, this.retryDelay * (retryCount + 1))); // Exponential backoff
+        this.logger.warn(
+          `Failed to connect to database. Retrying in ${this.retryDelay}ms... (Attempt ${retryCount + 1}/${this.maxRetries})`,
+        );
+        await new Promise((resolve) =>
+          setTimeout(resolve, this.retryDelay * (retryCount + 1)),
+        ); // Exponential backoff
         await this.connectWithRetry(retryCount + 1);
       } else {
-        this.logger.error('Failed to connect to database after maximum retries');
+        this.logger.error(
+          "Failed to connect to database after maximum retries",
+        );
         throw error;
       }
     }
@@ -111,7 +130,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     if (tenantId) {
       this.logger.debug(`Setting current tenant ID to ${tenantId}`);
     } else {
-      this.logger.debug('Clearing tenant ID - using global scope');
+      this.logger.debug("Clearing tenant ID - using global scope");
     }
     this.currentTenantId = tenantId;
   }
@@ -155,7 +174,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     } catch (error) {
       if (retryCount < this.maxRetries && this.isRetryableError(error)) {
         console.warn(`Operation failed. Retrying in ${this.retryDelay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        await new Promise((resolve) => setTimeout(resolve, this.retryDelay));
         return this.executeWithRetry(operation, retryCount + 1);
       }
       throw error;
@@ -165,11 +184,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   // Helper method to determine if an error is retryable
   private isRetryableError(error: any): boolean {
     return (
-      error instanceof Error && error.name === 'PrismaClientKnownRequestError' &&
-      ((error as any).code === 'P2024' || // Connection pool timeout
-       (error as any).code === 'P2028' || // Transaction timeout
-       (error as any).code === 'P2025' || // Record not found
-       (error as any).code === 'P2034') // Transaction failed
+      error instanceof Error &&
+      error.name === "PrismaClientKnownRequestError" &&
+      ((error as any).code === "P2024" || // Connection pool timeout
+        (error as any).code === "P2028" || // Transaction timeout
+        (error as any).code === "P2025" || // Record not found
+        (error as any).code === "P2034") // Transaction failed
     );
   }
 
@@ -191,12 +211,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   async executeOptimizedQuery<T>(
     queryFn: () => Promise<T>,
-    timeout: number = PrismaService.QUERY_TIMEOUT
+    timeout: number = PrismaService.QUERY_TIMEOUT,
   ): Promise<T> {
     return Promise.race([
       queryFn(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Query timeout')), timeout)
+        setTimeout(() => reject(new Error("Query timeout")), timeout),
       ),
     ]);
   }
@@ -206,23 +226,26 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   async executeBatch<T>(
     operations: (() => Promise<T>)[],
-    batchSize: number = 10
+    batchSize: number = 10,
   ): Promise<T[]> {
     const results: T[] = [];
-    
+
     for (let i = 0; i < operations.length; i += batchSize) {
       const batch = operations.slice(i, i + batchSize);
       const batchResults = await Promise.allSettled(
-        batch.map(operation => this.executeWithRetry(operation))
+        batch.map((operation) => this.executeWithRetry(operation)),
       );
-      
+
       results.push(
         ...batchResults
-          .filter((result): result is PromiseFulfilledResult<Awaited<T>> => result.status === 'fulfilled')
-          .map(result => result.value)
+          .filter(
+            (result): result is PromiseFulfilledResult<Awaited<T>> =>
+              result.status === "fulfilled",
+          )
+          .map((result) => result.value),
       );
     }
-    
+
     return results;
   }
 
@@ -233,16 +256,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     connected: boolean;
     connectionCount: number;
     maxConnections: number;
-    health: 'healthy' | 'warning' | 'critical';
+    health: "healthy" | "warning" | "critical";
   }> {
     try {
       await this.$queryRaw`SELECT 1`;
-      const health = PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.8 
-        ? 'warning' 
-        : PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.9 
-        ? 'critical' 
-        : 'healthy';
-      
+      const health =
+        PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.8
+          ? "warning"
+          : PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.9
+            ? "critical"
+            : "healthy";
+
       return {
         connected: true,
         connectionCount: PrismaService.connectionCount,
@@ -254,7 +278,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         connected: false,
         connectionCount: PrismaService.connectionCount,
         maxConnections: PrismaService.MAX_CONNECTIONS,
-        health: 'critical',
+        health: "critical",
       };
     }
   }

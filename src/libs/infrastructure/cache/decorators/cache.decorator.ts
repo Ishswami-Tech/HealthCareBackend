@@ -1,9 +1,14 @@
-import { SetMetadata, applyDecorators, createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { Logger } from '@nestjs/common';
+import {
+  SetMetadata,
+  applyDecorators,
+  createParamDecorator,
+  ExecutionContext,
+} from "@nestjs/common";
+import { Logger } from "@nestjs/common";
 
 /**
  * Unified Cache Decorator for Enterprise Healthcare Applications
- * 
+ *
  * Combines Redis caching with healthcare-specific features:
  * - SWR (Stale-While-Revalidate) support
  * - HIPAA compliance and PHI protection
@@ -11,113 +16,113 @@ import { Logger } from '@nestjs/common';
  * - Performance optimization for 10M+ users
  */
 
-export const CACHE_KEY = 'cache';
-export const CACHE_INVALIDATE_KEY = 'cache_invalidate';
-export const PHI_CACHE_KEY = 'phi_cache'; // Protected Health Information
+export const CACHE_KEY = "cache";
+export const CACHE_INVALIDATE_KEY = "cache_invalidate";
+export const PHI_CACHE_KEY = "phi_cache"; // Protected Health Information
 
 export interface UnifiedCacheOptions {
   /**
    * Cache key template with placeholders for dynamic values
-   * Example: 'patient:{patientId}:records' 
+   * Example: 'patient:{patientId}:records'
    */
   keyTemplate?: string;
-  
+
   /**
    * Cache TTL in seconds
    */
   ttl?: number;
-  
+
   /**
    * Cache key prefix for namespacing
    */
   prefix?: string;
-  
+
   /**
    * Custom function to generate cache keys
    */
   keyGenerator?: (...args: any[]) => string;
-  
+
   /**
    * Whether to use Stale-While-Revalidate strategy (default: true)
    */
   useSwr?: boolean;
-  
+
   /**
    * How long data is considered fresh before revalidation (in seconds)
    */
   staleTime?: number;
-  
+
   /**
    * Force data refresh regardless of cache status
    */
   forceRefresh?: boolean;
-  
+
   /**
    * Cache tags for grouped invalidation
    */
   tags?: string[];
-  
+
   /**
    * Whether to compress large cache entries
    */
   compress?: boolean;
-  
+
   /**
    * Processing priority for cache operations
    */
-  priority?: 'critical' | 'high' | 'normal' | 'low';
-  
+  priority?: "critical" | "high" | "normal" | "low";
+
   /**
    * Whether this contains PHI (Protected Health Information)
    * PHI data has stricter caching rules
    */
   containsPHI?: boolean;
-  
+
   /**
    * Enable compression for large data
    */
   enableCompression?: boolean;
-  
+
   /**
    * Enable stale-while-revalidate pattern
    */
   enableSWR?: boolean;
-  
+
   /**
    * Condition function to determine if caching should be applied
    */
   condition?: (context: ExecutionContext, result: any) => boolean;
-  
+
   /**
    * Custom key generator function
    */
   customKeyGenerator?: (context: ExecutionContext, ...args: any[]) => string;
-  
+
   /**
    * Clinic-specific caching (multi-tenant support)
    */
   clinicSpecific?: boolean;
-  
+
   /**
    * Patient-specific caching
    */
   patientSpecific?: boolean;
-  
+
   /**
    * Doctor-specific caching
    */
   doctorSpecific?: boolean;
-  
+
   /**
    * Emergency data flag - affects caching strategy
    */
   emergencyData?: boolean;
-  
+
   /**
    * Compliance level for healthcare data
    */
-  complianceLevel?: 'standard' | 'sensitive' | 'restricted';
-  
+  complianceLevel?: "standard" | "sensitive" | "restricted";
+
   /**
    * Auto-invalidation patterns
    */
@@ -129,36 +134,44 @@ export interface CacheInvalidationOptions {
    * Patterns to invalidate
    */
   patterns: string[];
-  
+
   /**
    * Tags to invalidate
    */
   tags?: string[];
-  
+
   /**
    * Whether to invalidate patient-specific cache
    */
   invalidatePatient?: boolean;
-  
+
   /**
    * Whether to invalidate doctor-specific cache
    */
   invalidateDoctor?: boolean;
-  
+
   /**
    * Whether to invalidate clinic-specific cache
    */
   invalidateClinic?: boolean;
-  
+
   /**
    * Custom invalidation function
    */
-  customInvalidation?: (context: ExecutionContext, result: any, ...args: any[]) => Promise<void>;
-  
+  customInvalidation?: (
+    context: ExecutionContext,
+    result: any,
+    ...args: any[]
+  ) => Promise<void>;
+
   /**
    * Condition to determine if invalidation should occur
    */
-  condition?: (context: ExecutionContext, result: any, ...args: any[]) => boolean;
+  condition?: (
+    context: ExecutionContext,
+    result: any,
+    ...args: any[]
+  ) => boolean;
 }
 
 /**
@@ -169,44 +182,50 @@ export const Cache = (options: UnifiedCacheOptions = {}) => {
     SetMetadata(CACHE_KEY, {
       ...options,
       timestamp: Date.now(),
-      type: 'unified_cache'
-    })
+      type: "unified_cache",
+    }),
   );
 };
 
 /**
  * PHI (Protected Health Information) cache decorator with enhanced security
  */
-export const PHICache = (options: Omit<UnifiedCacheOptions, 'containsPHI' | 'complianceLevel'>) => {
+export const PHICache = (
+  options: Omit<UnifiedCacheOptions, "containsPHI" | "complianceLevel">,
+) => {
   return Cache({
     ...options,
     containsPHI: true,
-    complianceLevel: 'sensitive',
+    complianceLevel: "sensitive",
     ttl: options.ttl || 1800, // Default 30 minutes for PHI
-    priority: 'high'
+    priority: "high",
   });
 };
 
 /**
  * Patient-specific cache decorator
  */
-export const PatientCache = (options: Omit<UnifiedCacheOptions, 'patientSpecific'>) => {
+export const PatientCache = (
+  options: Omit<UnifiedCacheOptions, "patientSpecific">,
+) => {
   return Cache({
     ...options,
     patientSpecific: true,
     containsPHI: true,
-    tags: [...(options.tags || []), 'patient_data']
+    tags: [...(options.tags || []), "patient_data"],
   });
 };
 
 /**
  * Doctor-specific cache decorator
  */
-export const DoctorCache = (options: Omit<UnifiedCacheOptions, 'doctorSpecific'>) => {
+export const DoctorCache = (
+  options: Omit<UnifiedCacheOptions, "doctorSpecific">,
+) => {
   return Cache({
     ...options,
     doctorSpecific: true,
-    tags: [...(options.tags || []), 'doctor_data']
+    tags: [...(options.tags || []), "doctor_data"],
   });
 };
 
@@ -216,23 +235,25 @@ export const DoctorCache = (options: Omit<UnifiedCacheOptions, 'doctorSpecific'>
 export const AppointmentCache = (options: UnifiedCacheOptions) => {
   return Cache({
     ...options,
-    tags: [...(options.tags || []), 'appointment_data'],
+    tags: [...(options.tags || []), "appointment_data"],
     ttl: options.ttl || 1800, // 30 minutes default for appointments
-    enableSWR: true
+    enableSWR: true,
   });
 };
 
 /**
  * Emergency data cache decorator with minimal TTL
  */
-export const EmergencyCache = (options: Omit<UnifiedCacheOptions, 'emergencyData' | 'priority'>) => {
+export const EmergencyCache = (
+  options: Omit<UnifiedCacheOptions, "emergencyData" | "priority">,
+) => {
   return Cache({
     ...options,
     emergencyData: true,
-    priority: 'critical',
+    priority: "critical",
     ttl: options.ttl || 300, // 5 minutes for emergency data
     enableSWR: false, // No SWR for emergency data
-    tags: [...(options.tags || []), 'emergency_data']
+    tags: [...(options.tags || []), "emergency_data"],
   });
 };
 
@@ -244,9 +265,9 @@ export const MedicalHistoryCache = (options: UnifiedCacheOptions) => {
     ...options,
     compress: true, // Medical history can be large
     containsPHI: true,
-    complianceLevel: 'sensitive',
+    complianceLevel: "sensitive",
     ttl: options.ttl || 7200, // 2 hours default
-    tags: [...(options.tags || []), 'medical_history']
+    tags: [...(options.tags || []), "medical_history"],
   });
 };
 
@@ -257,10 +278,10 @@ export const PrescriptionCache = (options: UnifiedCacheOptions) => {
   return Cache({
     ...options,
     containsPHI: true,
-    complianceLevel: 'sensitive',
+    complianceLevel: "sensitive",
     ttl: options.ttl || 1800, // 30 minutes default
-    tags: [...(options.tags || []), 'prescription_data'],
-    enableSWR: true
+    tags: [...(options.tags || []), "prescription_data"],
+    enableSWR: true,
   });
 };
 
@@ -271,10 +292,10 @@ export const LabResultsCache = (options: UnifiedCacheOptions) => {
   return Cache({
     ...options,
     containsPHI: true,
-    complianceLevel: 'sensitive',
+    complianceLevel: "sensitive",
     compress: true, // Lab results might include images
     ttl: options.ttl || 7200, // 2 hours default
-    tags: [...(options.tags || []), 'lab_results']
+    tags: [...(options.tags || []), "lab_results"],
   });
 };
 
@@ -286,41 +307,47 @@ export const InvalidateCache = (options: CacheInvalidationOptions) => {
     SetMetadata(CACHE_INVALIDATE_KEY, {
       ...options,
       timestamp: Date.now(),
-      type: 'cache_invalidation'
-    })
+      type: "cache_invalidation",
+    }),
   );
 };
 
 /**
  * Invalidate patient cache decorator
  */
-export const InvalidatePatientCache = (options: Omit<CacheInvalidationOptions, 'invalidatePatient'>) => {
+export const InvalidatePatientCache = (
+  options: Omit<CacheInvalidationOptions, "invalidatePatient">,
+) => {
   return InvalidateCache({
     ...options,
     invalidatePatient: true,
-    patterns: [...(options.patterns || []), 'patient:*']
+    patterns: [...(options.patterns || []), "patient:*"],
   });
 };
 
 /**
  * Invalidate appointment cache decorator
  */
-export const InvalidateAppointmentCache = (options: CacheInvalidationOptions) => {
+export const InvalidateAppointmentCache = (
+  options: CacheInvalidationOptions,
+) => {
   return InvalidateCache({
     ...options,
-    patterns: [...(options.patterns || []), 'appointment:*', '*:appointments'],
-    tags: [...(options.tags || []), 'appointment_data']
+    patterns: [...(options.patterns || []), "appointment:*", "*:appointments"],
+    tags: [...(options.tags || []), "appointment_data"],
   });
 };
 
 /**
  * Invalidate clinic cache decorator
  */
-export const InvalidateClinicCache = (options: Omit<CacheInvalidationOptions, 'invalidateClinic'>) => {
+export const InvalidateClinicCache = (
+  options: Omit<CacheInvalidationOptions, "invalidateClinic">,
+) => {
   return InvalidateCache({
     ...options,
     invalidateClinic: true,
-    patterns: [...(options.patterns || []), 'clinic:*', '*:clinic:*']
+    patterns: [...(options.patterns || []), "clinic:*", "*:clinic:*"],
   });
 };
 
@@ -330,16 +357,16 @@ export const InvalidateClinicCache = (options: Omit<CacheInvalidationOptions, 'i
 export const ClinicId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
-    
+
     // Try to get clinic ID from various sources
     return (
       request.params?.clinicId ||
       request.body?.clinicId ||
       request.query?.clinicId ||
       request.user?.clinicId ||
-      request.headers['x-clinic-id']
+      request.headers["x-clinic-id"]
     );
-  }
+  },
 );
 
 /**
@@ -348,14 +375,14 @@ export const ClinicId = createParamDecorator(
 export const PatientId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
-    
+
     return (
       request.params?.patientId ||
       request.body?.patientId ||
       request.query?.patientId ||
       request.params?.id // Generic ID that might be patient ID
     );
-  }
+  },
 );
 
 /**
@@ -364,14 +391,14 @@ export const PatientId = createParamDecorator(
 export const DoctorId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
-    
+
     return (
       request.params?.doctorId ||
       request.body?.doctorId ||
       request.query?.doctorId ||
-      (request.user?.role === 'DOCTOR' ? request.user?.id : undefined)
+      (request.user?.role === "DOCTOR" ? request.user?.id : undefined)
     );
-  }
+  },
 );
 
 /**
@@ -380,13 +407,13 @@ export const DoctorId = createParamDecorator(
 export const AppointmentId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
-    
+
     return (
       request.params?.appointmentId ||
       request.body?.appointmentId ||
       request.query?.appointmentId
     );
-  }
+  },
 );
 
 /**
@@ -395,15 +422,27 @@ export const AppointmentId = createParamDecorator(
 export const HealthcareIds = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
-    
+
     return {
-      clinicId: request.params?.clinicId || request.body?.clinicId || request.query?.clinicId,
-      patientId: request.params?.patientId || request.body?.patientId || request.query?.patientId,
-      doctorId: request.params?.doctorId || request.body?.doctorId || request.query?.doctorId,
-      appointmentId: request.params?.appointmentId || request.body?.appointmentId || request.query?.appointmentId,
-      userId: request.user?.id
+      clinicId:
+        request.params?.clinicId ||
+        request.body?.clinicId ||
+        request.query?.clinicId,
+      patientId:
+        request.params?.patientId ||
+        request.body?.patientId ||
+        request.query?.patientId,
+      doctorId:
+        request.params?.doctorId ||
+        request.body?.doctorId ||
+        request.query?.doctorId,
+      appointmentId:
+        request.params?.appointmentId ||
+        request.body?.appointmentId ||
+        request.query?.appointmentId,
+      userId: request.user?.id,
     };
-  }
+  },
 );
 
 /**
@@ -422,8 +461,11 @@ export const CacheConditions = {
    * Only cache non-empty results
    */
   nonEmpty: (context: ExecutionContext, result: any) => {
-    return result !== null && result !== undefined && 
-           (Array.isArray(result) ? result.length > 0 : true);
+    return (
+      result !== null &&
+      result !== undefined &&
+      (Array.isArray(result) ? result.length > 0 : true)
+    );
   },
 
   /**
@@ -440,7 +482,7 @@ export const CacheConditions = {
    */
   nonEmergencyUser: (context: ExecutionContext, result: any) => {
     const request = context.switchToHttp().getRequest();
-    return request.user?.role !== 'EMERGENCY_RESPONDER';
+    return request.user?.role !== "EMERGENCY_RESPONDER";
   },
 
   /**
@@ -448,7 +490,7 @@ export const CacheConditions = {
    */
   and: (...conditions: Function[]) => {
     return (context: ExecutionContext, result: any) => {
-      return conditions.every(condition => condition(context, result));
+      return conditions.every((condition) => condition(context, result));
     };
   },
 
@@ -457,9 +499,9 @@ export const CacheConditions = {
    */
   or: (...conditions: Function[]) => {
     return (context: ExecutionContext, result: any) => {
-      return conditions.some(condition => condition(context, result));
+      return conditions.some((condition) => condition(context, result));
     };
-  }
+  },
 };
 
 /**
@@ -474,7 +516,7 @@ export const HealthcareKeyGenerators = {
     const patientId = request.params?.patientId || request.body?.patientId;
     const clinicId = request.params?.clinicId || request.body?.clinicId;
     const method = context.getHandler().name;
-    
+
     return `patient:${patientId}:clinic:${clinicId}:${method}`;
   },
 
@@ -486,7 +528,7 @@ export const HealthcareKeyGenerators = {
     const doctorId = request.params?.doctorId || request.user?.id;
     const clinicId = request.params?.clinicId || request.body?.clinicId;
     const method = context.getHandler().name;
-    
+
     return `doctor:${doctorId}:clinic:${clinicId}:${method}`;
   },
 
@@ -495,9 +537,10 @@ export const HealthcareKeyGenerators = {
    */
   appointment: (context: ExecutionContext, ...args: any[]) => {
     const request = context.switchToHttp().getRequest();
-    const appointmentId = request.params?.appointmentId || request.body?.appointmentId;
+    const appointmentId =
+      request.params?.appointmentId || request.body?.appointmentId;
     const method = context.getHandler().name;
-    
+
     return `appointment:${appointmentId}:${method}`;
   },
 
@@ -508,7 +551,7 @@ export const HealthcareKeyGenerators = {
     const request = context.switchToHttp().getRequest();
     const clinicId = request.params?.clinicId || request.body?.clinicId;
     const method = context.getHandler().name;
-    
+
     return `clinic:${clinicId}:${method}`;
   },
 
@@ -517,12 +560,15 @@ export const HealthcareKeyGenerators = {
    */
   daily: (context: ExecutionContext, ...args: any[]) => {
     const request = context.switchToHttp().getRequest();
-    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const entityId = request.params?.id || request.params?.patientId || request.params?.doctorId;
+    const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const entityId =
+      request.params?.id ||
+      request.params?.patientId ||
+      request.params?.doctorId;
     const method = context.getHandler().name;
-    
+
     return `daily:${date}:${entityId}:${method}`;
-  }
+  },
 };
 
 // Legacy exports for backward compatibility

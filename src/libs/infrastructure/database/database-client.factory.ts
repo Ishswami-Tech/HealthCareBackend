@@ -1,10 +1,15 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
-import { PrismaService } from './prisma/prisma.service';
-import { ConnectionPoolManager } from './connection-pool.manager';
-import { DatabaseMetricsService } from './database-metrics.service';
-import { ClinicIsolationService } from './clinic-isolation.service';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { HealthcareDatabaseClient } from "./clients/healthcare-database.client";
+import { PrismaService } from "./prisma/prisma.service";
+import { ConnectionPoolManager } from "./connection-pool.manager";
+import { DatabaseMetricsService } from "./database-metrics.service";
+import { ClinicIsolationService } from "./clinic-isolation.service";
 import {
   IDatabaseClient,
   IHealthcareDatabaseClient,
@@ -12,11 +17,11 @@ import {
   DatabaseClientConfig,
   HealthcareDatabaseConfig,
   DatabaseClientType,
-} from './interfaces/database-client.interface';
+} from "./interfaces/database-client.interface";
 
 /**
  * Enterprise Database Client Factory
- * 
+ *
  * Handles creation and management of database clients for:
  * - Multi-tenant healthcare applications
  * - Clinic-specific data isolation
@@ -46,7 +51,7 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
-    this.logger.log('Database client factory initialized');
+    this.logger.log("Database client factory initialized");
     await this.initializeDefaultClients();
   }
 
@@ -54,7 +59,7 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.healthCheckInterval);
     clearInterval(this.cleanupInterval);
     await this.cleanupAllClients();
-    this.logger.log('Database client factory destroyed');
+    this.logger.log("Database client factory destroyed");
   }
 
   /**
@@ -62,37 +67,43 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
    */
   async createClient(options: DatabaseClientOptions): Promise<IDatabaseClient> {
     const clientId = this.generateClientId(options);
-    
+
     // Check if client already exists and is healthy
     const existingClient = this.clients.get(clientId);
-    if (existingClient && await this.isClientHealthy(existingClient)) {
+    if (existingClient && (await this.isClientHealthy(existingClient))) {
       this.logger.debug(`Reusing existing client: ${clientId}`);
       return existingClient;
     }
 
     // Check client limit
     if (this.clients.size >= this.maxClients) {
-      this.logger.warn(`Client limit reached (${this.maxClients}), cleaning up inactive clients`);
+      this.logger.warn(
+        `Client limit reached (${this.maxClients}), cleaning up inactive clients`,
+      );
       await this.cleanupInactiveClients();
     }
 
     // Create new client
     const client = await this.createNewClient(options);
     this.clients.set(clientId, client);
-    
-    this.logger.log(`Created new database client: ${clientId} (Total: ${this.clients.size})`);
+
+    this.logger.log(
+      `Created new database client: ${clientId} (Total: ${this.clients.size})`,
+    );
     return client;
   }
 
   /**
    * Create a healthcare-specific database client
    */
-  async createHealthcareClient(config: HealthcareDatabaseConfig): Promise<IHealthcareDatabaseClient> {
+  async createHealthcareClient(
+    config: HealthcareDatabaseConfig,
+  ): Promise<IHealthcareDatabaseClient> {
     const options: DatabaseClientOptions = {
-      type: 'healthcare',
-      config
+      type: "healthcare",
+      config,
     };
-    
+
     const client = await this.createClient(options);
     return client as IHealthcareDatabaseClient;
   }
@@ -100,42 +111,69 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
   /**
    * Create a clinic-specific database client with isolation
    */
-  async createClinicClient(clinicId: string, config?: Partial<HealthcareDatabaseConfig>): Promise<IHealthcareDatabaseClient> {
+  async createClinicClient(
+    clinicId: string,
+    config?: Partial<HealthcareDatabaseConfig>,
+  ): Promise<IHealthcareDatabaseClient> {
     // Check if clinic client already exists
     const existingClient = this.clinicClients.get(clinicId);
-    if (existingClient && await this.isClientHealthy(existingClient)) {
+    if (existingClient && (await this.isClientHealthy(existingClient))) {
       return existingClient;
     }
 
     // Validate clinic access
-    const clinicValidation = await this.clinicIsolationService.validateClinicAccess('system', clinicId);
+    const clinicValidation =
+      await this.clinicIsolationService.validateClinicAccess(
+        "system",
+        clinicId,
+      );
     if (!clinicValidation.success) {
       throw new Error(`Invalid clinic access: ${clinicValidation.error}`);
     }
 
     const fullConfig: HealthcareDatabaseConfig = {
-      connectionTimeout: this.configService.get<number>('DB_CONNECTION_TIMEOUT', 10000),
-      queryTimeout: this.configService.get<number>('DB_QUERY_TIMEOUT', 60000),
-      maxRetries: this.configService.get<number>('DB_MAX_RETRIES', 3),
+      connectionTimeout: this.configService.get<number>(
+        "DB_CONNECTION_TIMEOUT",
+        10000,
+      ),
+      queryTimeout: this.configService.get<number>("DB_QUERY_TIMEOUT", 60000),
+      maxRetries: this.configService.get<number>("DB_MAX_RETRIES", 3),
       enableMetrics: true,
       enableCircuitBreaker: true,
-      enableAuditLogging: this.configService.get<boolean>('HEALTHCARE_ENABLE_AUDIT_LOGGING', true),
-      enablePHIProtection: this.configService.get<boolean>('HEALTHCARE_ENABLE_PHI_PROTECTION', true),
-      auditRetentionDays: this.configService.get<number>('HEALTHCARE_AUDIT_RETENTION_DAYS', 2555),
-      encryptionEnabled: this.configService.get<boolean>('HEALTHCARE_ENCRYPTION_ENABLED', true),
-      complianceLevel: this.configService.get<string>('HEALTHCARE_COMPLIANCE_LEVEL', 'HIPAA'),
-      ...config
+      enableAuditLogging: this.configService.get<boolean>(
+        "HEALTHCARE_ENABLE_AUDIT_LOGGING",
+        true,
+      ),
+      enablePHIProtection: this.configService.get<boolean>(
+        "HEALTHCARE_ENABLE_PHI_PROTECTION",
+        true,
+      ),
+      auditRetentionDays: this.configService.get<number>(
+        "HEALTHCARE_AUDIT_RETENTION_DAYS",
+        2555,
+      ),
+      encryptionEnabled: this.configService.get<boolean>(
+        "HEALTHCARE_ENCRYPTION_ENABLED",
+        true,
+      ),
+      complianceLevel: this.configService.get<string>(
+        "HEALTHCARE_COMPLIANCE_LEVEL",
+        "HIPAA",
+      ),
+      ...config,
     };
 
     const options: DatabaseClientOptions = {
-      type: 'clinic',
+      type: "clinic",
       config: fullConfig,
-      clinicId
+      clinicId,
     };
 
-    const client = await this.createClient(options) as IHealthcareDatabaseClient;
+    const client = (await this.createClient(
+      options,
+    )) as IHealthcareDatabaseClient;
     this.clinicClients.set(clinicId, client);
-    
+
     this.logger.log(`Created clinic database client for clinic: ${clinicId}`);
     return client;
   }
@@ -145,18 +183,20 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
    */
   async getClinicClient(clinicId: string): Promise<IHealthcareDatabaseClient> {
     let client = this.clinicClients.get(clinicId);
-    
+
     if (!client || !(await this.isClientHealthy(client))) {
       client = await this.createClinicClient(clinicId);
     }
-    
+
     return client;
   }
 
   /**
    * Create multiple clinic clients for batch operations
    */
-  createClinicClientsBatch(clinicIds: string[]): Map<string, IHealthcareDatabaseClient> {
+  createClinicClientsBatch(
+    clinicIds: string[],
+  ): Map<string, IHealthcareDatabaseClient> {
     const clients = new Map<string, IHealthcareDatabaseClient>();
 
     for (const clinicId of clinicIds) {
@@ -166,12 +206,14 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
         enablePHIProtection: true,
         auditRetentionDays: 2555,
         encryptionEnabled: true,
-        complianceLevel: 'HIPAA'
+        complianceLevel: "HIPAA",
       });
       clients.set(clinicId, client);
     }
 
-    this.logger.debug(`Created ${clients.size} clinic clients for batch operations`);
+    this.logger.debug(
+      `Created ${clients.size} clinic clients for batch operations`,
+    );
     return clients;
   }
 
@@ -187,17 +229,17 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
    */
   async executeWithClinicContext<T>(
     clinicId: string,
-    operation: (client: IHealthcareDatabaseClient) => Promise<T>
+    operation: (client: IHealthcareDatabaseClient) => Promise<T>,
   ): Promise<T> {
     const client = await this.getClinicClient(clinicId);
-    
+
     try {
       // Set clinic context for isolation
       this.clinicIsolationService.setCurrentClinicContext(clinicId);
-      
+
       // Execute operation
       const result = await operation(client);
-      
+
       return result;
     } finally {
       // Always clear context
@@ -215,8 +257,13 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     connectionPoolStatus: any;
     memoryUsage: any;
   } {
-    const activeClients = Array.from(this.clients.values()).filter(client => 
-      client.getHealthStatus && client.getHealthStatus().then(status => status.isHealthy).catch(() => false)
+    const activeClients = Array.from(this.clients.values()).filter(
+      (client) =>
+        client.getHealthStatus &&
+        client
+          .getHealthStatus()
+          .then((status) => status.isHealthy)
+          .catch(() => false),
     ).length;
 
     return {
@@ -224,7 +271,7 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
       clinicClients: this.clinicClients.size,
       activeClients,
       connectionPoolStatus: this.connectionPoolManager.getMetrics(),
-      memoryUsage: process.memoryUsage()
+      memoryUsage: process.memoryUsage(),
     };
   }
 
@@ -247,24 +294,26 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
         if (healthStatus.isHealthy) {
           healthyClients++;
         } else {
-          issues.push(`Client ${clientId}: ${healthStatus.errors.join(', ')}`);
+          issues.push(`Client ${clientId}: ${healthStatus.errors.join(", ")}`);
         }
       } catch (error) {
-        issues.push(`Client ${clientId}: Health check failed - ${error instanceof Error ? error.message : String(error)}`);
+        issues.push(
+          `Client ${clientId}: Health check failed - ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 
     const healthy = healthyClients === totalClients && issues.length === 0;
-    
+
     if (!healthy) {
-      this.logger.warn(`Health check issues: ${issues.join('; ')}`);
+      this.logger.warn(`Health check issues: ${issues.join("; ")}`);
     }
 
     return {
       healthy,
       totalClients,
       healthyClients,
-      issues
+      issues,
     };
   }
 
@@ -274,43 +323,69 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     try {
       // Create default healthcare client
       const defaultConfig: HealthcareDatabaseConfig = {
-        connectionTimeout: this.configService.get<number>('DB_CONNECTION_TIMEOUT', 10000),
-        queryTimeout: this.configService.get<number>('DB_QUERY_TIMEOUT', 60000),
-        maxRetries: this.configService.get<number>('DB_MAX_RETRIES', 3),
+        connectionTimeout: this.configService.get<number>(
+          "DB_CONNECTION_TIMEOUT",
+          10000,
+        ),
+        queryTimeout: this.configService.get<number>("DB_QUERY_TIMEOUT", 60000),
+        maxRetries: this.configService.get<number>("DB_MAX_RETRIES", 3),
         enableMetrics: true,
         enableCircuitBreaker: true,
-        enableAuditLogging: this.configService.get<boolean>('HEALTHCARE_ENABLE_AUDIT_LOGGING', true),
-        enablePHIProtection: this.configService.get<boolean>('HEALTHCARE_ENABLE_PHI_PROTECTION', true),
-        auditRetentionDays: this.configService.get<number>('HEALTHCARE_AUDIT_RETENTION_DAYS', 2555),
-        encryptionEnabled: this.configService.get<boolean>('HEALTHCARE_ENCRYPTION_ENABLED', true),
-        complianceLevel: this.configService.get<string>('HEALTHCARE_COMPLIANCE_LEVEL', 'HIPAA'),
+        enableAuditLogging: this.configService.get<boolean>(
+          "HEALTHCARE_ENABLE_AUDIT_LOGGING",
+          true,
+        ),
+        enablePHIProtection: this.configService.get<boolean>(
+          "HEALTHCARE_ENABLE_PHI_PROTECTION",
+          true,
+        ),
+        auditRetentionDays: this.configService.get<number>(
+          "HEALTHCARE_AUDIT_RETENTION_DAYS",
+          2555,
+        ),
+        encryptionEnabled: this.configService.get<boolean>(
+          "HEALTHCARE_ENCRYPTION_ENABLED",
+          true,
+        ),
+        complianceLevel: this.configService.get<string>(
+          "HEALTHCARE_COMPLIANCE_LEVEL",
+          "HIPAA",
+        ),
       };
 
       await this.createHealthcareClient(defaultConfig);
-      this.logger.log('Default healthcare database client initialized');
-      
+      this.logger.log("Default healthcare database client initialized");
     } catch (error) {
-      this.logger.error('Failed to initialize default clients:', error);
+      this.logger.error("Failed to initialize default clients:", error);
       throw error;
     }
   }
 
-  private async createNewClient(options: DatabaseClientOptions): Promise<IDatabaseClient> {
+  private async createNewClient(
+    options: DatabaseClientOptions,
+  ): Promise<IDatabaseClient> {
     const { type, config } = options;
-    
+
     switch (type) {
-      case 'base':
+      case "base":
         return this.createBaseClientInstance(config as DatabaseClientConfig);
-      case 'healthcare':
-        return this.createHealthcareClientInstance(config as HealthcareDatabaseConfig);
-      case 'clinic':
-        return this.createClinicClientInstance(options.clinicId!, config as HealthcareDatabaseConfig);
+      case "healthcare":
+        return this.createHealthcareClientInstance(
+          config as HealthcareDatabaseConfig,
+        );
+      case "clinic":
+        return this.createClinicClientInstance(
+          options.clinicId!,
+          config as HealthcareDatabaseConfig,
+        );
       default:
         throw new Error(`Unknown client type: ${type}`);
     }
   }
 
-  private createBaseClientInstance(config: DatabaseClientConfig): HealthcareDatabaseClient {
+  private createBaseClientInstance(
+    config: DatabaseClientConfig,
+  ): HealthcareDatabaseClient {
     return new HealthcareDatabaseClient(
       this.prismaService,
       this.connectionPoolManager,
@@ -320,7 +395,9 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private createHealthcareClientInstance(config: HealthcareDatabaseConfig): HealthcareDatabaseClient {
+  private createHealthcareClientInstance(
+    config: HealthcareDatabaseConfig,
+  ): HealthcareDatabaseClient {
     return new HealthcareDatabaseClient(
       this.prismaService,
       this.connectionPoolManager,
@@ -330,7 +407,10 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private createClinicClientInstance(clinicId: string, config: HealthcareDatabaseConfig): HealthcareDatabaseClient {
+  private createClinicClientInstance(
+    clinicId: string,
+    config: HealthcareDatabaseConfig,
+  ): HealthcareDatabaseClient {
     return new HealthcareDatabaseClient(
       this.prismaService,
       this.connectionPoolManager,
@@ -343,15 +423,15 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
   private generateClientId(options: DatabaseClientOptions): string {
     const { type, config, clinicId } = options;
     const timestamp = Date.now();
-    
-    if (type === 'clinic' && clinicId) {
+
+    if (type === "clinic" && clinicId) {
       return `clinic_${clinicId}_${timestamp}`;
     }
-    
-    if (type === 'healthcare') {
+
+    if (type === "healthcare") {
       return `healthcare_${timestamp}`;
     }
-    
+
     return `base_${timestamp}`;
   }
 
@@ -405,7 +485,7 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Error disconnecting client ${clientId}:`, error);
       }
     }
-    
+
     this.clients.clear();
     this.clinicClients.clear();
   }
@@ -415,7 +495,7 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
       try {
         await this.performHealthCheck();
       } catch (error) {
-        this.logger.error('Health monitoring failed:', error);
+        this.logger.error("Health monitoring failed:", error);
       }
     }, 60000); // Every minute
   }
@@ -425,17 +505,23 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
       try {
         await this.cleanupInactiveClients();
       } catch (error) {
-        this.logger.error('Cleanup process failed:', error);
+        this.logger.error("Cleanup process failed:", error);
       }
     }, 300000); // Every 5 minutes
   }
 
-  private async logAuditTrail(auditInfo: any, operation: string, success: boolean): Promise<void> {
+  private async logAuditTrail(
+    auditInfo: any,
+    operation: string,
+    success: boolean,
+  ): Promise<void> {
     try {
       // Log to audit system
-      this.logger.log(`AUDIT: ${operation} - User: ${auditInfo.userId}, Clinic: ${auditInfo.clinicId}, Success: ${success}`);
+      this.logger.log(
+        `AUDIT: ${operation} - User: ${auditInfo.userId}, Clinic: ${auditInfo.clinicId}, Success: ${success}`,
+      );
     } catch (error) {
-      this.logger.error('Failed to log audit trail:', error);
+      this.logger.error("Failed to log audit trail:", error);
     }
   }
 }

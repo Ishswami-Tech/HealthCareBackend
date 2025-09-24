@@ -1,5 +1,10 @@
-import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AsyncLocalStorage } from 'async_hooks';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+} from "@nestjs/common";
+import { AsyncLocalStorage } from "async_hooks";
 
 export interface ClinicContext {
   clinicId: string;
@@ -22,12 +27,12 @@ export interface ClinicInfo {
   id: string;
   name: string;
   code: string;
-  type: 'hospital' | 'clinic' | 'diagnostic' | 'specialty';
-  status: 'active' | 'inactive' | 'suspended';
+  type: "hospital" | "clinic" | "diagnostic" | "specialty";
+  status: "active" | "inactive" | "suspended";
   locations: ClinicLocation[];
   settings: ClinicSettings;
   subscription: {
-    plan: 'basic' | 'professional' | 'enterprise';
+    plan: "basic" | "professional" | "enterprise";
     maxUsers: number;
     maxPatients: number;
     expiresAt: Date;
@@ -57,7 +62,8 @@ export interface ClinicLocation {
     website?: string;
   };
   operatingHours: {
-    [key: string]: { // day of week
+    [key: string]: {
+      // day of week
       open: string; // HH:mm
       close: string; // HH:mm
       isOpen: boolean;
@@ -122,7 +128,7 @@ export interface UserClinicAssociation {
       days: number[]; // 0-6, Sunday = 0
     };
   };
-  status: 'active' | 'inactive' | 'suspended';
+  status: "active" | "inactive" | "suspended";
   metadata: {
     assignedAt: Date;
     assignedBy: string;
@@ -134,7 +140,7 @@ export interface UserClinicAssociation {
 export class ClinicContextService {
   private readonly logger = new Logger(ClinicContextService.name);
   private readonly contextStore = new AsyncLocalStorage<ClinicContext>();
-  
+
   // In-memory cache for clinic data (in production, this would be Redis/Database)
   private clinicCache = new Map<string, ClinicInfo>();
   private userClinicCache = new Map<string, UserClinicAssociation[]>();
@@ -146,41 +152,41 @@ export class ClinicContextService {
   private initializeDefaultClinics(): void {
     // Initialize sample clinic data for development
     const sampleClinic: ClinicInfo = {
-      id: 'clinic-1',
-      name: 'HealthCare Plus',
-      code: 'HCP001',
-      type: 'clinic',
-      status: 'active',
+      id: "clinic-1",
+      name: "HealthCare Plus",
+      code: "HCP001",
+      type: "clinic",
+      status: "active",
       locations: [
         {
-          id: 'loc-1',
-          name: 'Main Branch',
+          id: "loc-1",
+          name: "Main Branch",
           address: {
-            street: '123 Healthcare Street',
-            city: 'Medical City',
-            state: 'Health State',
-            zipCode: '12345',
-            country: 'India'
+            street: "123 Healthcare Street",
+            city: "Medical City",
+            state: "Health State",
+            zipCode: "12345",
+            country: "India",
           },
           contact: {
-            phone: '+91-9876543210',
-            email: 'contact@healthcareplus.com'
+            phone: "+91-9876543210",
+            email: "contact@healthcareplus.com",
           },
           operatingHours: {
-            monday: { open: '09:00', close: '18:00', isOpen: true },
-            tuesday: { open: '09:00', close: '18:00', isOpen: true },
-            wednesday: { open: '09:00', close: '18:00', isOpen: true },
-            thursday: { open: '09:00', close: '18:00', isOpen: true },
-            friday: { open: '09:00', close: '18:00', isOpen: true },
-            saturday: { open: '09:00', close: '14:00', isOpen: true },
-            sunday: { open: '10:00', close: '14:00', isOpen: false }
+            monday: { open: "09:00", close: "18:00", isOpen: true },
+            tuesday: { open: "09:00", close: "18:00", isOpen: true },
+            wednesday: { open: "09:00", close: "18:00", isOpen: true },
+            thursday: { open: "09:00", close: "18:00", isOpen: true },
+            friday: { open: "09:00", close: "18:00", isOpen: true },
+            saturday: { open: "09:00", close: "14:00", isOpen: true },
+            sunday: { open: "10:00", close: "14:00", isOpen: false },
           },
-          services: ['general-consultation', 'diagnostics', 'pharmacy'],
+          services: ["general-consultation", "diagnostics", "pharmacy"],
           capacity: {
             maxAppointments: 100,
-            maxConcurrent: 20
-          }
-        }
+            maxConcurrent: 20,
+          },
+        },
       ],
       settings: {
         appointmentSettings: {
@@ -188,18 +194,18 @@ export class ClinicContextService {
           bufferTime: 15,
           maxAdvanceBooking: 30,
           allowOnlineBooking: true,
-          requireApproval: false
+          requireApproval: false,
         },
         notificationSettings: {
           emailEnabled: true,
           smsEnabled: true,
-          reminderHours: [24, 2]
+          reminderHours: [24, 2],
         },
         billingSettings: {
-          currency: 'INR',
+          currency: "INR",
           taxRate: 18,
-          paymentMethods: ['cash', 'card', 'upi', 'netbanking'],
-          invoicePrefix: 'HCP'
+          paymentMethods: ["cash", "card", "upi", "netbanking"],
+          invoicePrefix: "HCP",
         },
         securitySettings: {
           mfaRequired: false,
@@ -208,31 +214,31 @@ export class ClinicContextService {
             minLength: 8,
             requireSpecialChars: true,
             requireNumbers: true,
-            expirationDays: 90
-          }
+            expirationDays: 90,
+          },
         },
         integrationSettings: {
-          enabledIntegrations: ['email', 'sms'],
-          apiKeys: {}
-        }
+          enabledIntegrations: ["email", "sms"],
+          apiKeys: {},
+        },
       },
       subscription: {
-        plan: 'professional',
+        plan: "professional",
         maxUsers: 50,
         maxPatients: 10000,
-        expiresAt: new Date('2025-12-31')
+        expiresAt: new Date("2025-12-31"),
       },
       metadata: {
-        createdAt: new Date('2024-01-01'),
+        createdAt: new Date("2024-01-01"),
         updatedAt: new Date(),
-        ownerId: 'owner-1',
-        timezone: 'Asia/Kolkata',
-        locale: 'en-IN'
-      }
+        ownerId: "owner-1",
+        timezone: "Asia/Kolkata",
+        locale: "en-IN",
+      },
     };
 
     this.clinicCache.set(sampleClinic.id, sampleClinic);
-    this.logger.log('📋 Initialized sample clinic data');
+    this.logger.log("📋 Initialized sample clinic data");
   }
 
   // Context Management
@@ -240,11 +246,13 @@ export class ClinicContextService {
   async setContext(context: ClinicContext): Promise<void> {
     // Validate context
     await this.validateContext(context);
-    
+
     // Store context in AsyncLocalStorage
     this.contextStore.enterWith(context);
-    
-    this.logger.debug(`🏥 Set clinic context: ${context.clinicId} for user ${context.userId}`);
+
+    this.logger.debug(
+      `🏥 Set clinic context: ${context.clinicId} for user ${context.userId}`,
+    );
   }
 
   getContext(): ClinicContext | undefined {
@@ -254,7 +262,7 @@ export class ClinicContextService {
   getCurrentClinicId(): string {
     const context = this.getContext();
     if (!context) {
-      throw new BadRequestException('Clinic context not available');
+      throw new BadRequestException("Clinic context not available");
     }
     return context.clinicId;
   }
@@ -262,7 +270,7 @@ export class ClinicContextService {
   getCurrentUserId(): string {
     const context = this.getContext();
     if (!context) {
-      throw new BadRequestException('User context not available');
+      throw new BadRequestException("User context not available");
     }
     return context.userId;
   }
@@ -270,7 +278,7 @@ export class ClinicContextService {
   getCurrentUserRole(): string {
     const context = this.getContext();
     if (!context) {
-      throw new BadRequestException('User role context not available');
+      throw new BadRequestException("User role context not available");
     }
     return context.userRole;
   }
@@ -281,7 +289,10 @@ export class ClinicContextService {
     return context.permissions.includes(permission);
   }
 
-  async runWithContext<T>(context: ClinicContext, fn: () => Promise<T>): Promise<T> {
+  async runWithContext<T>(
+    context: ClinicContext,
+    fn: () => Promise<T>,
+  ): Promise<T> {
     return new Promise((resolve, reject) => {
       this.contextStore.run(context, async () => {
         try {
@@ -306,7 +317,7 @@ export class ClinicContextService {
 
   async getUserClinics(userId: string): Promise<UserClinicAssociation[]> {
     const associations = this.userClinicCache.get(userId) || [];
-    return associations.filter(assoc => assoc.status === 'active');
+    return associations.filter((assoc) => assoc.status === "active");
   }
 
   async addUserToClinic(
@@ -317,8 +328,8 @@ export class ClinicContextService {
     assignedBy: string,
     options: {
       locations?: string[];
-      restrictions?: Partial<UserClinicAssociation['restrictions']>;
-    } = {}
+      restrictions?: Partial<UserClinicAssociation["restrictions"]>;
+    } = {},
   ): Promise<UserClinicAssociation> {
     // Validate clinic exists
     await this.getClinicInfo(clinicId);
@@ -334,25 +345,25 @@ export class ClinicContextService {
         ipRestricted: false,
         allowedIPs: [],
         workingHours: {
-          start: '09:00',
-          end: '18:00',
-          days: [1, 2, 3, 4, 5] // Monday to Friday
+          start: "09:00",
+          end: "18:00",
+          days: [1, 2, 3, 4, 5], // Monday to Friday
         },
-        ...options.restrictions
+        ...options.restrictions,
       },
-      status: 'active',
+      status: "active",
       metadata: {
         assignedAt: new Date(),
-        assignedBy
-      }
+        assignedBy,
+      },
     };
 
     // Get existing associations
     const existingAssociations = this.userClinicCache.get(userId) || [];
-    
+
     // Check if association already exists
     const existingIndex = existingAssociations.findIndex(
-      assoc => assoc.clinicId === clinicId
+      (assoc) => assoc.clinicId === clinicId,
     );
 
     if (existingIndex >= 0) {
@@ -365,21 +376,28 @@ export class ClinicContextService {
 
     this.userClinicCache.set(userId, existingAssociations);
 
-    this.logger.log(`👤 Added user ${userId} to clinic ${clinicId} with role ${role}`);
+    this.logger.log(
+      `👤 Added user ${userId} to clinic ${clinicId} with role ${role}`,
+    );
 
     return association;
   }
 
-  async removeUserFromClinic(userId: string, clinicId: string): Promise<boolean> {
+  async removeUserFromClinic(
+    userId: string,
+    clinicId: string,
+  ): Promise<boolean> {
     const associations = this.userClinicCache.get(userId) || [];
-    const updatedAssociations = associations.filter(assoc => assoc.clinicId !== clinicId);
-    
+    const updatedAssociations = associations.filter(
+      (assoc) => assoc.clinicId !== clinicId,
+    );
+
     if (updatedAssociations.length < associations.length) {
       this.userClinicCache.set(userId, updatedAssociations);
       this.logger.log(`👤 Removed user ${userId} from clinic ${clinicId}`);
       return true;
     }
-    
+
     return false;
   }
 
@@ -388,19 +406,21 @@ export class ClinicContextService {
   async validateUserAccess(
     userId: string,
     clinicId: string,
-    requiredPermissions: string[] = []
+    requiredPermissions: string[] = [],
   ): Promise<{
     hasAccess: boolean;
     association?: UserClinicAssociation;
     restrictions: string[];
   }> {
     const userClinics = await this.getUserClinics(userId);
-    const association = userClinics.find(assoc => assoc.clinicId === clinicId);
+    const association = userClinics.find(
+      (assoc) => assoc.clinicId === clinicId,
+    );
 
     if (!association) {
       return {
         hasAccess: false,
-        restrictions: ['User not associated with clinic']
+        restrictions: ["User not associated with clinic"],
       };
     }
 
@@ -408,40 +428,47 @@ export class ClinicContextService {
 
     // Check permissions
     const missingPermissions = requiredPermissions.filter(
-      perm => !association.permissions.includes(perm)
+      (perm) => !association.permissions.includes(perm),
     );
 
     if (missingPermissions.length > 0) {
-      restrictions.push(`Missing permissions: ${missingPermissions.join(', ')}`);
+      restrictions.push(
+        `Missing permissions: ${missingPermissions.join(", ")}`,
+      );
     }
 
     // Check time restrictions
     if (association.restrictions.timeRestricted) {
       const now = new Date();
       const currentDay = now.getDay();
-      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      const currentTime = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
 
       const workingHours = association.restrictions.workingHours;
-      
+
       if (!workingHours.days.includes(currentDay)) {
-        restrictions.push('Access not allowed on current day');
-      } else if (currentTime < workingHours.start || currentTime > workingHours.end) {
-        restrictions.push(`Access only allowed between ${workingHours.start} and ${workingHours.end}`);
+        restrictions.push("Access not allowed on current day");
+      } else if (
+        currentTime < workingHours.start ||
+        currentTime > workingHours.end
+      ) {
+        restrictions.push(
+          `Access only allowed between ${workingHours.start} and ${workingHours.end}`,
+        );
       }
     }
 
     return {
       hasAccess: restrictions.length === 0,
       association,
-      restrictions
+      restrictions,
     };
   }
 
   async validateContext(context: ClinicContext): Promise<void> {
     // Validate clinic exists
     const clinic = await this.getClinicInfo(context.clinicId);
-    
-    if (clinic.status !== 'active') {
+
+    if (clinic.status !== "active") {
       throw new ForbiddenException(`Clinic ${context.clinicId} is not active`);
     }
 
@@ -449,29 +476,33 @@ export class ClinicContextService {
     const accessResult = await this.validateUserAccess(
       context.userId,
       context.clinicId,
-      context.permissions
+      context.permissions,
     );
 
     if (!accessResult.hasAccess) {
       throw new ForbiddenException(
-        `User access denied: ${accessResult.restrictions.join(', ')}`
+        `User access denied: ${accessResult.restrictions.join(", ")}`,
       );
     }
 
     // Validate location if specified
     if (context.locationId) {
-      const location = clinic.locations.find(loc => loc.id === context.locationId);
+      const location = clinic.locations.find(
+        (loc) => loc.id === context.locationId,
+      );
       if (!location) {
         throw new BadRequestException(
-          `Location ${context.locationId} not found in clinic ${context.clinicId}`
+          `Location ${context.locationId} not found in clinic ${context.clinicId}`,
         );
       }
 
       // Check if user has access to location
-      if (accessResult.association!.locations.length > 0 && 
-          !accessResult.association!.locations.includes(context.locationId)) {
+      if (
+        accessResult.association!.locations.length > 0 &&
+        !accessResult.association!.locations.includes(context.locationId)
+      ) {
         throw new ForbiddenException(
-          `User does not have access to location ${context.locationId}`
+          `User does not have access to location ${context.locationId}`,
         );
       }
     }
@@ -479,20 +510,26 @@ export class ClinicContextService {
 
   // Data Isolation Helpers
 
-  addClinicFilter<T extends Record<string, any>>(filter: T): T & { clinicId: string } {
+  addClinicFilter<T extends Record<string, any>>(
+    filter: T,
+  ): T & { clinicId: string } {
     const clinicId = this.getCurrentClinicId();
     return { ...filter, clinicId };
   }
 
-  addLocationFilter<T extends Record<string, any>>(filter: T): T & { clinicId: string; locationId?: string } {
+  addLocationFilter<T extends Record<string, any>>(
+    filter: T,
+  ): T & { clinicId: string; locationId?: string } {
     const context = this.getContext();
     if (!context) {
-      throw new BadRequestException('Context not available for location filtering');
+      throw new BadRequestException(
+        "Context not available for location filtering",
+      );
     }
 
     const result: T & { clinicId: string; locationId?: string } = {
       ...filter,
-      clinicId: context.clinicId
+      clinicId: context.clinicId,
     };
 
     if (context.locationId) {
@@ -512,7 +549,7 @@ export class ClinicContextService {
 
   async updateClinicSettings(
     settings: Partial<ClinicSettings>,
-    clinicId?: string
+    clinicId?: string,
   ): Promise<ClinicSettings> {
     const targetClinicId = clinicId || this.getCurrentClinicId();
     const clinic = await this.getClinicInfo(targetClinicId);
@@ -523,32 +560,32 @@ export class ClinicContextService {
       ...settings,
       appointmentSettings: {
         ...clinic.settings.appointmentSettings,
-        ...(settings.appointmentSettings || {})
+        ...(settings.appointmentSettings || {}),
       },
       notificationSettings: {
         ...clinic.settings.notificationSettings,
-        ...(settings.notificationSettings || {})
+        ...(settings.notificationSettings || {}),
       },
       billingSettings: {
         ...clinic.settings.billingSettings,
-        ...(settings.billingSettings || {})
+        ...(settings.billingSettings || {}),
       },
       securitySettings: {
         ...clinic.settings.securitySettings,
         ...(settings.securitySettings || {}),
         passwordPolicy: {
           ...clinic.settings.securitySettings.passwordPolicy,
-          ...(settings.securitySettings?.passwordPolicy || {})
-        }
+          ...(settings.securitySettings?.passwordPolicy || {}),
+        },
       },
       integrationSettings: {
         ...clinic.settings.integrationSettings,
         ...(settings.integrationSettings || {}),
         apiKeys: {
           ...clinic.settings.integrationSettings.apiKeys,
-          ...(settings.integrationSettings?.apiKeys || {})
-        }
-      }
+          ...(settings.integrationSettings?.apiKeys || {}),
+        },
+      },
     };
 
     // Update clinic in cache
@@ -557,8 +594,8 @@ export class ClinicContextService {
       settings: updatedSettings,
       metadata: {
         ...clinic.metadata,
-        updatedAt: new Date()
-      }
+        updatedAt: new Date(),
+      },
     };
 
     this.clinicCache.set(targetClinicId, updatedClinic);
@@ -576,17 +613,20 @@ export class ClinicContextService {
     contextHits: number;
     cacheSize: number;
   } {
-    const activeClinics = Array.from(this.clinicCache.values())
-      .filter(clinic => clinic.status === 'active').length;
-    
-    const totalUsers = Array.from(this.userClinicCache.values())
-      .reduce((total, associations) => total + associations.length, 0);
+    const activeClinics = Array.from(this.clinicCache.values()).filter(
+      (clinic) => clinic.status === "active",
+    ).length;
+
+    const totalUsers = Array.from(this.userClinicCache.values()).reduce(
+      (total, associations) => total + associations.length,
+      0,
+    );
 
     return {
       activeClinics,
       totalUsers,
       contextHits: 0, // Would be tracked from actual usage
-      cacheSize: this.clinicCache.size
+      cacheSize: this.clinicCache.size,
     };
   }
 
@@ -597,7 +637,7 @@ export class ClinicContextService {
     } else {
       this.clinicCache.clear();
       this.userClinicCache.clear();
-      this.logger.log('🧹 Cleared all clinic context cache');
+      this.logger.log("🧹 Cleared all clinic context cache");
     }
   }
 
@@ -606,27 +646,41 @@ export class ClinicContextService {
   isWithinOperatingHours(clinicId?: string, locationId?: string): boolean {
     const targetClinicId = clinicId || this.getCurrentClinicId();
     const clinic = this.clinicCache.get(targetClinicId);
-    
+
     if (!clinic) return false;
 
-    const location = locationId 
-      ? clinic.locations.find(loc => loc.id === locationId)
+    const location = locationId
+      ? clinic.locations.find((loc) => loc.id === locationId)
       : clinic.locations[0];
 
     if (!location) return false;
 
     const now = new Date();
-    const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][now.getDay()];
-    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    
+    const dayName = [
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ][now.getDay()];
+    const currentTime = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+
     const daySchedule = location.operatingHours[dayName];
-    
-    return daySchedule && daySchedule.isOpen && 
-           currentTime >= daySchedule.open && 
-           currentTime <= daySchedule.close;
+
+    return (
+      daySchedule &&
+      daySchedule.isOpen &&
+      currentTime >= daySchedule.open &&
+      currentTime <= daySchedule.close
+    );
   }
 
-  async getClinicCapacity(clinicId?: string, locationId?: string): Promise<{
+  async getClinicCapacity(
+    clinicId?: string,
+    locationId?: string,
+  ): Promise<{
     maxAppointments: number;
     maxConcurrent: number;
     currentLoad: number;
@@ -634,13 +688,13 @@ export class ClinicContextService {
   }> {
     const targetClinicId = clinicId || this.getCurrentClinicId();
     const clinic = await this.getClinicInfo(targetClinicId);
-    
-    const location = locationId 
-      ? clinic.locations.find(loc => loc.id === locationId)
+
+    const location = locationId
+      ? clinic.locations.find((loc) => loc.id === locationId)
       : clinic.locations[0];
 
     if (!location) {
-      throw new BadRequestException('Location not found');
+      throw new BadRequestException("Location not found");
     }
 
     // This would integrate with actual appointment data to get current load
@@ -650,7 +704,7 @@ export class ClinicContextService {
       maxAppointments: location.capacity.maxAppointments,
       maxConcurrent: location.capacity.maxConcurrent,
       currentLoad,
-      utilizationRate: currentLoad / location.capacity.maxAppointments * 100
+      utilizationRate: (currentLoad / location.capacity.maxAppointments) * 100,
     };
   }
 }

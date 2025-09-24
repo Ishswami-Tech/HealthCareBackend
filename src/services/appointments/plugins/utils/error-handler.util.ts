@@ -1,4 +1,8 @@
-import { Logger, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import {
+  Logger,
+  BadRequestException,
+  InternalServerErrorException,
+} from "@nestjs/common";
 
 export interface ErrorContext {
   pluginName: string;
@@ -9,24 +13,24 @@ export interface ErrorContext {
 }
 
 export class PluginErrorHandler {
-  private static readonly logger = new Logger('PluginErrorHandler');
+  private static readonly logger = new Logger("PluginErrorHandler");
 
   static handleError(error: unknown, context: ErrorContext): never {
-    const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-    const errorStack = error instanceof Error ? (error as Error).stack : '';
-    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : "";
+
     this.logger.error(
       `Plugin error in ${context.pluginName}: ${errorMessage}`,
       {
         ...context,
         error: errorStack,
-        timestamp: new Date().toISOString()
-      }
+        timestamp: new Date().toISOString(),
+      },
     );
 
     // Create a standardized error response using NestJS exception
     const standardizedMessage = `Plugin operation failed: ${context.operation} in ${context.pluginName} for domain ${context.domain}`;
-    
+
     // Use appropriate NestJS exception based on error type
     if (error instanceof BadRequestException) {
       throw error;
@@ -35,30 +39,44 @@ export class PluginErrorHandler {
     }
   }
 
-  static validateRequiredFields(data: any, requiredFields: string[], context: ErrorContext): void {
-    const missingFields = requiredFields.filter(field => data[field] === undefined);
-    
+  static validateRequiredFields(
+    data: any,
+    requiredFields: string[],
+    context: ErrorContext,
+  ): void {
+    const missingFields = requiredFields.filter(
+      (field) => data[field] === undefined,
+    );
+
     if (missingFields.length > 0) {
-      throw new BadRequestException(`Missing required fields: ${missingFields.join(', ')}`);
+      throw new BadRequestException(
+        `Missing required fields: ${missingFields.join(", ")}`,
+      );
     }
   }
 
-  static validateOperation(operation: string, validOperations: string[], context: ErrorContext): void {
+  static validateOperation(
+    operation: string,
+    validOperations: string[],
+    context: ErrorContext,
+  ): void {
     if (!validOperations.includes(operation)) {
-      throw new BadRequestException(`Invalid operation: ${operation}. Valid operations: ${validOperations.join(', ')}`);
+      throw new BadRequestException(
+        `Invalid operation: ${operation}. Valid operations: ${validOperations.join(", ")}`,
+      );
     }
   }
 
   static createErrorResponse(error: unknown, context: ErrorContext): any {
-    const errorMessage = error instanceof Error ? (error as Error).message : String(error);
-    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
     return {
       success: false,
       error: errorMessage,
       pluginName: context.pluginName,
       operation: context.operation,
       domain: context.domain,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   }
 }

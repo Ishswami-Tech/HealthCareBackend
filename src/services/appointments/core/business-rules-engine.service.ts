@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../../libs/infrastructure/database';
-import { LoggingService } from '../../../libs/infrastructure/logging';
+import { Injectable, Logger } from "@nestjs/common";
+import { PrismaService } from "../../../libs/infrastructure/database";
+import { LoggingService } from "../../../libs/infrastructure/logging";
 
 export interface BusinessRule {
   id: string;
@@ -38,7 +38,9 @@ export class BusinessRulesEngine {
     private readonly loggingService: LoggingService,
   ) {}
 
-  async evaluateRules(context: RuleEvaluationContext): Promise<RuleEvaluationResult> {
+  async evaluateRules(
+    context: RuleEvaluationContext,
+  ): Promise<RuleEvaluationResult> {
     try {
       const rules = await this.loadRules(context);
       const result: RuleEvaluationResult = {
@@ -62,65 +64,73 @@ export class BusinessRulesEngine {
 
       return result;
     } catch (error) {
-      this.logger.error('Error evaluating business rules:', error);
+      this.logger.error("Error evaluating business rules:", error);
       return {
         passed: false,
         appliedRules: [],
-        violations: ['Business rules evaluation failed'],
+        violations: ["Business rules evaluation failed"],
         actions: [],
       };
     }
   }
 
-  private async loadRules(context: RuleEvaluationContext): Promise<BusinessRule[]> {
+  private async loadRules(
+    context: RuleEvaluationContext,
+  ): Promise<BusinessRule[]> {
     // Mock implementation - in production, load from database
     return [
       {
-        id: '1',
-        name: 'appointment-time-validation',
-        description: 'Appointment must be during working hours',
+        id: "1",
+        name: "appointment-time-validation",
+        description: "Appointment must be during working hours",
         priority: 1,
         isActive: true,
-        conditions: { type: 'time_validation' },
+        conditions: { type: "time_validation" },
         actions: { notify: true },
       },
       {
-        id: '2',
-        name: 'double-booking-prevention',
-        description: 'Doctor cannot have overlapping appointments',
+        id: "2",
+        name: "double-booking-prevention",
+        description: "Doctor cannot have overlapping appointments",
         priority: 2,
         isActive: true,
-        conditions: { type: 'conflict_check' },
+        conditions: { type: "conflict_check" },
         actions: { block: true },
       },
     ];
   }
 
-  private async evaluateRule(rule: BusinessRule, context: RuleEvaluationContext): Promise<boolean> {
+  private async evaluateRule(
+    rule: BusinessRule,
+    context: RuleEvaluationContext,
+  ): Promise<boolean> {
     // Mock implementation - in production, implement proper rule evaluation logic
-    if (rule.conditions?.type === 'time_validation') {
+    if (rule.conditions?.type === "time_validation") {
       return true; // Mock: assume time is valid
     }
-    
-    if (rule.conditions?.type === 'conflict_check') {
+
+    if (rule.conditions?.type === "conflict_check") {
       return true; // Mock: assume no conflicts
     }
 
     return true;
   }
 
-  async addRule(rule: Omit<BusinessRule, 'id'>): Promise<BusinessRule> {
+  async addRule(rule: Omit<BusinessRule, "id">): Promise<BusinessRule> {
     // Mock implementation - in production, save to database
     const newRule: BusinessRule = {
       ...rule,
       id: Math.random().toString(36).substr(2, 9),
     };
-    
+
     this.logger.log(`Business rule added: ${newRule.name}`);
     return newRule;
   }
 
-  async updateRule(id: string, updates: Partial<BusinessRule>): Promise<BusinessRule | null> {
+  async updateRule(
+    id: string,
+    updates: Partial<BusinessRule>,
+  ): Promise<BusinessRule | null> {
     // Mock implementation - in production, update in database
     this.logger.log(`Business rule updated: ${id}`);
     return null;
@@ -136,7 +146,10 @@ export class BusinessRulesEngine {
     return this.loadRules({} as RuleEvaluationContext);
   }
 
-  async validateAppointmentCreation(createDto: any, context: any): Promise<RuleEvaluationResult> {
+  async validateAppointmentCreation(
+    createDto: any,
+    context: any,
+  ): Promise<RuleEvaluationResult> {
     try {
       const ruleContext: RuleEvaluationContext = {
         appointment: createDto,
@@ -149,11 +162,11 @@ export class BusinessRulesEngine {
 
       return this.evaluateRules(ruleContext);
     } catch (error) {
-      this.logger.error('Error validating appointment creation:', error);
+      this.logger.error("Error validating appointment creation:", error);
       return {
         passed: false,
         appliedRules: [],
-        violations: ['Appointment creation validation failed'],
+        violations: ["Appointment creation validation failed"],
         actions: [],
       };
     }

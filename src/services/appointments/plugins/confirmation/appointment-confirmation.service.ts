@@ -1,16 +1,21 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
-import { CacheService } from '../../../../libs/infrastructure/cache';
-import { LoggingService } from '../../../../libs/infrastructure/logging/logging.service';
-import { LogType, LogLevel } from '../../../../libs/infrastructure/logging';
-import { QrService } from '../../../../libs/utils/QR';
-import * as crypto from 'crypto';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+} from "@nestjs/common";
+import { CacheService } from "../../../../libs/infrastructure/cache";
+import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
+import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
+import { QrService } from "../../../../libs/utils/QR";
+import * as crypto from "crypto";
 
 export interface QRCodeData {
   appointmentId: string;
   domain: string;
   timestamp: number;
   expiresAt: number;
-  type: 'check-in' | 'confirmation';
+  type: "check-in" | "confirmation";
 }
 
 export interface ConfirmationResult {
@@ -31,7 +36,7 @@ export class AppointmentConfirmationService {
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly qrService: QrService
+    private readonly qrService: QrService,
   ) {}
 
   async generateCheckInQR(appointmentId: string, domain: string): Promise<any> {
@@ -45,9 +50,9 @@ export class AppointmentConfirmationService {
         this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'Check-in QR retrieved from cache',
-          'AppointmentConfirmationService',
-          { appointmentId, domain, responseTime: Date.now() - startTime }
+          "Check-in QR retrieved from cache",
+          "AppointmentConfirmationService",
+          { appointmentId, domain, responseTime: Date.now() - startTime },
         );
         return JSON.parse(cached as string);
       }
@@ -57,13 +62,13 @@ export class AppointmentConfirmationService {
         appointmentId,
         domain,
         timestamp: Date.now(),
-        expiresAt: Date.now() + (24 * 60 * 60 * 1000), // 24 hours
-        type: 'check-in'
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+        type: "check-in",
       };
 
       // Encrypt QR data
       const encryptedData = this.encryptQRData(qrData);
-      
+
       // Generate QR code using existing service
       const qrCodeImage = await this.qrService.generateQR(encryptedData);
 
@@ -73,18 +78,22 @@ export class AppointmentConfirmationService {
         appointmentId,
         domain,
         expiresAt: new Date(qrData.expiresAt).toISOString(),
-        type: 'check-in'
+        type: "check-in",
       };
 
       // Cache the QR code
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.QR_CACHE_TTL);
+      await this.cacheService.set(
+        cacheKey,
+        JSON.stringify(result),
+        this.QR_CACHE_TTL,
+      );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Check-in QR generated successfully',
-        'AppointmentConfirmationService',
-        { appointmentId, domain, responseTime: Date.now() - startTime }
+        "Check-in QR generated successfully",
+        "AppointmentConfirmationService",
+        { appointmentId, domain, responseTime: Date.now() - startTime },
       );
 
       return result;
@@ -92,31 +101,39 @@ export class AppointmentConfirmationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to generate check-in QR: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'AppointmentConfirmationService',
-        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to generate check-in QR: ${error instanceof Error ? error.message : String(error)}`,
+        "AppointmentConfirmationService",
+        {
+          appointmentId,
+          domain,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
   }
 
-  async processCheckIn(qrData: string, appointmentId: string, domain: string): Promise<any> {
+  async processCheckIn(
+    qrData: string,
+    appointmentId: string,
+    domain: string,
+  ): Promise<any> {
     const startTime = Date.now();
 
     try {
       // Decrypt and validate QR data
       const decodedData = this.decryptQRData(qrData);
-      
+
       if (!decodedData || decodedData.appointmentId !== appointmentId) {
-        throw new BadRequestException('Invalid QR code for this appointment');
+        throw new BadRequestException("Invalid QR code for this appointment");
       }
 
       if (decodedData.expiresAt < Date.now()) {
-        throw new BadRequestException('QR code has expired');
+        throw new BadRequestException("QR code has expired");
       }
 
       if (decodedData.domain !== domain) {
-        throw new BadRequestException('QR code is not valid for this domain');
+        throw new BadRequestException("QR code is not valid for this domain");
       }
 
       // Process check-in
@@ -128,9 +145,9 @@ export class AppointmentConfirmationService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Check-in processed successfully',
-        'AppointmentConfirmationService',
-        { appointmentId, domain, responseTime: Date.now() - startTime }
+        "Check-in processed successfully",
+        "AppointmentConfirmationService",
+        { appointmentId, domain, responseTime: Date.now() - startTime },
       );
 
       return {
@@ -138,21 +155,29 @@ export class AppointmentConfirmationService {
         appointmentId,
         domain,
         checkedInAt: new Date().toISOString(),
-        message: 'Check-in successful'
+        message: "Check-in successful",
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to process check-in: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'AppointmentConfirmationService',
-        { qrData, appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
+        "AppointmentConfirmationService",
+        {
+          qrData,
+          appointmentId,
+          domain,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
   }
 
-  async confirmAppointment(appointmentId: string, domain: string): Promise<any> {
+  async confirmAppointment(
+    appointmentId: string,
+    domain: string,
+  ): Promise<any> {
     const startTime = Date.now();
     const cacheKey = `confirmation:${appointmentId}:${domain}`;
 
@@ -164,17 +189,24 @@ export class AppointmentConfirmationService {
       }
 
       // Perform confirmation logic
-      const confirmationResult = await this.performConfirmation(appointmentId, domain);
+      const confirmationResult = await this.performConfirmation(
+        appointmentId,
+        domain,
+      );
 
       // Cache confirmation
-      await this.cacheService.set(cacheKey, JSON.stringify(confirmationResult), this.CONFIRMATION_CACHE_TTL);
+      await this.cacheService.set(
+        cacheKey,
+        JSON.stringify(confirmationResult),
+        this.CONFIRMATION_CACHE_TTL,
+      );
 
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Appointment confirmed successfully',
-        'AppointmentConfirmationService',
-        { appointmentId, domain, responseTime: Date.now() - startTime }
+        "Appointment confirmed successfully",
+        "AppointmentConfirmationService",
+        { appointmentId, domain, responseTime: Date.now() - startTime },
       );
 
       return confirmationResult;
@@ -182,20 +214,32 @@ export class AppointmentConfirmationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to confirm appointment: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'AppointmentConfirmationService',
-        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to confirm appointment: ${error instanceof Error ? error.message : String(error)}`,
+        "AppointmentConfirmationService",
+        {
+          appointmentId,
+          domain,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
   }
 
-  async markAppointmentCompleted(appointmentId: string, doctorId: string, domain: string): Promise<any> {
+  async markAppointmentCompleted(
+    appointmentId: string,
+    doctorId: string,
+    domain: string,
+  ): Promise<any> {
     const startTime = Date.now();
 
     try {
       // Mark appointment as completed
-      const completionResult = await this.performCompletion(appointmentId, doctorId, domain);
+      const completionResult = await this.performCompletion(
+        appointmentId,
+        doctorId,
+        domain,
+      );
 
       // Invalidate confirmation cache
       await this.cacheService.del(`confirmation:${appointmentId}:${domain}`);
@@ -203,9 +247,14 @@ export class AppointmentConfirmationService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Appointment marked as completed',
-        'AppointmentConfirmationService',
-        { appointmentId, doctorId, domain, responseTime: Date.now() - startTime }
+        "Appointment marked as completed",
+        "AppointmentConfirmationService",
+        {
+          appointmentId,
+          doctorId,
+          domain,
+          responseTime: Date.now() - startTime,
+        },
       );
 
       return completionResult;
@@ -213,15 +262,23 @@ export class AppointmentConfirmationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to mark appointment completed: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'AppointmentConfirmationService',
-        { appointmentId, doctorId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to mark appointment completed: ${error instanceof Error ? error.message : String(error)}`,
+        "AppointmentConfirmationService",
+        {
+          appointmentId,
+          doctorId,
+          domain,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
   }
 
-  async generateConfirmationQR(appointmentId: string, domain: string): Promise<any> {
+  async generateConfirmationQR(
+    appointmentId: string,
+    domain: string,
+  ): Promise<any> {
     const startTime = Date.now();
     const cacheKey = `qr:confirmation:${appointmentId}:${domain}`;
 
@@ -237,13 +294,13 @@ export class AppointmentConfirmationService {
         appointmentId,
         domain,
         timestamp: Date.now(),
-        expiresAt: Date.now() + (2 * 60 * 60 * 1000), // 2 hours
-        type: 'confirmation'
+        expiresAt: Date.now() + 2 * 60 * 60 * 1000, // 2 hours
+        type: "confirmation",
       };
 
       // Encrypt QR data
       const encryptedData = this.encryptQRData(qrData);
-      
+
       // Generate QR code using existing service
       const qrCodeImage = await this.qrService.generateQR(encryptedData);
 
@@ -253,18 +310,22 @@ export class AppointmentConfirmationService {
         appointmentId,
         domain,
         expiresAt: new Date(qrData.expiresAt).toISOString(),
-        type: 'confirmation'
+        type: "confirmation",
       };
 
       // Cache the QR code
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.QR_CACHE_TTL);
+      await this.cacheService.set(
+        cacheKey,
+        JSON.stringify(result),
+        this.QR_CACHE_TTL,
+      );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Confirmation QR generated successfully',
-        'AppointmentConfirmationService',
-        { appointmentId, domain, responseTime: Date.now() - startTime }
+        "Confirmation QR generated successfully",
+        "AppointmentConfirmationService",
+        { appointmentId, domain, responseTime: Date.now() - startTime },
       );
 
       return result;
@@ -272,42 +333,59 @@ export class AppointmentConfirmationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to generate confirmation QR: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'AppointmentConfirmationService',
-        { appointmentId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to generate confirmation QR: ${error instanceof Error ? error.message : String(error)}`,
+        "AppointmentConfirmationService",
+        {
+          appointmentId,
+          domain,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
   }
 
-  async verifyAppointmentQR(qrData: string, clinicId: string, domain: string): Promise<any> {
+  async verifyAppointmentQR(
+    qrData: string,
+    clinicId: string,
+    domain: string,
+  ): Promise<any> {
     const startTime = Date.now();
 
     try {
       // Decrypt and validate QR data
       const decodedData = this.decryptQRData(qrData);
-      
+
       if (!decodedData) {
-        throw new BadRequestException('Invalid QR code format');
+        throw new BadRequestException("Invalid QR code format");
       }
 
       if (decodedData.expiresAt < Date.now()) {
-        throw new BadRequestException('QR code has expired');
+        throw new BadRequestException("QR code has expired");
       }
 
       if (decodedData.domain !== domain) {
-        throw new BadRequestException('QR code is not valid for this domain');
+        throw new BadRequestException("QR code is not valid for this domain");
       }
 
       // Verify appointment exists and belongs to clinic
-      const appointment = await this.verifyAppointment(decodedData.appointmentId, clinicId, domain);
+      const appointment = await this.verifyAppointment(
+        decodedData.appointmentId,
+        clinicId,
+        domain,
+      );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Appointment QR verified successfully',
-        'AppointmentConfirmationService',
-        { appointmentId: decodedData.appointmentId, clinicId, domain, responseTime: Date.now() - startTime }
+        "Appointment QR verified successfully",
+        "AppointmentConfirmationService",
+        {
+          appointmentId: decodedData.appointmentId,
+          clinicId,
+          domain,
+          responseTime: Date.now() - startTime,
+        },
       );
 
       return {
@@ -316,15 +394,20 @@ export class AppointmentConfirmationService {
         clinicId,
         domain,
         verifiedAt: new Date().toISOString(),
-        type: decodedData.type
+        type: decodedData.type,
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to verify appointment QR: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'AppointmentConfirmationService',
-        { qrData, clinicId, domain, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to verify appointment QR: ${error instanceof Error ? error.message : String(error)}`,
+        "AppointmentConfirmationService",
+        {
+          qrData,
+          clinicId,
+          domain,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -337,29 +420,34 @@ export class AppointmentConfirmationService {
       // Invalidate all QR caches for this appointment
       const patterns = [
         `qr:checkin:${appointmentId}:*`,
-        `qr:confirmation:${appointmentId}:*`
+        `qr:confirmation:${appointmentId}:*`,
       ];
 
       await Promise.all(
-        patterns.map(pattern => this.cacheService.invalidateByPattern(pattern))
+        patterns.map((pattern) =>
+          this.cacheService.invalidateByPattern(pattern),
+        ),
       );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'QR cache invalidated successfully',
-        'AppointmentConfirmationService',
-        { appointmentId, responseTime: Date.now() - startTime }
+        "QR cache invalidated successfully",
+        "AppointmentConfirmationService",
+        { appointmentId, responseTime: Date.now() - startTime },
       );
 
-      return { success: true, message: 'QR cache invalidated' };
+      return { success: true, message: "QR cache invalidated" };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to invalidate QR cache: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'AppointmentConfirmationService',
-        { appointmentId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to invalidate QR cache: ${error instanceof Error ? error.message : String(error)}`,
+        "AppointmentConfirmationService",
+        {
+          appointmentId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -367,52 +455,72 @@ export class AppointmentConfirmationService {
 
   // Helper methods
   private encryptQRData(data: QRCodeData): string {
-    const secretKey = process.env.QR_ENCRYPTION_KEY || 'default-secret-key-32-chars-long';
+    const secretKey =
+      process.env.QR_ENCRYPTION_KEY || "default-secret-key-32-chars-long";
     const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(secretKey.padEnd(32, '0').slice(0, 32)), iv);
-    let encrypted = cipher.update(JSON.stringify(data), 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return iv.toString('hex') + ':' + encrypted;
+    const cipher = crypto.createCipheriv(
+      "aes-256-cbc",
+      Buffer.from(secretKey.padEnd(32, "0").slice(0, 32)),
+      iv,
+    );
+    let encrypted = cipher.update(JSON.stringify(data), "utf8", "hex");
+    encrypted += cipher.final("hex");
+    return iv.toString("hex") + ":" + encrypted;
   }
 
   private decryptQRData(encryptedData: string): QRCodeData | null {
     try {
-      const secretKey = process.env.QR_ENCRYPTION_KEY || 'default-secret-key-32-chars-long';
-      const [ivHex, encrypted] = encryptedData.split(':');
-      const iv = Buffer.from(ivHex, 'hex');
-      const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(secretKey.padEnd(32, '0').slice(0, 32)), iv);
-      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
+      const secretKey =
+        process.env.QR_ENCRYPTION_KEY || "default-secret-key-32-chars-long";
+      const [ivHex, encrypted] = encryptedData.split(":");
+      const iv = Buffer.from(ivHex, "hex");
+      const decipher = crypto.createDecipheriv(
+        "aes-256-cbc",
+        Buffer.from(secretKey.padEnd(32, "0").slice(0, 32)),
+        iv,
+      );
+      let decrypted = decipher.update(encrypted, "hex", "utf8");
+      decrypted += decipher.final("utf8");
       return JSON.parse(decrypted);
     } catch (error) {
-      this.logger.error('Failed to decrypt QR data:', error);
+      this.logger.error("Failed to decrypt QR data:", error);
       return null;
     }
   }
 
-  private async performCheckIn(appointmentId: string, domain: string): Promise<any> {
+  private async performCheckIn(
+    appointmentId: string,
+    domain: string,
+  ): Promise<any> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
     return {
       success: true,
       appointmentId,
       domain,
-      checkedInAt: new Date().toISOString()
+      checkedInAt: new Date().toISOString(),
     };
   }
 
-  private async performConfirmation(appointmentId: string, domain: string): Promise<any> {
+  private async performConfirmation(
+    appointmentId: string,
+    domain: string,
+  ): Promise<any> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
     return {
       success: true,
       appointmentId,
       domain,
-      confirmedAt: new Date().toISOString()
+      confirmedAt: new Date().toISOString(),
     };
   }
 
-  private async performCompletion(appointmentId: string, doctorId: string, domain: string): Promise<any> {
+  private async performCompletion(
+    appointmentId: string,
+    doctorId: string,
+    domain: string,
+  ): Promise<any> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
     return {
@@ -420,18 +528,22 @@ export class AppointmentConfirmationService {
       appointmentId,
       doctorId,
       domain,
-      completedAt: new Date().toISOString()
+      completedAt: new Date().toISOString(),
     };
   }
 
-  private async verifyAppointment(appointmentId: string, clinicId: string, domain: string): Promise<any> {
+  private async verifyAppointment(
+    appointmentId: string,
+    clinicId: string,
+    domain: string,
+  ): Promise<any> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
     return {
       id: appointmentId,
       clinicId,
       domain,
-      status: 'CONFIRMED'
+      status: "CONFIRMED",
     };
   }
 }

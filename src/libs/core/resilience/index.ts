@@ -1,1 +1,1 @@
-export { CircuitBreakerService } from './circuit-breaker.service';
+export { CircuitBreakerService } from "./circuit-breaker.service";

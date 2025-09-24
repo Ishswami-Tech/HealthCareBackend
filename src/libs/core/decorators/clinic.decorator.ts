@@ -1,19 +1,25 @@
-import { SetMetadata } from '@nestjs/common';
-import { createParamDecorator, ExecutionContext, BadRequestException } from '@nestjs/common';
+import { SetMetadata } from "@nestjs/common";
+import {
+  createParamDecorator,
+  ExecutionContext,
+  BadRequestException,
+} from "@nestjs/common";
 
-export const CLINIC_KEY = 'clinic';
+export const CLINIC_KEY = "clinic";
 export const Clinic = () => SetMetadata(CLINIC_KEY, true);
 
 export const ClinicId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string => {
     const request = ctx.switchToHttp().getRequest();
-    
+
     // Priority 1: Check Authorization header for clinic context
     const authHeader = request.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith("Bearer ")) {
       try {
         const token = authHeader.substring(7);
-        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+        const payload = JSON.parse(
+          Buffer.from(token.split(".")[1], "base64").toString(),
+        );
         if (payload.clinicId) {
           return payload.clinicId;
         }
@@ -23,7 +29,7 @@ export const ClinicId = createParamDecorator(
     }
 
     // Priority 2: Check X-Clinic-ID header
-    const clinicIdHeader = request.headers['x-clinic-id'];
+    const clinicIdHeader = request.headers["x-clinic-id"];
     if (clinicIdHeader) {
       return clinicIdHeader;
     }
@@ -40,20 +46,24 @@ export const ClinicId = createParamDecorator(
       return clinicIdQuery;
     }
 
-    throw new BadRequestException('Clinic ID is required. Provide it via X-Clinic-ID header, request body, or query parameter.');
+    throw new BadRequestException(
+      "Clinic ID is required. Provide it via X-Clinic-ID header, request body, or query parameter.",
+    );
   },
 );
 
 export const OptionalClinicId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string | undefined => {
     const request = ctx.switchToHttp().getRequest();
-    
+
     // Priority 1: Check Authorization header for clinic context
     const authHeader = request.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith("Bearer ")) {
       try {
         const token = authHeader.substring(7);
-        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+        const payload = JSON.parse(
+          Buffer.from(token.split(".")[1], "base64").toString(),
+        );
         if (payload.clinicId) {
           return payload.clinicId;
         }
@@ -63,7 +73,7 @@ export const OptionalClinicId = createParamDecorator(
     }
 
     // Priority 2: Check X-Clinic-ID header
-    const clinicIdHeader = request.headers['x-clinic-id'];
+    const clinicIdHeader = request.headers["x-clinic-id"];
     if (clinicIdHeader) {
       return clinicIdHeader;
     }
@@ -82,4 +92,4 @@ export const OptionalClinicId = createParamDecorator(
 
     return undefined;
   },
-); 
+);

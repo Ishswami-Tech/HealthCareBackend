@@ -1,8 +1,8 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../../libs/infrastructure/database/prisma/prisma.service';
-import { EmailService } from '../../../libs/communication/messaging/email/email.service';
-import { EmailTemplate } from '../../../libs/core/types/email.types';
+import { Injectable, Logger, BadRequestException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "../../../libs/infrastructure/database/prisma/prisma.service";
+import { EmailService } from "../../../libs/communication/messaging/email/email.service";
+import { EmailTemplate } from "../../../libs/core/types/email.types";
 
 export interface SocialAuthProvider {
   name: string;
@@ -17,7 +17,7 @@ export interface SocialUser {
   firstName?: string;
   lastName?: string;
   profilePicture?: string;
-  provider: 'google' | 'facebook' | 'apple';
+  provider: "google" | "facebook" | "apple";
 }
 
 export interface SocialAuthResult {
@@ -45,27 +45,27 @@ export class SocialAuthService {
    */
   private initializeProviders(): void {
     // Google
-    this.providers.set('google', {
-      name: 'google',
-      clientId: this.configService.get('GOOGLE_CLIENT_ID') || '',
-      clientSecret: this.configService.get('GOOGLE_CLIENT_SECRET') || '',
-      redirectUri: this.configService.get('GOOGLE_REDIRECT_URI') || '',
+    this.providers.set("google", {
+      name: "google",
+      clientId: this.configService.get("GOOGLE_CLIENT_ID") || "",
+      clientSecret: this.configService.get("GOOGLE_CLIENT_SECRET") || "",
+      redirectUri: this.configService.get("GOOGLE_REDIRECT_URI") || "",
     });
 
     // Facebook
-    this.providers.set('facebook', {
-      name: 'facebook',
-      clientId: this.configService.get('FACEBOOK_APP_ID') || '',
-      clientSecret: this.configService.get('FACEBOOK_APP_SECRET') || '',
-      redirectUri: this.configService.get('FACEBOOK_REDIRECT_URI') || '',
+    this.providers.set("facebook", {
+      name: "facebook",
+      clientId: this.configService.get("FACEBOOK_APP_ID") || "",
+      clientSecret: this.configService.get("FACEBOOK_APP_SECRET") || "",
+      redirectUri: this.configService.get("FACEBOOK_REDIRECT_URI") || "",
     });
 
     // Apple
-    this.providers.set('apple', {
-      name: 'apple',
-      clientId: this.configService.get('APPLE_CLIENT_ID') || '',
-      clientSecret: this.configService.get('APPLE_CLIENT_SECRET') || '',
-      redirectUri: this.configService.get('APPLE_REDIRECT_URI') || '',
+    this.providers.set("apple", {
+      name: "apple",
+      clientId: this.configService.get("APPLE_CLIENT_ID") || "",
+      clientSecret: this.configService.get("APPLE_CLIENT_SECRET") || "",
+      redirectUri: this.configService.get("APPLE_REDIRECT_URI") || "",
     });
   }
 
@@ -77,40 +77,48 @@ export class SocialAuthService {
       // In a real implementation, you would verify the Google token
       // For now, we'll simulate the user data extraction
       const googleUser = await this.verifyGoogleToken(googleToken);
-      
+
       return await this.processSocialUser({
         id: googleUser.id,
         email: googleUser.email,
         firstName: googleUser.given_name,
         lastName: googleUser.family_name,
         profilePicture: googleUser.picture,
-        provider: 'google',
+        provider: "google",
       });
     } catch (error) {
-      this.logger.error('Google authentication failed', error instanceof Error ? (error as Error).stack : 'No stack trace available');
-      throw new BadRequestException('Google authentication failed');
+      this.logger.error(
+        "Google authentication failed",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
+      throw new BadRequestException("Google authentication failed");
     }
   }
 
   /**
    * Authenticate with Facebook
    */
-  async authenticateWithFacebook(facebookToken: string): Promise<SocialAuthResult> {
+  async authenticateWithFacebook(
+    facebookToken: string,
+  ): Promise<SocialAuthResult> {
     try {
       // In a real implementation, you would verify the Facebook token
       const facebookUser = await this.verifyFacebookToken(facebookToken);
-      
+
       return await this.processSocialUser({
         id: facebookUser.id,
         email: facebookUser.email,
         firstName: facebookUser.first_name,
         lastName: facebookUser.last_name,
         profilePicture: facebookUser.picture?.data?.url,
-        provider: 'facebook',
+        provider: "facebook",
       });
     } catch (error) {
-      this.logger.error('Facebook authentication failed', error instanceof Error ? (error as Error).stack : 'No stack trace available');
-      throw new BadRequestException('Facebook authentication failed');
+      this.logger.error(
+        "Facebook authentication failed",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
+      throw new BadRequestException("Facebook authentication failed");
     }
   }
 
@@ -121,24 +129,29 @@ export class SocialAuthService {
     try {
       // In a real implementation, you would verify the Apple token
       const appleUser = await this.verifyAppleToken(appleToken);
-      
+
       return await this.processSocialUser({
         id: appleUser.sub,
         email: appleUser.email,
         firstName: appleUser.given_name,
         lastName: appleUser.family_name,
-        provider: 'apple',
+        provider: "apple",
       });
     } catch (error) {
-      this.logger.error('Apple authentication failed', error instanceof Error ? (error as Error).stack : 'No stack trace available');
-      throw new BadRequestException('Apple authentication failed');
+      this.logger.error(
+        "Apple authentication failed",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
+      throw new BadRequestException("Apple authentication failed");
     }
   }
 
   /**
    * Process social user (create or update)
    */
-  private async processSocialUser(socialUser: SocialUser): Promise<SocialAuthResult> {
+  private async processSocialUser(
+    socialUser: SocialUser,
+  ): Promise<SocialAuthResult> {
     try {
       // Check if user exists by email
       let user = await this.prisma.user.findUnique({
@@ -153,13 +166,15 @@ export class SocialAuthService {
           data: {
             userid: `user_${Date.now()}_${Math.random().toString(36).substring(2)}`,
             email: socialUser.email,
-            name: `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim() || socialUser.email,
+            name:
+              `${socialUser.firstName || ""} ${socialUser.lastName || ""}`.trim() ||
+              socialUser.email,
             age: 18, // Default age
-            firstName: socialUser.firstName || '',
-            lastName: socialUser.lastName || '',
+            firstName: socialUser.firstName || "",
+            lastName: socialUser.lastName || "",
             profilePicture: socialUser.profilePicture,
-            password: '', // No password for social auth
-            role: 'PATIENT',
+            password: "", // No password for social auth
+            role: "PATIENT",
             isVerified: true, // Social auth users are pre-verified
             [this.getSocialIdField(socialUser.provider)]: socialUser.id,
           },
@@ -170,16 +185,18 @@ export class SocialAuthService {
         // Send welcome email
         await this.emailService.sendEmail({
           to: user.email,
-          subject: 'Welcome to HealthCare App',
+          subject: "Welcome to HealthCare App",
           template: EmailTemplate.WELCOME,
           context: {
             name: `${user.firstName} ${user.lastName}`,
             role: user.role,
-            isGoogleAccount: socialUser.provider === 'google',
+            isGoogleAccount: socialUser.provider === "google",
           } as any,
         });
 
-        this.logger.log(`New social user created: ${user.email} via ${socialUser.provider}`);
+        this.logger.log(
+          `New social user created: ${user.email} via ${socialUser.provider}`,
+        );
       } else {
         // Update existing user with social ID if not already set
         const socialIdField = this.getSocialIdField(socialUser.provider);
@@ -194,7 +211,9 @@ export class SocialAuthService {
           });
         }
 
-        this.logger.log(`Existing user logged in via social: ${user.email} via ${socialUser.provider}`);
+        this.logger.log(
+          `Existing user logged in via social: ${user.email} via ${socialUser.provider}`,
+        );
       }
 
       return {
@@ -209,10 +228,15 @@ export class SocialAuthService {
           profilePicture: user.profilePicture,
         },
         isNewUser,
-        message: isNewUser ? 'Account created successfully' : 'Login successful',
+        message: isNewUser
+          ? "Account created successfully"
+          : "Login successful",
       };
     } catch (error) {
-      this.logger.error(`Failed to process social user: ${socialUser.email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to process social user: ${socialUser.email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -222,14 +246,16 @@ export class SocialAuthService {
    */
   private getSocialIdField(provider: string): string {
     switch (provider) {
-      case 'google':
-        return 'googleId';
-      case 'facebook':
-        return 'facebookId';
-      case 'apple':
-        return 'appleId';
+      case "google":
+        return "googleId";
+      case "facebook":
+        return "facebookId";
+      case "apple":
+        return "appleId";
       default:
-        throw new BadRequestException(`Unsupported social provider: ${provider}`);
+        throw new BadRequestException(
+          `Unsupported social provider: ${provider}`,
+        );
     }
   }
 
@@ -241,14 +267,14 @@ export class SocialAuthService {
     // 1. Verify the token with Google's API
     // 2. Extract user information
     // 3. Return the user data
-    
+
     // For now, return mock data
     return {
-      id: 'google_user_123',
-      email: 'user@gmail.com',
-      given_name: 'John',
-      family_name: 'Doe',
-      picture: 'https://example.com/avatar.jpg',
+      id: "google_user_123",
+      email: "user@gmail.com",
+      given_name: "John",
+      family_name: "Doe",
+      picture: "https://example.com/avatar.jpg",
     };
   }
 
@@ -260,16 +286,16 @@ export class SocialAuthService {
     // 1. Verify the token with Facebook's API
     // 2. Extract user information
     // 3. Return the user data
-    
+
     // For now, return mock data
     return {
-      id: 'facebook_user_123',
-      email: 'user@facebook.com',
-      first_name: 'Jane',
-      last_name: 'Smith',
+      id: "facebook_user_123",
+      email: "user@facebook.com",
+      first_name: "Jane",
+      last_name: "Smith",
       picture: {
         data: {
-          url: 'https://example.com/avatar.jpg',
+          url: "https://example.com/avatar.jpg",
         },
       },
     };
@@ -283,13 +309,13 @@ export class SocialAuthService {
     // 1. Verify the token with Apple's API
     // 2. Extract user information
     // 3. Return the user data
-    
+
     // For now, return mock data
     return {
-      sub: 'apple_user_123',
-      email: 'user@icloud.com',
-      given_name: 'Bob',
-      family_name: 'Johnson',
+      sub: "apple_user_123",
+      email: "user@icloud.com",
+      given_name: "Bob",
+      family_name: "Johnson",
     };
   }
 

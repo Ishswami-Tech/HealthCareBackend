@@ -1,6 +1,6 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../infrastructure/database/prisma/prisma.service';
-import { RedisService } from '../../infrastructure/cache/redis/redis.service';
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
+import { RedisService } from "../../infrastructure/cache/redis/redis.service";
 
 export interface Role {
   id: string;
@@ -45,7 +45,7 @@ export interface UpdateRoleDto {
 export class RoleService {
   private readonly logger = new Logger(RoleService.name);
   private readonly CACHE_TTL = 3600; // 1 hour
-  private readonly CACHE_PREFIX = 'roles:';
+  private readonly CACHE_PREFIX = "roles:";
 
   constructor(
     private readonly prisma: PrismaService,
@@ -67,7 +67,9 @@ export class RoleService {
       });
 
       if (existingRole) {
-        throw new Error(`Role '${createRoleDto.name}' already exists in this domain`);
+        throw new Error(
+          `Role '${createRoleDto.name}' already exists in this domain`,
+        );
       }
 
       const role = await this.prisma.rbacRole.create({
@@ -101,7 +103,10 @@ export class RoleService {
 
       return this.mapToRole(role);
     } catch (error) {
-      this.logger.error(`Failed to create role: ${createRoleDto.name}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to create role: ${createRoleDto.name}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -113,7 +118,7 @@ export class RoleService {
     try {
       const cacheKey = `${this.CACHE_PREFIX}id:${roleId}`;
       const cached = await this.redis.get<Role>(cacheKey);
-      
+
       if (cached) {
         return cached;
       }
@@ -134,13 +139,16 @@ export class RoleService {
       }
 
       const mappedRole = this.mapToRole(role);
-      
+
       // Cache the result
       await this.redis.set(cacheKey, mappedRole, this.CACHE_TTL);
 
       return mappedRole;
     } catch (error) {
-      this.logger.error(`Failed to get role by ID: ${roleId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to get role by ID: ${roleId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return null;
     }
   }
@@ -148,11 +156,15 @@ export class RoleService {
   /**
    * Get role by name
    */
-  async getRoleByName(name: string, domain?: string, clinicId?: string): Promise<Role | null> {
+  async getRoleByName(
+    name: string,
+    domain?: string,
+    clinicId?: string,
+  ): Promise<Role | null> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}name:${name}:${domain || 'null'}:${clinicId || 'null'}`;
+      const cacheKey = `${this.CACHE_PREFIX}name:${name}:${domain || "null"}:${clinicId || "null"}`;
       const cached = await this.redis.get<Role>(cacheKey);
-      
+
       if (cached) {
         return cached;
       }
@@ -177,13 +189,16 @@ export class RoleService {
       }
 
       const mappedRole = this.mapToRole(role);
-      
+
       // Cache the result
       await this.redis.set(cacheKey, mappedRole, this.CACHE_TTL);
 
       return mappedRole;
     } catch (error) {
-      this.logger.error(`Failed to get role by name: ${name}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to get role by name: ${name}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return null;
     }
   }
@@ -193,9 +208,9 @@ export class RoleService {
    */
   async getRoles(domain?: string, clinicId?: string): Promise<Role[]> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}list:${domain || 'null'}:${clinicId || 'null'}`;
+      const cacheKey = `${this.CACHE_PREFIX}list:${domain || "null"}:${clinicId || "null"}`;
       const cached = await this.redis.get<Role[]>(cacheKey);
-      
+
       if (cached) {
         return cached;
       }
@@ -213,20 +228,20 @@ export class RoleService {
             },
           },
         },
-        orderBy: [
-          { isSystemRole: 'desc' },
-          { name: 'asc' },
-        ],
+        orderBy: [{ isSystemRole: "desc" }, { name: "asc" }],
       });
 
       const mappedRoles = roles.map((role: any) => this.mapToRole(role));
-      
+
       // Cache the result
       await this.redis.set(cacheKey, mappedRoles, this.CACHE_TTL);
 
       return mappedRoles;
     } catch (error) {
-      this.logger.error('Failed to get roles', error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        "Failed to get roles",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return [];
     }
   }
@@ -234,7 +249,10 @@ export class RoleService {
   /**
    * Update role
    */
-  async updateRole(roleId: string, updateRoleDto: UpdateRoleDto): Promise<Role> {
+  async updateRole(
+    roleId: string,
+    updateRoleDto: UpdateRoleDto,
+  ): Promise<Role> {
     try {
       const existingRole = await this.prisma.rbacRole.findUnique({
         where: { id: roleId },
@@ -245,7 +263,7 @@ export class RoleService {
       }
 
       if (existingRole.isSystemRole) {
-        throw new Error('Cannot modify system roles');
+        throw new Error("Cannot modify system roles");
       }
 
       // Update role
@@ -278,7 +296,10 @@ export class RoleService {
 
       return this.mapToRole(role);
     } catch (error) {
-      this.logger.error(`Failed to update role: ${roleId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to update role: ${roleId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -297,7 +318,7 @@ export class RoleService {
       }
 
       if (role.isSystemRole) {
-        throw new Error('Cannot delete system roles');
+        throw new Error("Cannot delete system roles");
       }
 
       // Check if role is assigned to any users
@@ -309,7 +330,7 @@ export class RoleService {
       });
 
       if (userRoles > 0) {
-        throw new Error('Cannot delete role that is assigned to users');
+        throw new Error("Cannot delete role that is assigned to users");
       }
 
       // Soft delete role
@@ -326,7 +347,10 @@ export class RoleService {
 
       this.logger.log(`Role deleted: ${role.name} (${role.id})`);
     } catch (error) {
-      this.logger.error(`Failed to delete role: ${roleId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to delete role: ${roleId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -334,7 +358,10 @@ export class RoleService {
   /**
    * Assign permissions to role
    */
-  async assignPermissionsToRole(roleId: string, permissionIds: string[]): Promise<void> {
+  async assignPermissionsToRole(
+    roleId: string,
+    permissionIds: string[],
+  ): Promise<void> {
     try {
       // Remove existing permissions
       await this.prisma.rolePermission.deleteMany({
@@ -344,7 +371,7 @@ export class RoleService {
       // Add new permissions
       if (permissionIds.length > 0) {
         await this.prisma.rolePermission.createMany({
-          data: permissionIds.map(permissionId => ({
+          data: permissionIds.map((permissionId) => ({
             roleId,
             permissionId,
             isActive: true,
@@ -356,9 +383,14 @@ export class RoleService {
       // Clear cache
       await this.clearRoleCache();
 
-      this.logger.log(`Permissions assigned to role ${roleId}: ${permissionIds.length} permissions`);
+      this.logger.log(
+        `Permissions assigned to role ${roleId}: ${permissionIds.length} permissions`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to assign permissions to role: ${roleId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to assign permissions to role: ${roleId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -366,7 +398,10 @@ export class RoleService {
   /**
    * Remove permissions from role
    */
-  async removePermissionsFromRole(roleId: string, permissionIds: string[]): Promise<void> {
+  async removePermissionsFromRole(
+    roleId: string,
+    permissionIds: string[],
+  ): Promise<void> {
     try {
       await this.prisma.rolePermission.deleteMany({
         where: {
@@ -378,9 +413,14 @@ export class RoleService {
       // Clear cache
       await this.clearRoleCache();
 
-      this.logger.log(`Permissions removed from role ${roleId}: ${permissionIds.length} permissions`);
+      this.logger.log(
+        `Permissions removed from role ${roleId}: ${permissionIds.length} permissions`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to remove permissions from role: ${roleId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to remove permissions from role: ${roleId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -388,7 +428,10 @@ export class RoleService {
   /**
    * Update role permissions (replace all)
    */
-  async updateRolePermissions(roleId: string, permissionIds: string[]): Promise<void> {
+  async updateRolePermissions(
+    roleId: string,
+    permissionIds: string[],
+  ): Promise<void> {
     await this.assignPermissionsToRole(roleId, permissionIds);
   }
 
@@ -398,9 +441,12 @@ export class RoleService {
   async getSystemRoles(): Promise<Role[]> {
     try {
       const roles = await this.getRoles();
-      return roles.filter(role => role.isSystemRole);
+      return roles.filter((role) => role.isSystemRole);
     } catch (error) {
-      this.logger.error('Failed to get system roles', error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        "Failed to get system roles",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return [];
     }
   }
@@ -412,46 +458,49 @@ export class RoleService {
     try {
       const systemRoles = [
         {
-          name: 'SUPER_ADMIN',
-          displayName: 'Super Administrator',
-          description: 'Full system access',
-          domain: 'healthcare',
+          name: "SUPER_ADMIN",
+          displayName: "Super Administrator",
+          description: "Full system access",
+          domain: "healthcare",
         },
         {
-          name: 'CLINIC_ADMIN',
-          displayName: 'Clinic Administrator',
-          description: 'Full clinic management access',
-          domain: 'healthcare',
+          name: "CLINIC_ADMIN",
+          displayName: "Clinic Administrator",
+          description: "Full clinic management access",
+          domain: "healthcare",
         },
         {
-          name: 'DOCTOR',
-          displayName: 'Doctor',
-          description: 'Medical practitioner access',
-          domain: 'healthcare',
+          name: "DOCTOR",
+          displayName: "Doctor",
+          description: "Medical practitioner access",
+          domain: "healthcare",
         },
         {
-          name: 'NURSE',
-          displayName: 'Nurse',
-          description: 'Nursing staff access',
-          domain: 'healthcare',
+          name: "NURSE",
+          displayName: "Nurse",
+          description: "Nursing staff access",
+          domain: "healthcare",
         },
         {
-          name: 'RECEPTIONIST',
-          displayName: 'Receptionist',
-          description: 'Front desk staff access',
-          domain: 'healthcare',
+          name: "RECEPTIONIST",
+          displayName: "Receptionist",
+          description: "Front desk staff access",
+          domain: "healthcare",
         },
         {
-          name: 'PATIENT',
-          displayName: 'Patient',
-          description: 'Patient access to own records',
-          domain: 'healthcare',
+          name: "PATIENT",
+          displayName: "Patient",
+          description: "Patient access to own records",
+          domain: "healthcare",
         },
       ];
 
       for (const roleData of systemRoles) {
-        const existingRole = await this.getRoleByName(roleData.name, roleData.domain);
-        
+        const existingRole = await this.getRoleByName(
+          roleData.name,
+          roleData.domain,
+        );
+
         if (!existingRole) {
           await this.prisma.rbacRole.create({
             data: {
@@ -460,14 +509,17 @@ export class RoleService {
               isActive: true,
             },
           });
-          
+
           this.logger.log(`System role created: ${roleData.name}`);
         }
       }
 
       await this.clearRoleCache();
     } catch (error) {
-      this.logger.error('Failed to initialize system roles', error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        "Failed to initialize system roles",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -508,7 +560,10 @@ export class RoleService {
         await this.redis.del(...keys);
       }
     } catch (error) {
-      this.logger.error('Failed to clear role cache', error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        "Failed to clear role cache",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
     }
   }
 }

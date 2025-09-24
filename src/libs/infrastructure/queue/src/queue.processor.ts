@@ -1,7 +1,7 @@
-import { Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
-import { JobType, JobData } from './queue.service';
-import { PrismaService } from '../../database';
+import { Logger } from "@nestjs/common";
+import { Job } from "bullmq";
+import { JobType, JobData } from "./queue.service";
+import { PrismaService } from "../../database";
 
 // NOTE: In BullMQ, job processing is handled by Worker instances, not decorators.
 // Worker registration should be done in the module or service setup.
@@ -14,14 +14,19 @@ export class QueueProcessor {
   // Example BullMQ job handler for CREATE
   async processCreateJob(job: Job<JobData>) {
     try {
-      this.logger.log(`Processing create job ${job.id} for resource ${job.data.id}`);
+      this.logger.log(
+        `Processing create job ${job.id} for resource ${job.data.id}`,
+      );
       // Ensure this handler is idempotent!
       // ... job logic ...
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing create job: ${(error as Error).message}`, (error as Error).stack);
+        this.logger.error(
+          `Error processing create job: ${error.message}`,
+          error.stack,
+        );
       } else {
         this.logger.error(`Error processing create job: ${String(error)}`);
       }
@@ -36,16 +41,21 @@ export class QueueProcessor {
   // Repeat for other job types (UPDATE, CONFIRM, COMPLETE, NOTIFY)
   async processUpdateJob(job: Job<JobData>) {
     try {
-      this.logger.log(`Processing update job ${job.id} for resource ${job.data.id}`);
-      
+      this.logger.log(
+        `Processing update job ${job.id} for resource ${job.data.id}`,
+      );
+
       // Generic processing logic for service-queue
       // Implementation of UPDATE job for service-queue
-      
+
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing update job: ${(error as Error).message}`, (error as Error).stack);
+        this.logger.error(
+          `Error processing update job: ${error.message}`,
+          error.stack,
+        );
       } else {
         this.logger.error(`Error processing update job: ${String(error)}`);
       }
@@ -55,16 +65,21 @@ export class QueueProcessor {
 
   async processConfirmJob(job: Job<JobData>) {
     try {
-      this.logger.log(`Processing confirm job ${job.id} for resource ${job.data.id}`);
-      
+      this.logger.log(
+        `Processing confirm job ${job.id} for resource ${job.data.id}`,
+      );
+
       // Generic processing logic for service-queue
       // Implementation of CONFIRM job for service-queue
-      
+
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing confirm job: ${(error as Error).message}`, (error as Error).stack);
+        this.logger.error(
+          `Error processing confirm job: ${error.message}`,
+          error.stack,
+        );
       } else {
         this.logger.error(`Error processing confirm job: ${String(error)}`);
       }
@@ -74,16 +89,21 @@ export class QueueProcessor {
 
   async processCompleteJob(job: Job<JobData>) {
     try {
-      this.logger.log(`Processing complete job ${job.id} for resource ${job.data.id}`);
-      
+      this.logger.log(
+        `Processing complete job ${job.id} for resource ${job.data.id}`,
+      );
+
       // Generic processing logic for service-queue
       // Implementation of COMPLETE job for service-queue
-      
+
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing complete job: ${(error as Error).message}`, (error as Error).stack);
+        this.logger.error(
+          `Error processing complete job: ${error.message}`,
+          error.stack,
+        );
       } else {
         this.logger.error(`Error processing complete job: ${String(error)}`);
       }
@@ -93,11 +113,15 @@ export class QueueProcessor {
 
   async processNotifyJob(job: Job<JobData>) {
     try {
-      this.logger.log(`Processing notification job ${job.id} for resource ${job.data.id}`);
-      
+      this.logger.log(
+        `Processing notification job ${job.id} for resource ${job.data.id}`,
+      );
+
       // Send notification logic for service-queue
-      this.logger.log(`Sending notification for resource ${job.data.id} to user ${job.data.userId}`);
-      
+      this.logger.log(
+        `Sending notification for resource ${job.data.id} to user ${job.data.userId}`,
+      );
+
       // Example of FCM notification (would need to be implemented)
       // await this.fcmService.sendNotification({
       //   userId: job.data.userId,
@@ -105,16 +129,21 @@ export class QueueProcessor {
       //   body: job.data.metadata?.message || 'Your resource status has been updated',
       //   data: { resourceId: job.data.id, resourceType: job.data.resourceType },
       // });
-      
+
       this.logger.log(`Notification sent for resource ${job.data.id}`);
       return { success: true };
     } catch (error) {
       if (error instanceof Error) {
-        this.logger.error(`Error processing notification job: ${(error as Error).message}`, (error as Error).stack);
+        this.logger.error(
+          `Error processing notification job: ${error.message}`,
+          error.stack,
+        );
       } else {
-        this.logger.error(`Error processing notification job: ${String(error)}`);
+        this.logger.error(
+          `Error processing notification job: ${String(error)}`,
+        );
       }
       throw error; // Rethrow to trigger job retry
     }
   }
-} 
+}

@@ -1,9 +1,18 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { PrismaService } from '../../infrastructure/database/prisma/prisma.service';
-import { LoggingService } from '../../infrastructure/logging/logging.service';
-import { LogType, LogLevel } from '../../infrastructure/logging/types/logging.types';
-import { ClinicIsolationService } from '../../infrastructure/database/clinic-isolation.service';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
+import { LoggingService } from "../../infrastructure/logging/logging.service";
+import {
+  LogType,
+  LogLevel,
+} from "../../infrastructure/logging/types/logging.types";
+import { ClinicIsolationService } from "../../infrastructure/database/clinic-isolation.service";
 
 @Injectable()
 export class ClinicGuard implements CanActivate {
@@ -23,48 +32,50 @@ export class ClinicGuard implements CanActivate {
       LogType.AUTH,
       LogLevel.DEBUG,
       `ClinicGuard processing request`,
-      'ClinicGuard',
-      { 
+      "ClinicGuard",
+      {
         path: request.url,
         method: request.method,
         userId: user?.id,
-        userRole: user?.role
-      }
+        userRole: user?.role,
+      },
     );
 
     // Check if this route is accessing clinic-specific resources
     const isClinicRoute = this.isClinicRoute(context);
-    
+
     // If not a clinic route, allow access
     if (!isClinicRoute) {
       this.loggingService.log(
         LogType.AUTH,
         LogLevel.DEBUG,
         `Not a clinic route, allowing access`,
-        'ClinicGuard',
-        { path: request.url }
+        "ClinicGuard",
+        { path: request.url },
       );
       return true;
     }
-    
+
     // For clinic routes, extract clinic ID from request
     const clinicId = this.extractClinicId(request);
-    
+
     if (!clinicId) {
       this.loggingService.log(
         LogType.AUTH,
         LogLevel.WARN,
         `Clinic ID required for clinic route`,
-        'ClinicGuard',
-        { path: request.url }
+        "ClinicGuard",
+        { path: request.url },
       );
-      throw new ForbiddenException('Clinic ID is required. Please provide clinic ID in header, query, or JWT token.');
+      throw new ForbiddenException(
+        "Clinic ID is required. Please provide clinic ID in header, query, or JWT token.",
+      );
     }
 
     // Validate clinic access using ClinicIsolationService
     const clinicResult = await this.clinicIsolationService.validateClinicAccess(
-      user?.sub || user?.id || 'anonymous',
-      clinicId
+      user?.sub || user?.id || "anonymous",
+      clinicId,
     );
 
     if (!clinicResult.success) {
@@ -72,14 +83,16 @@ export class ClinicGuard implements CanActivate {
         LogType.AUTH,
         LogLevel.WARN,
         `Invalid clinic access`,
-        'ClinicGuard',
-        { 
+        "ClinicGuard",
+        {
           path: request.url,
           clinicId,
-          error: clinicResult.error
-        }
+          error: clinicResult.error,
+        },
       );
-      throw new ForbiddenException(`Clinic access denied: ${clinicResult.error}`);
+      throw new ForbiddenException(
+        `Clinic access denied: ${clinicResult.error}`,
+      );
     }
 
     // Set clinic context in request for downstream use
@@ -90,21 +103,21 @@ export class ClinicGuard implements CanActivate {
       LogType.AUTH,
       LogLevel.DEBUG,
       `Clinic access validated`,
-      'ClinicGuard',
-      { 
+      "ClinicGuard",
+      {
         userId: user?.sub || user?.id,
         userRole: user?.role,
         clinicId,
-        clinicName: clinicResult.clinicContext?.clinicName
-      }
+        clinicName: clinicResult.clinicContext?.clinicName,
+      },
     );
-    
+
     return true;
   }
 
   private isClinicRoute(context: ExecutionContext): boolean {
     // Get the controller and handler metadata to determine if this is a clinic route
-    const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
+    const isPublic = this.reflector.getAllAndOverride<boolean>("isPublic", [
       context.getHandler(),
       context.getClass(),
     ]);
@@ -115,10 +128,10 @@ export class ClinicGuard implements CanActivate {
     }
 
     // Get controller metadata to check if it's a clinic route
-    const isClinicRoute = this.reflector.getAllAndOverride<boolean>('isClinicRoute', [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const isClinicRoute = this.reflector.getAllAndOverride<boolean>(
+      "isClinicRoute",
+      [context.getHandler(), context.getClass()],
+    );
 
     // If explicitly marked as a clinic route, return true
     if (isClinicRoute) {
@@ -128,7 +141,7 @@ export class ClinicGuard implements CanActivate {
     // Otherwise, check the route path to determine if it's a clinic route
     const request = context.switchToHttp().getRequest();
     const path = request.url;
-    
+
     // Clinic routes typically include /clinics/ or /appointments/ or similar
     const clinicRoutePatterns = [
       /\/appointments\//,
@@ -140,14 +153,15 @@ export class ClinicGuard implements CanActivate {
       /\/prescriptions\//,
     ];
 
-    return clinicRoutePatterns.some(pattern => pattern.test(path));
+    return clinicRoutePatterns.some((pattern) => pattern.test(path));
   }
 
   private extractClinicId(request: any): string | null {
     // Try to get clinic ID from various sources
-    
+
     // 1. From headers
-    const headerClinicId = request.headers['x-clinic-id'] || request.headers['clinic-id'];
+    const headerClinicId =
+      request.headers["x-clinic-id"] || request.headers["clinic-id"];
     if (headerClinicId) {
       return headerClinicId;
     }
@@ -176,4 +190,4 @@ export class ClinicGuard implements CanActivate {
 
     return null;
   }
-} 
+}

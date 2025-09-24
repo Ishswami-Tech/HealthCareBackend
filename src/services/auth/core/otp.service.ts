@@ -1,8 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { RedisService } from '../../../libs/infrastructure/cache/redis/redis.service';
-import { EmailService } from '../../../libs/communication/messaging/email/email.service';
-import { ConfigService } from '@nestjs/config';
-import { EmailTemplate } from '../../../libs/core/types/email.types';
+import { Injectable, Logger } from "@nestjs/common";
+import { RedisService } from "../../../libs/infrastructure/cache/redis/redis.service";
+import { EmailService } from "../../../libs/communication/messaging/email/email.service";
+import { ConfigService } from "@nestjs/config";
+import { EmailTemplate } from "../../../libs/core/types/email.types";
 
 export interface OtpConfig {
   length: number;
@@ -30,10 +30,10 @@ export class OtpService {
     private readonly configService: ConfigService,
   ) {
     this.config = {
-      length: this.configService.get('OTP_LENGTH') || 6,
-      expiryMinutes: this.configService.get('OTP_EXPIRY_MINUTES') || 5,
-      maxAttempts: this.configService.get('OTP_MAX_ATTEMPTS') || 3,
-      cooldownMinutes: this.configService.get('OTP_COOLDOWN_MINUTES') || 1,
+      length: this.configService.get("OTP_LENGTH") || 6,
+      expiryMinutes: this.configService.get("OTP_EXPIRY_MINUTES") || 5,
+      maxAttempts: this.configService.get("OTP_MAX_ATTEMPTS") || 3,
+      cooldownMinutes: this.configService.get("OTP_COOLDOWN_MINUTES") || 1,
     };
   }
 
@@ -43,18 +43,22 @@ export class OtpService {
   generateOtp(): string {
     const min = Math.pow(10, this.config.length - 1);
     const max = Math.pow(10, this.config.length) - 1;
-    return Math.floor(Math.random() * (max - min + 1)) + min + '';
+    return Math.floor(Math.random() * (max - min + 1)) + min + "";
   }
 
   /**
    * Send OTP via email
    */
-  async sendOtpEmail(email: string, name: string, purpose: string = 'verification'): Promise<OtpResult> {
+  async sendOtpEmail(
+    email: string,
+    name: string,
+    purpose: string = "verification",
+  ): Promise<OtpResult> {
     try {
       // Check cooldown
       const cooldownKey = `otp_cooldown:${email}`;
       const cooldown = await this.redis.get(cooldownKey);
-      
+
       if (cooldown) {
         return {
           success: false,
@@ -70,7 +74,7 @@ export class OtpService {
       if (attemptCount >= this.config.maxAttempts) {
         return {
           success: false,
-          message: 'Maximum OTP attempts exceeded. Please try again later.',
+          message: "Maximum OTP attempts exceeded. Please try again later.",
         };
       }
 
@@ -81,12 +85,12 @@ export class OtpService {
 
       await this.redis.set(otpKey, otp, expirySeconds);
       await this.redis.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
-      await this.redis.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
+      await this.redis.set(cooldownKey, "1", this.config.cooldownMinutes * 60);
 
       // Send email
       await this.emailService.sendEmail({
         to: email,
-        subject: 'Your OTP Code',
+        subject: "Your OTP Code",
         template: EmailTemplate.OTP_LOGIN,
         context: {
           name,
@@ -98,15 +102,18 @@ export class OtpService {
 
       return {
         success: true,
-        message: 'OTP sent successfully',
+        message: "OTP sent successfully",
         expiresIn: expirySeconds,
         attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
       };
     } catch (error) {
-      this.logger.error(`Failed to send OTP to ${email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to send OTP to ${email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return {
         success: false,
-        message: 'Failed to send OTP. Please try again.',
+        message: "Failed to send OTP. Please try again.",
       };
     }
   }
@@ -122,14 +129,14 @@ export class OtpService {
       if (!storedOtp) {
         return {
           success: false,
-          message: 'OTP not found or expired',
+          message: "OTP not found or expired",
         };
       }
 
       if (storedOtp !== otp) {
         return {
           success: false,
-          message: 'Invalid OTP',
+          message: "Invalid OTP",
         };
       }
 
@@ -140,13 +147,16 @@ export class OtpService {
 
       return {
         success: true,
-        message: 'OTP verified successfully',
+        message: "OTP verified successfully",
       };
     } catch (error) {
-      this.logger.error(`Failed to verify OTP for ${email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to verify OTP for ${email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return {
         success: false,
-        message: 'Failed to verify OTP. Please try again.',
+        message: "Failed to verify OTP. Please try again.",
       };
     }
   }
@@ -169,19 +179,25 @@ export class OtpService {
         this.redis.get(attemptsKey),
         this.redis.get(cooldownKey),
       ]);
-      
+
       const otpExists = otpData !== null;
       const cooldown = cooldownData !== null;
 
       const attemptCount = attempts ? parseInt(attempts) : 0;
-      const attemptsRemaining = Math.max(0, this.config.maxAttempts - attemptCount);
+      const attemptsRemaining = Math.max(
+        0,
+        this.config.maxAttempts - attemptCount,
+      );
 
       return {
         exists: otpExists,
         attemptsRemaining: cooldown ? 0 : attemptsRemaining,
       };
     } catch (error) {
-      this.logger.error(`Failed to check OTP status for ${email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to check OTP status for ${email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return {
         exists: false,
         attemptsRemaining: 0,
@@ -196,12 +212,15 @@ export class OtpService {
     try {
       const otpKey = `otp:${email}`;
       await this.redis.del(otpKey);
-      
+
       this.logger.log(`OTP invalidated for ${email}`);
-      
+
       return true;
     } catch (error) {
-      this.logger.error(`Failed to invalidate OTP for ${email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to invalidate OTP for ${email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return false;
     }
   }
@@ -213,7 +232,7 @@ export class OtpService {
     try {
       const attemptsKey = `otp_attempts:${email}`;
       const cooldownKey = `otp_cooldown:${email}`;
-      
+
       await Promise.all([
         this.redis.del(attemptsKey),
         this.redis.del(cooldownKey),
@@ -221,7 +240,10 @@ export class OtpService {
 
       this.logger.log(`OTP attempts reset for ${email}`);
     } catch (error) {
-      this.logger.error(`Failed to reset OTP attempts for ${email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to reset OTP attempts for ${email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
     }
   }
 }

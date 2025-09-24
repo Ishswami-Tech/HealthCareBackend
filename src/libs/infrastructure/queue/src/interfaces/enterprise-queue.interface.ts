@@ -1,4 +1,4 @@
-import { Job } from 'bullmq';
+import { Job } from "bullmq";
 
 /**
  * Enterprise Queue Service Interface
@@ -10,86 +10,104 @@ export interface IEnterpriseQueueService {
     queueName: string,
     jobType: string,
     data: T,
-    options?: EnterpriseJobOptions
+    options?: EnterpriseJobOptions,
   ): Promise<EnterpriseJob<T>>;
 
   addBulkJobs<T = any>(
     queueName: string,
-    jobs: BulkJobData<T>[]
+    jobs: BulkJobData<T>[],
   ): Promise<EnterpriseJob<T>[]>;
 
-  getJob<T = any>(jobId: string, queueName?: string): Promise<EnterpriseJob<T> | null>;
+  getJob<T = any>(
+    jobId: string,
+    queueName?: string,
+  ): Promise<EnterpriseJob<T> | null>;
   removeJob(jobId: string, queueName?: string): Promise<boolean>;
-  
+
   // Enterprise workflow operations
   startSaga<T = any>(
     sagaName: string,
     initialData: T,
-    options?: SagaOptions
+    options?: SagaOptions,
   ): Promise<SagaExecution<T>>;
 
   compensateSaga(sagaId: string, reason?: string): Promise<CompensationResult>;
-  
+
   // Multi-tenant operations
   addTenantJob<T = any>(
     tenantId: string,
     queueName: string,
     jobType: string,
     data: T,
-    options?: TenantJobOptions
+    options?: TenantJobOptions,
   ): Promise<EnterpriseJob<T>>;
 
-  getTenantJobs(tenantId: string, options?: TenantQueryOptions): Promise<EnterpriseJob[]>;
-  
+  getTenantJobs(
+    tenantId: string,
+    options?: TenantQueryOptions,
+  ): Promise<EnterpriseJob[]>;
+
   // Monitoring and observability
   getQueueMetrics(queueName: string): Promise<EnterpriseQueueMetrics>;
   getQueueHealth(queueName: string): Promise<QueueHealthStatus>;
   getAllQueueStatuses(): Promise<Record<string, QueueStatus>>;
-  
+
   // Compliance and audit
   getAuditTrail(jobId: string): Promise<AuditEvent[]>;
   exportComplianceReport(
-    options: ComplianceExportOptions
+    options: ComplianceExportOptions,
   ): Promise<ComplianceReport>;
-  
+
   // Performance and scaling
-  scaleQueue(queueName: string, targetConcurrency: number): Promise<ScalingResult>;
-  enableAutoScaling(queueName: string, policy: AutoScalingPolicy): Promise<void>;
-  
+  scaleQueue(
+    queueName: string,
+    targetConcurrency: number,
+  ): Promise<ScalingResult>;
+  enableAutoScaling(
+    queueName: string,
+    policy: AutoScalingPolicy,
+  ): Promise<void>;
+
   // Multi-region operations
-  replicateToRegion(jobId: string, targetRegion: string): Promise<ReplicationResult>;
-  failoverToRegion(queueName: string, targetRegion: string): Promise<FailoverResult>;
+  replicateToRegion(
+    jobId: string,
+    targetRegion: string,
+  ): Promise<ReplicationResult>;
+  failoverToRegion(
+    queueName: string,
+    targetRegion: string,
+  ): Promise<FailoverResult>;
 }
 
 /**
  * Enterprise Job with enhanced metadata and security
  */
-export interface EnterpriseJob<T = any> extends Omit<Job<T>, 'data'> {
+export interface EnterpriseJob<T = any> extends Omit<Job<T>, "data"> {
   // Enhanced identification
   id: string;
   tenantId: string;
   correlationId: string;
   parentJobId?: string;
   sagaId?: string;
-  
+
   // Security and compliance
   data: EncryptedPayload<T>;
   classification: DataClassification;
   consentTokens: ConsentToken[];
-  
+
   // Workflow and dependencies
   dependencies: JobDependency[];
   workflow?: WorkflowMetadata;
-  
+
   // Observability
   traceId: string;
   spanId: string;
   metrics: JobMetrics;
-  
+
   // Audit and compliance
   auditTrail: AuditEvent[];
   retentionPolicy: RetentionPolicy;
-  
+
   // Multi-region
   region: string;
   replicationStatus?: ReplicationStatus;
@@ -104,26 +122,26 @@ export interface EnterpriseJobOptions {
   priority?: JobPriority;
   attempts?: number;
   backoff?: BackoffStrategy;
-  
+
   // Enterprise features
   tenantId?: string;
   correlationId?: string;
   classification?: DataClassification;
   consentTokens?: ConsentToken[];
-  
+
   // Workflow options
   sagaId?: string;
   dependencies?: JobDependency[];
   timeout?: number;
-  
+
   // Compliance options
   retentionPolicy?: RetentionPolicy;
   auditLevel?: AuditLevel;
-  
+
   // Performance options
   batchable?: boolean;
   preferredRegion?: string;
-  
+
   // Security options
   encryptionKey?: string;
   signatureRequired?: boolean;
@@ -208,21 +226,21 @@ export interface EnterpriseQueueMetrics {
   failed: number;
   delayed: number;
   paused: number;
-  
+
   // Performance metrics
   throughput: ThroughputMetrics;
   latency: LatencyMetrics;
   errorRates: ErrorRateMetrics;
-  
+
   // Resource metrics
   memory: MemoryMetrics;
   cpu: CpuMetrics;
   network: NetworkMetrics;
-  
+
   // Business metrics
   tenantMetrics: Record<string, TenantMetrics>;
   regionMetrics: Record<string, RegionMetrics>;
-  
+
   // Compliance metrics
   auditMetrics: AuditMetrics;
   dataClassificationMetrics: DataClassificationMetrics;
@@ -238,7 +256,7 @@ export interface EncryptedPayload<T = any> {
   iv: string;
   tag: string;
   metadata: EncryptionMetadata;
-  
+
   // For development/testing only
   _plaintext?: T;
 }
@@ -269,12 +287,12 @@ export interface ComplianceReport {
   reportType: ComplianceReportType;
   period: DateRange;
   tenantId?: string;
-  
+
   summary: ComplianceSummary;
   violations: ComplianceViolation[];
   recommendations: ComplianceRecommendation[];
   evidence: ComplianceEvidence[];
-  
+
   signature: string;
   certification: ComplianceCertification;
 }
@@ -285,66 +303,66 @@ export enum JobPriority {
   HIGH = 1,
   NORMAL = 5,
   LOW = 10,
-  BACKGROUND = 15
+  BACKGROUND = 15,
 }
 
 export enum DataClassification {
-  PUBLIC = 'public',
-  INTERNAL = 'internal',
-  CONFIDENTIAL = 'confidential',
-  RESTRICTED = 'restricted',
-  PHI = 'phi',
-  PII = 'pii'
+  PUBLIC = "public",
+  INTERNAL = "internal",
+  CONFIDENTIAL = "confidential",
+  RESTRICTED = "restricted",
+  PHI = "phi",
+  PII = "pii",
 }
 
 export enum SagaStatus {
-  STARTED = 'started',
-  RUNNING = 'running',
-  COMPENSATING = 'compensating',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-  CANCELLED = 'cancelled'
+  STARTED = "started",
+  RUNNING = "running",
+  COMPENSATING = "compensating",
+  COMPLETED = "completed",
+  FAILED = "failed",
+  CANCELLED = "cancelled",
 }
 
 export enum DependencyRelationship {
-  REQUIRES = 'requires',
-  BLOCKS = 'blocks',
-  FOLLOWS = 'follows',
-  PARALLEL = 'parallel'
+  REQUIRES = "requires",
+  BLOCKS = "blocks",
+  FOLLOWS = "follows",
+  PARALLEL = "parallel",
 }
 
 export enum AuditAction {
-  CREATE = 'create',
-  READ = 'read',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  EXECUTE = 'execute',
-  COMPENSATE = 'compensate'
+  CREATE = "create",
+  READ = "read",
+  UPDATE = "update",
+  DELETE = "delete",
+  EXECUTE = "execute",
+  COMPENSATE = "compensate",
 }
 
 export enum AuditLevel {
-  NONE = 'none',
-  BASIC = 'basic',
-  DETAILED = 'detailed',
-  COMPREHENSIVE = 'comprehensive'
+  NONE = "none",
+  BASIC = "basic",
+  DETAILED = "detailed",
+  COMPREHENSIVE = "comprehensive",
 }
 
 export enum EncryptionAlgorithm {
-  AES_256_GCM = 'aes-256-gcm',
-  CHACHA20_POLY1305 = 'chacha20-poly1305'
+  AES_256_GCM = "aes-256-gcm",
+  CHACHA20_POLY1305 = "chacha20-poly1305",
 }
 
 export enum ComplianceReportType {
-  HIPAA = 'hipaa',
-  GDPR = 'gdpr',
-  SOC2 = 'soc2',
-  PCI_DSS = 'pci-dss'
+  HIPAA = "hipaa",
+  GDPR = "gdpr",
+  SOC2 = "soc2",
+  PCI_DSS = "pci-dss",
 }
 
 export enum IsolationLevel {
-  SHARED = 'shared',
-  LOGICAL = 'logical',
-  PHYSICAL = 'physical'
+  SHARED = "shared",
+  LOGICAL = "logical",
+  PHYSICAL = "physical",
 }
 
 // Supporting interfaces
@@ -411,7 +429,7 @@ export interface RegionMetrics {
 }
 
 export interface QueueHealthStatus {
-  status: 'healthy' | 'degraded' | 'unhealthy' | 'critical';
+  status: "healthy" | "degraded" | "unhealthy" | "critical";
   lastChecked: Date;
   issues: HealthIssue[];
   metrics: Record<string, any>;
@@ -419,7 +437,7 @@ export interface QueueHealthStatus {
 }
 
 export interface HealthIssue {
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  severity: "low" | "medium" | "high" | "critical";
   message: string;
   code: string;
   affectedResources: string[];
@@ -435,14 +453,14 @@ export interface ConsentToken {
 }
 
 export interface RetentionPolicy {
-  type: 'time-based' | 'event-based' | 'consent-based';
+  type: "time-based" | "event-based" | "consent-based";
   duration?: string; // ISO 8601 duration
   condition?: string;
   actions: RetentionAction[];
 }
 
 export interface RetentionAction {
-  action: 'archive' | 'delete' | 'anonymize' | 'encrypt';
+  action: "archive" | "delete" | "anonymize" | "encrypt";
   delay?: string;
   configuration?: Record<string, any>;
 }
@@ -458,7 +476,7 @@ export interface AutoScalingPolicy {
 export interface ScalingMetric {
   name: string;
   threshold: number;
-  comparison: 'greater' | 'less' | 'equal';
+  comparison: "greater" | "less" | "equal";
   duration: number;
 }
 
@@ -469,7 +487,7 @@ export interface ScalingRule {
 }
 
 export interface ScalingAction {
-  type: 'scale-up' | 'scale-down' | 'alert';
+  type: "scale-up" | "scale-down" | "alert";
   factor?: number;
   target?: number;
 }
@@ -491,7 +509,7 @@ export interface TenantQuota {
 }
 
 export interface BackoffStrategy {
-  type: 'exponential' | 'linear' | 'fixed';
+  type: "exponential" | "linear" | "fixed";
   delay: number;
   maxDelay?: number;
   factor?: number;
@@ -506,9 +524,9 @@ export interface RetryPolicy {
 }
 
 export interface DependencyCondition {
-  type: 'status' | 'data' | 'time' | 'custom';
+  type: "status" | "data" | "time" | "custom";
   value: any;
-  operator?: 'equals' | 'not-equals' | 'greater' | 'less';
+  operator?: "equals" | "not-equals" | "greater" | "less";
 }
 
 export interface SagaError {
@@ -520,7 +538,7 @@ export interface SagaError {
 
 export interface CompensationResult {
   sagaId: string;
-  status: 'started' | 'completed' | 'failed';
+  status: "started" | "completed" | "failed";
   compensatedSteps: number[];
   failedCompensations: number[];
   errors: Error[];
@@ -545,7 +563,7 @@ export interface JobMetrics {
 
 export interface QueueStatus {
   name: string;
-  status: 'active' | 'paused' | 'failed' | 'unknown';
+  status: "active" | "paused" | "failed" | "unknown";
   health: QueueHealthStatus;
   metrics: EnterpriseQueueMetrics;
   workers: WorkerStatus[];
@@ -554,7 +572,7 @@ export interface QueueStatus {
 
 export interface WorkerStatus {
   id: string;
-  status: 'idle' | 'busy' | 'failed';
+  status: "idle" | "busy" | "failed";
   currentJob?: string;
   processed: number;
   failed: number;
@@ -563,7 +581,7 @@ export interface WorkerStatus {
 }
 
 export interface ReplicationStatus {
-  status: 'pending' | 'in-progress' | 'completed' | 'failed';
+  status: "pending" | "in-progress" | "completed" | "failed";
   targetRegions: string[];
   completedRegions: string[];
   failedRegions: string[];
@@ -573,7 +591,7 @@ export interface ReplicationStatus {
 export interface ReplicationResult {
   jobId: string;
   targetRegion: string;
-  status: 'success' | 'failed';
+  status: "success" | "failed";
   replicationId: string;
   latency: number;
   error?: Error;
@@ -583,7 +601,7 @@ export interface FailoverResult {
   queueName: string;
   sourceRegion: string;
   targetRegion: string;
-  status: 'success' | 'failed';
+  status: "success" | "failed";
   duration: number;
   affectedJobs: number;
   error?: Error;
@@ -593,7 +611,7 @@ export interface ScalingResult {
   queueName: string;
   previousConcurrency: number;
   newConcurrency: number;
-  status: 'success' | 'failed';
+  status: "success" | "failed";
   duration: number;
   error?: Error;
 }
@@ -605,7 +623,7 @@ export interface TenantQueryOptions {
   limit?: number;
   offset?: number;
   sortBy?: string;
-  sortOrder?: 'asc' | 'desc';
+  sortOrder?: "asc" | "desc";
 }
 
 export interface DateRange {
@@ -618,21 +636,21 @@ export interface ComplianceExportOptions {
   period: DateRange;
   tenantId?: string;
   includeEvidence?: boolean;
-  format?: 'json' | 'pdf' | 'csv';
+  format?: "json" | "pdf" | "csv";
 }
 
 export interface ComplianceSummary {
   totalEvents: number;
   violationCount: number;
   complianceScore: number;
-  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskLevel: "low" | "medium" | "high" | "critical";
   lastAssessment: Date;
 }
 
 export interface ComplianceViolation {
   id: string;
   type: string;
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  severity: "low" | "medium" | "high" | "critical";
   description: string;
   affectedResources: string[];
   detectedAt: Date;
@@ -643,7 +661,7 @@ export interface ComplianceViolation {
 export interface ComplianceRecommendation {
   id: string;
   category: string;
-  priority: 'low' | 'medium' | 'high' | 'critical';
+  priority: "low" | "medium" | "high" | "critical";
   description: string;
   implementation: string[];
   estimatedEffort: string;

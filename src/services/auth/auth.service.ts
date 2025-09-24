@@ -1,28 +1,34 @@
-import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
-import { CacheService } from '../../libs/infrastructure/cache/cache.service';
-import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
-import { EmailService } from '../../libs/communication/messaging/email/email.service';
-import { SessionManagementService } from '../../libs/core/session/session-management.service';
-import { RbacService } from '../../libs/core/rbac/rbac.service';
-import { 
-  LoginDto, 
-  RegisterDto, 
-  AuthResponse, 
-  PasswordResetRequestDto, 
+import {
+  Injectable,
+  Logger,
+  UnauthorizedException,
+  BadRequestException,
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import { CacheService } from "../../libs/infrastructure/cache/cache.service";
+import { LoggingService } from "../../libs/infrastructure/logging/logging.service";
+import { EmailService } from "../../libs/communication/messaging/email/email.service";
+import { SessionManagementService } from "../../libs/core/session/session-management.service";
+import { RbacService } from "../../libs/core/rbac/rbac.service";
+import { JwtAuthService } from "./core/jwt.service";
+import {
+  LoginDto,
+  RegisterDto,
+  AuthResponse,
+  PasswordResetRequestDto,
   PasswordResetDto,
   RefreshTokenDto,
   ChangePasswordDto,
   RequestOtpDto,
-  VerifyOtpRequestDto
-} from '../../libs/dtos/auth.dto';
-import { CreateUserDto, Role } from '../../libs/dtos/user.dto';
-import { AuthTokens, TokenPayload } from '../../libs/core/types';
-import { EmailTemplate } from '../../libs/core/types/email.types';
-import * as bcrypt from 'bcryptjs';
-import { v4 as uuidv4 } from 'uuid';
+  VerifyOtpRequestDto,
+} from "../../libs/dtos/auth.dto";
+import { CreateUserDto, Role } from "../../libs/dtos/user.dto";
+import { AuthTokens, TokenPayload } from "../../libs/core/types";
+import { EmailTemplate } from "../../libs/core/types/email.types";
+import * as bcrypt from "bcryptjs";
+import { v4 as uuidv4 } from "uuid";
 
 @Injectable()
 export class AuthService {
@@ -38,14 +44,15 @@ export class AuthService {
     private readonly emailService: EmailService,
     private readonly sessionService: SessionManagementService,
     private readonly rbacService: RbacService,
+    private readonly jwtAuthService: JwtAuthService,
   ) {}
 
   /**
    * Get user profile with enterprise healthcare caching
    */
   async getUserProfile(userId: string, clinicId?: string): Promise<any> {
-    const cacheKey = `user:${userId}:profile:${clinicId || 'default'}`;
-    
+    const cacheKey = `user:${userId}:profile:${clinicId || "default"}`;
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
@@ -65,19 +72,23 @@ export class AuthService {
         });
 
         if (!user) {
-          throw new UnauthorizedException('User not found');
+          throw new UnauthorizedException("User not found");
         }
 
         return user;
       },
       {
         ttl: 1800, // 30 minutes
-        tags: [`user:${userId}`, 'user_profiles', clinicId ? `clinic:${clinicId}` : 'global'],
-        priority: 'high',
+        tags: [
+          `user:${userId}`,
+          "user_profiles",
+          clinicId ? `clinic:${clinicId}` : "global",
+        ],
+        priority: "high",
         enableSwr: true,
         compress: true, // Compress user profiles
         containsPHI: true, // User profiles contain PHI
-      }
+      },
     );
   }
 
@@ -86,46 +97,54 @@ export class AuthService {
    */
   async getUserPermissions(userId: string, clinicId: string): Promise<any> {
     const cacheKey = `user:${userId}:clinic:${clinicId}:permissions`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
         // First get user roles
         const userRoles = await this.rbacService.getUserRoles(userId, clinicId);
         // Then get permissions for those roles
-        const roleIds = userRoles.map(role => role.roleId);
+        const roleIds = userRoles.map((role) => role.roleId);
         return await this.rbacService.getRolePermissions(roleIds);
       },
       {
         ttl: 3600, // 1 hour
-        tags: [`user:${userId}`, `clinic:${clinicId}`, 'permissions', 'rbac'],
-        priority: 'high',
+        tags: [`user:${userId}`, `clinic:${clinicId}`, "permissions", "rbac"],
+        priority: "high",
         enableSwr: true,
         compress: true, // Compress permission data
         containsPHI: false, // Permissions are not PHI
-      }
+      },
     );
   }
 
   /**
    * Invalidate user cache when user data changes
    */
-  private async invalidateUserCache(userId: string, clinicId?: string): Promise<void> {
+  private async invalidateUserCache(
+    userId: string,
+    clinicId?: string,
+  ): Promise<void> {
     try {
       // Invalidate user profile cache
       await this.cacheService.invalidatePatientCache(userId, clinicId);
-      
+
       // Invalidate user-specific caches
       await this.cacheService.invalidateCacheByPattern(`user:${userId}:*`);
-      
+
       // Invalidate clinic-specific caches if clinicId provided
       if (clinicId) {
         await this.cacheService.invalidateClinicCache(clinicId);
       }
-      
-      this.logger.debug(`Invalidated cache for user: ${userId}, clinic: ${clinicId || 'all'}`);
+
+      this.logger.debug(
+        `Invalidated cache for user: ${userId}, clinic: ${clinicId || "all"}`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to invalidate user cache for ${userId}:`, error);
+      this.logger.error(
+        `Failed to invalidate user cache for ${userId}:`,
+        error,
+      );
     }
   }
 
@@ -140,7 +159,7 @@ export class AuthService {
       });
 
       if (existingUser) {
-        throw new BadRequestException('User with this email already exists');
+        throw new BadRequestException("User with this email already exists");
       }
 
       // Hash password
@@ -162,7 +181,8 @@ export class AuthService {
       // Add optional fields only if they exist
       if (registerDto.role) userData.role = registerDto.role as Role;
       if (registerDto.gender) userData.gender = registerDto.gender;
-      if (registerDto.dateOfBirth) userData.dateOfBirth = new Date(registerDto.dateOfBirth);
+      if (registerDto.dateOfBirth)
+        userData.dateOfBirth = new Date(registerDto.dateOfBirth);
       if (registerDto.address) userData.address = registerDto.address;
       if (registerDto.clinicId) userData.primaryClinicId = registerDto.clinicId;
       if (registerDto.googleId) userData.googleId = registerDto.googleId;
@@ -171,22 +191,22 @@ export class AuthService {
         data: userData,
       });
 
-      // Generate tokens
-      const tokens = await this.generateTokens(user);
-
-      // Create session
+      // Create session first
       const session = await this.sessionService.createSession({
         userId: user.id,
         clinicId: registerDto.clinicId,
-        userAgent: 'Registration',
-        ipAddress: '127.0.0.1',
+        userAgent: "Registration",
+        ipAddress: "127.0.0.1",
         metadata: { registration: true },
       });
+
+      // Generate tokens with session ID
+      const tokens = await this.generateTokens(user, session.sessionId);
 
       // Send welcome email
       await this.emailService.sendEmail({
         to: user.email,
-        subject: 'Welcome to Healthcare App',
+        subject: "Welcome to Healthcare App",
         template: EmailTemplate.WELCOME,
         context: {
           name: `${user.firstName} ${user.lastName}`,
@@ -214,7 +234,10 @@ export class AuthService {
         },
       };
     } catch (error) {
-      this.logger.error(`Registration failed for ${registerDto.email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Registration failed for ${registerDto.email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -244,34 +267,39 @@ export class AuthService {
         },
         {
           ttl: 300, // 5 minutes for login attempts
-          tags: ['user_login'],
-          priority: 'high',
+          tags: ["user_login"],
+          priority: "high",
           enableSwr: false, // No SWR for login data
-        }
+        },
       );
 
       if (!user) {
-        throw new UnauthorizedException('Invalid credentials');
+        throw new UnauthorizedException("Invalid credentials");
       }
-
 
       // Verify password
-      const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
+      const isPasswordValid = await bcrypt.compare(
+        loginDto.password,
+        user.password,
+      );
       if (!isPasswordValid) {
-        throw new UnauthorizedException('Invalid credentials');
+        throw new UnauthorizedException("Invalid credentials");
       }
 
-      // Generate tokens
-      const tokens = await this.generateTokens(user);
-
-      // Create session
+      // Create session first
       const session = await this.sessionService.createSession({
         userId: user.id,
         clinicId: loginDto.clinicId || user.primaryClinicId || undefined,
-        userAgent: 'Login',
-        ipAddress: '127.0.0.1',
+        userAgent: "Login",
+        ipAddress: "127.0.0.1",
         metadata: { login: true },
       });
+
+      this.logger.log(`DEBUG: Session created: ${JSON.stringify(session)}`);
+      this.logger.log(`DEBUG: Session ID: ${session?.sessionId}`);
+
+      // Generate tokens with session ID
+      const tokens = await this.generateTokens(user, session.sessionId);
 
       // Update last login
       await this.prisma.user.update({
@@ -295,54 +323,55 @@ export class AuthService {
         },
       };
     } catch (error) {
-      this.logger.error(`Login failed for ${loginDto.email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Login failed for ${loginDto.email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
 
   /**
-   * Refresh access token
+   * Refresh access token with enhanced security
    */
   async refreshToken(refreshTokenDto: RefreshTokenDto): Promise<AuthTokens> {
     try {
-      const payload = this.jwtService.verify(refreshTokenDto.refreshToken);
-      
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          primaryClinicId: true,
-        },
-      });
-
-      if (!user) {
-        throw new UnauthorizedException('Invalid refresh token');
-      }
-
-      return await this.generateTokens(user);
+      // Use enhanced JWT refresh with security validation
+      return await this.jwtAuthService.refreshEnhancedToken(
+        refreshTokenDto.refreshToken,
+        refreshTokenDto.deviceFingerprint,
+        refreshTokenDto.userAgent,
+        refreshTokenDto.ipAddress,
+      );
     } catch (error) {
-      this.logger.error('Token refresh failed', error instanceof Error ? (error as Error).stack : 'No stack trace available');
-      throw new UnauthorizedException('Invalid refresh token');
+      this.logger.error(
+        "Enhanced token refresh failed",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
+      throw new UnauthorizedException("Invalid refresh token");
     }
   }
 
   /**
    * Logout user
    */
-  async logout(sessionId: string): Promise<{ success: boolean; message: string }> {
+  async logout(
+    sessionId: string,
+  ): Promise<{ success: boolean; message: string }> {
     try {
       await this.sessionService.invalidateSession(sessionId);
-      
+
       this.logger.log(`User logged out: session ${sessionId}`);
-      
+
       return {
         success: true,
-        message: 'Logout successful',
+        message: "Logout successful",
       };
     } catch (error) {
-      this.logger.error(`Logout failed for session ${sessionId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Logout failed for session ${sessionId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -350,7 +379,9 @@ export class AuthService {
   /**
    * Request password reset
    */
-  async requestPasswordReset(requestDto: PasswordResetRequestDto): Promise<{ success: boolean; message: string }> {
+  async requestPasswordReset(
+    requestDto: PasswordResetRequestDto,
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const user = await this.prisma.user.findUnique({
         where: { email: requestDto.email },
@@ -360,7 +391,7 @@ export class AuthService {
         // Don't reveal if user exists
         return {
           success: true,
-          message: 'If the email exists, a password reset link has been sent',
+          message: "If the email exists, a password reset link has been sent",
         };
       }
 
@@ -372,17 +403,17 @@ export class AuthService {
       await this.cacheService.set(
         `password_reset:${resetToken}`,
         user.id,
-        900 // 15 minutes
+        900, // 15 minutes
       );
 
       // Send reset email
       await this.emailService.sendEmail({
         to: user.email,
-        subject: 'Password Reset Request',
+        subject: "Password Reset Request",
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.get('FRONTEND_URL')}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService.get("FRONTEND_URL")}/reset-password?token=${resetToken}`,
         },
       });
 
@@ -390,10 +421,13 @@ export class AuthService {
 
       return {
         success: true,
-        message: 'If the email exists, a password reset link has been sent',
+        message: "If the email exists, a password reset link has been sent",
       };
     } catch (error) {
-      this.logger.error(`Password reset request failed for ${requestDto.email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Password reset request failed for ${requestDto.email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -401,13 +435,17 @@ export class AuthService {
   /**
    * Reset password
    */
-  async resetPassword(resetDto: PasswordResetDto): Promise<{ success: boolean; message: string }> {
+  async resetPassword(
+    resetDto: PasswordResetDto,
+  ): Promise<{ success: boolean; message: string }> {
     try {
       // Verify reset token
-      const userId = await this.cacheService.get<string>(`password_reset:${resetDto.token}`);
-      
+      const userId = await this.cacheService.get<string>(
+        `password_reset:${resetDto.token}`,
+      );
+
       if (!userId) {
-        throw new BadRequestException('Invalid or expired reset token');
+        throw new BadRequestException("Invalid or expired reset token");
       }
 
       // Find user
@@ -416,7 +454,7 @@ export class AuthService {
       });
 
       if (!user) {
-        throw new BadRequestException('User not found');
+        throw new BadRequestException("User not found");
       }
 
       // Hash new password
@@ -432,7 +470,10 @@ export class AuthService {
       await this.sessionService.revokeAllUserSessions(user.id);
 
       // Invalidate user cache
-      await this.invalidateUserCache(user.id, user.primaryClinicId || undefined);
+      await this.invalidateUserCache(
+        user.id,
+        user.primaryClinicId || undefined,
+      );
 
       // Remove reset token
       await this.cacheService.del(`password_reset:${resetDto.token}`);
@@ -441,10 +482,13 @@ export class AuthService {
 
       return {
         success: true,
-        message: 'Password reset successful',
+        message: "Password reset successful",
       };
     } catch (error) {
-      this.logger.error('Password reset failed', error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        "Password reset failed",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -452,24 +496,33 @@ export class AuthService {
   /**
    * Change password (authenticated user)
    */
-  async changePassword(userId: string, changePasswordDto: ChangePasswordDto): Promise<{ success: boolean; message: string }> {
+  async changePassword(
+    userId: string,
+    changePasswordDto: ChangePasswordDto,
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
       });
 
       if (!user) {
-        throw new BadRequestException('User not found');
+        throw new BadRequestException("User not found");
       }
 
       // Verify current password
-      const isCurrentPasswordValid = await bcrypt.compare(changePasswordDto.currentPassword, user.password);
+      const isCurrentPasswordValid = await bcrypt.compare(
+        changePasswordDto.currentPassword,
+        user.password,
+      );
       if (!isCurrentPasswordValid) {
-        throw new BadRequestException('Current password is incorrect');
+        throw new BadRequestException("Current password is incorrect");
       }
 
       // Hash new password
-      const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 12);
+      const hashedPassword = await bcrypt.hash(
+        changePasswordDto.newPassword,
+        12,
+      );
 
       // Update password
       await this.prisma.user.update({
@@ -484,10 +537,13 @@ export class AuthService {
 
       return {
         success: true,
-        message: 'Password changed successfully',
+        message: "Password changed successfully",
       };
     } catch (error) {
-      this.logger.error(`Password change failed for user ${userId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Password change failed for user ${userId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -495,14 +551,16 @@ export class AuthService {
   /**
    * Request OTP
    */
-  async requestOtp(requestDto: RequestOtpDto): Promise<{ success: boolean; message: string }> {
+  async requestOtp(
+    requestDto: RequestOtpDto,
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const user = await this.prisma.user.findUnique({
         where: { email: requestDto.identifier },
       });
 
       if (!user) {
-        throw new BadRequestException('User not found');
+        throw new BadRequestException("User not found");
       }
 
       // Generate OTP
@@ -513,13 +571,13 @@ export class AuthService {
       await this.cacheService.set(
         `otp:${user.id}`,
         otp,
-        300 // 5 minutes
+        300, // 5 minutes
       );
 
       // Send OTP email
       await this.emailService.sendEmail({
         to: user.email,
-        subject: 'Your OTP Code',
+        subject: "Your OTP Code",
         template: EmailTemplate.OTP_LOGIN,
         context: {
           name: `${user.firstName} ${user.lastName}`,
@@ -531,10 +589,13 @@ export class AuthService {
 
       return {
         success: true,
-        message: 'OTP sent successfully',
+        message: "OTP sent successfully",
       };
     } catch (error) {
-      this.logger.error(`OTP request failed for ${requestDto.identifier}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `OTP request failed for ${requestDto.identifier}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -549,30 +610,30 @@ export class AuthService {
       });
 
       if (!user) {
-        throw new BadRequestException('User not found');
+        throw new BadRequestException("User not found");
       }
 
       // Verify OTP
       const storedOtp = await this.cacheService.get(`otp:${user.id}`);
-      
+
       if (!storedOtp || storedOtp !== verifyDto.otp) {
-        throw new BadRequestException('Invalid or expired OTP');
+        throw new BadRequestException("Invalid or expired OTP");
       }
 
       // Remove OTP
       await this.cacheService.del(`otp:${user.id}`);
 
-      // Generate tokens
-      const tokens = await this.generateTokens(user);
-
-      // Create session
+      // Create session first
       const session = await this.sessionService.createSession({
         userId: user.id,
         clinicId: verifyDto.clinicId || user.primaryClinicId || undefined,
-        userAgent: 'OTP Login',
-        ipAddress: '127.0.0.1',
+        userAgent: "OTP Login",
+        ipAddress: "127.0.0.1",
         metadata: { otpLogin: true },
       });
+
+      // Generate tokens with session ID
+      const tokens = await this.generateTokens(user, session.sessionId);
 
       // Update last login
       await this.prisma.user.update({
@@ -596,37 +657,39 @@ export class AuthService {
         },
       };
     } catch (error) {
-      this.logger.error(`OTP verification failed for ${verifyDto.email}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `OTP verification failed for ${verifyDto.email}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
 
   /**
-   * Generate JWT tokens
+   * Generate JWT tokens with enhanced security features
    */
-  private async generateTokens(user: any): Promise<AuthTokens> {
+  private async generateTokens(
+    user: any,
+    sessionId: string,
+    deviceFingerprint?: string,
+    userAgent?: string,
+    ipAddress?: string,
+  ): Promise<AuthTokens> {
     const payload: TokenPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       clinicId: user.primaryClinicId,
-      domain: 'healthcare',
+      domain: "healthcare",
+      sessionId: sessionId,
     };
 
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, {
-        expiresIn: this.configService.get('JWT_ACCESS_EXPIRES_IN') || '15m',
-      }),
-      this.jwtService.signAsync(payload, {
-        expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN') || '7d',
-      }),
-    ]);
-
-    return {
-      accessToken,
-      refreshToken,
-      expiresIn: 15 * 60, // 15 minutes
-      sessionId: uuidv4(),
-    };
+    // Use enhanced JWT service for advanced features
+    return await this.jwtAuthService.generateEnhancedTokens(
+      payload,
+      deviceFingerprint,
+      userAgent,
+      ipAddress,
+    );
   }
 }

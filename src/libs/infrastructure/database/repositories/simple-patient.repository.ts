@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { ClinicIsolationService } from '../clinic-isolation.service';
-import { RepositoryResult } from '../types/repository-result';
+import { Injectable } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { ClinicIsolationService } from "../clinic-isolation.service";
+import { RepositoryResult } from "../types/repository-result";
 
 export interface PatientWithUser {
   id: string;
@@ -47,106 +47,36 @@ export class SimplePatientRepository {
       limit?: number;
       includeAppointments?: boolean;
       includeHealthRecords?: boolean;
-    } = {}
-  ): Promise<RepositoryResult<{ data: PatientWithUser[]; total: number; page: number; totalPages: number }>> {
-    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
-      const { page = 1, limit = 20, includeAppointments = false, includeHealthRecords = false } = options;
-      const skip = (page - 1) * limit;
+    } = {},
+  ): Promise<
+    RepositoryResult<{
+      data: PatientWithUser[];
+      total: number;
+      page: number;
+      totalPages: number;
+    }>
+  > {
+    const result = await this.clinicIsolationService.executeWithClinicContext(
+      clinicId,
+      async () => {
+        const {
+          page = 1,
+          limit = 20,
+          includeAppointments = false,
+          includeHealthRecords = false,
+        } = options;
+        const skip = (page - 1) * limit;
 
-      // Find patients who have appointments in this clinic
-      const whereClause = {
-        appointments: {
-          some: {
-            clinicId: clinicId
-          }
-        }
-      };
-
-      const include = {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-            dateOfBirth: true,
-            gender: true,
-            address: true,
-            emergencyContact: true,
-            isVerified: true,
-          }
-        },
-        ...(includeAppointments && {
-          appointments: {
-            where: { clinicId },
-            orderBy: { date: 'desc' as const },
-            take: 5,
-            select: {
-              id: true,
-              date: true,
-              time: true,
-              status: true,
-              type: true
-            }
-          }
-        }),
-        ...(includeHealthRecords && {
-          healthRecords: {
-            orderBy: { createdAt: 'desc' as const },
-            take: 5
-          }
-        })
-      };
-
-      const [data, total] = await Promise.all([
-        this.prisma.patient.findMany({
-          where: whereClause,
-          include,
-          orderBy: { createdAt: 'desc' as const },
-          skip,
-          take: limit,
-        }),
-        this.prisma.patient.count({ where: whereClause })
-      ]);
-
-      const totalPages = Math.ceil(total / limit);
-
-      return {
-        data: data as PatientWithUser[],
-        total,
-        page,
-        totalPages
-      };
-    });
-
-    // Convert ClinicIsolationResult to RepositoryResult
-    if (result.success && result.data) {
-      return RepositoryResult.success(result.data);
-    } else {
-      return RepositoryResult.failure(new Error(result.error || 'Failed to get patients for clinic'));
-    }
-  }
-
-  /**
-   * Get a specific patient by ID for a clinic
-   */
-  async getPatientById(
-    patientId: string,
-    clinicId: string
-  ): Promise<RepositoryResult<PatientWithUser | null>> {
-    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
-      const patient = await this.prisma.patient.findFirst({
-        where: {
-          id: patientId,
+        // Find patients who have appointments in this clinic
+        const whereClause = {
           appointments: {
             some: {
-              clinicId: clinicId
-            }
-          }
-        },
-        include: {
+              clinicId: clinicId,
+            },
+          },
+        };
+
+        const include = {
           user: {
             select: {
               id: true,
@@ -160,106 +90,81 @@ export class SimplePatientRepository {
               address: true,
               emergencyContact: true,
               isVerified: true,
-            }
+            },
           },
-          appointments: {
-            where: { clinicId },
-            orderBy: { date: 'desc' as const },
-            select: {
-              id: true,
-              date: true,
-              time: true,
-              status: true,
-              type: true,
-              doctor: {
-                select: {
-                  id: true,
-                  user: {
-                    select: {
-                      name: true,
-                      firstName: true,
-                      lastName: true
-                    }
-                  }
-                }
-              }
-            }
-          },
-          healthRecords: {
-            orderBy: { createdAt: 'desc' as const },
-            take: 10
-          }
-        }
-      });
+          ...(includeAppointments && {
+            appointments: {
+              where: { clinicId },
+              orderBy: { date: "desc" as const },
+              take: 5,
+              select: {
+                id: true,
+                date: true,
+                time: true,
+                status: true,
+                type: true,
+              },
+            },
+          }),
+          ...(includeHealthRecords && {
+            healthRecords: {
+              orderBy: { createdAt: "desc" as const },
+              take: 5,
+            },
+          }),
+        };
 
-      return patient as PatientWithUser | null;
-    });
+        const [data, total] = await Promise.all([
+          this.prisma.patient.findMany({
+            where: whereClause,
+            include,
+            orderBy: { createdAt: "desc" as const },
+            skip,
+            take: limit,
+          }),
+          this.prisma.patient.count({ where: whereClause }),
+        ]);
+
+        const totalPages = Math.ceil(total / limit);
+
+        return {
+          data: data as PatientWithUser[],
+          total,
+          page,
+          totalPages,
+        };
+      },
+    );
 
     // Convert ClinicIsolationResult to RepositoryResult
-    if (result.success) {
-      return RepositoryResult.success(result.data || null);
+    if (result.success && result.data) {
+      return RepositoryResult.success(result.data);
     } else {
-      return RepositoryResult.failure(new Error(result.error || 'Failed to get patient by ID'));
+      return RepositoryResult.failure(
+        new Error(result.error || "Failed to get patients for clinic"),
+      );
     }
   }
 
   /**
-   * Search patients by name or contact info within a clinic
+   * Get a specific patient by ID for a clinic
    */
-  async searchPatients(
-    query: string,
+  async getPatientById(
+    patientId: string,
     clinicId: string,
-    options: { page?: number; limit?: number } = {}
-  ): Promise<RepositoryResult<{ data: PatientWithUser[]; total: number; page: number; totalPages: number }>> {
-    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
-      const { page = 1, limit = 20 } = options;
-      const skip = (page - 1) * limit;
-
-      const whereClause = {
-        appointments: {
-          some: {
-            clinicId: clinicId
-          }
-        },
-        user: {
-          OR: [
-            {
-              name: {
-                contains: query,
-                mode: 'insensitive' as const
-              }
+  ): Promise<RepositoryResult<PatientWithUser | null>> {
+    const result = await this.clinicIsolationService.executeWithClinicContext(
+      clinicId,
+      async () => {
+        const patient = await this.prisma.patient.findFirst({
+          where: {
+            id: patientId,
+            appointments: {
+              some: {
+                clinicId: clinicId,
+              },
             },
-            {
-              firstName: {
-                contains: query,
-                mode: 'insensitive' as const
-              }
-            },
-            {
-              lastName: {
-                contains: query,
-                mode: 'insensitive' as const
-              }
-            },
-            {
-              email: {
-                contains: query,
-                mode: 'insensitive' as const
-              }
-            },
-            {
-              phone: {
-                contains: query,
-                mode: 'insensitive' as const
-              }
-            }
-          ]
-        }
-      };
-
-      const [data, total] = await Promise.all([
-        this.prisma.patient.findMany({
-          where: whereClause,
+          },
           include: {
             user: {
               select: {
@@ -274,31 +179,160 @@ export class SimplePatientRepository {
                 address: true,
                 emergencyContact: true,
                 isVerified: true,
-              }
-            }
+              },
+            },
+            appointments: {
+              where: { clinicId },
+              orderBy: { date: "desc" as const },
+              select: {
+                id: true,
+                date: true,
+                time: true,
+                status: true,
+                type: true,
+                doctor: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        name: true,
+                        firstName: true,
+                        lastName: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            healthRecords: {
+              orderBy: { createdAt: "desc" as const },
+              take: 10,
+            },
           },
-          orderBy: { createdAt: 'desc' as const },
-          skip,
-          take: limit,
-        }),
-        this.prisma.patient.count({ where: whereClause })
-      ]);
+        });
 
-      const totalPages = Math.ceil(total / limit);
+        return patient as PatientWithUser | null;
+      },
+    );
 
-      return {
-        data: data as PatientWithUser[],
-        total,
-        page,
-        totalPages
-      };
-    });
+    // Convert ClinicIsolationResult to RepositoryResult
+    if (result.success) {
+      return RepositoryResult.success(result.data || null);
+    } else {
+      return RepositoryResult.failure(
+        new Error(result.error || "Failed to get patient by ID"),
+      );
+    }
+  }
+
+  /**
+   * Search patients by name or contact info within a clinic
+   */
+  async searchPatients(
+    query: string,
+    clinicId: string,
+    options: { page?: number; limit?: number } = {},
+  ): Promise<
+    RepositoryResult<{
+      data: PatientWithUser[];
+      total: number;
+      page: number;
+      totalPages: number;
+    }>
+  > {
+    const result = await this.clinicIsolationService.executeWithClinicContext(
+      clinicId,
+      async () => {
+        const { page = 1, limit = 20 } = options;
+        const skip = (page - 1) * limit;
+
+        const whereClause = {
+          appointments: {
+            some: {
+              clinicId: clinicId,
+            },
+          },
+          user: {
+            OR: [
+              {
+                name: {
+                  contains: query,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                firstName: {
+                  contains: query,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                lastName: {
+                  contains: query,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                email: {
+                  contains: query,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                phone: {
+                  contains: query,
+                  mode: "insensitive" as const,
+                },
+              },
+            ],
+          },
+        };
+
+        const [data, total] = await Promise.all([
+          this.prisma.patient.findMany({
+            where: whereClause,
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  phone: true,
+                  dateOfBirth: true,
+                  gender: true,
+                  address: true,
+                  emergencyContact: true,
+                  isVerified: true,
+                },
+              },
+            },
+            orderBy: { createdAt: "desc" as const },
+            skip,
+            take: limit,
+          }),
+          this.prisma.patient.count({ where: whereClause }),
+        ]);
+
+        const totalPages = Math.ceil(total / limit);
+
+        return {
+          data: data as PatientWithUser[],
+          total,
+          page,
+          totalPages,
+        };
+      },
+    );
 
     // Convert ClinicIsolationResult to RepositoryResult
     if (result.success && result.data) {
       return RepositoryResult.success(result.data);
     } else {
-      return RepositoryResult.failure(new Error(result.error || 'Failed to search patients'));
+      return RepositoryResult.failure(
+        new Error(result.error || "Failed to search patients"),
+      );
     }
   }
 
@@ -307,74 +341,78 @@ export class SimplePatientRepository {
    */
   async getPatientStatistics(
     clinicId: string,
-    dateRange?: { from: Date; to: Date }
-  ): Promise<RepositoryResult<{
-    totalPatients: number;
-    newPatients: number;
-    patientsWithRecentAppointments: number;
-  }>> {
-    const result = await this.clinicIsolationService.executeWithClinicContext(clinicId, async () => {
-      const baseAppointmentWhere = {
-        clinicId,
-        ...(dateRange && {
-          date: {
-            gte: dateRange.from,
-            lte: dateRange.to
-          }
-        })
-      };
-
-      const [
-        totalPatients,
-        newPatients,
-        patientsWithRecentAppointments
-      ] = await Promise.all([
-        // Total patients who have appointments in this clinic
-        this.prisma.patient.count({
-          where: {
-            appointments: {
-              some: { clinicId }
-            }
-          }
-        }),
-        
-        // New patients (created in date range) with appointments in clinic
-        this.prisma.patient.count({
-          where: {
-            appointments: {
-              some: { clinicId }
+    dateRange?: { from: Date; to: Date },
+  ): Promise<
+    RepositoryResult<{
+      totalPatients: number;
+      newPatients: number;
+      patientsWithRecentAppointments: number;
+    }>
+  > {
+    const result = await this.clinicIsolationService.executeWithClinicContext(
+      clinicId,
+      async () => {
+        const baseAppointmentWhere = {
+          clinicId,
+          ...(dateRange && {
+            date: {
+              gte: dateRange.from,
+              lte: dateRange.to,
             },
-            ...(dateRange && {
-              createdAt: {
-                gte: dateRange.from,
-                lte: dateRange.to
-              }
-            })
-          }
-        }),
-        
-        // Patients with recent appointments
-        this.prisma.patient.count({
-          where: {
-            appointments: {
-              some: baseAppointmentWhere
-            }
-          }
-        })
-      ]);
+          }),
+        };
 
-      return {
-        totalPatients,
-        newPatients,
-        patientsWithRecentAppointments
-      };
-    });
+        const [totalPatients, newPatients, patientsWithRecentAppointments] =
+          await Promise.all([
+            // Total patients who have appointments in this clinic
+            this.prisma.patient.count({
+              where: {
+                appointments: {
+                  some: { clinicId },
+                },
+              },
+            }),
+
+            // New patients (created in date range) with appointments in clinic
+            this.prisma.patient.count({
+              where: {
+                appointments: {
+                  some: { clinicId },
+                },
+                ...(dateRange && {
+                  createdAt: {
+                    gte: dateRange.from,
+                    lte: dateRange.to,
+                  },
+                }),
+              },
+            }),
+
+            // Patients with recent appointments
+            this.prisma.patient.count({
+              where: {
+                appointments: {
+                  some: baseAppointmentWhere,
+                },
+              },
+            }),
+          ]);
+
+        return {
+          totalPatients,
+          newPatients,
+          patientsWithRecentAppointments,
+        };
+      },
+    );
 
     // Convert ClinicIsolationResult to RepositoryResult
     if (result.success && result.data) {
       return RepositoryResult.success(result.data);
     } else {
-      return RepositoryResult.failure(new Error(result.error || 'Failed to get patient statistics'));
+      return RepositoryResult.failure(
+        new Error(result.error || "Failed to get patient statistics"),
+      );
     }
   }
 }
