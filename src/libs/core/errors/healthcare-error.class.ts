@@ -1,6 +1,6 @@
-import { HttpStatus } from '@nestjs/common';
-import { ErrorCode } from './error-codes.enum';
-import { ErrorMessages } from './error-messages.constant';
+import { HttpStatus } from "@nestjs/common";
+import { ErrorCode } from "./error-codes.enum";
+import { ErrorMessages } from "./error-messages.constant";
 
 /**
  * Custom Healthcare Error class that extends the standard Error
@@ -19,12 +19,12 @@ export class HealthcareError extends Error {
     message?: string,
     statusCode: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR,
     metadata?: Record<string, any>,
-    context?: string
+    context?: string,
   ) {
     const errorMessage = message || ErrorMessages[code];
     super(errorMessage);
-    
-    this.name = 'HealthcareError';
+
+    this.name = "HealthcareError";
     this.code = code;
     this.statusCode = statusCode;
     this.timestamp = new Date().toISOString();
@@ -77,15 +77,22 @@ export class HealthcareError extends Error {
    */
   private isMetadataSafe(): boolean {
     if (!this.metadata) return false;
-    
+
     // List of sensitive fields that should not be exposed
     const sensitiveFields = [
-      'password', 'token', 'secret', 'key', 'credential',
-      'ssn', 'social_security', 'credit_card', 'bank_account'
+      "password",
+      "token",
+      "secret",
+      "key",
+      "credential",
+      "ssn",
+      "social_security",
+      "credit_card",
+      "bank_account",
     ];
 
     const metadataString = JSON.stringify(this.metadata).toLowerCase();
-    return !sensitiveFields.some(field => metadataString.includes(field));
+    return !sensitiveFields.some((field) => metadataString.includes(field));
   }
 
   /**
@@ -97,7 +104,7 @@ export class HealthcareError extends Error {
       this.message,
       this.statusCode,
       this.metadata,
-      context
+      context,
     );
   }
 
@@ -110,7 +117,7 @@ export class HealthcareError extends Error {
       this.message,
       this.statusCode,
       { ...this.metadata, ...metadata },
-      this.context
+      this.context,
     );
   }
 }

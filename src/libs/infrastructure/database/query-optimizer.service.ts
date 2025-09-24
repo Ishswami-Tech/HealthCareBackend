@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from "@nestjs/common";
 
 @Injectable()
 export class HealthcareQueryOptimizerService {
@@ -13,15 +13,17 @@ export class HealthcareQueryOptimizerService {
     try {
       // Basic query optimization logic
       this.logger.debug(`Optimizing query: ${query}`);
-      
+
       // Add basic optimizations
-      let optimizedQuery = query;
-      
+      const optimizedQuery = query;
+
       // Add indexes hints if needed
-      if (query.includes('WHERE')) {
-        this.logger.debug('Query contains WHERE clause, checking for index optimization');
+      if (query.includes("WHERE")) {
+        this.logger.debug(
+          "Query contains WHERE clause, checking for index optimization",
+        );
       }
-      
+
       return optimizedQuery;
     } catch (error) {
       this.logger.error(`Query optimization failed: ${error}`);
@@ -36,7 +38,7 @@ export class HealthcareQueryOptimizerService {
     return {
       optimizedQueries: 0,
       averageOptimizationTime: 0,
-      cacheHitRate: 0
+      cacheHitRate: 0,
     };
   }
 
@@ -50,7 +52,7 @@ export class HealthcareQueryOptimizerService {
       averageOptimizationTime: 0,
       cacheHitRate: 0,
       indexRecommendations: [],
-      slowQueries: []
+      slowQueries: [],
     };
   }
 }

@@ -6,70 +6,70 @@
  */
 
 export enum LogLevel {
-  ERROR = 'ERROR',
-  WARN = 'WARN',
-  INFO = 'INFO',
-  DEBUG = 'DEBUG',
-  VERBOSE = 'VERBOSE',
-  TRACE = 'TRACE'
+  ERROR = "ERROR",
+  WARN = "WARN",
+  INFO = "INFO",
+  DEBUG = "DEBUG",
+  VERBOSE = "VERBOSE",
+  TRACE = "TRACE",
 }
 
 export enum LogType {
   // System & Infrastructure
-  SYSTEM = 'SYSTEM',
-  ERROR = 'ERROR',
-  DATABASE = 'DATABASE',
-  CACHE = 'CACHE',
-  QUEUE = 'QUEUE',
-  PERFORMANCE = 'PERFORMANCE',
-  
+  SYSTEM = "SYSTEM",
+  ERROR = "ERROR",
+  DATABASE = "DATABASE",
+  CACHE = "CACHE",
+  QUEUE = "QUEUE",
+  PERFORMANCE = "PERFORMANCE",
+
   // Authentication & Security
-  AUTH = 'AUTH',
-  SECURITY = 'SECURITY',
-  ACCESS_CONTROL = 'ACCESS_CONTROL',
-  LOGIN = 'LOGIN',
-  LOGOUT = 'LOGOUT',
-  
+  AUTH = "AUTH",
+  SECURITY = "SECURITY",
+  ACCESS_CONTROL = "ACCESS_CONTROL",
+  LOGIN = "LOGIN",
+  LOGOUT = "LOGOUT",
+
   // Communication
-  REQUEST = 'REQUEST',
-  RESPONSE = 'RESPONSE',
-  WEBSOCKET = 'WEBSOCKET',
-  EMAIL = 'EMAIL',
-  SMS = 'SMS',
-  NOTIFICATION = 'NOTIFICATION',
-  
+  REQUEST = "REQUEST",
+  RESPONSE = "RESPONSE",
+  WEBSOCKET = "WEBSOCKET",
+  EMAIL = "EMAIL",
+  SMS = "SMS",
+  NOTIFICATION = "NOTIFICATION",
+
   // Business Operations
-  AUDIT = 'AUDIT',
-  APPOINTMENT = 'APPOINTMENT',
-  BUSINESS = 'BUSINESS',
-  PAYMENT = 'PAYMENT',
-  USER_ACTIVITY = 'USER_ACTIVITY',
-  
+  AUDIT = "AUDIT",
+  APPOINTMENT = "APPOINTMENT",
+  BUSINESS = "BUSINESS",
+  PAYMENT = "PAYMENT",
+  USER_ACTIVITY = "USER_ACTIVITY",
+
   // HIPAA Compliance - Enterprise Healthcare Features
-  PHI_ACCESS = 'PHI_ACCESS',
-  MEDICAL_RECORD_ACCESS = 'MEDICAL_RECORD_ACCESS',
-  PATIENT_DATA_EXPORT = 'PATIENT_DATA_EXPORT',
-  CONSENT_MANAGEMENT = 'CONSENT_MANAGEMENT',
-  DATA_MINIMIZATION = 'DATA_MINIMIZATION',
-  ENCRYPTION_EVENT = 'ENCRYPTION_EVENT',
-  BREACH_NOTIFICATION = 'BREACH_NOTIFICATION',
-  COMPLIANCE_VIOLATION = 'COMPLIANCE_VIOLATION',
-  
+  PHI_ACCESS = "PHI_ACCESS",
+  MEDICAL_RECORD_ACCESS = "MEDICAL_RECORD_ACCESS",
+  PATIENT_DATA_EXPORT = "PATIENT_DATA_EXPORT",
+  CONSENT_MANAGEMENT = "CONSENT_MANAGEMENT",
+  DATA_MINIMIZATION = "DATA_MINIMIZATION",
+  ENCRYPTION_EVENT = "ENCRYPTION_EVENT",
+  BREACH_NOTIFICATION = "BREACH_NOTIFICATION",
+  COMPLIANCE_VIOLATION = "COMPLIANCE_VIOLATION",
+
   // Emergency & Critical Events
-  EMERGENCY = 'EMERGENCY',
-  CRITICAL_ALERT = 'CRITICAL_ALERT',
-  INCIDENT = 'INCIDENT',
-  
+  EMERGENCY = "EMERGENCY",
+  CRITICAL_ALERT = "CRITICAL_ALERT",
+  INCIDENT = "INCIDENT",
+
   // Multi-Tenant & Clinic Operations
-  CLINIC_OPERATIONS = 'CLINIC_OPERATIONS',
-  TENANT_ISOLATION = 'TENANT_ISOLATION',
-  MULTI_CLINIC = 'MULTI_CLINIC',
-  
+  CLINIC_OPERATIONS = "CLINIC_OPERATIONS",
+  TENANT_ISOLATION = "TENANT_ISOLATION",
+  MULTI_CLINIC = "MULTI_CLINIC",
+
   // Monitoring & Observability
-  METRICS = 'METRICS',
-  HEALTH_CHECK = 'HEALTH_CHECK',
-  RESOURCE_USAGE = 'RESOURCE_USAGE',
-  SCALING_EVENT = 'SCALING_EVENT',
+  METRICS = "METRICS",
+  HEALTH_CHECK = "HEALTH_CHECK",
+  RESOURCE_USAGE = "RESOURCE_USAGE",
+  SCALING_EVENT = "SCALING_EVENT",
 }
 
 export interface LogEntry {
@@ -94,46 +94,51 @@ export interface LogEntry {
 
 export interface EnterpriseLogEntry extends LogEntry {
   // Enterprise features for 1M+ users
-  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL';
+  priority: "LOW" | "NORMAL" | "HIGH" | "CRITICAL";
   retentionPeriod: number; // in days
-  complianceType?: 'HIPAA' | 'GDPR' | 'SOC2' | 'PCI_DSS';
+  complianceType?: "HIPAA" | "GDPR" | "SOC2" | "PCI_DSS";
   encrypted: boolean;
   auditTrail: boolean;
   alertRequired: boolean;
-  
+
   // Performance tracking
   executionTime?: number;
   memoryUsage?: number;
   cpuUsage?: number;
-  
+
   // Multi-tenant support
   tenantId?: string;
   organizationId?: string;
   locationId?: string;
-  
+
   // Request context
   requestId?: string;
   operationId?: string;
   parentSpanId?: string;
-  
+
   // Security context
-  riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  riskLevel?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   sensitiveData: boolean;
   phiData: boolean;
-  
+
   // Business context
   businessUnit?: string;
   department?: string;
   costCenter?: string;
-  
+
   // Technical context
   stackTrace?: string;
   errorCode?: string;
   httpStatusCode?: number;
   responseSize?: number;
-  
+
   // Compliance fields
-  dataClassification?: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'RESTRICTED' | 'PHI';
+  dataClassification?:
+    | "PUBLIC"
+    | "INTERNAL"
+    | "CONFIDENTIAL"
+    | "RESTRICTED"
+    | "PHI";
   purposeOfUse?: string;
   legalBasis?: string;
   dataRetentionPolicy?: string;
@@ -146,33 +151,38 @@ export interface HealthcareAuditLogEntry extends EnterpriseLogEntry {
   encounterDate?: Date;
   diagnosticCode?: string;
   treatmentCode?: string;
-  
+
   // PHI access tracking
-  phiAccessType?: 'DIRECT' | 'INDIRECT' | 'ADMINISTRATIVE';
+  phiAccessType?: "DIRECT" | "INDIRECT" | "ADMINISTRATIVE";
   phiDataTypes?: string[];
-  accessPurpose?: 'TREATMENT' | 'PAYMENT' | 'OPERATIONS' | 'RESEARCH' | 'DISCLOSURE';
-  
+  accessPurpose?:
+    | "TREATMENT"
+    | "PAYMENT"
+    | "OPERATIONS"
+    | "RESEARCH"
+    | "DISCLOSURE";
+
   // Consent tracking
-  consentStatus?: 'GRANTED' | 'DENIED' | 'WITHDRAWN' | 'EXPIRED';
+  consentStatus?: "GRANTED" | "DENIED" | "WITHDRAWN" | "EXPIRED";
   consentDocument?: string;
-  
+
   // Medical record context
-  recordType?: 'CLINICAL' | 'ADMINISTRATIVE' | 'FINANCIAL' | 'RESEARCH';
+  recordType?: "CLINICAL" | "ADMINISTRATIVE" | "FINANCIAL" | "RESEARCH";
   medicalSpecialty?: string;
   careTeamMember?: string;
-  
+
   // Emergency access
   emergencyAccess?: boolean;
   emergencyJustification?: string;
   emergencyOverride?: boolean;
-  
+
   // Minimum necessary determination
   dataMinimization?: boolean;
   minimumNecessary?: boolean;
   accessJustification?: string;
-  
+
   // Breach investigation
-  breachRisk?: 'NONE' | 'LOW' | 'MODERATE' | 'HIGH';
+  breachRisk?: "NONE" | "LOW" | "MODERATE" | "HIGH";
   breachContainment?: string;
   breachNotification?: boolean;
 }
@@ -197,14 +207,19 @@ export interface PerformanceMetrics {
 
 export interface SecurityEvent {
   timestamp: string;
-  eventType: 'AUTHENTICATION' | 'AUTHORIZATION' | 'DATA_ACCESS' | 'SYSTEM_ACCESS' | 'POLICY_VIOLATION';
-  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  eventType:
+    | "AUTHENTICATION"
+    | "AUTHORIZATION"
+    | "DATA_ACCESS"
+    | "SYSTEM_ACCESS"
+    | "POLICY_VIOLATION";
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   userId?: string;
   sourceIp: string;
   userAgent?: string;
   resource: string;
   action: string;
-  outcome: 'SUCCESS' | 'FAILURE' | 'BLOCKED';
+  outcome: "SUCCESS" | "FAILURE" | "BLOCKED";
   riskScore: number;
   geolocation?: {
     country: string;
@@ -222,8 +237,13 @@ export interface SecurityEvent {
 
 export interface ComplianceEvent {
   timestamp: string;
-  complianceFramework: 'HIPAA' | 'GDPR' | 'SOC2' | 'PCI_DSS' | 'HITECH';
-  eventCategory: 'ACCESS' | 'PROCESSING' | 'STORAGE' | 'TRANSMISSION' | 'DISPOSAL';
+  complianceFramework: "HIPAA" | "GDPR" | "SOC2" | "PCI_DSS" | "HITECH";
+  eventCategory:
+    | "ACCESS"
+    | "PROCESSING"
+    | "STORAGE"
+    | "TRANSMISSION"
+    | "DISPOSAL";
   dataSubject?: string;
   dataController: string;
   dataProcessor?: string;
@@ -328,7 +348,7 @@ export function createLogData(
   level: LogLevel,
   message: string,
   context: string,
-  metadata: Record<string, any> = {}
+  metadata: Record<string, any> = {},
 ): LogEntry {
   return {
     id: `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
@@ -339,8 +359,8 @@ export function createLogData(
     metadata: {
       ...metadata,
       timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development',
-      service: process.env.SERVICE_NAME || 'healthcare-backend',
+      environment: process.env.NODE_ENV || "development",
+      service: process.env.SERVICE_NAME || "healthcare-backend",
     },
     timestamp: new Date(),
   };
@@ -352,28 +372,33 @@ export function createHipaaAuditLog(
   patientId: string,
   action: string,
   resource: string,
-  outcome: 'SUCCESS' | 'FAILURE' | 'DENIED',
-  additionalData: Partial<HealthcareAuditLogEntry> = {}
+  outcome: "SUCCESS" | "FAILURE" | "DENIED",
+  additionalData: Partial<HealthcareAuditLogEntry> = {},
 ): HealthcareAuditLogEntry {
   return {
-    ...createLogData(LogType.PHI_ACCESS, LogLevel.INFO, `PHI Access: ${action}`, 'HIPAA_Audit'),
-    priority: 'HIGH',
+    ...createLogData(
+      LogType.PHI_ACCESS,
+      LogLevel.INFO,
+      `PHI Access: ${action}`,
+      "HIPAA_Audit",
+    ),
+    priority: "HIGH",
     retentionPeriod: 2555, // 7 years for HIPAA
-    complianceType: 'HIPAA',
+    complianceType: "HIPAA",
     encrypted: true,
     auditTrail: true,
-    alertRequired: outcome !== 'SUCCESS',
+    alertRequired: outcome !== "SUCCESS",
     sensitiveData: true,
     phiData: true,
-    dataClassification: 'PHI',
+    dataClassification: "PHI",
     userId,
     patientId,
-    accessPurpose: 'TREATMENT',
-    phiAccessType: 'DIRECT',
-    recordType: 'CLINICAL',
+    accessPurpose: "TREATMENT",
+    phiAccessType: "DIRECT",
+    recordType: "CLINICAL",
     dataMinimization: true,
     minimumNecessary: true,
-    breachRisk: 'NONE',
+    breachRisk: "NONE",
     ...additionalData,
   } as HealthcareAuditLogEntry;
 }
@@ -382,11 +407,16 @@ export function createHipaaAuditLog(
 export function createPerformanceLog(
   operation: string,
   duration: number,
-  additionalMetrics: Partial<PerformanceMetrics> = {}
+  additionalMetrics: Partial<PerformanceMetrics> = {},
 ): EnterpriseLogEntry {
   return {
-    ...createLogData(LogType.PERFORMANCE, LogLevel.INFO, `Performance: ${operation}`, 'PerformanceMonitoring'),
-    priority: duration > 5000 ? 'HIGH' : 'NORMAL',
+    ...createLogData(
+      LogType.PERFORMANCE,
+      LogLevel.INFO,
+      `Performance: ${operation}`,
+      "PerformanceMonitoring",
+    ),
+    priority: duration > 5000 ? "HIGH" : "NORMAL",
     retentionPeriod: 90,
     encrypted: false,
     auditTrail: false,
@@ -401,20 +431,25 @@ export function createPerformanceLog(
 // Helper function for security event logging
 export function createSecurityLog(
   eventType: string,
-  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL',
-  details: Partial<SecurityEvent>
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
+  details: Partial<SecurityEvent>,
 ): EnterpriseLogEntry {
   return {
-    ...createLogData(LogType.SECURITY, severity === 'CRITICAL' ? LogLevel.ERROR : LogLevel.WARN, `Security: ${eventType}`, 'SecurityMonitoring'),
-    priority: severity === 'CRITICAL' ? 'CRITICAL' : 'HIGH',
+    ...createLogData(
+      LogType.SECURITY,
+      severity === "CRITICAL" ? LogLevel.ERROR : LogLevel.WARN,
+      `Security: ${eventType}`,
+      "SecurityMonitoring",
+    ),
+    priority: severity === "CRITICAL" ? "CRITICAL" : "HIGH",
     retentionPeriod: 365, // 1 year for security events
-    complianceType: 'SOC2',
+    complianceType: "SOC2",
     encrypted: true,
     auditTrail: true,
-    alertRequired: severity === 'HIGH' || severity === 'CRITICAL',
+    alertRequired: severity === "HIGH" || severity === "CRITICAL",
     riskLevel: severity,
     sensitiveData: true,
     phiData: false,
     ...details,
   } as EnterpriseLogEntry;
-} 
+}

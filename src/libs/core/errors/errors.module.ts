@@ -1,5 +1,5 @@
-import { Global, Module } from '@nestjs/common';
-import { HealthcareErrorsService } from './healthcare-errors.service';
+import { Global, Module } from "@nestjs/common";
+import { HealthcareErrorsService } from "./healthcare-errors.service";
 
 /**
  * Global Errors Module

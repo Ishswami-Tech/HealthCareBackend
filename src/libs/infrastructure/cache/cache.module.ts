@@ -1,15 +1,15 @@
-import { Module, Global } from '@nestjs/common';
-import { APP_INTERCEPTOR } from '@nestjs/core';
-import { ConfigModule } from '@nestjs/config';
-import { EventEmitterModule } from '@nestjs/event-emitter';
-import { CacheController } from './controllers/cache.controller';
-import { CacheService } from './cache.service';
-import { RedisService } from './redis/redis.service';
-import { HealthcareCacheInterceptor } from './interceptors/healthcare-cache.interceptor';
+import { Module, Global } from "@nestjs/common";
+import { APP_INTERCEPTOR } from "@nestjs/core";
+import { ConfigModule } from "@nestjs/config";
+import { EventEmitterModule } from "@nestjs/event-emitter";
+import { CacheController } from "./controllers/cache.controller";
+import { CacheService } from "./cache.service";
+import { RedisService } from "./redis/redis.service";
+import { HealthcareCacheInterceptor } from "./interceptors/healthcare-cache.interceptor";
 
 /**
  * Enterprise Cache Module for 10M+ Users
- * 
+ *
  * Single unified module providing:
  * - Global cache service with single entry point
  * - Healthcare-specific caching with HIPAA compliance
@@ -29,7 +29,7 @@ import { HealthcareCacheInterceptor } from './interceptors/healthcare-cache.inte
     EventEmitterModule.forRoot({
       // Enterprise-grade event emitter configuration
       wildcard: false,
-      delimiter: '.',
+      delimiter: ".",
       newListener: false,
       removeListener: false,
       maxListeners: 1000,
@@ -42,7 +42,7 @@ import { HealthcareCacheInterceptor } from './interceptors/healthcare-cache.inte
     // Core services
     RedisService,
     CacheService,
-    
+
     // Global interceptor
     {
       provide: APP_INTERCEPTOR,
@@ -51,4 +51,4 @@ import { HealthcareCacheInterceptor } from './interceptors/healthcare-cache.inte
   ],
   exports: [CacheService], // Only export CacheService as single entry point
 })
-export class CacheModule {} 
+export class CacheModule {}

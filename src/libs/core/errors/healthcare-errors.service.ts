@@ -1,8 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { HttpStatus } from '@nestjs/common';
-import { ErrorCode } from './error-codes.enum';
-import { ErrorMessages } from './error-messages.constant';
-import { HealthcareError } from './healthcare-error.class';
+import { Injectable, Logger } from "@nestjs/common";
+import { HttpStatus } from "@nestjs/common";
+import { ErrorCode } from "./error-codes.enum";
+import { ErrorMessages } from "./error-messages.constant";
+import { HealthcareError } from "./healthcare-error.class";
 
 /**
  * Centralized Healthcare Error Service
@@ -17,7 +17,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.AUTH_INVALID_CREDENTIALS,
       HttpStatus.UNAUTHORIZED,
-      context
+      context,
     );
   }
 
@@ -25,7 +25,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.AUTH_TOKEN_EXPIRED,
       HttpStatus.UNAUTHORIZED,
-      context
+      context,
     );
   }
 
@@ -33,7 +33,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
       HttpStatus.FORBIDDEN,
-      context
+      context,
     );
   }
 
@@ -41,7 +41,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.AUTH_ACCOUNT_LOCKED,
       HttpStatus.FORBIDDEN,
-      context
+      context,
     );
   }
 
@@ -49,7 +49,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.AUTH_OTP_INVALID,
       HttpStatus.BAD_REQUEST,
-      context
+      context,
     );
   }
 
@@ -59,7 +59,7 @@ export class HealthcareErrorsService {
       ErrorCode.USER_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      userId ? { userId } : undefined
+      userId ? { userId } : undefined,
     );
   }
 
@@ -68,7 +68,7 @@ export class HealthcareErrorsService {
       ErrorCode.USER_ALREADY_EXISTS,
       HttpStatus.CONFLICT,
       context,
-      email ? { email } : undefined
+      email ? { email } : undefined,
     );
   }
 
@@ -77,7 +77,7 @@ export class HealthcareErrorsService {
       ErrorCode.USER_EMAIL_ALREADY_EXISTS,
       HttpStatus.CONFLICT,
       context,
-      { email }
+      { email },
     );
   }
 
@@ -87,7 +87,7 @@ export class HealthcareErrorsService {
       ErrorCode.CLINIC_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      clinicId ? { clinicId } : undefined
+      clinicId ? { clinicId } : undefined,
     );
   }
 
@@ -96,7 +96,7 @@ export class HealthcareErrorsService {
       ErrorCode.CLINIC_ACCESS_DENIED,
       HttpStatus.FORBIDDEN,
       context,
-      clinicId ? { clinicId } : undefined
+      clinicId ? { clinicId } : undefined,
     );
   }
 
@@ -105,26 +105,32 @@ export class HealthcareErrorsService {
       ErrorCode.CLINIC_QUOTA_EXCEEDED,
       HttpStatus.FORBIDDEN,
       context,
-      clinicId ? { clinicId } : undefined
+      clinicId ? { clinicId } : undefined,
     );
   }
 
   // Appointment Errors
-  appointmentNotFound(appointmentId?: string, context?: string): HealthcareError {
+  appointmentNotFound(
+    appointmentId?: string,
+    context?: string,
+  ): HealthcareError {
     return this.createError(
       ErrorCode.APPOINTMENT_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      appointmentId ? { appointmentId } : undefined
+      appointmentId ? { appointmentId } : undefined,
     );
   }
 
-  appointmentConflict(appointmentId?: string, context?: string): HealthcareError {
+  appointmentConflict(
+    appointmentId?: string,
+    context?: string,
+  ): HealthcareError {
     return this.createError(
       ErrorCode.APPOINTMENT_CONFLICT,
       HttpStatus.CONFLICT,
       context,
-      appointmentId ? { appointmentId } : undefined
+      appointmentId ? { appointmentId } : undefined,
     );
   }
 
@@ -133,7 +139,7 @@ export class HealthcareErrorsService {
       ErrorCode.APPOINTMENT_SLOT_UNAVAILABLE,
       HttpStatus.CONFLICT,
       context,
-      slot ? { slot } : undefined
+      slot ? { slot } : undefined,
     );
   }
 
@@ -141,7 +147,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.APPOINTMENT_PAST_DATE,
       HttpStatus.BAD_REQUEST,
-      context
+      context,
     );
   }
 
@@ -151,7 +157,7 @@ export class HealthcareErrorsService {
       ErrorCode.DOCTOR_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      doctorId ? { doctorId } : undefined
+      doctorId ? { doctorId } : undefined,
     );
   }
 
@@ -160,7 +166,7 @@ export class HealthcareErrorsService {
       ErrorCode.DOCTOR_UNAVAILABLE,
       HttpStatus.CONFLICT,
       context,
-      doctorId ? { doctorId } : undefined
+      doctorId ? { doctorId } : undefined,
     );
   }
 
@@ -169,7 +175,7 @@ export class HealthcareErrorsService {
       ErrorCode.STAFF_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      staffId ? { staffId } : undefined
+      staffId ? { staffId } : undefined,
     );
   }
 
@@ -179,27 +185,34 @@ export class HealthcareErrorsService {
       ErrorCode.PATIENT_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      patientId ? { patientId } : undefined
+      patientId ? { patientId } : undefined,
     );
   }
 
-  patientConsentRequired(patientId?: string, context?: string): HealthcareError {
+  patientConsentRequired(
+    patientId?: string,
+    context?: string,
+  ): HealthcareError {
     return this.createError(
       ErrorCode.PATIENT_CONSENT_REQUIRED,
       HttpStatus.FORBIDDEN,
       context,
-      patientId ? { patientId } : undefined
+      patientId ? { patientId } : undefined,
     );
   }
 
   // Validation Errors
-  validationError(field: string, message?: string, context?: string): HealthcareError {
+  validationError(
+    field: string,
+    message?: string,
+    context?: string,
+  ): HealthcareError {
     return this.createError(
       ErrorCode.VALIDATION_REQUIRED_FIELD,
       HttpStatus.BAD_REQUEST,
       context,
       { field },
-      message
+      message,
     );
   }
 
@@ -208,7 +221,7 @@ export class HealthcareErrorsService {
       ErrorCode.VALIDATION_INVALID_EMAIL,
       HttpStatus.BAD_REQUEST,
       context,
-      email ? { email } : undefined
+      email ? { email } : undefined,
     );
   }
 
@@ -217,7 +230,7 @@ export class HealthcareErrorsService {
       ErrorCode.VALIDATION_INVALID_PHONE,
       HttpStatus.BAD_REQUEST,
       context,
-      phone ? { phone } : undefined
+      phone ? { phone } : undefined,
     );
   }
 
@@ -226,7 +239,7 @@ export class HealthcareErrorsService {
       ErrorCode.VALIDATION_INVALID_DATE,
       HttpStatus.BAD_REQUEST,
       context,
-      date ? { date } : undefined
+      date ? { date } : undefined,
     );
   }
 
@@ -235,7 +248,7 @@ export class HealthcareErrorsService {
       ErrorCode.VALIDATION_INVALID_UUID,
       HttpStatus.BAD_REQUEST,
       context,
-      id ? { id } : undefined
+      id ? { id } : undefined,
     );
   }
 
@@ -245,7 +258,7 @@ export class HealthcareErrorsService {
       ErrorCode.DATABASE_QUERY_FAILED,
       HttpStatus.INTERNAL_SERVER_ERROR,
       context,
-      operation ? { operation } : undefined
+      operation ? { operation } : undefined,
     );
   }
 
@@ -254,7 +267,7 @@ export class HealthcareErrorsService {
       ErrorCode.DATABASE_RECORD_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      table ? { table } : undefined
+      table ? { table } : undefined,
     );
   }
 
@@ -263,7 +276,7 @@ export class HealthcareErrorsService {
       ErrorCode.DATABASE_DUPLICATE_ENTRY,
       HttpStatus.CONFLICT,
       context,
-      field ? { field } : undefined
+      field ? { field } : undefined,
     );
   }
 
@@ -272,7 +285,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.EMAIL_SERVICE_FAILED,
       HttpStatus.SERVICE_UNAVAILABLE,
-      context
+      context,
     );
   }
 
@@ -280,7 +293,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.SMS_SERVICE_FAILED,
       HttpStatus.SERVICE_UNAVAILABLE,
-      context
+      context,
     );
   }
 
@@ -288,7 +301,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.WHATSAPP_SERVICE_FAILED,
       HttpStatus.SERVICE_UNAVAILABLE,
-      context
+      context,
     );
   }
 
@@ -298,7 +311,7 @@ export class HealthcareErrorsService {
       ErrorCode.FILE_NOT_FOUND,
       HttpStatus.NOT_FOUND,
       context,
-      filename ? { filename } : undefined
+      filename ? { filename } : undefined,
     );
   }
 
@@ -307,7 +320,7 @@ export class HealthcareErrorsService {
       ErrorCode.FILE_TOO_LARGE,
       HttpStatus.PAYLOAD_TOO_LARGE,
       context,
-      maxSize ? { maxSize } : undefined
+      maxSize ? { maxSize } : undefined,
     );
   }
 
@@ -316,7 +329,7 @@ export class HealthcareErrorsService {
       ErrorCode.FILE_INVALID_FORMAT,
       HttpStatus.BAD_REQUEST,
       context,
-      format ? { format } : undefined
+      format ? { format } : undefined,
     );
   }
 
@@ -326,7 +339,7 @@ export class HealthcareErrorsService {
       ErrorCode.RATE_LIMIT_EXCEEDED,
       HttpStatus.TOO_MANY_REQUESTS,
       context,
-      limit ? { limit } : undefined
+      limit ? { limit } : undefined,
     );
   }
 
@@ -335,7 +348,7 @@ export class HealthcareErrorsService {
       ErrorCode.SECURITY_VIOLATION,
       HttpStatus.FORBIDDEN,
       context,
-      violation ? { violation } : undefined
+      violation ? { violation } : undefined,
     );
   }
 
@@ -344,7 +357,7 @@ export class HealthcareErrorsService {
       ErrorCode.SUSPICIOUS_ACTIVITY,
       HttpStatus.FORBIDDEN,
       context,
-      activity ? { activity } : undefined
+      activity ? { activity } : undefined,
     );
   }
 
@@ -354,7 +367,7 @@ export class HealthcareErrorsService {
       ErrorCode.BUSINESS_RULE_VIOLATION,
       HttpStatus.BAD_REQUEST,
       context,
-      rule ? { rule } : undefined
+      rule ? { rule } : undefined,
     );
   }
 
@@ -363,7 +376,7 @@ export class HealthcareErrorsService {
       ErrorCode.OPERATION_NOT_ALLOWED,
       HttpStatus.METHOD_NOT_ALLOWED,
       context,
-      operation ? { operation } : undefined
+      operation ? { operation } : undefined,
     );
   }
 
@@ -372,7 +385,7 @@ export class HealthcareErrorsService {
       ErrorCode.RESOURCE_LOCKED,
       HttpStatus.LOCKED,
       context,
-      resource ? { resource } : undefined
+      resource ? { resource } : undefined,
     );
   }
 
@@ -381,7 +394,7 @@ export class HealthcareErrorsService {
     return this.createError(
       ErrorCode.INTERNAL_SERVER_ERROR,
       HttpStatus.INTERNAL_SERVER_ERROR,
-      context
+      context,
     );
   }
 
@@ -390,7 +403,7 @@ export class HealthcareErrorsService {
       ErrorCode.SERVICE_UNAVAILABLE,
       HttpStatus.SERVICE_UNAVAILABLE,
       context,
-      service ? { service } : undefined
+      service ? { service } : undefined,
     );
   }
 
@@ -399,7 +412,7 @@ export class HealthcareErrorsService {
       ErrorCode.FEATURE_NOT_IMPLEMENTED,
       HttpStatus.NOT_IMPLEMENTED,
       context,
-      feature ? { feature } : undefined
+      feature ? { feature } : undefined,
     );
   }
 
@@ -409,7 +422,7 @@ export class HealthcareErrorsService {
       ErrorCode.HIPAA_VIOLATION,
       HttpStatus.FORBIDDEN,
       context,
-      violation ? { violation } : undefined
+      violation ? { violation } : undefined,
     );
   }
 
@@ -418,7 +431,7 @@ export class HealthcareErrorsService {
       ErrorCode.PHI_ACCESS_UNAUTHORIZED,
       HttpStatus.FORBIDDEN,
       context,
-      patientId ? { patientId } : undefined
+      patientId ? { patientId } : undefined,
     );
   }
 
@@ -427,28 +440,28 @@ export class HealthcareErrorsService {
       ErrorCode.CONSENT_EXPIRED,
       HttpStatus.FORBIDDEN,
       context,
-      patientId ? { patientId } : undefined
+      patientId ? { patientId } : undefined,
     );
   }
 
   // Error Handling & Logging
   handleError(error: HealthcareError, context?: string): void {
-    const errorContext = context || error.context || 'Unknown';
-    
+    const errorContext = context || error.context || "Unknown";
+
     if (this.isCriticalError(error)) {
       this.logger.error(
         `[CRITICAL] ${error.code} in ${errorContext}: ${(error as Error).message}`,
-        error.toJSON()
+        error.toJSON(),
       );
     } else if (this.isWarningError(error)) {
       this.logger.warn(
         `[WARNING] ${error.code} in ${errorContext}: ${(error as Error).message}`,
-        error.toJSON()
+        error.toJSON(),
       );
     } else {
       this.logger.log(
         `[INFO] ${error.code} in ${errorContext}: ${(error as Error).message}`,
-        error.toJSON()
+        error.toJSON(),
       );
     }
   }
@@ -464,9 +477,15 @@ export class HealthcareErrorsService {
     statusCode: HttpStatus,
     context?: string,
     metadata?: Record<string, any>,
-    customMessage?: string
+    customMessage?: string,
   ): HealthcareError {
-    return new HealthcareError(code, customMessage, statusCode, metadata, context);
+    return new HealthcareError(
+      code,
+      customMessage,
+      statusCode,
+      metadata,
+      context,
+    );
   }
 
   private isCriticalError(error: HealthcareError): boolean {
@@ -492,7 +511,9 @@ export class HealthcareErrorsService {
       ErrorCode.WHATSAPP_SERVICE_FAILED,
     ];
 
-    return warningCodes.includes(error.code) || 
-           (error.statusCode >= 400 && error.statusCode < 500);
+    return (
+      warningCodes.includes(error.code) ||
+      (error.statusCode >= 400 && error.statusCode < 500)
+    );
   }
 }

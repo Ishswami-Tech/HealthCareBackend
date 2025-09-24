@@ -1,6 +1,6 @@
 /**
  * Enterprise Plugin Interface System
- * 
+ *
  * This provides a unified interface for all plugin systems across the healthcare platform.
  * Supports domain-specific plugins for appointments, auth, queue, and other services.
  */
@@ -45,27 +45,27 @@ export interface BasePlugin {
   readonly name: string;
   readonly version: string;
   readonly features: string[];
-  
+
   /**
    * Initialize the plugin
    */
   initialize(context: PluginContext): Promise<void>;
-  
+
   /**
    * Process plugin operation
    */
   process(data: any): Promise<any>;
-  
+
   /**
    * Validate input data
    */
   validate(data: any): Promise<boolean>;
-  
+
   /**
    * Get plugin health status
    */
   getHealth(): Promise<PluginHealth>;
-  
+
   /**
    * Cleanup plugin resources
    */
@@ -77,12 +77,11 @@ export interface BasePlugin {
  * Extends base plugin for appointment-specific functionality
  */
 export interface AppointmentPlugin extends BasePlugin {
-  
   /**
    * Handle appointment-specific operations
    */
   handleAppointmentOperation(operation: string, data: any): Promise<any>;
-  
+
   /**
    * Get appointment-specific metrics
    */
@@ -94,16 +93,19 @@ export interface AppointmentPlugin extends BasePlugin {
  * Extends base plugin for authentication-specific functionality
  */
 export interface AuthPlugin extends BasePlugin {
-  
   /**
    * Handle authentication operations
    */
   handleAuthOperation(operation: string, data: any): Promise<any>;
-  
+
   /**
    * Validate user permissions
    */
-  validatePermissions(userId: string, resource: string, action: string): Promise<boolean>;
+  validatePermissions(
+    userId: string,
+    resource: string,
+    action: string,
+  ): Promise<boolean>;
 }
 
 /**
@@ -111,12 +113,11 @@ export interface AuthPlugin extends BasePlugin {
  * Extends base plugin for queue-specific functionality
  */
 export interface QueuePlugin extends BasePlugin {
-  
   /**
    * Handle queue operations
    */
   handleQueueOperation(operation: string, data: any): Promise<any>;
-  
+
   /**
    * Get queue metrics
    */
@@ -132,23 +133,22 @@ export interface PluginRegistry {
    * Register a plugin
    */
   register(plugin: BasePlugin): Promise<void>;
-  
+
   /**
    * Unregister a plugin
    */
   unregister(pluginName: string): Promise<void>;
-  
+
   /**
    * Get plugin by name
    */
   getPlugin(name: string): BasePlugin | undefined;
-  
-  
+
   /**
    * Get plugins by feature
    */
   getPluginsByFeature(feature: string): BasePlugin[];
-  
+
   /**
    * Get all registered plugins
    */
@@ -164,22 +164,28 @@ export interface PluginManager {
    * Initialize all plugins
    */
   initializePlugins(context: PluginContext): Promise<void>;
-  
+
   /**
    * Execute plugin operation
    */
   executePlugin(pluginName: string, operation: string, data: any): Promise<any>;
-  
+
   /**
    * Execute plugins by feature
    */
-  executePluginsByFeature(feature: string, operation: string, data: any): Promise<any[]>;
-  
+  executePluginsByFeature(
+    feature: string,
+    operation: string,
+    data: any,
+  ): Promise<any[]>;
+
   /**
    * Get plugin health status
    */
-  getPluginHealth(pluginName?: string): Promise<PluginHealth | Record<string, PluginHealth>>;
-  
+  getPluginHealth(
+    pluginName?: string,
+  ): Promise<PluginHealth | Record<string, PluginHealth>>;
+
   /**
    * Shutdown all plugins
    */
@@ -195,17 +201,20 @@ export interface PluginConfigManager {
    * Get plugin configuration
    */
   getConfig(pluginName: string): PluginConfig;
-  
+
   /**
    * Update plugin configuration
    */
-  updateConfig(pluginName: string, config: Partial<PluginConfig>): Promise<void>;
-  
+  updateConfig(
+    pluginName: string,
+    config: Partial<PluginConfig>,
+  ): Promise<void>;
+
   /**
    * Reset plugin configuration to defaults
    */
   resetConfig(pluginName: string): Promise<void>;
-  
+
   /**
    * Get all plugin configurations
    */
@@ -220,24 +229,36 @@ export class PluginError extends Error {
     message: string,
     public pluginName: string,
     public operation: string,
-    public originalError?: Error
+    public originalError?: Error,
   ) {
     super(message);
-    this.name = 'PluginError';
+    this.name = "PluginError";
   }
 }
 
 export class PluginTimeoutError extends PluginError {
   constructor(pluginName: string, operation: string, timeout: number) {
-    super(`Plugin ${pluginName} timed out after ${timeout}ms during ${operation}`, pluginName, operation);
-    this.name = 'PluginTimeoutError';
+    super(
+      `Plugin ${pluginName} timed out after ${timeout}ms during ${operation}`,
+      pluginName,
+      operation,
+    );
+    this.name = "PluginTimeoutError";
   }
 }
 
 export class PluginValidationError extends PluginError {
-  constructor(pluginName: string, operation: string, validationErrors: string[]) {
-    super(`Plugin ${pluginName} validation failed: ${validationErrors.join(', ')}`, pluginName, operation);
-    this.name = 'PluginValidationError';
+  constructor(
+    pluginName: string,
+    operation: string,
+    validationErrors: string[],
+  ) {
+    super(
+      `Plugin ${pluginName} validation failed: ${validationErrors.join(", ")}`,
+      pluginName,
+      operation,
+    );
+    this.name = "PluginValidationError";
   }
 }
 
@@ -245,7 +266,12 @@ export class PluginValidationError extends PluginError {
  * Plugin Event Types
  */
 export interface PluginEvent {
-  type: 'plugin.registered' | 'plugin.unregistered' | 'plugin.initialized' | 'plugin.error' | 'plugin.health.changed';
+  type:
+    | "plugin.registered"
+    | "plugin.unregistered"
+    | "plugin.initialized"
+    | "plugin.error"
+    | "plugin.health.changed";
   pluginName: string;
   timestamp: Date;
   data?: any;
@@ -274,12 +300,12 @@ export interface PluginFactory {
    * Create plugin instance
    */
   createPlugin(pluginType: string, config: PluginConfig): BasePlugin;
-  
+
   /**
    * Get supported plugin types
    */
   getSupportedTypes(): string[];
-  
+
   /**
    * Validate plugin configuration
    */

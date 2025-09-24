@@ -34,4 +34,4 @@ export interface DoctorQueueStats {
     patientName: string;
     scheduledTime: string;
   };
-} 
+}

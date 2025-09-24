@@ -1,26 +1,36 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, HttpException, HttpStatus } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { FastifyRequest } from 'fastify';
-import { RedisService } from '../../infrastructure/cache/redis/redis.service';
-import { RateLimitService } from '../../utils/rate-limit/rate-limit.service';
-import { AuthGuard } from '@nestjs/passport';
-import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
-import { LoggingService } from '../../infrastructure/logging/logging.service';
-import { LogLevel, LogType } from '../../infrastructure/logging/types/logging.types';
-import { Logger } from '@nestjs/common';
-import * as crypto from 'crypto';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  UnauthorizedException,
+  HttpException,
+  HttpStatus,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { JwtService } from "@nestjs/jwt";
+import { FastifyRequest } from "fastify";
+import { RedisService } from "../../infrastructure/cache/redis/redis.service";
+import { RateLimitService } from "../../utils/rate-limit/rate-limit.service";
+import { AuthGuard } from "@nestjs/passport";
+import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
+import { LoggingService } from "../../infrastructure/logging/logging.service";
+import {
+  LogLevel,
+  LogType,
+} from "../../infrastructure/logging/types/logging.types";
+import { Logger } from "@nestjs/common";
+import { JwtAuthService } from "../../../services/auth/core/jwt.service";
+import * as crypto from "crypto";
 
 @Injectable()
-
 export class JwtAuthGuard implements CanActivate {
   // Progressive lockout intervals in minutes
   private readonly LOCKOUT_INTERVALS = [
-    10,    // 10 minutes after 3 failures
-    25,    // 25 minutes after 4 failures
-    45,    // 45 minutes after 5 failures
-    60,    // 1 hour after 6 failures
-    360    // 6 hours after 7 failures
+    10, // 10 minutes after 3 failures
+    25, // 25 minutes after 4 failures
+    45, // 45 minutes after 5 failures
+    60, // 1 hour after 6 failures
+    360, // 6 hours after 7 failures
   ];
 
   private readonly MAX_ATTEMPTS = 10; // Initial threshold before lockout
@@ -30,19 +40,20 @@ export class JwtAuthGuard implements CanActivate {
   private readonly SECURITY_EVENT_RETENTION = 30 * 24 * 60 * 60; // 30 days retention for security events
 
   constructor(
-    private reflector: Reflector, 
+    private reflector: Reflector,
     private jwtService: JwtService,
+    private jwtAuthService: JwtAuthService,
     private redisService: RedisService,
     private rateLimitService: RateLimitService,
-    private loggingService: LoggingService
+    private loggingService: LoggingService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
     try {
-      const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-        context.getHandler(),
-        context.getClass(),
-      ]);
+      const isPublic = this.reflector.getAllAndOverride<boolean>(
+        IS_PUBLIC_KEY,
+        [context.getHandler(), context.getClass()],
+      );
 
       const request = context.switchToHttp().getRequest();
       const path = request.raw.url;
@@ -56,7 +67,7 @@ export class JwtAuthGuard implements CanActivate {
       if (this.redisService.isDevelopmentMode()) {
         const token = this.extractTokenFromHeader(request);
         if (!token) {
-          throw new UnauthorizedException('No token provided');
+          throw new UnauthorizedException("No token provided");
         }
         const payload = await this.verifyToken(token);
         request.user = payload;
@@ -64,54 +75,78 @@ export class JwtAuthGuard implements CanActivate {
       }
 
       // Get client info
-      const clientIp = request.ip || request.headers['x-forwarded-for'] || 'unknown';
-      const userAgent = request.headers['user-agent'] || 'unknown';
+      const clientIp =
+        request.ip || request.headers["x-forwarded-for"] || "unknown";
+      const userAgent = request.headers["user-agent"] || "unknown";
       const deviceFingerprint = this.generateDeviceFingerprint(request);
 
-      // Temporarily disable rate limiting for testing
+      // Rate limiting disabled for development stage
+      // TODO: Enable rate limiting in production
       /*
-      // Check rate limits
-      const rateLimitResult = await this.rateLimitService.isRateLimited(
-        `${clientIp}:${path}`,
-        'auth'
-      );
-
-      if (rateLimitResult.limited) {
-        throw new HttpException(
-          `Rate limit exceeded. Please try again later. ${rateLimitResult.remaining} attempts remaining.`,
-          HttpStatus.TOO_MANY_REQUESTS
+      // Check rate limits (enabled for production security)
+      if (!this.redisService.isDevelopmentMode()) {
+        const rateLimitResult = await this.rateLimitService.isRateLimited(
+          `${clientIp}:${path}`,
+          'auth'
         );
+
+        if (rateLimitResult.limited) {
+          throw new HttpException(
+            {
+              error: 'Too Many Requests',
+              message: 'Rate limit exceeded. Please try again later.',
+              retryAfter: 60, // Standard retry after 60 seconds
+              remaining: rateLimitResult.remaining
+            },
+            HttpStatus.TOO_MANY_REQUESTS
+          );
+        }
       }
       */
 
-      // Temporarily disable lockout check for testing
+      // Lockout mechanism disabled for development stage
+      // TODO: Enable lockout protection in production
       /*
-      // Check for time-based lockout
-      const lockoutStatus = await this.checkLockoutStatus(clientIp);
-      if (lockoutStatus.isLocked) {
-        throw new HttpException(
-          `Account temporarily locked due to multiple failed attempts. Try again in ${lockoutStatus.remainingMinutes} minutes.`,
-          HttpStatus.TOO_MANY_REQUESTS
-        );
+      // Check for time-based lockout (enabled for production security)
+      if (!this.redisService.isDevelopmentMode()) {
+        const lockoutStatus = await this.checkLockoutStatus(clientIp);
+        if (lockoutStatus.isLocked) {
+          throw new HttpException(
+            {
+              error: 'Account Locked',
+              message: `Account temporarily locked due to multiple failed attempts. Try again in ${lockoutStatus.remainingMinutes} minutes.`,
+              lockoutMinutes: lockoutStatus.remainingMinutes,
+              retryAfter: lockoutStatus.remainingMinutes * 60
+            },
+            HttpStatus.TOO_MANY_REQUESTS
+          );
+        }
       }
       */
 
       // Validate security headers and request integrity
       await this.validateRequest(request);
 
-    const token = this.extractTokenFromHeader(request);
-    if (!token) {
+      const token = this.extractTokenFromHeader(request);
+      if (!token) {
         await this.recordFailedAttempt(clientIp);
-      throw new UnauthorizedException('No token provided');
-    }
+        throw new UnauthorizedException("No token provided");
+      }
 
       // Verify and decode JWT token
       const payload = await this.verifyToken(token);
       request.user = payload;
 
+      // Store payload in request for session validation
+      request.user = payload;
+
       // Validate session
-      const sessionData = await this.validateSession(payload.sub, request, deviceFingerprint);
-      
+      const sessionData = await this.validateSession(
+        payload.sub,
+        request,
+        deviceFingerprint,
+      );
+
       // Check concurrent sessions limit
       await this.checkConcurrentSessions(payload.sub);
 
@@ -134,57 +169,151 @@ export class JwtAuthGuard implements CanActivate {
 
   private async validateRequest(request: any): Promise<void> {
     // Validate Content-Type for POST/PUT/PATCH requests
-    if (['POST', 'PUT', 'PATCH'].includes(request.method) && 
-        !request.headers['content-type']?.includes('application/json')) {
-      throw new HttpException('Invalid Content-Type', HttpStatus.BAD_REQUEST);
+    if (
+      ["POST", "PUT", "PATCH"].includes(request.method) &&
+      !request.headers["content-type"]?.includes("application/json")
+    ) {
+      throw new HttpException("Invalid Content-Type", HttpStatus.BAD_REQUEST);
     }
 
     // Check for required security headers
-    const requiredHeaders = ['user-agent', 'accept', 'host'];
-    const missingHeaders = requiredHeaders.filter(header => !request.headers[header]);
+    const requiredHeaders = ["user-agent", "accept", "host"];
+    const missingHeaders = requiredHeaders.filter(
+      (header) => !request.headers[header],
+    );
     if (missingHeaders.length > 0) {
       throw new HttpException(
-        `Missing required headers: ${missingHeaders.join(', ')}`,
-        HttpStatus.BAD_REQUEST
+        `Missing required headers: ${missingHeaders.join(", ")}`,
+        HttpStatus.BAD_REQUEST,
       );
     }
 
     // Validate origin for CORS requests
     if (request.headers.origin) {
-      const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+      const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") || [];
       if (!allowedOrigins.includes(request.headers.origin)) {
-        throw new HttpException('Invalid origin', HttpStatus.FORBIDDEN);
+        throw new HttpException("Invalid origin", HttpStatus.FORBIDDEN);
       }
     }
   }
 
   private async verifyToken(token: string): Promise<any> {
     const logger = this.loggingService;
+    logger.log(
+      LogType.AUTH,
+      LogLevel.DEBUG,
+      "Attempting to verify JWT token",
+      "JwtAuthGuard",
+      { tokenStart: token.substring(0, 20) + "..." },
+    );
+
+    let payload: any;
+    let lastError: Error | null = null;
+
+    // Try basic JWT service first
     try {
-      logger.log(LogType.AUTH, LogLevel.DEBUG, 'Attempting to verify JWT token', 'JwtAuthGuard');
-      const payload = this.jwtService.verify(token);
-      logger.log(LogType.AUTH, LogLevel.DEBUG, 'JWT token signature verified successfully', 'JwtAuthGuard', { userId: payload.sub });
-      
-      // Skip blacklist check in DEV_MODE
-      if (!this.redisService.isDevelopmentMode()) {
-        const isBlacklisted = await this.redisService.get(`blacklist:token:${token.substring(0, 64)}`);
-        if (isBlacklisted) {
-          logger.log(LogType.AUTH, LogLevel.WARN, 'Token validation failed: Token is blacklisted', 'JwtAuthGuard', { userId: payload.sub });
-          throw new UnauthorizedException('Token has been invalidated');
-        }
-        logger.log(LogType.AUTH, LogLevel.DEBUG, 'Token is not blacklisted', 'JwtAuthGuard', { userId: payload.sub });
+      payload = this.jwtService.verify(token);
+      logger.log(
+        LogType.AUTH,
+        LogLevel.DEBUG,
+        "JWT token verified with basic service",
+        "JwtAuthGuard",
+        { userId: payload.sub },
+      );
+    } catch (basicError) {
+      lastError =
+        basicError instanceof Error
+          ? basicError
+          : new Error("Unknown basic JWT error");
+      logger.log(
+        LogType.AUTH,
+        LogLevel.DEBUG,
+        "Basic JWT verification failed, trying enhanced service",
+        "JwtAuthGuard",
+        { error: lastError.message },
+      );
+
+      // Try enhanced JWT service as fallback
+      try {
+        payload = await this.jwtAuthService.verifyEnhancedToken(token);
+        logger.log(
+          LogType.AUTH,
+          LogLevel.DEBUG,
+          "JWT token verified with enhanced service",
+          "JwtAuthGuard",
+          { userId: payload.sub },
+        );
+        lastError = null; // Clear error since enhanced verification succeeded
+      } catch (enhancedError) {
+        lastError =
+          enhancedError instanceof Error
+            ? enhancedError
+            : new Error("Unknown enhanced JWT error");
+        logger.log(
+          LogType.AUTH,
+          LogLevel.ERROR,
+          "Enhanced JWT verification also failed",
+          "JwtAuthGuard",
+          { error: lastError.message },
+        );
       }
-      return payload;
-    } catch (error) {
-      logger.log(LogType.AUTH, LogLevel.ERROR, `Token verification failed: ${error instanceof Error ? error.name : 'Unknown'}`, 'JwtAuthGuard', { error: error instanceof Error ? (error as Error).message : 'Unknown error' });
-      if (error instanceof Error && error.name === 'TokenExpiredError') {
-        throw new UnauthorizedException('Token has expired');
-      }
-      if (error instanceof Error && error.name === 'JsonWebTokenError') {
-        throw new UnauthorizedException('Invalid token format');
-      }
-      throw new UnauthorizedException('Token validation failed');
     }
+
+    // If both verifications failed, handle the error
+    if (!payload && lastError) {
+      logger.log(
+        LogType.AUTH,
+        LogLevel.ERROR,
+        `All token verification methods failed: ${lastError.name}`,
+        "JwtAuthGuard",
+        { error: lastError.message },
+      );
+
+      if (lastError.name === "TokenExpiredError") {
+        throw new UnauthorizedException("Token has expired");
+      }
+      if (lastError.name === "JsonWebTokenError") {
+        throw new UnauthorizedException("Invalid token format");
+      }
+      if (lastError.message && lastError.message.includes("revoked")) {
+        throw new UnauthorizedException("Token has been revoked");
+      }
+      throw new UnauthorizedException("Token validation failed");
+    }
+
+    // Check blacklist regardless of verification method
+    if (payload && payload.jti) {
+      try {
+        const blacklistKey = `jwt:blacklist:${payload.jti}`;
+        const isBlacklisted = await this.redisService.get(blacklistKey);
+        if (isBlacklisted) {
+          logger.log(
+            LogType.AUTH,
+            LogLevel.WARN,
+            "Token validation failed: Token is blacklisted",
+            "JwtAuthGuard",
+            { userId: payload.sub, jti: payload.jti },
+          );
+          throw new UnauthorizedException("Token has been revoked");
+        }
+      } catch (blacklistError) {
+        logger.log(
+          LogType.AUTH,
+          LogLevel.ERROR,
+          "Failed to check token blacklist",
+          "JwtAuthGuard",
+          {
+            error:
+              blacklistError instanceof Error
+                ? blacklistError.message
+                : "Unknown",
+          },
+        );
+        // Continue with token validation even if blacklist check fails
+      }
+    }
+
+    return payload;
   }
 
   /**
@@ -210,47 +339,105 @@ export class JwtAuthGuard implements CanActivate {
       // Session is still valid but inactive for a while
       // This is just for logging, we'll still return the session
     }
-    
+
     return sessionData;
   }
 
-  private async validateSession(userId: string, request: any, deviceFingerprint: string): Promise<any> {
+  private async validateSession(
+    userId: string,
+    request: any,
+    deviceFingerprint: string,
+  ): Promise<any> {
     const logger = this.loggingService;
-    const sessionId = request.user?.sessionId || request.headers['x-session-id'];
-    
-    logger.log(LogType.AUTH, LogLevel.DEBUG, 'Attempting to validate session', 'JwtAuthGuard', { userId, sessionId: sessionId || 'MISSING' });
+    // Get sessionId from token payload (more reliable than request.user which might not be set yet)
+    const token = this.extractTokenFromHeader(request);
+    let sessionId = request.user?.sessionId || request.headers["x-session-id"];
+
+    // If sessionId not found in request.user, try to decode token to get it
+    if (!sessionId && token) {
+      try {
+        const decoded = this.jwtService.decode(token);
+        sessionId = decoded?.sessionId;
+      } catch (error) {
+        logger.log(
+          LogType.AUTH,
+          LogLevel.ERROR,
+          "Failed to decode token for sessionId",
+          "JwtAuthGuard",
+          { error },
+        );
+      }
+    }
+
+    logger.log(
+      LogType.AUTH,
+      LogLevel.DEBUG,
+      "Attempting to validate session",
+      "JwtAuthGuard",
+      { userId, sessionId: sessionId || "MISSING" },
+    );
 
     if (!sessionId) {
-      logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: No session ID provided in token or headers', 'JwtAuthGuard', { userId });
-      throw new UnauthorizedException('Session ID is missing');
+      logger.log(
+        LogType.AUTH,
+        LogLevel.WARN,
+        "Session validation failed: No session ID provided in token or headers",
+        "JwtAuthGuard",
+        { userId },
+      );
+      throw new UnauthorizedException("Session ID is missing");
     }
 
     const sessionKey = `session:${userId}:${sessionId}`;
     const sessionData = await this.getSessionData(sessionKey);
 
     if (!sessionData) {
-      logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: Session not found in Redis', 'JwtAuthGuard', { userId, sessionId, sessionKey });
-      throw new UnauthorizedException('Invalid session');
+      logger.log(
+        LogType.AUTH,
+        LogLevel.WARN,
+        "Session validation failed: Session not found in Redis",
+        "JwtAuthGuard",
+        { userId, sessionId, sessionKey },
+      );
+      throw new UnauthorizedException("Invalid session");
     }
-    
-    logger.log(LogType.AUTH, LogLevel.DEBUG, 'Session found in Redis', 'JwtAuthGuard', { userId, sessionId });
+
+    logger.log(
+      LogType.AUTH,
+      LogLevel.DEBUG,
+      "Session found in Redis",
+      "JwtAuthGuard",
+      { userId, sessionId },
+    );
 
     // Skip device fingerprint check in DEV_MODE
     if (!this.redisService.isDevelopmentMode()) {
       const currentFingerprint = this.generateDeviceFingerprint(request);
       if (sessionData.deviceFingerprint !== currentFingerprint) {
-        logger.log(LogType.AUTH, LogLevel.WARN, 'Session validation failed: Device fingerprint mismatch', 'JwtAuthGuard', { 
-          userId, 
-          sessionId,
-          storedFingerprint: sessionData.deviceFingerprint,
-          currentFingerprint: currentFingerprint
-        });
+        logger.log(
+          LogType.AUTH,
+          LogLevel.WARN,
+          "Session validation failed: Device fingerprint mismatch",
+          "JwtAuthGuard",
+          {
+            userId,
+            sessionId,
+            storedFingerprint: sessionData.deviceFingerprint,
+            currentFingerprint: currentFingerprint,
+          },
+        );
         // Depending on security policy, you might want to invalidate the session here.
         // For now, we'll just log it.
       }
     }
-    
-    logger.log(LogType.AUTH, LogLevel.INFO, 'Session validated successfully', 'JwtAuthGuard', { userId, sessionId });
+
+    logger.log(
+      LogType.AUTH,
+      LogLevel.INFO,
+      "Session validated successfully",
+      "JwtAuthGuard",
+      { userId, sessionId },
+    );
     return sessionData;
   }
 
@@ -258,57 +445,67 @@ export class JwtAuthGuard implements CanActivate {
    * Compare two user agent strings to determine if they are similar devices
    * This helps with browser updates and minor variations
    */
-  private isSimilarUserAgent(storedAgent: string, currentAgent: string): boolean {
+  private isSimilarUserAgent(
+    storedAgent: string,
+    currentAgent: string,
+  ): boolean {
     if (!storedAgent || !currentAgent) return false;
-    
+
     // Extract browser family (e.g., Chrome, Firefox, Safari)
     const getBrowserFamily = (ua: string): string => {
       ua = ua.toLowerCase();
-      if (ua.includes('chrome')) return 'chrome';
-      if (ua.includes('firefox')) return 'firefox';
-      if (ua.includes('safari')) return 'safari';
-      if (ua.includes('edge')) return 'edge';
-      if (ua.includes('opera')) return 'opera';
+      if (ua.includes("chrome")) return "chrome";
+      if (ua.includes("firefox")) return "firefox";
+      if (ua.includes("safari")) return "safari";
+      if (ua.includes("edge")) return "edge";
+      if (ua.includes("opera")) return "opera";
       return ua;
     };
-    
+
     // Extract OS family (e.g., Windows, Mac, Android)
     const getOSFamily = (ua: string): string => {
       ua = ua.toLowerCase();
-      if (ua.includes('windows')) return 'windows';
-      if (ua.includes('mac')) return 'mac';
-      if (ua.includes('android')) return 'android';
-      if (ua.includes('ios') || ua.includes('iphone') || ua.includes('ipad')) return 'ios';
-      if (ua.includes('linux')) return 'linux';
+      if (ua.includes("windows")) return "windows";
+      if (ua.includes("mac")) return "mac";
+      if (ua.includes("android")) return "android";
+      if (ua.includes("ios") || ua.includes("iphone") || ua.includes("ipad"))
+        return "ios";
+      if (ua.includes("linux")) return "linux";
       return ua;
     };
-    
+
     const storedBrowser = getBrowserFamily(storedAgent);
     const currentBrowser = getBrowserFamily(currentAgent);
     const storedOS = getOSFamily(storedAgent);
     const currentOS = getOSFamily(currentAgent);
-    
+
     // Consider similar if both browser family and OS family match
     return storedBrowser === currentBrowser && storedOS === currentOS;
   }
 
   private async checkConcurrentSessions(userId: string): Promise<void> {
-    const activeSessions = await this.redisService.sMembers(`user:${userId}:sessions`);
+    const activeSessions = await this.redisService.sMembers(
+      `user:${userId}:sessions`,
+    );
     if (activeSessions.length >= this.MAX_CONCURRENT_SESSIONS) {
-      await this.trackSecurityEvent(userId, 'MAX_SESSIONS_REACHED', {
-        activeSessionCount: activeSessions.length
+      await this.trackSecurityEvent(userId, "MAX_SESSIONS_REACHED", {
+        activeSessionCount: activeSessions.length,
       });
       throw new HttpException(
         `Maximum number of concurrent sessions (${this.MAX_CONCURRENT_SESSIONS}) reached`,
-        HttpStatus.TOO_MANY_REQUESTS
+        HttpStatus.TOO_MANY_REQUESTS,
       );
     }
   }
 
-  private async updateSessionData(userId: string, sessionData: any, request: any): Promise<void> {
+  private async updateSessionData(
+    userId: string,
+    sessionData: any,
+    request: any,
+  ): Promise<void> {
     try {
-      const clientIp = request.ip || 'unknown';
-      const userAgent = request.headers['user-agent'] || 'unknown';
+      const clientIp = request.ip || "unknown";
+      const userAgent = request.headers["user-agent"] || "unknown";
 
       // Update session with latest activity and info
       const updatedSession = {
@@ -318,87 +515,106 @@ export class JwtAuthGuard implements CanActivate {
         deviceInfo: {
           ...sessionData.deviceInfo,
           userAgent: userAgent,
-        }
+        },
       };
 
       await this.redisService.set(
         `session:${userId}:${sessionData.sessionId}`,
         JSON.stringify(updatedSession),
-        3600 // Keep session alive for another hour
+        3600, // Keep session alive for another hour
       );
     } catch (error) {
-      this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Failed to update session data', 'JwtAuthGuard', { error });
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        "Failed to update session data",
+        "JwtAuthGuard",
+        { error },
+      );
     }
   }
 
   private generateDeviceFingerprint(request: any): string {
-    const userAgent = request.headers['user-agent'] || 'unknown';
+    const userAgent = request.headers["user-agent"] || "unknown";
     // Use a stable hash of the user agent. IP address is removed to support dynamic IPs.
-    return crypto.createHash('sha256').update(userAgent).digest('hex');
+    return crypto.createHash("sha256").update(userAgent).digest("hex");
   }
 
-  private async trackSecurityEvent(identifier: string, eventType: string, details: any): Promise<void> {
+  private async trackSecurityEvent(
+    identifier: string,
+    eventType: string,
+    details: any,
+  ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
       const event = {
         timestamp,
         eventType,
         identifier,
-        details
+        details,
       };
 
       await this.redisService.rPush(
         `security:events:${identifier}`,
-        JSON.stringify(event)
+        JSON.stringify(event),
       );
 
       // Trim old events
-      await this.redisService.lTrim(
-        `security:events:${identifier}`,
-        -1000,
-        -1
-      );
+      await this.redisService.lTrim(`security:events:${identifier}`, -1000, -1);
 
       // Set expiry for events list
       await this.redisService.expire(
         `security:events:${identifier}`,
-        this.SECURITY_EVENT_RETENTION
+        this.SECURITY_EVENT_RETENTION,
       );
     } catch (error) {
-      this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Failed to track security event', 'JwtAuthGuard', { error });
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        "Failed to track security event",
+        "JwtAuthGuard",
+        { error },
+      );
     }
   }
 
-  private async handleAuthenticationError(error: any, context: ExecutionContext): Promise<void> {
+  private async handleAuthenticationError(
+    error: any,
+    context: ExecutionContext,
+  ): Promise<void> {
     const request = context.switchToHttp().getRequest();
-    const clientIp = request.ip || request.headers['x-forwarded-for'] || 'unknown';
+    const clientIp =
+      request.ip || request.headers["x-forwarded-for"] || "unknown";
 
     // Record failed attempt
     await this.recordFailedAttempt(clientIp);
 
     // Track security event
-    await this.trackSecurityEvent(clientIp, 'AUTHENTICATION_FAILURE', {
+    await this.trackSecurityEvent(clientIp, "AUTHENTICATION_FAILURE", {
       error: (error as Error).message,
       path: request.raw.url,
-      method: request.method
+      method: request.method,
     });
 
     // Enhance error message if needed
     if (error instanceof UnauthorizedException) {
       const lockoutStatus = await this.checkLockoutStatus(clientIp);
       if (lockoutStatus.isLocked) {
-        (error as Error).message = `Account is temporarily locked. Please try again in ${lockoutStatus.remainingMinutes} minutes.`;
+        (error as Error).message =
+          `Account is temporarily locked. Please try again in ${lockoutStatus.remainingMinutes} minutes.`;
       }
     }
   }
 
-  private async checkLockoutStatus(identifier: string): Promise<{ isLocked: boolean; remainingMinutes: number }> {
+  private async checkLockoutStatus(
+    identifier: string,
+  ): Promise<{ isLocked: boolean; remainingMinutes: number }> {
     const attemptsKey = `auth:attempts:${identifier}`;
     const lockoutKey = `auth:lockout:${identifier}`;
 
     const attempts = await this.redisService.get(attemptsKey);
     const lockoutData = await this.redisService.get(lockoutKey);
-    
+
     if (lockoutData) {
       const { lockedUntil } = JSON.parse(lockoutData);
       const now = Date.now();
@@ -416,15 +632,18 @@ export class JwtAuthGuard implements CanActivate {
   private async recordFailedAttempt(identifier: string): Promise<void> {
     const attemptsKey = `auth:attempts:${identifier}`;
     const lockoutKey = `auth:lockout:${identifier}`;
-    
+
     const attempts = await this.redisService.get(attemptsKey);
     const currentAttempts = attempts ? parseInt(attempts) : 0;
     const newAttempts = currentAttempts + 1;
 
     if (newAttempts >= this.MAX_ATTEMPTS) {
-      const lockoutIndex = Math.min(newAttempts - this.MAX_ATTEMPTS, this.LOCKOUT_INTERVALS.length - 1);
+      const lockoutIndex = Math.min(
+        newAttempts - this.MAX_ATTEMPTS,
+        this.LOCKOUT_INTERVALS.length - 1,
+      );
       const lockoutMinutes = this.LOCKOUT_INTERVALS[lockoutIndex];
-      const lockedUntil = Date.now() + (lockoutMinutes * 60 * 1000);
+      const lockedUntil = Date.now() + lockoutMinutes * 60 * 1000;
 
       // Set lockout with progressive duration
       await this.redisService.set(
@@ -432,23 +651,23 @@ export class JwtAuthGuard implements CanActivate {
         JSON.stringify({
           lockedUntil,
           attempts: newAttempts,
-          lockoutMinutes
+          lockoutMinutes,
         }),
-        lockoutMinutes * 60
+        lockoutMinutes * 60,
       );
 
       // Track security event
-      await this.trackSecurityEvent(identifier, 'ACCOUNT_LOCKOUT', {
+      await this.trackSecurityEvent(identifier, "ACCOUNT_LOCKOUT", {
         attempts: newAttempts,
         lockoutMinutes,
-        lockedUntil: new Date(lockedUntil)
+        lockedUntil: new Date(lockedUntil),
       });
     } else {
       // Update attempts count
       await this.redisService.set(
         attemptsKey,
         newAttempts.toString(),
-        this.ATTEMPT_WINDOW
+        this.ATTEMPT_WINDOW,
       );
     }
   }
@@ -458,50 +677,53 @@ export class JwtAuthGuard implements CanActivate {
     const lockoutKey = `auth:lockout:${identifier}`;
     await Promise.all([
       this.redisService.del(attemptsKey),
-      this.redisService.del(lockoutKey)
+      this.redisService.del(lockoutKey),
     ]);
   }
 
   private validateSecurityHeaders(request: any): void {
     // Validate Content-Type for POST requests
-    if (request.method === 'POST' && !request.headers['content-type']?.includes('application/json')) {
-      throw new HttpException('Invalid Content-Type', HttpStatus.BAD_REQUEST);
+    if (
+      request.method === "POST" &&
+      !request.headers["content-type"]?.includes("application/json")
+    ) {
+      throw new HttpException("Invalid Content-Type", HttpStatus.BAD_REQUEST);
     }
 
     // Check for required security headers
-    if (!request.headers['user-agent']) {
-      throw new HttpException('User-Agent header is required', HttpStatus.BAD_REQUEST);
+    if (!request.headers["user-agent"]) {
+      throw new HttpException(
+        "User-Agent header is required",
+        HttpStatus.BAD_REQUEST,
+      );
     }
   }
 
   private generateDeviceId(userAgent: string): string {
-    return require('crypto')
-      .createHash('md5')
-      .update(userAgent)
-      .digest('hex');
+    return require("crypto").createHash("md5").update(userAgent).digest("hex");
   }
 
   private extractTokenFromHeader(request: any): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    const [type, token] = request.headers.authorization?.split(" ") ?? [];
+    return type === "Bearer" ? token : undefined;
   }
 
   private isPublicPath(path: string): boolean {
     const publicPaths = [
-      '/auth/login',
-      '/auth/register',
-      '/auth/forgot-password',
-      '/auth/reset-password',
-      '/auth/verify-email',
-      '/health',
-      '/health/check',
-      '/api-health',
-      '/docs',
-      '/api',
-      '/api-json',
-      '/swagger',
-      '/favicon.ico'
+      "/auth/login",
+      "/auth/register",
+      "/auth/forgot-password",
+      "/auth/reset-password",
+      "/auth/verify-email",
+      "/health",
+      "/health/check",
+      "/api-health",
+      "/docs",
+      "/api",
+      "/api-json",
+      "/swagger",
+      "/favicon.ico",
     ];
-    return publicPaths.some(publicPath => path.startsWith(publicPath));
+    return publicPaths.some((publicPath) => path.startsWith(publicPath));
   }
-} 
+}

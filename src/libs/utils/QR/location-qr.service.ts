@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 
 @Injectable()
 export class LocationQrService {
@@ -15,7 +15,7 @@ export class LocationQrService {
       // Create QR data with location information
       const qrData = {
         locationId,
-        type: 'LOCATION_CHECK_IN',
+        type: "LOCATION_CHECK_IN",
         timestamp: new Date().toISOString(),
       };
 
@@ -23,8 +23,10 @@ export class LocationQrService {
       // Note: This would integrate with QrService in a real implementation
       return JSON.stringify(qrData);
     } catch (error) {
-      const message = error instanceof Error ? (error as Error).message : String(error);
-      throw new BadRequestException(`Failed to generate location QR: ${message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(
+        `Failed to generate location QR: ${message}`,
+      );
     }
   }
 
@@ -34,24 +36,27 @@ export class LocationQrService {
    * @param appointmentLocationId - The location ID from the appointment
    * @returns boolean - Whether the QR code is valid for this location
    */
-  async verifyLocationQR(qrData: string, appointmentLocationId: string): Promise<boolean> {
+  async verifyLocationQR(
+    qrData: string,
+    appointmentLocationId: string,
+  ): Promise<boolean> {
     try {
       const data = JSON.parse(qrData);
-      
+
       // Validate QR data format
-      if (data.type !== 'LOCATION_CHECK_IN') {
-        throw new BadRequestException('Invalid QR code type');
+      if (data.type !== "LOCATION_CHECK_IN") {
+        throw new BadRequestException("Invalid QR code type");
       }
 
       // Verify if the QR code is for the correct location
       if (data.locationId !== appointmentLocationId) {
-        throw new BadRequestException('QR code is not valid for this location');
+        throw new BadRequestException("QR code is not valid for this location");
       }
 
       return true;
     } catch (error) {
-      const message = error instanceof Error ? (error as Error).message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
       throw new BadRequestException(`Invalid QR code: ${message}`);
     }
   }
-} 
+}

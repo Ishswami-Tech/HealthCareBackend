@@ -1,11 +1,11 @@
-import { Controller, Get, Res, Logger } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { AppService } from './app.service';
-import { Public } from './libs/core/decorators/public.decorator';
-import { ConfigService } from '@nestjs/config';
-import { FastifyReply } from 'fastify';
-import { HealthController } from './services/health/health.controller';
-import { LoggingService } from './libs/infrastructure/logging/logging.service';
+import { Controller, Get, Res, Logger } from "@nestjs/common";
+import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
+import { AppService } from "./app.service";
+import { Public } from "./libs/core/decorators/public.decorator";
+import { ConfigService } from "@nestjs/config";
+import { FastifyReply } from "fastify";
+import { HealthController } from "./services/health/health.controller";
+import { LoggingService } from "./libs/infrastructure/logging/logging.service";
 
 interface ServiceInfo {
   name: string;
@@ -30,7 +30,7 @@ interface ServiceMetrics {
 }
 
 interface ServiceHealth {
-  status: 'healthy' | 'unhealthy';
+  status: "healthy" | "unhealthy";
   details?: string;
   responseTime?: number;
   lastChecked?: string;
@@ -38,7 +38,7 @@ interface ServiceHealth {
 }
 
 interface HealthData {
-  status: 'healthy' | 'degraded';
+  status: "healthy" | "degraded";
   timestamp: string;
   environment: string;
   version: string;
@@ -68,7 +68,7 @@ interface DashboardData {
   }>;
 }
 
-@ApiTags('root')
+@ApiTags("root")
 @Controller()
 export class AppController {
   private readonly logger = new Logger(AppController.name);
@@ -82,190 +82,244 @@ export class AppController {
 
   @Get()
   @Public()
-  @ApiOperation({ 
-    summary: 'API Dashboard',
-    description: 'Shows a dashboard with all available services and their status.'
+  @ApiOperation({
+    summary: "API Dashboard",
+    description:
+      "Shows a dashboard with all available services and their status.",
   })
   @ApiResponse({
     status: 200,
-    description: 'Dashboard HTML'
+    description: "Dashboard HTML",
   })
   async getDashboard(@Res() res: FastifyReply) {
     try {
-      const host = this.configService.get('API_URL') || 'https://api.ishswami.in';
-      const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
-      const isProduction = process.env.NODE_ENV === 'production';
-      
+      const host =
+        this.configService.get("API_URL") || "https://api.ishswami.in";
+      const baseUrl = host.endsWith("/") ? host.slice(0, -1) : host;
+      const isProduction = process.env.NODE_ENV === "production";
+
       // Get real-time service status from health controller
-      const healthData: HealthData = await this.healthController.getDetailedHealth();
-      
+      const healthData: HealthData =
+        await this.healthController.getDetailedHealth();
+
       // Map health data to service status format
       const healthStatus = {
-        api: { status: healthData.services.api.status === 'healthy' ? 'up' : 'down' },
-        redis: { status: healthData.services.redis.status === 'healthy' ? 'up' : 'down' },
-        database: { status: healthData.services.database.status === 'healthy' ? 'up' : 'down' },
-        queues: { status: healthData.services.queues.status === 'healthy' ? 'up' : 'down' },
-        logger: { status: healthData.services.logger.status === 'healthy' ? 'up' : 'down' },
-        socket: { status: healthData.services.socket.status === 'healthy' ? 'up' : 'down' },
-        email: { status: healthData.services.email.status === 'healthy' ? 'up' : 'down' },
-        prismaStudio: { status: healthData.services.prismaStudio?.status === 'healthy' ? 'up' : 'down' },
-        redisCommander: { status: healthData.services.redisCommander?.status === 'healthy' ? 'up' : 'down' },
-        pgAdmin: { status: healthData.services.pgAdmin?.status === 'healthy' ? 'up' : 'down' },
-        lastUpdated: new Date()
+        api: {
+          status: healthData.services.api.status === "healthy" ? "up" : "down",
+        },
+        redis: {
+          status:
+            healthData.services.redis.status === "healthy" ? "up" : "down",
+        },
+        database: {
+          status:
+            healthData.services.database.status === "healthy" ? "up" : "down",
+        },
+        queues: {
+          status:
+            healthData.services.queues.status === "healthy" ? "up" : "down",
+        },
+        logger: {
+          status:
+            healthData.services.logger.status === "healthy" ? "up" : "down",
+        },
+        socket: {
+          status:
+            healthData.services.socket.status === "healthy" ? "up" : "down",
+        },
+        email: {
+          status:
+            healthData.services.email.status === "healthy" ? "up" : "down",
+        },
+        prismaStudio: {
+          status:
+            healthData.services.prismaStudio?.status === "healthy"
+              ? "up"
+              : "down",
+        },
+        redisCommander: {
+          status:
+            healthData.services.redisCommander?.status === "healthy"
+              ? "up"
+              : "down",
+        },
+        pgAdmin: {
+          status:
+            healthData.services.pgAdmin?.status === "healthy" ? "up" : "down",
+        },
+        lastUpdated: new Date(),
       };
-      
+
       // Check if services are running
-      const isApiRunning = healthStatus.api.status === 'up';
-      const isRedisRunning = healthStatus.redis.status === 'up';
-      const isDatabaseRunning = healthStatus.database.status === 'up';
-      const isQueueRunning = healthStatus.queues.status === 'up';
-      const isLoggerRunning = healthStatus.logger.status === 'up';
-      const isSocketRunning = healthStatus.socket.status === 'up';
-      const isEmailRunning = healthStatus.email.status === 'up';
-      const isPrismaStudioRunning = healthStatus.prismaStudio.status === 'up';
-      const isRedisCommanderRunning = healthStatus.redisCommander.status === 'up';
-      const isPgAdminRunning = healthStatus.pgAdmin.status === 'up';
-      
+      const isApiRunning = healthStatus.api.status === "up";
+      const isRedisRunning = healthStatus.redis.status === "up";
+      const isDatabaseRunning = healthStatus.database.status === "up";
+      const isQueueRunning = healthStatus.queues.status === "up";
+      const isLoggerRunning = healthStatus.logger.status === "up";
+      const isSocketRunning = healthStatus.socket.status === "up";
+      const isEmailRunning = healthStatus.email.status === "up";
+      const isPrismaStudioRunning = healthStatus.prismaStudio.status === "up";
+      const isRedisCommanderRunning =
+        healthStatus.redisCommander.status === "up";
+      const isPgAdminRunning = healthStatus.pgAdmin.status === "up";
+
       // Define all services
       const allServices: ServiceInfo[] = [
         {
-          name: 'API Documentation',
-          description: 'Swagger API documentation and testing interface.',
-          url: `${baseUrl}${this.configService.get('SWAGGER_URL') || '/docs'}`,
+          name: "API Documentation",
+          description: "Swagger API documentation and testing interface.",
+          url: `${baseUrl}${this.configService.get("SWAGGER_URL") || "/docs"}`,
           active: isApiRunning,
-          category: 'Documentation'
+          category: "Documentation",
         },
         {
-          name: 'Queue Dashboard',
-          description: 'Queue management and monitoring dashboard.',
-          url: `${baseUrl}${this.configService.get('BULL_BOARD_URL') || '/queue-dashboard'}`,
+          name: "Queue Dashboard",
+          description: "Queue management and monitoring dashboard.",
+          url: `${baseUrl}${this.configService.get("BULL_BOARD_URL") || "/queue-dashboard"}`,
           active: isQueueRunning,
-          category: 'Monitoring'
+          category: "Monitoring",
         },
         {
-          name: 'Logger',
-          description: 'Application logs and monitoring interface.',
+          name: "Logger",
+          description: "Application logs and monitoring interface.",
           url: `${baseUrl}/logger`,
           active: isLoggerRunning,
-          category: 'Monitoring'
+          category: "Monitoring",
         },
         {
-          name: 'WebSocket',
-          description: 'WebSocket endpoint for real-time communication.',
+          name: "WebSocket",
+          description: "WebSocket endpoint for real-time communication.",
           url: `${baseUrl}/socket-test`,
           active: isSocketRunning,
-          category: 'API'
+          category: "API",
         },
         {
-          name: 'Email Service',
-          description: 'Email sending and template management.',
+          name: "Email Service",
+          description: "Email sending and template management.",
           url: `${baseUrl}/email-status`,
           active: isEmailRunning,
-          category: 'Services'
-        }
+          category: "Services",
+        },
       ];
-      
+
       // Add development-only services
       if (!isProduction || isRedisCommanderRunning) {
         allServices.push({
-          name: 'Redis Commander',
-          description: 'Redis database management interface.',
-          url: isProduction 
-            ? `${this.configService.get('REDIS_COMMANDER_URL', '/redis-ui')}`
+          name: "Redis Commander",
+          description: "Redis database management interface.",
+          url: isProduction
+            ? `${this.configService.get("REDIS_COMMANDER_URL", "/redis-ui")}`
             : `${baseUrl}/redis-ui`,
           active: isRedisRunning && isRedisCommanderRunning,
-          category: 'Database',
-          credentials: 'Username: admin, Password: admin',
-          devOnly: !isRedisCommanderRunning
+          category: "Database",
+          credentials: "Username: admin, Password: admin",
+          devOnly: !isRedisCommanderRunning,
         });
       }
-      
+
       if (!isProduction || isPrismaStudioRunning) {
         allServices.push({
-          name: 'Prisma Studio',
-          description: 'PostgreSQL database management through Prisma.',
-          url: isProduction 
-            ? `${this.configService.get('PRISMA_STUDIO_URL', '/prisma')}`
+          name: "Prisma Studio",
+          description: "PostgreSQL database management through Prisma.",
+          url: isProduction
+            ? `${this.configService.get("PRISMA_STUDIO_URL", "/prisma")}`
             : `${baseUrl}/prisma`,
           active: isDatabaseRunning && isPrismaStudioRunning,
-          category: 'Database',
-          devOnly: !isPrismaStudioRunning
+          category: "Database",
+          devOnly: !isPrismaStudioRunning,
         });
       }
-      
+
       if (!isProduction || isPgAdminRunning) {
         allServices.push({
-          name: 'pgAdmin',
-          description: 'PostgreSQL database management interface.',
-          url: isProduction 
-            ? `${this.configService.get('PGADMIN_URL', '/pgadmin')}`
+          name: "pgAdmin",
+          description: "PostgreSQL database management interface.",
+          url: isProduction
+            ? `${this.configService.get("PGADMIN_URL", "/pgadmin")}`
             : `${baseUrl}/pgadmin`,
           active: isDatabaseRunning && isPgAdminRunning,
-          category: 'Database',
-          credentials: 'Email: admin@admin.com, Password: admin',
-          devOnly: !isPgAdminRunning
+          category: "Database",
+          credentials: "Email: admin@admin.com, Password: admin",
+          devOnly: !isPgAdminRunning,
         });
-        }
+      }
 
       // Filter services based on environment
-      const services = isProduction 
-        ? allServices.filter(service => !service.devOnly)
+      const services = isProduction
+        ? allServices.filter((service) => !service.devOnly)
         : allServices;
 
       // Calculate overall system health
       const totalServices = Object.keys(healthData.services).length;
-      const healthyServices = Object.values(healthData.services).filter(service => service.status === 'healthy').length;
+      const healthyServices = Object.values(healthData.services).filter(
+        (service) => service.status === "healthy",
+      ).length;
       const isSystemHealthy = healthyServices === totalServices;
-      
+
       // Initialize health dashboard data
       const dashboardData: DashboardData = {
         overallHealth: {
-          status: isSystemHealthy ? 'healthy' : 'degraded',
-          statusText: isSystemHealthy ? 'All systems operational' : 'System partially degraded',
+          status: isSystemHealthy ? "healthy" : "degraded",
+          statusText: isSystemHealthy
+            ? "All systems operational"
+            : "System partially degraded",
           healthyCount: healthyServices,
           totalCount: totalServices,
           lastChecked: new Date().toLocaleString(),
-          details: `${healthyServices} of ${totalServices} services are healthy`
+          details: `${healthyServices} of ${totalServices} services are healthy`,
         },
-        services: Object.entries(healthData.services).map(([name, service]) => ({
-          id: name.toLowerCase(),
-          name: name.charAt(0).toUpperCase() + name.slice(1),
-          status: service.status,
-          isHealthy: service.status === 'healthy',
-          responseTime: service.responseTime || 0,
-          details: service.details || (service.status === 'healthy' ? 'Service is responding normally' : 'Service is experiencing issues'),
-          lastChecked: service.lastChecked || new Date().toLocaleString(),
-          metrics: service.metrics || {}
-        }))
+        services: Object.entries(healthData.services).map(
+          ([name, service]) => ({
+            id: name.toLowerCase(),
+            name: name.charAt(0).toUpperCase() + name.slice(1),
+            status: service.status,
+            isHealthy: service.status === "healthy",
+            responseTime: service.responseTime || 0,
+            details:
+              service.details ||
+              (service.status === "healthy"
+                ? "Service is responding normally"
+                : "Service is experiencing issues"),
+            lastChecked: service.lastChecked || new Date().toLocaleString(),
+            metrics: service.metrics || {},
+          }),
+        ),
       };
-      
+
       // Only fetch logs in development mode
       const recentLogs = isProduction ? [] : await this.getRecentLogs();
-      
-      // Generate HTML content with both service cards and health data
-      const html = this.generateDashboardHtml('Healthcare API Dashboard', services, recentLogs, isProduction, dashboardData);
 
-      res.header('Content-Type', 'text/html');
+      // Generate HTML content with both service cards and health data
+      const html = this.generateDashboardHtml(
+        "Healthcare API Dashboard",
+        services,
+        recentLogs,
+        isProduction,
+        dashboardData,
+      );
+
+      res.header("Content-Type", "text/html");
       return res.send(html);
     } catch (error) {
-      this.logger.error('Error serving dashboard:', error);
-      return res.send('Error loading dashboard. Please check server logs.');
+      this.logger.error("Error serving dashboard:", error);
+      return res.send("Error loading dashboard. Please check server logs.");
     }
   }
 
-  @Get('socket-test')
+  @Get("socket-test")
   @Public()
   @ApiOperation({
-    summary: 'WebSocket Test Page',
-    description: 'A simple page to test WebSocket connectivity'
+    summary: "WebSocket Test Page",
+    description: "A simple page to test WebSocket connectivity",
   })
   @ApiResponse({
     status: 200,
-    description: 'WebSocket test page HTML'
+    description: "WebSocket test page HTML",
   })
   async getSocketTestPage(@Res() res: FastifyReply) {
-    const baseUrl = this.configService.get('API_URL') || 'http://localhost:8088';
-    
+    const baseUrl =
+      this.configService.get("API_URL") || "http://localhost:8088";
+
     const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -488,8 +542,8 @@ export class AppController {
 </body>
 </html>
     `;
-    
-    res.header('Content-Type', 'text/html');
+
+    res.header("Content-Type", "text/html");
     return res.send(html);
   }
 
@@ -497,39 +551,47 @@ export class AppController {
     try {
       // Use your logging service to get recent logs
       const logs = await this.loggingService.getLogs();
-      
-      return logs.slice(0, limit).map(log => ({
+
+      return logs.slice(0, limit).map((log) => ({
         timestamp: log.timestamp,
         level: log.level,
         message: log.message,
-        source: log.type || 'Unknown',
-        data: log.metadata || '{}'
+        source: log.type || "Unknown",
+        data: log.metadata || "{}",
       }));
     } catch (error) {
-      this.logger.error('Error fetching logs:', error);
+      this.logger.error("Error fetching logs:", error);
       // Return placeholder data if there's an error
-      return Array(limit).fill(null).map((_, i) => ({
-        timestamp: new Date(),
-        level: 'info',
-        message: `This is a placeholder log entry ${i + 1}`,
-        source: 'System',
-        data: '{}'
-      }));
+      return Array(limit)
+        .fill(null)
+        .map((_, i) => ({
+          timestamp: new Date(),
+          level: "info",
+          message: `This is a placeholder log entry ${i + 1}`,
+          source: "System",
+          data: "{}",
+        }));
     }
   }
 
-  private generateDashboardHtml(title: string, services: ServiceInfo[], recentLogs: any[], isProduction: boolean, healthData: DashboardData): string {
+  private generateDashboardHtml(
+    title: string,
+    services: ServiceInfo[],
+    recentLogs: any[],
+    isProduction: boolean,
+    healthData: DashboardData,
+  ): string {
     // Add this helper function at the beginning of generateDashboardHtml
     const formatDateTime = (dateString: string) => {
       const date = new Date(dateString);
-      return new Intl.DateTimeFormat('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true
+      return new Intl.DateTimeFormat("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
       }).format(date);
     };
 
@@ -922,40 +984,48 @@ export class AppController {
     <div class="container">
         <header>
             <h1>${title}</h1>
-            <p>System Status and Service Management${isProduction ? ' (Production Mode)' : ' (Development Mode)'}</p>
+            <p>System Status and Service Management${isProduction ? " (Production Mode)" : " (Development Mode)"}</p>
         </header>
 
         <!-- Service Cards Section -->
         <section class="services-section">
             <h2 class="section-title">Available Services</h2>
             <div class="services-grid">
-                ${services.map(service => `
+                ${services
+                  .map(
+                    (service) => `
                     <div class="service-card">
                         <div class="service-card-header">
                             <div class="service-header-content">
-                                <div class="service-status-indicator ${service.active ? 'indicator-healthy' : 'indicator-unhealthy'}"></div>
+                                <div class="service-status-indicator ${service.active ? "indicator-healthy" : "indicator-unhealthy"}"></div>
                                 <h3 class="service-title">${service.name}</h3>
                             </div>
-                            <span class="status-badge ${service.active ? 'status-active' : 'status-inactive'}">
-                                ${service.active ? 'Active' : 'Inactive'}
+                            <span class="status-badge ${service.active ? "status-active" : "status-inactive"}">
+                                ${service.active ? "Active" : "Inactive"}
                             </span>
                         </div>
                         <p class="service-description">${service.description}</p>
                         <div class="service-footer">
                             <a href="${service.url}" 
                                target="_blank" 
-                               class="access-button ${service.active ? 'active' : 'disabled'}"
-                               ${!service.active ? 'disabled' : ''}>
+                               class="access-button ${service.active ? "active" : "disabled"}"
+                               ${!service.active ? "disabled" : ""}>
                                 Access Service
                             </a>
-                            ${service.credentials ? `
+                            ${
+                              service.credentials
+                                ? `
                                 <div class="credentials-info">
                                     <span class="credentials-label">Credentials:</span> ${service.credentials}
                                 </div>
-                            ` : ''}
+                            `
+                                : ""
+                            }
                         </div>
                     </div>
-                `).join('')}
+                `,
+                  )
+                  .join("")}
             </div>
         </section>
 
@@ -963,16 +1033,16 @@ export class AppController {
         <section class="health-dashboard">
             <h2 class="section-title">System Health Status</h2>
             <div class="health-card">
-                <div class="health-card-header ${healthData.overallHealth.status === 'healthy' ? 'healthy' : 'unhealthy'}">
+                <div class="health-card-header ${healthData.overallHealth.status === "healthy" ? "healthy" : "unhealthy"}">
                     <h3 class="health-card-title">
-                        <span class="status-circle ${healthData.overallHealth.status === 'healthy' ? 'status-healthy' : 'status-unhealthy'}"></span>
+                        <span class="status-circle ${healthData.overallHealth.status === "healthy" ? "status-healthy" : "status-unhealthy"}"></span>
                         Overall System Health
                     </h3>
                     <span style="font-size: 0.75rem; color: #64748b;">Last checked: ${formatDateTime(healthData.overallHealth.lastChecked)}</span>
                 </div>
                 <div class="health-card-body">
                     <div class="health-summary">
-                        <span class="health-status-text ${healthData.overallHealth.status === 'healthy' ? 'status-text-healthy' : 'status-text-unhealthy'}">
+                        <span class="health-status-text ${healthData.overallHealth.status === "healthy" ? "status-text-healthy" : "status-text-unhealthy"}">
                             ${healthData.overallHealth.statusText}
                         </span>
                     </div>
@@ -981,14 +1051,16 @@ export class AppController {
             </div>
 
             <div style="margin-top: 1.5rem;">
-                ${healthData.services.map(service => `
-                    <div class="service-section ${service.isHealthy ? 'healthy' : 'unhealthy'}">
+                ${healthData.services
+                  .map(
+                    (service) => `
+                    <div class="service-section ${service.isHealthy ? "healthy" : "unhealthy"}">
                         <div class="service-header">
                             <div class="service-header-content">
-                                <div class="service-status-indicator ${service.isHealthy ? 'indicator-healthy' : 'indicator-unhealthy'}"></div>
+                                <div class="service-status-indicator ${service.isHealthy ? "indicator-healthy" : "indicator-unhealthy"}"></div>
                                 <h3 class="service-title">${service.name}</h3>
                             </div>
-                            <span class="health-status-text ${service.isHealthy ? 'status-text-healthy' : 'status-text-unhealthy'}">
+                            <span class="health-status-text ${service.isHealthy ? "status-text-healthy" : "status-text-unhealthy"}">
                                 ${service.status}
                             </span>
                         </div>
@@ -998,23 +1070,31 @@ export class AppController {
                                 <span class="metric-label">Response Time</span>
                                 <span class="metric-value">${service.responseTime} ms</span>
                             </div>
-                            ${Object.entries(service.metrics).map(([key, value]) => `
+                            ${Object.entries(service.metrics)
+                              .map(
+                                ([key, value]) => `
                                 <div class="metric">
                                     <span class="metric-label">${key}</span>
                                     <span class="metric-value">${value}</span>
                                 </div>
-                            `).join('')}
+                            `,
+                              )
+                              .join("")}
                             <div class="metric">
                                 <span class="metric-label">Last Checked</span>
                                 <span class="metric-value">${formatDateTime(service.lastChecked)}</span>
                             </div>
                         </div>
                     </div>
-                `).join('')}
+                `,
+                  )
+                  .join("")}
             </div>
         </section>
 
-        ${!isProduction && recentLogs.length > 0 ? `
+        ${
+          !isProduction && recentLogs.length > 0
+            ? `
             <!-- Recent Logs Section -->
             <section class="logs-section">
                 <h2 class="section-title">Recent Logs</h2>
@@ -1029,14 +1109,18 @@ export class AppController {
                             </tr>
                         </thead>
                         <tbody>
-                            ${recentLogs.map(log => `
+                            ${recentLogs
+                              .map(
+                                (log) => `
                                 <tr>
                                     <td>${formatDateTime(new Date(log.timestamp).toISOString())}</td>
                                     <td>
                                         <span class="log-level ${
-                                            log.level === 'error' ? 'log-level-error' :
-                                            log.level === 'warn' ? 'log-level-warn' :
-                                            'log-level-info'
+                                          log.level === "error"
+                                            ? "log-level-error"
+                                            : log.level === "warn"
+                                              ? "log-level-warn"
+                                              : "log-level-info"
                                         }">
                                             ${log.level}
                                         </span>
@@ -1044,15 +1128,19 @@ export class AppController {
                                     <td>${log.source}</td>
                                     <td>${log.message}</td>
                                 </tr>
-                            `).join('')}
+                            `,
+                              )
+                              .join("")}
                         </tbody>
                     </table>
                 </div>
             </section>
-        ` : ''}
+        `
+            : ""
+        }
 
         <footer>
-            <p>Environment: ${isProduction ? 'Production' : 'Development'}</p>
+            <p>Environment: ${isProduction ? "Production" : "Development"}</p>
             <p>© ${new Date().getFullYear()} Healthcare API. All rights reserved.</p>
         </footer>
     </div>

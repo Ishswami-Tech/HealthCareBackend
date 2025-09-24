@@ -1,15 +1,23 @@
-import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common';
-import { PrismaService } from '../../../libs/infrastructure/database/prisma/prisma.service';
-import { CreateClinicLocationDto } from '../dto/create-clinic-location.dto';
-import { UpdateClinicLocationDto } from '../dto/update-clinic-location.dto';
-import { EventService } from '../../../libs/infrastructure/events/event.service';
-import { ClinicErrorService } from '../shared/error.utils';
-import { QrService } from '../../../libs/utils/QR/qr.service';
-import { LoggingService } from '../../../libs/infrastructure/logging/logging.service';
-import { LogType, LogLevel } from '../../../libs/infrastructure/logging/types/logging.types';
-import { RbacService } from '../../../libs/core/rbac/rbac.service';
-import { resolveClinicUUID } from '../../../libs/utils/clinic.utils';
-import { ClinicLocation, QRCodeData } from 'src/libs/core/types/clinic.types';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { PrismaService } from "../../../libs/infrastructure/database/prisma/prisma.service";
+import { CreateClinicLocationDto } from "../dto/create-clinic-location.dto";
+import { UpdateClinicLocationDto } from "../dto/update-clinic-location.dto";
+import { EventService } from "../../../libs/infrastructure/events/event.service";
+import { ClinicErrorService } from "../shared/error.utils";
+import { QrService } from "../../../libs/utils/QR/qr.service";
+import { LoggingService } from "../../../libs/infrastructure/logging/logging.service";
+import {
+  LogType,
+  LogLevel,
+} from "../../../libs/infrastructure/logging/types/logging.types";
+import { RbacService } from "../../../libs/core/rbac/rbac.service";
+import { resolveClinicUUID } from "../../../libs/utils/clinic.utils";
+import { ClinicLocation, QRCodeData } from "src/libs/core/types/clinic.types";
 
 @Injectable()
 export class ClinicLocationService {
@@ -24,29 +32,35 @@ export class ClinicLocationService {
 
   private async generateLocationId(): Promise<string> {
     const lastLocation = await this.prisma.clinicLocation.findFirst({
-      orderBy: { locationId: 'desc' },
+      orderBy: { locationId: "desc" },
     });
 
     if (!lastLocation) {
-      return 'LOC0001';
+      return "LOC0001";
     }
 
     const lastNumber = parseInt(lastLocation.locationId.slice(3));
     const newNumber = lastNumber + 1;
-    return `LOC${newNumber.toString().padStart(4, '0')}`;
+    return `LOC${newNumber.toString().padStart(4, "0")}`;
   }
 
-  async createLocation(clinicId: string, createLocationDto: CreateClinicLocationDto, userId: string): Promise<ClinicLocation> {
+  async createLocation(
+    clinicId: string,
+    createLocationDto: CreateClinicLocationDto,
+    userId: string,
+  ): Promise<ClinicLocation> {
     try {
       // Check if the user has permission to add locations to this clinic
       const hasPermission = await this.rbacService.checkPermission({
         userId,
-        resource: 'clinic',
-        action: 'manage_clinic_staff',
+        resource: "clinic",
+        action: "manage_clinic_staff",
         resourceId: clinicId,
       });
       if (!hasPermission) {
-        throw new UnauthorizedException('You do not have permission to add locations to this clinic');
+        throw new UnauthorizedException(
+          "You do not have permission to add locations to this clinic",
+        );
       }
 
       // Check if a location with the same name already exists for this clinic
@@ -58,7 +72,9 @@ export class ClinicLocationService {
       });
 
       if (existingLocation) {
-        throw new ConflictException('A location with this name already exists for this clinic');
+        throw new ConflictException(
+          "A location with this name already exists for this clinic",
+        );
       }
 
       // Generate unique location ID
@@ -71,16 +87,16 @@ export class ClinicLocationService {
           clinicId,
           locationId,
           isActive: true,
-          timezone: createLocationDto.timezone || 'UTC',
+          timezone: createLocationDto.timezone || "UTC",
           workingHours: createLocationDto.workingHours || {
-            monday: { start: '09:00', end: '17:00' },
-            tuesday: { start: '09:00', end: '17:00' },
-            wednesday: { start: '09:00', end: '17:00' },
-            thursday: { start: '09:00', end: '17:00' },
-            friday: { start: '09:00', end: '17:00' },
-            saturday: { start: '09:00', end: '13:00' },
-            sunday: null
-          }
+            monday: { start: "09:00", end: "17:00" },
+            tuesday: { start: "09:00", end: "17:00" },
+            wednesday: { start: "09:00", end: "17:00" },
+            thursday: { start: "09:00", end: "17:00" },
+            friday: { start: "09:00", end: "17:00" },
+            saturday: { start: "09:00", end: "13:00" },
+            sunday: null,
+          },
         },
         include: {
           clinic: true,
@@ -93,14 +109,14 @@ export class ClinicLocationService {
                       id: true,
                       firstName: true,
                       lastName: true,
-                      profilePicture: true
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+                      profilePicture: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
 
       const formattedLocation: ClinicLocation = {
@@ -114,53 +130,58 @@ export class ClinicLocationService {
         zipCode: location.zipCode || undefined,
         phone: location.phone || undefined,
         email: location.email || undefined,
-        timezone: location.timezone || 'UTC',
+        timezone: location.timezone || "UTC",
         workingHours: location.workingHours as any,
         isActive: location.isActive,
-        doctors: location.doctorClinic.map(dc => ({
+        doctors: location.doctorClinic.map((dc) => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined
-        }))
+          profilePicture: dc.doctor.user.profilePicture || undefined,
+        })),
       };
 
-      await this.eventService.emit('clinic.location.created', {
+      await this.eventService.emit("clinic.location.created", {
         clinicId,
         locationId: location.id,
         name: location.name,
-        createdBy: userId
+        createdBy: userId,
       });
 
       return formattedLocation;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicLocationService',
-        'create clinic location',
-        { clinicId, ...createLocationDto }
+        "ClinicLocationService",
+        "create clinic location",
+        { clinicId, ...createLocationDto },
       );
       throw error;
     }
   }
 
-  async getLocations(clinicId: string, userId: string): Promise<ClinicLocation[]> {
+  async getLocations(
+    clinicId: string,
+    userId: string,
+  ): Promise<ClinicLocation[]> {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Check if the user has permission to view this clinic's locations
       const hasPermission = await this.rbacService.checkPermission({
         userId,
-        resource: 'clinic',
-        action: 'manage_clinic_staff',
+        resource: "clinic",
+        action: "manage_clinic_staff",
         resourceId: clinicUUID,
       });
       if (!hasPermission) {
-        throw new UnauthorizedException('You do not have permission to view locations for this clinic');
+        throw new UnauthorizedException(
+          "You do not have permission to view locations for this clinic",
+        );
       }
 
       const locations = await this.prisma.clinicLocation.findMany({
-        where: { 
+        where: {
           clinicId: clinicUUID,
-          isActive: true 
+          isActive: true,
         },
         include: {
           doctorClinic: {
@@ -172,20 +193,20 @@ export class ClinicLocationService {
                       id: true,
                       firstName: true,
                       lastName: true,
-                      profilePicture: true
-                    }
-                  }
-                }
-              }
-            }
-          }
+                      profilePicture: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
         orderBy: {
-          locationId: 'asc'
-        }
+          locationId: "asc",
+        },
       });
 
-      return locations.map(location => ({
+      return locations.map((location) => ({
         id: location.id,
         locationId: location.locationId,
         name: location.name,
@@ -196,45 +217,51 @@ export class ClinicLocationService {
         zipCode: location.zipCode || undefined,
         phone: location.phone || undefined,
         email: location.email || undefined,
-        timezone: location.timezone || 'UTC',
+        timezone: location.timezone || "UTC",
         workingHours: location.workingHours as any,
         isActive: location.isActive,
-        doctors: location.doctorClinic.map(dc => ({
+        doctors: location.doctorClinic.map((dc) => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined
-        }))
+          profilePicture: dc.doctor.user.profilePicture || undefined,
+        })),
       }));
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicLocationService',
-        'retrieve clinic locations',
-        { clinicId }
+        "ClinicLocationService",
+        "retrieve clinic locations",
+        { clinicId },
       );
       throw error;
     }
   }
 
-  async getLocationById(id: string, clinicId: string, userId: string): Promise<ClinicLocation> {
+  async getLocationById(
+    id: string,
+    clinicId: string,
+    userId: string,
+  ): Promise<ClinicLocation> {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Check if the user has permission to view this clinic's locations
       const hasPermission = await this.rbacService.checkPermission({
         userId,
-        resource: 'clinic',
-        action: 'manage_clinic_staff',
+        resource: "clinic",
+        action: "manage_clinic_staff",
         resourceId: clinicUUID,
       });
       if (!hasPermission) {
-        throw new UnauthorizedException('You do not have permission to view locations for this clinic');
+        throw new UnauthorizedException(
+          "You do not have permission to view locations for this clinic",
+        );
       }
 
       const location = await this.prisma.clinicLocation.findFirst({
         where: {
           id,
           clinicId: clinicUUID,
-          isActive: true
+          isActive: true,
         },
         include: {
           doctorClinic: {
@@ -246,18 +273,18 @@ export class ClinicLocationService {
                       id: true,
                       firstName: true,
                       lastName: true,
-                      profilePicture: true
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+                      profilePicture: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
 
       if (!location) {
-        throw new NotFoundException('Location not found');
+        throw new NotFoundException("Location not found");
       }
 
       return {
@@ -271,34 +298,38 @@ export class ClinicLocationService {
         zipCode: location.zipCode || undefined,
         phone: location.phone || undefined,
         email: location.email || undefined,
-        timezone: location.timezone || 'UTC',
+        timezone: location.timezone || "UTC",
         workingHours: location.workingHours as any,
         isActive: location.isActive,
-        doctors: location.doctorClinic.map(dc => ({
+        doctors: location.doctorClinic.map((dc) => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined
-        }))
+          profilePicture: dc.doctor.user.profilePicture || undefined,
+        })),
       };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicLocationService',
-        'retrieve clinic location',
-        { clinicId, locationId: id }
+        "ClinicLocationService",
+        "retrieve clinic location",
+        { clinicId, locationId: id },
       );
       throw error;
     }
   }
 
-  async generateLocationQR(locationId: string, clinicId: string, userId: string): Promise<string> {
+  async generateLocationQR(
+    locationId: string,
+    clinicId: string,
+    userId: string,
+  ): Promise<string> {
     try {
       const location = await this.getLocationById(locationId, clinicId, userId);
-      
+
       const qrData: QRCodeData = {
         locationId: location.locationId,
         clinicId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
 
       const qrCode = await this.qrService.generateQR(JSON.stringify(qrData));
@@ -306,9 +337,9 @@ export class ClinicLocationService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Generated QR code for location',
-        'ClinicLocationService',
-        { locationId, clinicId }
+        "Generated QR code for location",
+        "ClinicLocationService",
+        { locationId, clinicId },
       );
 
       return qrCode;
@@ -316,41 +347,49 @@ export class ClinicLocationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to generate location QR: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
-        'ClinicLocationService',
-        { locationId, error: error instanceof Error ? (error as Error).stack : '' }
+        `Failed to generate location QR: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "ClinicLocationService",
+        {
+          locationId,
+          error: error instanceof Error ? error.stack : "",
+        },
       );
       throw error;
     }
   }
 
-  async verifyLocationQR(qrData: string, userId: string): Promise<ClinicLocation> {
+  async verifyLocationQR(
+    qrData: string,
+    userId: string,
+  ): Promise<ClinicLocation> {
     try {
       const data: QRCodeData = JSON.parse(qrData);
-      
+
       // Find the location using the locationId from QR code
       const location = await this.prisma.clinicLocation.findFirst({
-        where: { locationId: data.locationId }
+        where: { locationId: data.locationId },
       });
 
       if (!location) {
-        throw new NotFoundException('Location not found');
+        throw new NotFoundException("Location not found");
       }
 
       // Check if user has permission to access this clinic's locations
       const hasPermission = await this.rbacService.checkPermission({
         userId,
-        resource: 'clinic',
-        action: 'manage_clinic_staff',
+        resource: "clinic",
+        action: "manage_clinic_staff",
         resourceId: data.clinicId,
       });
       if (!hasPermission) {
-        throw new UnauthorizedException('You do not have permission to access this location');
+        throw new UnauthorizedException(
+          "You do not have permission to access this location",
+        );
       }
 
       // Verify the location belongs to the correct clinic
       if (location.clinicId !== data.clinicId) {
-        throw new Error('Invalid QR code: location does not match clinic');
+        throw new Error("Invalid QR code: location does not match clinic");
       }
 
       // Verify the QR code is not too old (e.g., within 5 minutes)
@@ -358,7 +397,7 @@ export class ClinicLocationService {
       const now = new Date();
       const fiveMinutes = 5 * 60 * 1000;
       if (now.getTime() - timestamp.getTime() > fiveMinutes) {
-        throw new Error('QR code has expired');
+        throw new Error("QR code has expired");
       }
 
       return this.getLocationById(location.id, location.clinicId, userId);
@@ -366,25 +405,32 @@ export class ClinicLocationService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to verify location QR: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
-        'ClinicLocationService',
-        { error: error instanceof Error ? (error as Error).stack : '' }
+        `Failed to verify location QR: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "ClinicLocationService",
+        { error: error instanceof Error ? error.stack : "" },
       );
       throw error;
     }
   }
 
-  async updateLocation(id: string, clinicId: string, updateLocationDto: UpdateClinicLocationDto, userId: string): Promise<ClinicLocation> {
+  async updateLocation(
+    id: string,
+    clinicId: string,
+    updateLocationDto: UpdateClinicLocationDto,
+    userId: string,
+  ): Promise<ClinicLocation> {
     try {
       // Check if the user has permission to update this clinic's locations
       const hasPermission = await this.rbacService.checkPermission({
         userId,
-        resource: 'clinic',
-        action: 'manage_clinic_staff',
+        resource: "clinic",
+        action: "manage_clinic_staff",
         resourceId: clinicId,
       });
       if (!hasPermission) {
-        throw new UnauthorizedException('You do not have permission to update locations for this clinic');
+        throw new UnauthorizedException(
+          "You do not have permission to update locations for this clinic",
+        );
       }
 
       // Check if the location exists
@@ -392,12 +438,12 @@ export class ClinicLocationService {
         where: {
           id,
           clinicId,
-          isActive: true
+          isActive: true,
         },
       });
 
       if (!location) {
-        throw new NotFoundException('Location not found');
+        throw new NotFoundException("Location not found");
       }
 
       // If updating the name, check if another location already has this name
@@ -407,12 +453,14 @@ export class ClinicLocationService {
             clinicId,
             name: updateLocationDto.name,
             id: { not: id },
-            isActive: true
+            isActive: true,
           },
         });
 
         if (existingLocation) {
-          throw new ConflictException('Another location with this name already exists for this clinic');
+          throw new ConflictException(
+            "Another location with this name already exists for this clinic",
+          );
         }
       }
 
@@ -421,7 +469,7 @@ export class ClinicLocationService {
         where: { id },
         data: {
           ...updateLocationDto,
-          updatedAt: new Date()
+          updatedAt: new Date(),
         },
         include: {
           doctorClinic: {
@@ -433,21 +481,21 @@ export class ClinicLocationService {
                       id: true,
                       firstName: true,
                       lastName: true,
-                      profilePicture: true
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+                      profilePicture: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
 
-      await this.eventService.emit('clinic.location.updated', {
+      await this.eventService.emit("clinic.location.updated", {
         clinicId,
         locationId: id,
         updatedFields: Object.keys(updateLocationDto),
-        updatedBy: userId
+        updatedBy: userId,
       });
 
       return {
@@ -461,37 +509,43 @@ export class ClinicLocationService {
         zipCode: updatedLocation.zipCode || undefined,
         phone: updatedLocation.phone || undefined,
         email: updatedLocation.email || undefined,
-        timezone: updatedLocation.timezone || 'UTC',
+        timezone: updatedLocation.timezone || "UTC",
         workingHours: updatedLocation.workingHours as any,
         isActive: updatedLocation.isActive,
-        doctors: updatedLocation.doctorClinic.map(dc => ({
+        doctors: updatedLocation.doctorClinic.map((dc) => ({
           id: dc.doctor.id,
           name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined
-        }))
+          profilePicture: dc.doctor.user.profilePicture || undefined,
+        })),
       };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicLocationService',
-        'update clinic location',
-        { clinicId, locationId: id, ...updateLocationDto }
+        "ClinicLocationService",
+        "update clinic location",
+        { clinicId, locationId: id, ...updateLocationDto },
       );
       throw error;
     }
   }
 
-  async deleteLocation(id: string, clinicId: string, userId: string): Promise<{ message: string }> {
+  async deleteLocation(
+    id: string,
+    clinicId: string,
+    userId: string,
+  ): Promise<{ message: string }> {
     try {
       // Check if the user has permission to delete locations for this clinic
       const hasPermission = await this.rbacService.checkPermission({
         userId,
-        resource: 'clinic',
-        action: 'manage_clinic_staff',
+        resource: "clinic",
+        action: "manage_clinic_staff",
         resourceId: clinicId,
       });
       if (!hasPermission) {
-        throw new UnauthorizedException('You do not have permission to delete locations for this clinic');
+        throw new UnauthorizedException(
+          "You do not have permission to delete locations for this clinic",
+        );
       }
 
       // Check if the location exists
@@ -499,24 +553,26 @@ export class ClinicLocationService {
         where: {
           id,
           clinicId,
-          isActive: true
+          isActive: true,
         },
       });
 
       if (!location) {
-        throw new NotFoundException('Location not found');
+        throw new NotFoundException("Location not found");
       }
 
       // Check if this is the only active location for the clinic
       const activeLocationsCount = await this.prisma.clinicLocation.count({
-        where: { 
+        where: {
           clinicId,
-          isActive: true
+          isActive: true,
         },
       });
 
       if (activeLocationsCount === 1) {
-        throw new ConflictException('Cannot delete the only active location for a clinic');
+        throw new ConflictException(
+          "Cannot delete the only active location for a clinic",
+        );
       }
 
       // Soft delete the location by marking it as inactive
@@ -524,25 +580,25 @@ export class ClinicLocationService {
         where: { id },
         data: {
           isActive: false,
-          updatedAt: new Date()
-        }
+          updatedAt: new Date(),
+        },
       });
 
-      await this.eventService.emit('clinic.location.deleted', {
+      await this.eventService.emit("clinic.location.deleted", {
         clinicId,
         locationId: id,
-        deletedBy: userId
+        deletedBy: userId,
       });
 
-      return { message: 'Location deleted successfully' };
+      return { message: "Location deleted successfully" };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicLocationService',
-        'delete clinic location',
-        { clinicId, locationId: id }
+        "ClinicLocationService",
+        "delete clinic location",
+        { clinicId, locationId: id },
       );
       throw error;
     }
   }
-} 
+}

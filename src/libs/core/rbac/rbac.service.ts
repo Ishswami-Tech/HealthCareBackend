@@ -1,9 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { RoleService } from './role.service';
-import { PermissionService } from './permission.service';
-import { PrismaService } from '../../infrastructure/database/prisma/prisma.service';
-import { RedisService } from '../../infrastructure/cache/redis/redis.service';
-import { LoggingService, LogType, LogLevel } from '../../infrastructure/logging/logging.service';
+import { Injectable, Logger } from "@nestjs/common";
+import { RoleService } from "./role.service";
+import { PermissionService } from "./permission.service";
+import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
+import { RedisService } from "../../infrastructure/cache/redis/redis.service";
+import {
+  LoggingService,
+  LogType,
+  LogLevel,
+} from "../../infrastructure/logging/logging.service";
 
 export interface RbacContext {
   userId: string;
@@ -37,7 +41,7 @@ export interface PermissionCheck {
 export class RbacService {
   private readonly logger = new Logger(RbacService.name);
   private readonly CACHE_TTL = 3600; // 1 hour
-  private readonly CACHE_PREFIX = 'rbac:';
+  private readonly CACHE_PREFIX = "rbac:";
 
   constructor(
     private readonly roleService: RoleService,
@@ -53,38 +57,57 @@ export class RbacService {
    */
   async checkPermission(context: RbacContext): Promise<PermissionCheck> {
     try {
-      const cacheKey = this.getCacheKey('permission', context.userId, context.clinicId, context.resource, context.action);
+      const cacheKey = this.getCacheKey(
+        "permission",
+        context.userId,
+        context.clinicId,
+        context.resource,
+        context.action,
+      );
       const cached = await this.redis.get<PermissionCheck>(cacheKey);
-      
+
       if (cached) {
         return cached;
       }
 
-      const userRoles = await this.getUserRoles(context.userId, context.clinicId);
-      const userPermissions = await this.getRolePermissions(userRoles.map(r => r.roleId));
-      
+      const userRoles = await this.getUserRoles(
+        context.userId,
+        context.clinicId,
+      );
+      const userPermissions = await this.getRolePermissions(
+        userRoles.map((r) => r.roleId),
+      );
+
       const requiredPermission = `${context.resource}:${context.action}`;
-      const hasDirectPermission = userPermissions.some(permission => 
-        permission === requiredPermission || 
-        permission === `${context.resource}:*` || 
-        permission === '*'
+      const hasDirectPermission = userPermissions.some(
+        (permission) =>
+          permission === requiredPermission ||
+          permission === `${context.resource}:*` ||
+          permission === "*",
       );
 
       // Check for role-based permissions
-      const hasRolePermission = userRoles.some(role => 
-        this.checkRolePermission(role.roleName, context.resource, context.action)
+      const hasRolePermission = userRoles.some((role) =>
+        this.checkRolePermission(
+          role.roleName,
+          context.resource,
+          context.action,
+        ),
       );
 
       // Check ownership-based access
       const hasOwnershipAccess = await this.checkOwnershipAccess(context);
 
-      const hasPermission = hasDirectPermission || hasRolePermission || hasOwnershipAccess;
-      
+      const hasPermission =
+        hasDirectPermission || hasRolePermission || hasOwnershipAccess;
+
       const result: PermissionCheck = {
         hasPermission,
-        roles: userRoles.map(r => r.roleName),
+        roles: userRoles.map((r) => r.roleName),
         permissions: userPermissions,
-        reason: hasPermission ? 'Permission granted' : 'Insufficient permissions',
+        reason: hasPermission
+          ? "Permission granted"
+          : "Insufficient permissions",
         metadata: {
           directPermission: hasDirectPermission,
           rolePermission: hasRolePermission,
@@ -100,8 +123,8 @@ export class RbacService {
       await this.loggingService.log(
         LogType.SECURITY,
         hasPermission ? LogLevel.INFO : LogLevel.WARN,
-        `Permission check: ${hasPermission ? 'GRANTED' : 'DENIED'}`,
-        'RbacService',
+        `Permission check: ${hasPermission ? "GRANTED" : "DENIED"}`,
+        "RbacService",
         {
           userId: context.userId,
           clinicId: context.clinicId,
@@ -109,19 +132,24 @@ export class RbacService {
           action: context.action,
           hasPermission,
           roles: result.roles,
-        }
+        },
       );
 
       return result;
     } catch (error) {
-      this.logger.error(`Permission check failed for user ${context.userId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
-      
+      this.logger.error(
+        `Permission check failed for user ${context.userId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
+
       return {
         hasPermission: false,
         roles: [],
         permissions: [],
-        reason: 'Permission check failed due to internal error',
-        metadata: { error: error instanceof Error ? (error as Error).message : 'Unknown error' },
+        reason: "Permission check failed due to internal error",
+        metadata: {
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
       };
     }
   }
@@ -134,7 +162,7 @@ export class RbacService {
     roleId: string,
     clinicId?: string,
     assignedBy?: string,
-    expiresAt?: Date
+    expiresAt?: Date,
   ): Promise<RoleAssignment> {
     try {
       const role = await this.roleService.getRoleById(roleId);
@@ -153,7 +181,7 @@ export class RbacService {
       });
 
       if (existingAssignment) {
-        throw new Error('Role already assigned to user');
+        throw new Error("Role already assigned to user");
       }
 
       const assignment = await this.prisma.userRole.create({
@@ -161,7 +189,7 @@ export class RbacService {
           userId,
           roleId,
           clinicId,
-          assignedBy: assignedBy || 'SYSTEM',
+          assignedBy: assignedBy || "SYSTEM",
           assignedAt: new Date(),
           expiresAt,
           isActive: true,
@@ -186,20 +214,23 @@ export class RbacService {
       await this.loggingService.log(
         LogType.SECURITY,
         LogLevel.INFO,
-        'Role assigned to user',
-        'RbacService',
+        "Role assigned to user",
+        "RbacService",
         {
           userId,
           roleId,
           roleName: role.name,
           clinicId,
           assignedBy,
-        }
+        },
       );
 
       return roleAssignment;
     } catch (error) {
-      this.logger.error(`Role assignment failed for user ${userId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Role assignment failed for user ${userId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -211,7 +242,7 @@ export class RbacService {
     userId: string,
     roleId: string,
     clinicId?: string,
-    revokedBy?: string
+    revokedBy?: string,
   ): Promise<void> {
     try {
       const assignment = await this.prisma.userRole.findFirst({
@@ -224,7 +255,7 @@ export class RbacService {
       });
 
       if (!assignment) {
-        throw new Error('Role assignment not found');
+        throw new Error("Role assignment not found");
       }
 
       await this.prisma.userRole.update({
@@ -232,7 +263,7 @@ export class RbacService {
         data: {
           isActive: false,
           revokedAt: new Date(),
-          revokedBy: revokedBy || 'SYSTEM',
+          revokedBy: revokedBy || "SYSTEM",
         },
       });
 
@@ -243,17 +274,20 @@ export class RbacService {
       await this.loggingService.log(
         LogType.SECURITY,
         LogLevel.INFO,
-        'Role revoked from user',
-        'RbacService',
+        "Role revoked from user",
+        "RbacService",
         {
           userId,
           roleId,
           clinicId,
           revokedBy,
-        }
+        },
       );
     } catch (error) {
-      this.logger.error(`Role revocation failed for user ${userId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Role revocation failed for user ${userId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -261,11 +295,14 @@ export class RbacService {
   /**
    * Get user's roles
    */
-  async getUserRoles(userId: string, clinicId?: string): Promise<RoleAssignment[]> {
+  async getUserRoles(
+    userId: string,
+    clinicId?: string,
+  ): Promise<RoleAssignment[]> {
     try {
-      const cacheKey = this.getCacheKey('user_roles', userId, clinicId);
+      const cacheKey = this.getCacheKey("user_roles", userId, clinicId);
       const cached = await this.redis.get<RoleAssignment[]>(cacheKey);
-      
+
       if (cached) {
         return cached;
       }
@@ -275,10 +312,7 @@ export class RbacService {
           userId,
           clinicId,
           isActive: true,
-          OR: [
-            { expiresAt: null },
-            { expiresAt: { gt: new Date() } },
-          ],
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         },
         include: {
           role: true,
@@ -301,7 +335,10 @@ export class RbacService {
 
       return roles;
     } catch (error) {
-      this.logger.error(`Failed to get roles for user ${userId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to get roles for user ${userId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return [];
     }
   }
@@ -315,9 +352,9 @@ export class RbacService {
         return [];
       }
 
-      const cacheKey = this.getCacheKey('role_permissions', ...roleIds);
+      const cacheKey = this.getCacheKey("role_permissions", ...roleIds);
       const cached = await this.redis.get<string[]>(cacheKey);
-      
+
       if (cached) {
         return cached;
       }
@@ -332,8 +369,8 @@ export class RbacService {
         },
       });
 
-      const permissions = rolePermissions.map((rp: any) => 
-        `${rp.permission.resource}:${rp.permission.action}`
+      const permissions = rolePermissions.map(
+        (rp: any) => `${rp.permission.resource}:${rp.permission.action}`,
       );
 
       // Remove duplicates
@@ -342,9 +379,12 @@ export class RbacService {
       // Cache the result
       await this.redis.set(cacheKey, uniquePermissions, this.CACHE_TTL);
 
-      return uniquePermissions as string[];
+      return uniquePermissions;
     } catch (error) {
-      this.logger.error('Failed to get role permissions', error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        "Failed to get role permissions",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return [];
     }
   }
@@ -352,63 +392,71 @@ export class RbacService {
   /**
    * Check role-based permission
    */
-  private checkRolePermission(roleName: string, resource: string, action: string): boolean {
+  private checkRolePermission(
+    roleName: string,
+    resource: string,
+    action: string,
+  ): boolean {
     // Define role-based permissions
     const rolePermissions: Record<string, string[]> = {
-      'SUPER_ADMIN': ['*'],
-      'CLINIC_ADMIN': [
-        'users:*',
-        'appointments:*',
-        'clinics:read',
-        'clinics:update',
-        'reports:*',
-        'settings:*',
+      SUPER_ADMIN: ["*"],
+      CLINIC_ADMIN: [
+        "users:*",
+        "appointments:*",
+        "clinics:read",
+        "clinics:update",
+        "reports:*",
+        "settings:*",
       ],
-      'DOCTOR': [
-        'appointments:read',
-        'appointments:update',
-        'patients:read',
-        'patients:update',
-        'medical-records:*',
-        'prescriptions:*',
+      DOCTOR: [
+        "appointments:read",
+        "appointments:update",
+        "patients:read",
+        "patients:update",
+        "medical-records:*",
+        "prescriptions:*",
       ],
-      'NURSE': [
-        'appointments:read',
-        'patients:read',
-        'patients:update',
-        'medical-records:read',
-        'vitals:*',
+      NURSE: [
+        "appointments:read",
+        "patients:read",
+        "patients:update",
+        "medical-records:read",
+        "vitals:*",
       ],
-      'RECEPTIONIST': [
-        'appointments:*',
-        'patients:read',
-        'patients:create',
-        'billing:read',
-        'scheduling:*',
+      RECEPTIONIST: [
+        "appointments:*",
+        "patients:read",
+        "patients:create",
+        "billing:read",
+        "scheduling:*",
       ],
-      'PATIENT': [
-        'appointments:read',
-        'appointments:create',
-        'profile:read',
-        'profile:update',
-        'medical-records:read',
+      PATIENT: [
+        "appointments:read",
+        "appointments:create",
+        "profile:read",
+        "profile:update",
+        "medical-records:read",
       ],
     };
 
     const permissions = rolePermissions[roleName] || [];
     const requiredPermission = `${resource}:${action}`;
-    
-    return permissions.some(permission => 
-      permission === requiredPermission ||
-      permission === `${resource}:*` ||
-      permission === '*'
+
+    return permissions.some(
+      (permission) =>
+        permission === requiredPermission ||
+        permission === `${resource}:*` ||
+        permission === "*",
     );
   }
 
   /**
    * Clear user cache
    */
-  private async clearUserCache(userId: string, clinicId?: string): Promise<void> {
+  private async clearUserCache(
+    userId: string,
+    clinicId?: string,
+  ): Promise<void> {
     try {
       const patterns = [
         `${this.CACHE_PREFIX}user_roles:${userId}*`,
@@ -423,7 +471,10 @@ export class RbacService {
         }
       }
     } catch (error) {
-      this.logger.error(`Failed to clear cache for user ${userId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to clear cache for user ${userId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
     }
   }
 
@@ -431,8 +482,10 @@ export class RbacService {
    * Generate cache key
    */
   private getCacheKey(...parts: (string | undefined)[]): string {
-    const validParts = parts.filter(part => part !== undefined && part !== null);
-    return `${this.CACHE_PREFIX}${validParts.join(':')}`;
+    const validParts = parts.filter(
+      (part) => part !== undefined && part !== null,
+    );
+    return `${this.CACHE_PREFIX}${validParts.join(":")}`;
   }
 
   /**
@@ -445,11 +498,11 @@ export class RbacService {
       clinicId?: string;
       expiresAt?: Date;
     }>,
-    assignedBy?: string
+    assignedBy?: string,
   ): Promise<RoleAssignment[]> {
     try {
       const results: RoleAssignment[] = [];
-      
+
       for (const assignment of assignments) {
         try {
           const result = await this.assignRole(
@@ -457,17 +510,23 @@ export class RbacService {
             assignment.roleId,
             assignment.clinicId,
             assignedBy,
-            assignment.expiresAt
+            assignment.expiresAt,
           );
           results.push(result);
         } catch (error) {
-          this.logger.warn(`Failed to assign role ${assignment.roleId} to user ${assignment.userId}`, error instanceof Error ? (error as Error).message : 'Unknown error');
+          this.logger.warn(
+            `Failed to assign role ${assignment.roleId} to user ${assignment.userId}`,
+            error instanceof Error ? error.message : "Unknown error",
+          );
         }
       }
 
       return results;
     } catch (error) {
-      this.logger.error('Bulk role assignment failed', error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        "Bulk role assignment failed",
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -477,7 +536,7 @@ export class RbacService {
    */
   async getUserPermissionsSummary(
     userId: string,
-    clinicId?: string
+    clinicId?: string,
   ): Promise<{
     roles: RoleAssignment[];
     permissions: string[];
@@ -486,14 +545,20 @@ export class RbacService {
   }> {
     try {
       const roles = await this.getUserRoles(userId, clinicId);
-      const rolePermissions = await this.getRolePermissions(roles.map(r => r.roleId));
-      
+      const rolePermissions = await this.getRolePermissions(
+        roles.map((r) => r.roleId),
+      );
+
       // Get effective permissions (including role-based)
       const effectivePermissions = new Set(rolePermissions);
-      
-      roles.forEach(role => {
-        const roleBasedPermissions = this.getRoleBasedPermissions(role.roleName);
-        roleBasedPermissions.forEach(permission => effectivePermissions.add(permission));
+
+      roles.forEach((role) => {
+        const roleBasedPermissions = this.getRoleBasedPermissions(
+          role.roleName,
+        );
+        roleBasedPermissions.forEach((permission) =>
+          effectivePermissions.add(permission),
+        );
       });
 
       return {
@@ -508,7 +573,10 @@ export class RbacService {
         },
       };
     } catch (error) {
-      this.logger.error(`Failed to get permissions summary for user ${userId}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to get permissions summary for user ${userId}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       throw error;
     }
   }
@@ -524,24 +592,33 @@ export class RbacService {
     try {
       // Check if user owns the resource
       switch (context.resource) {
-        case 'profile':
-        case 'user':
+        case "profile":
+        case "user":
           return context.resourceId === context.userId;
 
-        case 'appointments':
-          return await this.checkAppointmentOwnership(context.resourceId, context.userId);
+        case "appointments":
+          return await this.checkAppointmentOwnership(
+            context.resourceId,
+            context.userId,
+          );
 
-        case 'medical-records':
-          return await this.checkMedicalRecordOwnership(context.resourceId, context.userId);
+        case "medical-records":
+          return await this.checkMedicalRecordOwnership(
+            context.resourceId,
+            context.userId,
+          );
 
-        case 'patients':
+        case "patients":
           return context.resourceId === context.userId;
 
         default:
           return false;
       }
     } catch (error) {
-      this.logger.error(`Ownership check failed for ${context.resource}`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Ownership check failed for ${context.resource}`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return false;
     }
   }
@@ -549,16 +626,24 @@ export class RbacService {
   /**
    * Check appointment ownership
    */
-  private async checkAppointmentOwnership(appointmentId: string, userId: string): Promise<boolean> {
+  private async checkAppointmentOwnership(
+    appointmentId: string,
+    userId: string,
+  ): Promise<boolean> {
     try {
       const appointment = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
         select: { patientId: true, doctorId: true },
       });
 
-      return appointment ? (appointment.patientId === userId || appointment.doctorId === userId) : false;
+      return appointment
+        ? appointment.patientId === userId || appointment.doctorId === userId
+        : false;
     } catch (error) {
-      this.logger.error(`Failed to check appointment ownership`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+      this.logger.error(
+        `Failed to check appointment ownership`,
+        error instanceof Error ? error.stack : "No stack trace available",
+      );
       return false;
     }
   }
@@ -567,7 +652,10 @@ export class RbacService {
    * Check medical record ownership
    * MedicalRecord model integration - currently using placeholder implementation
    */
-  private async checkMedicalRecordOwnership(recordId: string, userId: string): Promise<boolean> {
+  private async checkMedicalRecordOwnership(
+    recordId: string,
+    userId: string,
+  ): Promise<boolean> {
     // Commented out until MedicalRecord model is added to Prisma schema
     // try {
     //   const record = await this.prisma.medicalRecord.findUnique({
@@ -580,7 +668,7 @@ export class RbacService {
     //   this.logger.error(`Failed to check medical record ownership`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
     //   return false;
     // }
-    
+
     // For now, return false as medical records are not implemented
     return false;
   }
@@ -590,43 +678,43 @@ export class RbacService {
    */
   private getRoleBasedPermissions(roleName: string): string[] {
     const rolePermissions: Record<string, string[]> = {
-      'SUPER_ADMIN': ['*'],
-      'CLINIC_ADMIN': [
-        'users:*',
-        'appointments:*',
-        'clinics:read',
-        'clinics:update',
-        'reports:*',
-        'settings:*',
+      SUPER_ADMIN: ["*"],
+      CLINIC_ADMIN: [
+        "users:*",
+        "appointments:*",
+        "clinics:read",
+        "clinics:update",
+        "reports:*",
+        "settings:*",
       ],
-      'DOCTOR': [
-        'appointments:read',
-        'appointments:update',
-        'patients:read',
-        'patients:update',
-        'medical-records:*',
-        'prescriptions:*',
+      DOCTOR: [
+        "appointments:read",
+        "appointments:update",
+        "patients:read",
+        "patients:update",
+        "medical-records:*",
+        "prescriptions:*",
       ],
-      'NURSE': [
-        'appointments:read',
-        'patients:read',
-        'patients:update',
-        'medical-records:read',
-        'vitals:*',
+      NURSE: [
+        "appointments:read",
+        "patients:read",
+        "patients:update",
+        "medical-records:read",
+        "vitals:*",
       ],
-      'RECEPTIONIST': [
-        'appointments:*',
-        'patients:read',
-        'patients:create',
-        'billing:read',
-        'scheduling:*',
+      RECEPTIONIST: [
+        "appointments:*",
+        "patients:read",
+        "patients:create",
+        "billing:read",
+        "scheduling:*",
       ],
-      'PATIENT': [
-        'appointments:read',
-        'appointments:create',
-        'profile:read',
-        'profile:update',
-        'medical-records:read',
+      PATIENT: [
+        "appointments:read",
+        "appointments:create",
+        "profile:read",
+        "profile:update",
+        "medical-records:read",
       ],
     };
 

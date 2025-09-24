@@ -1,10 +1,10 @@
-import { registerAs } from '@nestjs/config';
+import { registerAs } from "@nestjs/config";
 
 export interface RateLimitRule {
   limit: number;
-  window: number;  // in seconds
-  burst?: number;  // allow burst requests
-  cost?: number;   // request cost
+  window: number; // in seconds
+  burst?: number; // allow burst requests
+  cost?: number; // request cost
 }
 
 export interface RateLimitConfig {
@@ -21,43 +21,52 @@ export interface RateLimitConfig {
   };
 }
 
-export default registerAs('rateLimit', (): RateLimitConfig => ({
-  enabled: process.env.RATE_LIMIT_ENABLED !== 'false',
-  rules: {
-    // API endpoints
-    api: {
-      limit: parseInt(process.env.API_RATE_LIMIT || '100', 10),
-      window: 60,  // 1 minute
-      burst: 20    // Allow 20 extra requests for bursts
+export default registerAs(
+  "rateLimit",
+  (): RateLimitConfig => ({
+    enabled: process.env.RATE_LIMIT_ENABLED !== "false",
+    rules: {
+      // API endpoints
+      api: {
+        limit: parseInt(process.env.API_RATE_LIMIT || "100", 10),
+        window: 60, // 1 minute
+        burst: 20, // Allow 20 extra requests for bursts
+      },
+      // Authentication endpoints
+      auth: {
+        limit: parseInt(process.env.AUTH_RATE_LIMIT || "5", 10),
+        window: 60, // 1 minute
+        burst: 2, // Allow 2 extra attempts
+      },
+      // Heavy operations (e.g., file uploads, reports)
+      heavy: {
+        limit: parseInt(process.env.HEAVY_RATE_LIMIT || "10", 10),
+        window: 300, // 5 minutes
+        cost: 2, // Each request counts as 2
+      },
+      // User profile operations
+      user: {
+        limit: parseInt(process.env.USER_RATE_LIMIT || "50", 10),
+        window: 60, // 1 minute
+      },
+      // Health check endpoints
+      health: {
+        limit: parseInt(process.env.HEALTH_RATE_LIMIT || "200", 10),
+        window: 60, // 1 minute
+      },
     },
-    // Authentication endpoints
-    auth: {
-      limit: parseInt(process.env.AUTH_RATE_LIMIT || '5', 10),
-      window: 60,  // 1 minute
-      burst: 2     // Allow 2 extra attempts
+    security: {
+      maxAttempts: parseInt(process.env.MAX_AUTH_ATTEMPTS || "5", 10),
+      attemptWindow: parseInt(process.env.AUTH_ATTEMPT_WINDOW || "1800", 10), // 30 minutes
+      lockoutIntervals: [10, 25, 45, 60, 360], // Progressive lockout in minutes
+      maxConcurrentSessions: parseInt(
+        process.env.MAX_CONCURRENT_SESSIONS || "5",
+        10,
+      ),
+      sessionInactivityThreshold: parseInt(
+        process.env.SESSION_INACTIVITY_THRESHOLD || "900",
+        10,
+      ), // 15 minutes
     },
-    // Heavy operations (e.g., file uploads, reports)
-    heavy: {
-      limit: parseInt(process.env.HEAVY_RATE_LIMIT || '10', 10),
-      window: 300, // 5 minutes
-      cost: 2      // Each request counts as 2
-    },
-    // User profile operations
-    user: {
-      limit: parseInt(process.env.USER_RATE_LIMIT || '50', 10),
-      window: 60   // 1 minute
-    },
-    // Health check endpoints
-    health: {
-      limit: parseInt(process.env.HEALTH_RATE_LIMIT || '200', 10),
-      window: 60   // 1 minute
-    }
-  },
-  security: {
-    maxAttempts: parseInt(process.env.MAX_AUTH_ATTEMPTS || '5', 10),
-    attemptWindow: parseInt(process.env.AUTH_ATTEMPT_WINDOW || '1800', 10), // 30 minutes
-    lockoutIntervals: [10, 25, 45, 60, 360], // Progressive lockout in minutes
-    maxConcurrentSessions: parseInt(process.env.MAX_CONCURRENT_SESSIONS || '5', 10),
-    sessionInactivityThreshold: parseInt(process.env.SESSION_INACTIVITY_THRESHOLD || '900', 10) // 15 minutes
-  }
-})); 
+  }),
+);

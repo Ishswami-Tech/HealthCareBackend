@@ -1,6 +1,6 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from './prisma/prisma.service';
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "./prisma/prisma.service";
 
 export interface ClinicContext {
   clinicId: string;
@@ -42,14 +42,20 @@ export class ClinicIsolationService implements OnModuleInit {
     private prismaService: PrismaService,
     private configService: ConfigService,
   ) {
-    this.maxClinics = this.configService.get<number>('healthcare.multiClinic.maxClinicsPerApp', 200); // Optimized for 200 clinics
-    this.maxLocationsPerClinic = this.configService.get<number>('healthcare.multiClinic.maxLocationsPerClinic', 50); // Optimized for 50 locations per clinic
+    this.maxClinics = this.configService.get<number>(
+      "healthcare.multiClinic.maxClinicsPerApp",
+      200,
+    ); // Optimized for 200 clinics
+    this.maxLocationsPerClinic = this.configService.get<number>(
+      "healthcare.multiClinic.maxLocationsPerClinic",
+      50,
+    ); // Optimized for 50 locations per clinic
   }
 
   async onModuleInit() {
     await this.initializeClinicCaching();
     this.startCacheRefresh();
-    this.logger.log('Clinic isolation service initialized');
+    this.logger.log("Clinic isolation service initialized");
   }
 
   /**
@@ -68,12 +74,12 @@ export class ClinicIsolationService implements OnModuleInit {
         include: {
           locations: true,
           _count: {
-            select: { 
-              users: true, 
-              appointments: true
-            }
-          }
-        }
+            select: {
+              users: true,
+              appointments: true,
+            },
+          },
+        },
       });
 
       for (const clinic of clinics) {
@@ -82,7 +88,7 @@ export class ClinicIsolationService implements OnModuleInit {
           clinicName: clinic.name,
           subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
-          locations: clinic.locations.map(loc => loc.id),
+          locations: clinic.locations.map((loc) => loc.id),
           isActive: clinic.isActive,
           features: this.getClinicFeatures(clinic),
           settings: this.getClinicSettings(clinic),
@@ -99,9 +105,13 @@ export class ClinicIsolationService implements OnModuleInit {
       // Load user-clinic mappings
       await this.loadUserClinicMappings();
 
-      this.logger.log(`Initialized clinic cache with ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`);
+      this.logger.log(
+        `Initialized clinic cache with ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to initialize clinic caching: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to initialize clinic caching: ${(error as Error).message}`,
+      );
       throw error;
     }
   }
@@ -109,27 +119,29 @@ export class ClinicIsolationService implements OnModuleInit {
   /**
    * Get clinic context by clinic ID
    */
-  async getClinicContext(clinicId: string): Promise<ClinicIsolationResult<ClinicContext>> {
+  async getClinicContext(
+    clinicId: string,
+  ): Promise<ClinicIsolationResult<ClinicContext>> {
     try {
       // Check cache first
       let clinicContext = this.clinicCache.get(clinicId);
-      
+
       if (!clinicContext) {
         // If not in cache, try to load from database
         const clinic = await this.prismaService.clinic.findFirst({
-          where: { 
-            id: clinicId, 
-            isActive: true 
+          where: {
+            id: clinicId,
+            isActive: true,
           },
           include: {
-            locations: true
-          }
+            locations: true,
+          },
         });
 
         if (!clinic) {
           return {
             success: false,
-            error: `Clinic not found or inactive: ${clinicId}`
+            error: `Clinic not found or inactive: ${clinicId}`,
           };
         }
 
@@ -138,26 +150,28 @@ export class ClinicIsolationService implements OnModuleInit {
           clinicName: clinic.name,
           subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
-          locations: clinic.locations.map(loc => loc.id),
+          locations: clinic.locations.map((loc) => loc.id),
           isActive: clinic.isActive,
           features: this.getClinicFeatures(clinic),
           settings: this.getClinicSettings(clinic),
         };
 
         // Cache for future use
-        this.clinicCache.set(clinicId, clinicContext!);
+        this.clinicCache.set(clinicId, clinicContext);
       }
 
       return {
         success: true,
         data: clinicContext,
-        clinicContext
+        clinicContext,
       };
     } catch (error) {
-      this.logger.error(`Failed to get clinic context for ${clinicId}: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to get clinic context for ${clinicId}: ${(error as Error).message}`,
+      );
       return {
         success: false,
-        error: (error as Error).message
+        error: (error as Error).message,
       };
     }
   }
@@ -165,7 +179,10 @@ export class ClinicIsolationService implements OnModuleInit {
   /**
    * Validate clinic access for a user
    */
-  async validateClinicAccess(userId: string, clinicId: string): Promise<ClinicIsolationResult<boolean>> {
+  async validateClinicAccess(
+    userId: string,
+    clinicId: string,
+  ): Promise<ClinicIsolationResult<boolean>> {
     try {
       // Check if clinic exists and is active
       const clinicResult = await this.getClinicContext(clinicId);
@@ -173,7 +190,7 @@ export class ClinicIsolationService implements OnModuleInit {
         return {
           success: false,
           error: clinicResult.error,
-          data: false
+          data: false,
         };
       }
 
@@ -182,26 +199,26 @@ export class ClinicIsolationService implements OnModuleInit {
       if (!userClinics || !userClinics.includes(clinicId)) {
         // Load from database if not in cache
         const userClinicAccess = await this.prismaService.user.findFirst({
-          where: { 
+          where: {
             id: userId,
             OR: [
               { primaryClinicId: clinicId }, // Primary clinic assignment
-              { 
+              {
                 clinics: {
                   some: {
-                    id: clinicId
-                  }
-                }
-              } // Many-to-many clinic association
-            ]
-          }
+                    id: clinicId,
+                  },
+                },
+              }, // Many-to-many clinic association
+            ],
+          },
         });
 
         if (!userClinicAccess) {
           return {
             success: false,
             error: `User ${userId} does not have access to clinic ${clinicId}`,
-            clinicContext: clinicResult.data
+            clinicContext: clinicResult.data,
           };
         }
 
@@ -216,13 +233,15 @@ export class ClinicIsolationService implements OnModuleInit {
       return {
         success: true,
         data: true,
-        clinicContext: clinicResult.data
+        clinicContext: clinicResult.data,
       };
     } catch (error) {
-      this.logger.error(`Failed to validate clinic access for user ${userId}, clinic ${clinicId}: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to validate clinic access for user ${userId}, clinic ${clinicId}: ${(error as Error).message}`,
+      );
       return {
         success: false,
-        error: (error as Error).message
+        error: (error as Error).message,
       };
     }
   }
@@ -241,35 +260,37 @@ export class ClinicIsolationService implements OnModuleInit {
    */
   clearClinicContext(): void {
     this.prismaService.clearTenantId();
-    this.logger.debug('Cleared clinic context');
+    this.logger.debug("Cleared clinic context");
   }
 
   /**
    * Get clinics accessible by user
    */
-  async getUserClinics(userId: string): Promise<ClinicIsolationResult<ClinicContext[]>> {
+  async getUserClinics(
+    userId: string,
+  ): Promise<ClinicIsolationResult<ClinicContext[]>> {
     try {
       let userClinics = this.userClinicCache.get(userId);
-      
+
       if (!userClinics) {
         // Load from database
         const user = await this.prismaService.user.findUnique({
           where: { id: userId },
           include: {
             primaryClinic: true,
-            clinics: true
-          }
+            clinics: true,
+          },
         });
 
         if (!user) {
           return {
             success: false,
-            error: `User not found: ${userId}`
+            error: `User not found: ${userId}`,
           };
         }
 
         const clinicIds = new Set<string>();
-        
+
         // Add primary clinic
         if (user.primaryClinic) {
           clinicIds.add(user.primaryClinic.id);
@@ -285,18 +306,20 @@ export class ClinicIsolationService implements OnModuleInit {
       }
 
       const clinicContexts = userClinics
-        .map(clinicId => this.clinicCache.get(clinicId))
-        .filter(context => context && context.isActive) as ClinicContext[];
+        .map((clinicId) => this.clinicCache.get(clinicId))
+        .filter((context) => context && context.isActive) as ClinicContext[];
 
       return {
         success: true,
-        data: clinicContexts
+        data: clinicContexts,
       };
     } catch (error) {
-      this.logger.error(`Failed to get user clinics for ${userId}: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to get user clinics for ${userId}: ${(error as Error).message}`,
+      );
       return {
         success: false,
-        error: (error as Error).message
+        error: (error as Error).message,
       };
     }
   }
@@ -304,21 +327,23 @@ export class ClinicIsolationService implements OnModuleInit {
   /**
    * Get clinic by location ID
    */
-  async getClinicByLocation(locationId: string): Promise<ClinicIsolationResult<ClinicContext>> {
+  async getClinicByLocation(
+    locationId: string,
+  ): Promise<ClinicIsolationResult<ClinicContext>> {
     try {
       let clinicId = this.locationClinicCache.get(locationId);
-      
+
       if (!clinicId) {
         // Load from database
         const location = await this.prismaService.clinicLocation.findUnique({
           where: { id: locationId },
-          include: { clinic: true }
+          include: { clinic: true },
         });
 
         if (!location || !location.clinic) {
           return {
             success: false,
-            error: `Location not found or not associated with clinic: ${locationId}`
+            error: `Location not found or not associated with clinic: ${locationId}`,
           };
         }
 
@@ -328,10 +353,12 @@ export class ClinicIsolationService implements OnModuleInit {
 
       return this.getClinicContext(clinicId);
     } catch (error) {
-      this.logger.error(`Failed to get clinic by location ${locationId}: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to get clinic by location ${locationId}: ${(error as Error).message}`,
+      );
       return {
         success: false,
-        error: (error as Error).message
+        error: (error as Error).message,
       };
     }
   }
@@ -341,7 +368,7 @@ export class ClinicIsolationService implements OnModuleInit {
    */
   async executeWithClinicContext<T>(
     clinicId: string,
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
   ): Promise<ClinicIsolationResult<T>> {
     try {
       // Validate clinic
@@ -358,7 +385,7 @@ export class ClinicIsolationService implements OnModuleInit {
         return {
           success: true,
           data: result,
-          clinicContext: clinicResult.data
+          clinicContext: clinicResult.data,
         };
       } finally {
         // Always clear context after operation
@@ -366,10 +393,12 @@ export class ClinicIsolationService implements OnModuleInit {
       }
     } catch (error) {
       this.clearClinicContext();
-      this.logger.error(`Failed to execute operation with clinic context ${clinicId}: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to execute operation with clinic context ${clinicId}: ${(error as Error).message}`,
+      );
       return {
         success: false,
-        error: (error as Error).message
+        error: (error as Error).message,
       };
     }
   }
@@ -381,15 +410,15 @@ export class ClinicIsolationService implements OnModuleInit {
         primaryClinicId: true,
         clinics: {
           select: {
-            id: true
-          }
-        }
-      }
+            id: true,
+          },
+        },
+      },
     });
 
     for (const user of users) {
       const clinicIds = new Set<string>();
-      
+
       if (user.primaryClinicId) {
         clinicIds.add(user.primaryClinicId);
       }
@@ -407,42 +436,48 @@ export class ClinicIsolationService implements OnModuleInit {
   private getClinicFeatures(clinic: any): string[] {
     // Extract clinic-specific features based on clinic configuration
     const features = [
-      'appointment_scheduling',
-      'patient_management',
-      'medical_records',
-      'billing'
+      "appointment_scheduling",
+      "patient_management",
+      "medical_records",
+      "billing",
     ];
 
     // Add conditional features based on clinic settings
-    if (clinic.telemedicineEnabled) features.push('telemedicine');
-    if (clinic.labIntegrationEnabled) features.push('lab_integration');
-    if (clinic.pharmacyIntegrationEnabled) features.push('pharmacy_integration');
+    if (clinic.telemedicineEnabled) features.push("telemedicine");
+    if (clinic.labIntegrationEnabled) features.push("lab_integration");
+    if (clinic.pharmacyIntegrationEnabled)
+      features.push("pharmacy_integration");
 
     return features;
   }
 
   private getClinicSettings(clinic: any): Record<string, any> {
     return {
-      timezone: clinic.timezone || 'UTC',
-      workingHours: clinic.workingHours || '09:00-17:00',
+      timezone: clinic.timezone || "UTC",
+      workingHours: clinic.workingHours || "09:00-17:00",
       appointmentDuration: clinic.appointmentDuration || 30,
       maxAdvanceBooking: clinic.maxAdvanceBooking || 30,
       emergencyContact: clinic.emergencyContact,
       hipaaCompliance: true,
-      dataRetention: clinic.dataRetention || '7_years'
+      dataRetention: clinic.dataRetention || "7_years",
     };
   }
 
   private startCacheRefresh(): void {
     // Refresh cache every 5 minutes
-    this.cacheUpdateInterval = setInterval(async () => {
-      try {
-        await this.initializeClinicCaching();
-        this.logger.debug('Clinic cache refreshed');
-      } catch (error) {
-        this.logger.error(`Failed to refresh clinic cache: ${(error as Error).message}`);
-      }
-    }, 5 * 60 * 1000);
+    this.cacheUpdateInterval = setInterval(
+      async () => {
+        try {
+          await this.initializeClinicCaching();
+          this.logger.debug("Clinic cache refreshed");
+        } catch (error) {
+          this.logger.error(
+            `Failed to refresh clinic cache: ${(error as Error).message}`,
+          );
+        }
+      },
+      5 * 60 * 1000,
+    );
   }
 
   /**
@@ -457,12 +492,16 @@ export class ClinicIsolationService implements OnModuleInit {
     locationCacheSize: number;
   } {
     const totalRequests = this.cacheHitCount + this.cacheMissCount;
-    const hitRate = totalRequests > 0 ? (this.cacheHitCount / totalRequests) * 100 : 0;
-    
+    const hitRate =
+      totalRequests > 0 ? (this.cacheHitCount / totalRequests) * 100 : 0;
+
     return {
       hitRate,
       totalRequests,
-      cacheSize: this.clinicCache.size + this.userClinicCache.size + this.locationClinicCache.size,
+      cacheSize:
+        this.clinicCache.size +
+        this.userClinicCache.size +
+        this.locationClinicCache.size,
       clinicCacheSize: this.clinicCache.size,
       userCacheSize: this.userClinicCache.size,
       locationCacheSize: this.locationClinicCache.size,
@@ -473,30 +512,45 @@ export class ClinicIsolationService implements OnModuleInit {
    * Optimize cache by removing least recently used entries
    */
   private optimizeCache(): void {
-    const totalSize = this.clinicCache.size + this.userClinicCache.size + this.locationClinicCache.size;
-    
+    const totalSize =
+      this.clinicCache.size +
+      this.userClinicCache.size +
+      this.locationClinicCache.size;
+
     if (totalSize > this.MAX_CACHE_SIZE) {
       // Remove oldest entries from each cache
       const entriesToRemove = Math.floor(totalSize * 0.1); // Remove 10% of entries
-      
+
       // Remove from clinic cache
       const clinicEntries = Array.from(this.clinicCache.keys());
-      for (let i = 0; i < Math.min(entriesToRemove / 3, clinicEntries.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(entriesToRemove / 3, clinicEntries.length);
+        i++
+      ) {
         this.clinicCache.delete(clinicEntries[i]);
       }
-      
+
       // Remove from user cache
       const userEntries = Array.from(this.userClinicCache.keys());
-      for (let i = 0; i < Math.min(entriesToRemove / 3, userEntries.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(entriesToRemove / 3, userEntries.length);
+        i++
+      ) {
         this.userClinicCache.delete(userEntries[i]);
       }
-      
+
       // Remove from location cache
       const locationEntries = Array.from(this.locationClinicCache.keys());
-      for (let i = 0; i < Math.min(entriesToRemove / 3, locationEntries.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(entriesToRemove / 3, locationEntries.length);
+        i++
+      ) {
         this.locationClinicCache.delete(locationEntries[i]);
       }
-      
+
       this.logger.debug(`Cache optimized: removed ${entriesToRemove} entries`);
     }
   }
@@ -506,13 +560,13 @@ export class ClinicIsolationService implements OnModuleInit {
    */
   async batchValidateClinicAccess(
     userIds: string[],
-    clinicId: string
+    clinicId: string,
   ): Promise<Map<string, boolean>> {
     const results = new Map<string, boolean>();
-    
+
     // Check cache first
     const uncachedUserIds: string[] = [];
-    
+
     for (const userId of userIds) {
       const userClinics = this.userClinicCache.get(userId);
       if (userClinics) {
@@ -523,7 +577,7 @@ export class ClinicIsolationService implements OnModuleInit {
         this.cacheMissCount++;
       }
     }
-    
+
     // Fetch uncached users from database
     if (uncachedUserIds.length > 0) {
       try {
@@ -531,27 +585,27 @@ export class ClinicIsolationService implements OnModuleInit {
           where: {
             id: { in: uncachedUserIds },
             clinicAdmins: {
-              some: { clinicId }
-            }
+              some: { clinicId },
+            },
           },
-          select: { id: true }
+          select: { id: true },
         });
-        
-        const validUserIds = new Set(users.map(u => u.id));
-        
+
+        const validUserIds = new Set(users.map((u) => u.id));
+
         for (const userId of uncachedUserIds) {
           const hasAccess = validUserIds.has(userId);
           results.set(userId, hasAccess);
         }
       } catch (error) {
-        this.logger.error('Batch clinic access validation failed:', error);
+        this.logger.error("Batch clinic access validation failed:", error);
         // Set all uncached users to false on error
         for (const userId of uncachedUserIds) {
           results.set(userId, false);
         }
       }
     }
-    
+
     return results;
   }
 
@@ -559,7 +613,7 @@ export class ClinicIsolationService implements OnModuleInit {
    * Get service health status
    */
   async getHealthStatus(): Promise<{
-    status: 'healthy' | 'warning' | 'critical';
+    status: "healthy" | "warning" | "critical";
     cacheMetrics: any;
     lastCacheRefresh: Date;
     totalClinics: number;
@@ -567,8 +621,13 @@ export class ClinicIsolationService implements OnModuleInit {
     totalLocations: number;
   }> {
     const metrics = this.getCacheMetrics();
-    const status = metrics.hitRate > 80 ? 'healthy' : metrics.hitRate > 60 ? 'warning' : 'critical';
-    
+    const status =
+      metrics.hitRate > 80
+        ? "healthy"
+        : metrics.hitRate > 60
+          ? "warning"
+          : "critical";
+
     return {
       status,
       cacheMetrics: metrics,

@@ -1,17 +1,24 @@
-import { Injectable, NotFoundException, ConflictException, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
-import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
-import { Role } from '../../libs/infrastructure/database/prisma/prisma.types';
-import { EventService } from '../../libs/infrastructure/events/event.service';
-import { ClinicErrorService } from './shared/error.utils';
-import { CacheService } from '../../libs/infrastructure/cache';
-import { JwtService } from '@nestjs/jwt';
-import { ClinicLocationService } from './services/clinic-location.service';
-import { RbacService } from '../../libs/core/rbac/rbac.service';
-import { resolveClinicUUID } from '../../libs/utils/clinic.utils';
-import { HealthcareDatabaseClient } from '../../libs/infrastructure/database/clients/healthcare-database.client';
-import { RepositoryResult } from '../../libs/infrastructure/database/types/repository-result';
-import { ConfigService } from '@nestjs/config';
-import { HealthcareErrorsService } from '../../libs/core/errors';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  UnauthorizedException,
+  BadRequestException,
+  Logger,
+} from "@nestjs/common";
+import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import { Role } from "../../libs/infrastructure/database/prisma/prisma.types";
+import { EventService } from "../../libs/infrastructure/events/event.service";
+import { ClinicErrorService } from "./shared/error.utils";
+import { CacheService } from "../../libs/infrastructure/cache";
+import { JwtService } from "@nestjs/jwt";
+import { ClinicLocationService } from "./services/clinic-location.service";
+import { RbacService } from "../../libs/core/rbac/rbac.service";
+import { resolveClinicUUID } from "../../libs/utils/clinic.utils";
+import { HealthcareDatabaseClient } from "../../libs/infrastructure/database/clients/healthcare-database.client";
+import { RepositoryResult } from "../../libs/infrastructure/database/types/repository-result";
+import { ConfigService } from "@nestjs/config";
+import { HealthcareErrorsService } from "../../libs/core/errors";
 
 @Injectable()
 export class ClinicService {
@@ -63,23 +70,29 @@ export class ClinicService {
   }) {
     try {
       const creator = await this.prisma.user.findUnique({
-      where: { id: data.createdBy },
-        include: { 
+        where: { id: data.createdBy },
+        include: {
           superAdmin: true,
-          clinicAdmins: true 
+          clinicAdmins: true,
         },
       });
 
-      if (!creator || (creator.role !== Role.SUPER_ADMIN && creator.role !== Role.CLINIC_ADMIN) || 
-          (creator.role === Role.SUPER_ADMIN && !creator.superAdmin) || 
-          (creator.role === Role.CLINIC_ADMIN && !creator.clinicAdmins?.length)) {
+      if (
+        !creator ||
+        (creator.role !== Role.SUPER_ADMIN &&
+          creator.role !== Role.CLINIC_ADMIN) ||
+        (creator.role === Role.SUPER_ADMIN && !creator.superAdmin) ||
+        (creator.role === Role.CLINIC_ADMIN && !creator.clinicAdmins?.length)
+      ) {
         await this.errorService.logError(
-          { message: 'Unauthorized clinic creation attempt' },
-          'ClinicService',
-          'authorize user',
-          { userId: data.createdBy, role: creator?.role }
+          { message: "Unauthorized clinic creation attempt" },
+          "ClinicService",
+          "authorize user",
+          { userId: data.createdBy, role: creator?.role },
         );
-        throw new UnauthorizedException('Only SuperAdmin and ClinicAdmin can create clinics');
+        throw new UnauthorizedException(
+          "Only SuperAdmin and ClinicAdmin can create clinics",
+        );
       }
 
       // Determine who will be the clinic admin
@@ -89,88 +102,106 @@ export class ClinicService {
       if (creator.role === Role.SUPER_ADMIN) {
         if (!data.clinicAdminIdentifier) {
           await this.errorService.logError(
-            { message: 'SuperAdmin must specify a Clinic Admin when creating a clinic' },
-            'ClinicService',
-            'validate clinic admin',
-            { creatorId: data.createdBy, role: creator.role }
+            {
+              message:
+                "SuperAdmin must specify a Clinic Admin when creating a clinic",
+            },
+            "ClinicService",
+            "validate clinic admin",
+            { creatorId: data.createdBy, role: creator.role },
           );
-          throw new ConflictException('SuperAdmin must specify a Clinic Admin when creating a clinic');
+          throw new ConflictException(
+            "SuperAdmin must specify a Clinic Admin when creating a clinic",
+          );
         }
 
         // Determine if clinicAdminIdentifier is an email or ID
         let clinicAdmin;
-        const isEmail = data.clinicAdminIdentifier.includes('@');
-        
+        const isEmail = data.clinicAdminIdentifier.includes("@");
+
         if (isEmail) {
           // Look up user by email
           clinicAdmin = await this.prisma.user.findUnique({
             where: { email: data.clinicAdminIdentifier },
-            include: { clinicAdmins: true }
+            include: { clinicAdmins: true },
           });
         } else {
           // Try to parse as ID (could be numeric ID or UUID)
           try {
             clinicAdmin = await this.prisma.user.findUnique({
               where: { id: data.clinicAdminIdentifier },
-              include: { clinicAdmins: true }
+              include: { clinicAdmins: true },
             });
           } catch (error) {
             await this.errorService.logError(
-              { message: 'Invalid clinic admin identifier format' },
-              'ClinicService',
-              'validate clinic admin',
-              { clinicAdminIdentifier: data.clinicAdminIdentifier }
+              { message: "Invalid clinic admin identifier format" },
+              "ClinicService",
+              "validate clinic admin",
+              { clinicAdminIdentifier: data.clinicAdminIdentifier },
             );
-            throw new ConflictException('Invalid clinic admin identifier format');
+            throw new ConflictException(
+              "Invalid clinic admin identifier format",
+            );
           }
         }
 
         if (!clinicAdmin) {
           await this.errorService.logError(
-            { message: 'Specified Clinic Admin not found' },
-            'ClinicService',
-            'validate clinic admin',
-            { clinicAdminIdentifier: data.clinicAdminIdentifier }
+            { message: "Specified Clinic Admin not found" },
+            "ClinicService",
+            "validate clinic admin",
+            { clinicAdminIdentifier: data.clinicAdminIdentifier },
           );
-          throw new NotFoundException(`Clinic Admin with ${isEmail ? 'email' : 'ID'} "${data.clinicAdminIdentifier}" not found`);
+          throw new NotFoundException(
+            `Clinic Admin with ${isEmail ? "email" : "ID"} "${data.clinicAdminIdentifier}" not found`,
+          );
         }
 
-        if (clinicAdmin.role !== Role.CLINIC_ADMIN || !clinicAdmin.clinicAdmins?.length) {
+        if (
+          clinicAdmin.role !== Role.CLINIC_ADMIN ||
+          !clinicAdmin.clinicAdmins?.length
+        ) {
           await this.errorService.logError(
-            { message: 'Specified user is not a Clinic Admin' },
-            'ClinicService',
-            'validate clinic admin',
-            { clinicAdminIdentifier: data.clinicAdminIdentifier, role: clinicAdmin.role }
+            { message: "Specified user is not a Clinic Admin" },
+            "ClinicService",
+            "validate clinic admin",
+            {
+              clinicAdminIdentifier: data.clinicAdminIdentifier,
+              role: clinicAdmin.role,
+            },
           );
-          throw new ConflictException(`User with ${isEmail ? 'email' : 'ID'} "${data.clinicAdminIdentifier}" is not a Clinic Admin`);
+          throw new ConflictException(
+            `User with ${isEmail ? "email" : "ID"} "${data.clinicAdminIdentifier}" is not a Clinic Admin`,
+          );
         }
 
         clinicAdminId = clinicAdmin.id;
       }
 
       // Check for existing clinic with same name, email, or subdomain
-    const existingClinic = await this.prisma.clinic.findFirst({
-      where: {
-        OR: [
-          { name: data.name },
+      const existingClinic = await this.prisma.clinic.findFirst({
+        where: {
+          OR: [
+            { name: data.name },
             { email: data.email },
-            { app_name: data.subdomain }
-        ]
-      },
-    });
+            { app_name: data.subdomain },
+          ],
+        },
+      });
 
-    if (existingClinic) {
-        const errorMessage = existingClinic.name === data.name
-          ? 'A clinic with this name already exists'
-          : existingClinic.email === data.email
-          ? 'A clinic with this email already exists'
-          : 'A clinic with this subdomain already exists';
-          
+      if (existingClinic) {
+        const errorMessage =
+          existingClinic.name === data.name
+            ? "A clinic with this name already exists"
+            : existingClinic.email === data.email
+              ? "A clinic with this email already exists"
+              : "A clinic with this subdomain already exists";
+
         await this.errorService.logError(
-          { message: 'Clinic creation failed - duplicate entry' },
-          'ClinicService',
-          'validate unique constraints',
-          { name: data.name, email: data.email, subdomain: data.subdomain }
+          { message: "Clinic creation failed - duplicate entry" },
+          "ClinicService",
+          "validate unique constraints",
+          { name: data.name, email: data.email, subdomain: data.subdomain },
         );
         throw new ConflictException(errorMessage);
       }
@@ -186,19 +217,19 @@ export class ClinicService {
           logo: data.logo,
           website: data.website,
           description: data.description,
-          timezone: data.timezone || 'Asia/Kolkata',
-          currency: data.currency || 'INR',
-          language: data.language || 'en',
+          timezone: data.timezone || "Asia/Kolkata",
+          currency: data.currency || "INR",
+          language: data.language || "en",
           isActive: true,
           createdByUser: {
-            connect: { id: data.createdBy }
+            connect: { id: data.createdBy },
           },
           subdomain: data.subdomain,
           clinicId: data.subdomain,
           // Use shared database connection for multi-tenancy
-          db_connection_string: this.configService.get('DATABASE_URL') || '',
-          databaseName: this.configService.get('DATABASE_NAME', 'userdb'), // All clinics share the same database in multi-tenant setup
-          databaseStatus: 'ACTIVE',
+          db_connection_string: this.configService.get("DATABASE_URL") || "",
+          databaseName: this.configService.get("DATABASE_NAME", "userdb"), // All clinics share the same database in multi-tenant setup
+          databaseStatus: "ACTIVE",
         },
       });
 
@@ -213,46 +244,51 @@ export class ClinicService {
       // Create the main location using the clinic location service
       const mainLocationData = {
         ...data.mainLocation,
-        isMainBranch: true
+        isMainBranch: true,
       };
-      
+
       const location = await this.clinicLocationService.createLocation(
         clinic.id,
         mainLocationData,
-        data.createdBy
+        data.createdBy,
       );
 
       await this.errorService.logSuccess(
-        'Clinic created successfully with main location',
-        'ClinicService',
-        'create clinic',
-        { clinicId: clinic.id, name: data.name, locationId: location.id, clinicAdminId }
+        "Clinic created successfully with main location",
+        "ClinicService",
+        "create clinic",
+        {
+          clinicId: clinic.id,
+          name: data.name,
+          locationId: location.id,
+          clinicAdminId,
+        },
       );
 
-      await this.eventService.emit('clinic.created', {
+      await this.eventService.emit("clinic.created", {
         clinicId: clinic.id,
         name: data.name,
         email: data.email,
         createdBy: data.createdBy,
         locationId: location.id,
-        clinicAdminId
+        clinicAdminId,
       });
 
       // Invalidate clinic list cache after creating a new clinic
-      await this.cacheService.invalidateCacheByTag('clinics');
+      await this.cacheService.invalidateCacheByTag("clinics");
 
       // Return the clinic with its main location
       return {
         ...clinic,
         mainLocation: location,
-        clinicAdminId
+        clinicAdminId,
       };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'create clinic',
-        { ...data }
+        "ClinicService",
+        "create clinic",
+        { ...data },
       );
       throw error;
     }
@@ -265,7 +301,7 @@ export class ClinicService {
    */
   async getAllClinics(userId: string) {
     const cacheKey = `clinics:list:${userId}`;
-    
+
     // Try to get from cache first
     const cached = await this.cacheService.get(cacheKey);
     if (cached) {
@@ -276,108 +312,110 @@ export class ClinicService {
       // Check if userId is undefined or empty
       if (!userId) {
         await this.errorService.logError(
-          { message: 'User ID is required' },
-          'ClinicService',
-          'validate user id',
-          { userId }
+          { message: "User ID is required" },
+          "ClinicService",
+          "validate user id",
+          { userId },
         );
-        throw new UnauthorizedException('Authentication required');
+        throw new UnauthorizedException("Authentication required");
       }
 
-    const user = await this.prisma.user.findUnique({
+      const user = await this.prisma.user.findUnique({
         where: {
-          id: userId
+          id: userId,
         },
-      include: {
-        superAdmin: true,
-          clinicAdmins: true
-        }
-    });
+        include: {
+          superAdmin: true,
+          clinicAdmins: true,
+        },
+      });
 
-    if (!user) {
+      if (!user) {
         await this.errorService.logError(
-          { message: 'User not found' },
-          'ClinicService',
-          'find user',
-          { userId }
+          { message: "User not found" },
+          "ClinicService",
+          "find user",
+          { userId },
         );
-      throw new NotFoundException('User not found');
-    }
+        throw new NotFoundException("User not found");
+      }
 
       // Log user details for debugging
-      this.logger.debug('User found:', {
+      this.logger.debug("User found:", {
         id: user.id,
         email: user.email,
         role: user.role,
         hasSuperAdmin: !!user.superAdmin,
-        hasClinicAdmin: !!user.clinicAdmins?.length
+        hasClinicAdmin: !!user.clinicAdmins?.length,
       });
 
       let clinics;
       if (user.role === Role.SUPER_ADMIN) {
         // SuperAdmin can see all clinics (simplified check)
         await this.errorService.logSuccess(
-          'SuperAdmin fetching all clinics',
-          'ClinicService',
-          'get all clinics - SuperAdmin',
-          { userId, role: Role.SUPER_ADMIN }
+          "SuperAdmin fetching all clinics",
+          "ClinicService",
+          "get all clinics - SuperAdmin",
+          { userId, role: Role.SUPER_ADMIN },
         );
-        
+
         try {
           // Check tables in the database
           const tableInfo = await this.prisma.$queryRaw`
             SELECT tablename FROM pg_tables WHERE schemaname = 'public'
           `;
-          this.logger.debug('Tables in database:', tableInfo);
-          
+          this.logger.debug("Tables in database:", tableInfo);
+
           // Check if the clinics table has any data
           const countResult = await this.prisma.$queryRaw`
             SELECT COUNT(*) as count FROM "clinics"
           `;
-          this.logger.debug('Number of clinics:', countResult);
-          
+          this.logger.debug("Number of clinics:", countResult);
+
           // Direct query with debug output
           const rawClinics = await this.prisma.$queryRaw`
             SELECT * FROM "clinics"
           `;
-          this.logger.debug('Raw clinics data:', rawClinics);
-          
+          this.logger.debug("Raw clinics data:", rawClinics);
+
           // Get admin data separately
           const clinicAdmins = await this.prisma.$queryRaw`
             SELECT ca.*, u.email, u.name 
             FROM "ClinicAdmin" ca 
             JOIN "users" u ON ca."userId" = u.id
           `;
-          this.logger.debug('Clinic admins data:', clinicAdmins);
-          
+          this.logger.debug("Clinic admins data:", clinicAdmins);
+
           // Associate admins with their clinics
-          clinics = (rawClinics as any[]).map(clinic => ({
+          clinics = (rawClinics as any[]).map((clinic) => ({
             ...clinic,
-            admins: (clinicAdmins as any[]).filter(admin => admin.clinicId === clinic.id).map(admin => ({
-              id: admin.id,
-              userId: admin.userId,
-              clinicId: admin.clinicId,
-              user: {
-                id: admin.userId,
-                email: admin.email,
-                name: admin.name
-              }
-            }))
+            admins: (clinicAdmins as any[])
+              .filter((admin) => admin.clinicId === clinic.id)
+              .map((admin) => ({
+                id: admin.id,
+                userId: admin.userId,
+                clinicId: admin.clinicId,
+                user: {
+                  id: admin.userId,
+                  email: admin.email,
+                  name: admin.name,
+                },
+              })),
           }));
         } catch (error) {
-          this.logger.error('Error fetching clinics:', error);
+          this.logger.error("Error fetching clinics:", error);
           // Return empty array to avoid application errors
           clinics = [];
         }
       } else if (user.role === Role.CLINIC_ADMIN) {
         // ClinicAdmin can only see their assigned clinics (simplified check)
         await this.errorService.logSuccess(
-          'ClinicAdmin fetching assigned clinics',
-          'ClinicService',
-          'get all clinics - ClinicAdmin',
-          { userId, role: Role.CLINIC_ADMIN }
+          "ClinicAdmin fetching assigned clinics",
+          "ClinicService",
+          "get all clinics - ClinicAdmin",
+          { userId, role: Role.CLINIC_ADMIN },
         );
-        
+
         try {
           // Direct query using the correct table names to get clinics where the user is an admin
           const adminClinics = await this.prisma.$queryRaw`
@@ -386,7 +424,7 @@ export class ClinicService {
             JOIN "ClinicAdmin" ca ON c.id = ca."clinicId" 
             WHERE ca."userId" = ${userId}
           `;
-          
+
           // Get admin data for these clinics
           const clinicAdmins = await this.prisma.$queryRaw`
             SELECT ca.*, u.email, u.name 
@@ -396,53 +434,57 @@ export class ClinicService {
               SELECT "clinicId" FROM "ClinicAdmin" WHERE "userId" = ${userId}
             )
           `;
-          
+
           // Associate admins with their clinics
-          clinics = (adminClinics as any[]).map(clinic => ({
+          clinics = (adminClinics as any[]).map((clinic) => ({
             ...clinic,
-            admins: (clinicAdmins as any[]).filter(admin => admin.clinicId === clinic.id).map(admin => ({
-              id: admin.id,
-              userId: admin.userId,
-              clinicId: admin.clinicId,
-              user: {
-                id: admin.userId,
-                email: admin.email,
-                name: admin.name
-              }
-            }))
+            admins: (clinicAdmins as any[])
+              .filter((admin) => admin.clinicId === clinic.id)
+              .map((admin) => ({
+                id: admin.id,
+                userId: admin.userId,
+                clinicId: admin.clinicId,
+                user: {
+                  id: admin.userId,
+                  email: admin.email,
+                  name: admin.name,
+                },
+              })),
           }));
         } catch (error) {
-          this.logger.error('Error fetching clinics for clinic admin:', error);
+          this.logger.error("Error fetching clinics for clinic admin:", error);
           // Return empty array to avoid application errors
           clinics = [];
         }
       } else {
         await this.errorService.logError(
-          { message: 'Unauthorized access attempt' },
-          'ClinicService',
-          'authorize user',
-          { userId, role: user.role }
+          { message: "Unauthorized access attempt" },
+          "ClinicService",
+          "authorize user",
+          { userId, role: user.role },
         );
-        throw new UnauthorizedException('You do not have permission to view clinics');
+        throw new UnauthorizedException(
+          "You do not have permission to view clinics",
+        );
       }
 
       await this.errorService.logSuccess(
-        'Clinics fetched successfully',
-        'ClinicService',
-        'get all clinics',
-        { userId, count: clinics.length }
+        "Clinics fetched successfully",
+        "ClinicService",
+        "get all clinics",
+        { userId, count: clinics.length },
       );
 
       // Cache the result for 30 minutes
       await this.cacheService.set(cacheKey, clinics, 1800);
-      
+
       return clinics;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'fetch clinics',
-        { userId }
+        "ClinicService",
+        "fetch clinics",
+        { userId },
       );
       throw error;
     }
@@ -455,7 +497,7 @@ export class ClinicService {
    */
   async getClinicById(id: string, userId: string) {
     const cacheKey = `clinics:detail:${id}:${userId}`;
-    
+
     // Try to get from cache first
     const cached = await this.cacheService.get(cacheKey);
     if (cached) {
@@ -463,85 +505,86 @@ export class ClinicService {
     }
 
     try {
-        const clinicUUID = await resolveClinicUUID(this.prisma, id);
-          // First check if the user exists
-          const user = await this.prisma.user.findUnique({
-            where: { id: userId },
+      const clinicUUID = await resolveClinicUUID(this.prisma, id);
+      // First check if the user exists
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          superAdmin: true,
+          clinicAdmins: true,
+        },
+      });
+
+      if (!user) {
+        await this.errorService.logError(
+          { message: "User not found" },
+          "ClinicService",
+          "find user",
+          { userId },
+        );
+        throw new NotFoundException("User not found");
+      }
+
+      // Then find the clinic
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id: clinicUUID },
+        include: {
+          admins: {
             include: {
-              superAdmin: true,
-              clinicAdmins: true,
+              user: true,
             },
-          });
+          },
+        },
+      });
 
-          if (!user) {
-            await this.errorService.logError(
-              { message: 'User not found' },
-              'ClinicService',
-              'find user',
-              { userId }
-            );
-            throw new NotFoundException('User not found');
-          }
+      if (!clinic) {
+        await this.errorService.logError(
+          { message: "Clinic not found" },
+          "ClinicService",
+          "find clinic",
+          { clinicId: clinicUUID },
+        );
+        throw new NotFoundException("Clinic not found");
+      }
 
-          // Then find the clinic
-          const clinic = await this.prisma.clinic.findUnique({
-            where: { id: clinicUUID },
-            include: {
-              admins: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          });
+      // Use the permission service to validate access
+      // For patients, check for view_clinic_details permission, for others check manage_clinics
+      const action =
+        user.role === "PATIENT" ? "view_clinic_details" : "manage_clinics";
+      const hasPermission = await this.rbacService.checkPermission({
+        userId,
+        resource: "clinic",
+        action,
+        resourceId: clinicUUID,
+      });
+      if (!hasPermission) {
+        await this.errorService.logError(
+          { message: "Unauthorized access attempt" },
+          "ClinicService",
+          "authorize user",
+          { clinicId: clinicUUID, userId, role: user.role },
+        );
+        throw new UnauthorizedException(
+          "You do not have permission to view this clinic",
+        );
+      }
 
-          if (!clinic) {
-            await this.errorService.logError(
-              { message: 'Clinic not found' },
-              'ClinicService',
-              'find clinic',
-              { clinicId: clinicUUID }
-            );
-            throw new NotFoundException('Clinic not found');
-          }
-
-          // Use the permission service to validate access
-          // For patients, check for view_clinic_details permission, for others check manage_clinics
-          const action = user.role === 'PATIENT' ? 'view_clinic_details' : 'manage_clinics';
-          const hasPermission = await this.rbacService.checkPermission({
-            userId,
-            resource: 'clinic',
-            action,
-            resourceId: clinicUUID,
-          });
-          if (!hasPermission) {
-            await this.errorService.logError(
-              { message: 'Unauthorized access attempt' },
-              'ClinicService',
-              'authorize user',
-              { clinicId: clinicUUID, userId, role: user.role }
-            );
-            throw new UnauthorizedException('You do not have permission to view this clinic');
-          }
-
-          await this.errorService.logSuccess(
-            'Clinic fetched successfully',
-            'ClinicService',
-            'get clinic by id',
-            { clinicId: clinicUUID, userId }
-          );
-          
-        // Cache the result for 30 minutes
-        await this.cacheService.set(cacheKey, clinic, 1800);
-        
-        return clinic;
-    } catch (error) {
-      await this.errorService.logError(
-        error,
-        'ClinicService',
-        'fetch clinic',
-        { clinicId: id, userId }
+      await this.errorService.logSuccess(
+        "Clinic fetched successfully",
+        "ClinicService",
+        "get clinic by id",
+        { clinicId: clinicUUID, userId },
       );
+
+      // Cache the result for 30 minutes
+      await this.cacheService.set(cacheKey, clinic, 1800);
+
+      return clinic;
+    } catch (error) {
+      await this.errorService.logError(error, "ClinicService", "fetch clinic", {
+        clinicId: id,
+        userId,
+      });
       throw error;
     }
   }
@@ -552,7 +595,7 @@ export class ClinicService {
    */
   async getClinicByAppName(appName: string) {
     const cacheKey = `clinics:appname:${appName}`;
-    
+
     // Try to get from cache first
     const cached = await this.cacheService.get(cacheKey);
     if (cached) {
@@ -560,44 +603,44 @@ export class ClinicService {
     }
 
     try {
-          const clinic = await this.prisma.clinic.findUnique({
-            where: { email: appName },
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { email: appName },
+        include: {
+          admins: {
             include: {
-              admins: {
-                include: {
-                  user: true,
-                },
-              },
+              user: true,
             },
-          });
+          },
+        },
+      });
 
-          if (!clinic) {
-            await this.errorService.logError(
-              { message: 'Clinic not found' },
-              'ClinicService',
-              'find clinic by app name',
-              { appName }
-            );
-            throw new NotFoundException('Clinic not found');
-          }
+      if (!clinic) {
+        await this.errorService.logError(
+          { message: "Clinic not found" },
+          "ClinicService",
+          "find clinic by app name",
+          { appName },
+        );
+        throw new NotFoundException("Clinic not found");
+      }
 
-          await this.errorService.logSuccess(
-            'Clinic found by app name',
-            'ClinicService',
-            'get clinic by app name',
-            { clinicId: clinic.id, appName }
-          );
+      await this.errorService.logSuccess(
+        "Clinic found by app name",
+        "ClinicService",
+        "get clinic by app name",
+        { clinicId: clinic.id, appName },
+      );
 
       // Cache the result for 1 hour
       await this.cacheService.set(cacheKey, clinic, 3600);
-      
+
       return clinic;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'fetch clinic by app name',
-        { appName }
+        "ClinicService",
+        "fetch clinic by app name",
+        { appName },
       );
       throw error;
     }
@@ -616,103 +659,112 @@ export class ClinicService {
     try {
       const assigner = await this.prisma.user.findUnique({
         where: { id: data.assignedBy },
-        include: { superAdmin: true, clinicAdmins: true }
+        include: { superAdmin: true, clinicAdmins: true },
       });
 
       if (!assigner) {
         await this.errorService.logError(
-          { message: 'Assigner user not found' },
-          'ClinicService',
-          'find user',
-          { userId: data.assignedBy }
+          { message: "Assigner user not found" },
+          "ClinicService",
+          "find user",
+          { userId: data.assignedBy },
         );
-        throw new NotFoundException('Assigner user not found');
+        throw new NotFoundException("Assigner user not found");
       }
 
       const user = await this.prisma.user.findUnique({
         where: { id: data.userId },
-        include: { clinicAdmins: true }
+        include: { clinicAdmins: true },
       });
 
       if (!user) {
         await this.errorService.logError(
-          { message: 'User not found' },
-          'ClinicService',
-          'find user',
-          { userId: data.userId }
+          { message: "User not found" },
+          "ClinicService",
+          "find user",
+          { userId: data.userId },
         );
-        throw new NotFoundException('User not found');
+        throw new NotFoundException("User not found");
       }
 
       if (user.role !== Role.CLINIC_ADMIN) {
         await this.errorService.logError(
-          { message: 'Only ClinicAdmin role users can be assigned to clinics' },
-          'ClinicService',
-          'validate user role',
-          { userId: data.userId, role: user.role }
+          { message: "Only ClinicAdmin role users can be assigned to clinics" },
+          "ClinicService",
+          "validate user role",
+          { userId: data.userId, role: user.role },
         );
-        throw new ConflictException('Only ClinicAdmin role users can be assigned to clinics');
+        throw new ConflictException(
+          "Only ClinicAdmin role users can be assigned to clinics",
+        );
       }
 
       const clinicUUID = await resolveClinicUUID(this.prisma, data.clinicId);
       const clinic = await this.prisma.clinic.findUnique({
         where: { id: clinicUUID },
         include: {
-          admins: true
-        }
+          admins: true,
+        },
       });
 
       if (!clinic) {
         await this.errorService.logError(
-          { message: 'Clinic not found' },
-          'ClinicService',
-          'find clinic',
-          { clinicId: data.clinicId }
+          { message: "Clinic not found" },
+          "ClinicService",
+          "find clinic",
+          { clinicId: data.clinicId },
         );
-        throw new NotFoundException('Clinic not found');
+        throw new NotFoundException("Clinic not found");
       }
 
       // Check if already assigned
       const isAlreadyAssigned = clinic.admins.some(
-        (admin) => admin.userId === data.userId
+        (admin) => admin.userId === data.userId,
       );
 
       if (isAlreadyAssigned) {
         await this.errorService.logError(
-          { message: 'User is already assigned to this clinic' },
-          'ClinicService',
-          'validate assignment',
-          { userId: data.userId, clinicId: data.clinicId }
+          { message: "User is already assigned to this clinic" },
+          "ClinicService",
+          "validate assignment",
+          { userId: data.userId, clinicId: data.clinicId },
         );
-        throw new ConflictException('User is already assigned to this clinic');
+        throw new ConflictException("User is already assigned to this clinic");
       }
 
       // Check if a SuperAdmin or a ClinicAdmin owner is making this assignment
       if (assigner.role === Role.SUPER_ADMIN && assigner.superAdmin) {
         // SuperAdmin can assign any ClinicAdmin to any clinic
-      } else if (assigner.role === Role.CLINIC_ADMIN && assigner.clinicAdmins?.length) {
+      } else if (
+        assigner.role === Role.CLINIC_ADMIN &&
+        assigner.clinicAdmins?.length
+      ) {
         // Check if the assigner is an owner of this clinic
         const isOwner = clinic.admins.some(
-          (admin) => admin.userId === data.assignedBy
+          (admin) => admin.userId === data.assignedBy,
         );
 
         if (!isOwner) {
           await this.errorService.logError(
-            { message: 'Only clinic owners can assign clinic admins' },
-            'ClinicService',
-            'authorize assignment',
-            { assignerId: data.assignedBy, clinicId: data.clinicId }
+            { message: "Only clinic owners can assign clinic admins" },
+            "ClinicService",
+            "authorize assignment",
+            { assignerId: data.assignedBy, clinicId: data.clinicId },
           );
-          throw new UnauthorizedException('Only clinic owners can assign clinic admins');
+          throw new UnauthorizedException(
+            "Only clinic owners can assign clinic admins",
+          );
         }
       } else {
         await this.errorService.logError(
-          { message: 'Unauthorized clinic admin assignment attempt' },
-          'ClinicService',
-          'authorize user',
-          { assignerId: data.assignedBy, role: assigner.role }
+          { message: "Unauthorized clinic admin assignment attempt" },
+          "ClinicService",
+          "authorize user",
+          { assignerId: data.assignedBy, role: assigner.role },
         );
-        throw new UnauthorizedException('You do not have permission to assign clinic admins');
+        throw new UnauthorizedException(
+          "You do not have permission to assign clinic admins",
+        );
       }
 
       // Create the assignment
@@ -723,36 +775,42 @@ export class ClinicService {
         },
         include: {
           user: true,
-          clinic: true
-        }
+          clinic: true,
+        },
       });
 
       await this.errorService.logSuccess(
-        'Clinic admin assigned successfully',
-        'ClinicService',
-        'assign clinic admin',
-        { clinicId: data.clinicId, userId: data.userId, assignedBy: data.assignedBy }
+        "Clinic admin assigned successfully",
+        "ClinicService",
+        "assign clinic admin",
+        {
+          clinicId: data.clinicId,
+          userId: data.userId,
+          assignedBy: data.assignedBy,
+        },
       );
 
-      await this.eventService.emit('clinic.admin.assigned', {
+      await this.eventService.emit("clinic.admin.assigned", {
         clinicId: data.clinicId,
         userId: data.userId,
         assignedBy: data.assignedBy,
         clinicName: clinic.name,
-        userName: user.email
+        userName: user.email,
       });
 
       // After successfully assigning clinic admin, invalidate clinic caches
-      await this.cacheService.invalidateByPattern(`clinics:detail:${data.clinicId}:*`);
+      await this.cacheService.invalidateByPattern(
+        `clinics:detail:${data.clinicId}:*`,
+      );
       await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
 
       return assignment;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'assign clinic admin',
-        { ...data }
+        "ClinicService",
+        "assign clinic admin",
+        { ...data },
       );
       throw error;
     }
@@ -773,7 +831,9 @@ export class ClinicService {
     });
 
     if (!remover || remover.role !== Role.SUPER_ADMIN) {
-      throw new UnauthorizedException('Only SuperAdmin can remove clinic admins');
+      throw new UnauthorizedException(
+        "Only SuperAdmin can remove clinic admins",
+      );
     }
 
     // Check if the clinic admin exists
@@ -783,7 +843,7 @@ export class ClinicService {
     });
 
     if (!clinicAdmin) {
-      throw new NotFoundException('Clinic admin not found');
+      throw new NotFoundException("Clinic admin not found");
     }
 
     // Delete the clinic admin record
@@ -804,10 +864,14 @@ export class ClinicService {
     }
 
     // After successfully removing clinic admin, invalidate clinic caches
-    await this.cacheService.invalidateByPattern(`clinics:detail:${clinicAdmin.clinicId}:*`);
-    await this.cacheService.invalidateCacheByTag(`clinic:${clinicAdmin.clinicId}`);
+    await this.cacheService.invalidateByPattern(
+      `clinics:detail:${clinicAdmin.clinicId}:*`,
+    );
+    await this.cacheService.invalidateCacheByTag(
+      `clinic:${clinicAdmin.clinicId}`,
+    );
 
-    return { success: true, message: 'Clinic admin removed successfully' };
+    return { success: true, message: "Clinic admin removed successfully" };
   }
 
   /**
@@ -816,78 +880,84 @@ export class ClinicService {
    */
   async getClinicDoctors(clinicId: string, userId: string) {
     const cacheKey = `clinics:doctors:${clinicId}:${userId}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
-
-    try {
-      const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        superAdmin: true,
-        clinicAdmins: true,
-      },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    // Check if the clinic exists
-    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-    const clinic = await this.prisma.clinic.findUnique({
-      where: { id: clinicUUID },
-    });
-
-    if (!clinic) {
-      throw new NotFoundException('Clinic not found');
-    }
-
-    // Check if the user has permission to view this clinic's doctors
-    if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
-      // SuperAdmin can see all doctors
-    } else if (user.role === Role.CLINIC_ADMIN && user.clinicAdmins?.length) {
-      // ClinicAdmin can only see doctors from their assigned clinics
-      const isAdmin = await this.prisma.clinicAdmin.findFirst({
-        where: {
-          userId: userId,
-          clinicId: clinicUUID,
-        },
-      });
-
-      if (!isAdmin) {
-        throw new UnauthorizedException('You do not have permission to view doctors from this clinic');
-      }
-    } else {
-      throw new UnauthorizedException('You do not have permission to view doctors');
-    }
-
-      // Get all doctors for this clinic
-      const doctors = await this.prisma.doctorClinic.findMany({
-        where: { clinicId: clinicUUID },
-        include: {
-          doctor: {
+        try {
+          const user = await this.prisma.user.findUnique({
+            where: { id: userId },
             include: {
-              user: true,
+              superAdmin: true,
+              clinicAdmins: true,
             },
-          },
-        },
-      });
+          });
 
-        return doctors;
-      } catch (error) {
-        throw error;
-      }
+          if (!user) {
+            throw new NotFoundException("User not found");
+          }
+
+          // Check if the clinic exists
+          const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+          const clinic = await this.prisma.clinic.findUnique({
+            where: { id: clinicUUID },
+          });
+
+          if (!clinic) {
+            throw new NotFoundException("Clinic not found");
+          }
+
+          // Check if the user has permission to view this clinic's doctors
+          if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
+            // SuperAdmin can see all doctors
+          } else if (
+            user.role === Role.CLINIC_ADMIN &&
+            user.clinicAdmins?.length
+          ) {
+            // ClinicAdmin can only see doctors from their assigned clinics
+            const isAdmin = await this.prisma.clinicAdmin.findFirst({
+              where: {
+                userId: userId,
+                clinicId: clinicUUID,
+              },
+            });
+
+            if (!isAdmin) {
+              throw new UnauthorizedException(
+                "You do not have permission to view doctors from this clinic",
+              );
+            }
+          } else {
+            throw new UnauthorizedException(
+              "You do not have permission to view doctors",
+            );
+          }
+
+          // Get all doctors for this clinic
+          const doctors = await this.prisma.doctorClinic.findMany({
+            where: { clinicId: clinicUUID },
+            include: {
+              doctor: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          });
+
+          return doctors;
+        } catch (error) {
+          throw error;
+        }
       },
       {
         ttl: 1800, // 30 minutes
-        tags: [`clinic:${clinicId}`, 'doctors', 'clinic_data'],
-        priority: 'high',
+        tags: [`clinic:${clinicId}`, "doctors", "clinic_data"],
+        priority: "high",
         enableSwr: true,
         compress: true, // Compress doctor lists
         containsPHI: false, // Doctor lists don't contain PHI
-      }
+      },
     );
   }
 
@@ -897,71 +967,77 @@ export class ClinicService {
    */
   async getClinicPatients(clinicId: string, userId: string) {
     const cacheKey = `clinics:patients:${clinicId}:${userId}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
+        try {
+          const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            include: {
+              superAdmin: true,
+              clinicAdmins: true,
+            },
+          });
 
-    try {
-      const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        superAdmin: true,
-        clinicAdmins: true,
-      },
-    });
+          if (!user) {
+            throw new NotFoundException("User not found");
+          }
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+          // Check if the clinic exists
+          const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+          const clinic = await this.prisma.clinic.findUnique({
+            where: { id: clinicUUID },
+          });
 
-    // Check if the clinic exists
-    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-    const clinic = await this.prisma.clinic.findUnique({
-      where: { id: clinicUUID },
-    });
+          if (!clinic) {
+            throw new NotFoundException("Clinic not found");
+          }
 
-    if (!clinic) {
-      throw new NotFoundException('Clinic not found');
-    }
+          // Check if the user has permission to view this clinic's patients
+          if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
+            // SuperAdmin can see all patients
+          } else if (
+            user.role === Role.CLINIC_ADMIN &&
+            user.clinicAdmins?.length
+          ) {
+            // ClinicAdmin can only see patients from their assigned clinics
+            const isAdmin = await this.prisma.clinicAdmin.findFirst({
+              where: {
+                userId: userId,
+                clinicId: clinicUUID,
+              },
+            });
 
-    // Check if the user has permission to view this clinic's patients
-    if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
-      // SuperAdmin can see all patients
-    } else if (user.role === Role.CLINIC_ADMIN && user.clinicAdmins?.length) {
-      // ClinicAdmin can only see patients from their assigned clinics
-      const isAdmin = await this.prisma.clinicAdmin.findFirst({
-        where: {
-          userId: userId,
-          clinicId: clinicUUID,
-        },
-      });
+            if (!isAdmin) {
+              throw new UnauthorizedException(
+                "You do not have permission to view patients from this clinic",
+              );
+            }
+          } else {
+            throw new UnauthorizedException(
+              "You do not have permission to view patients",
+            );
+          }
 
-      if (!isAdmin) {
-        throw new UnauthorizedException('You do not have permission to view patients from this clinic');
-      }
-    } else {
-      throw new UnauthorizedException('You do not have permission to view patients');
-    }
+          // Connect to the clinic's database to get patients
+          // This is a placeholder - in a real implementation, you would query the clinic's database
+          // For now, we'll just return an empty array
+          const patients: any[] = [];
 
-      // Connect to the clinic's database to get patients
-      // This is a placeholder - in a real implementation, you would query the clinic's database
-      // For now, we'll just return an empty array
-      const patients: any[] = [];
-      
-        return patients;
-      } catch (error) {
-        throw error;
-      }
+          return patients;
+        } catch (error) {
+          throw error;
+        }
       },
       {
         ttl: 900, // 15 minutes
-        tags: [`clinic:${clinicId}`, 'patients', 'clinic_data'],
-        priority: 'high',
+        tags: [`clinic:${clinicId}`, "patients", "clinic_data"],
+        priority: "high",
         enableSwr: true,
         compress: true, // Compress patient lists
         containsPHI: true, // Patient lists contain PHI
-      }
+      },
     );
   }
 
@@ -969,10 +1045,7 @@ export class ClinicService {
    * Register a patient to a clinic
    * This is used by the mobile app to register a patient to a specific clinic
    */
-  async registerPatientToClinic(data: {
-    userId: string;
-    clinicId: string;
-  }) {
+  async registerPatientToClinic(data: { userId: string; clinicId: string }) {
     // Get the clinic by clinic ID
     const clinicUUID = await resolveClinicUUID(this.prisma, data.clinicId);
     const clinic = await this.prisma.clinic.findUnique({
@@ -980,7 +1053,7 @@ export class ClinicService {
     });
 
     if (!clinic) {
-      throw new NotFoundException('Clinic not found');
+      throw new NotFoundException("Clinic not found");
     }
 
     // Check if the user exists and is a patient
@@ -990,11 +1063,11 @@ export class ClinicService {
     });
 
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException("User not found");
     }
 
     if (user.role !== Role.PATIENT || !user.patient) {
-      throw new ConflictException('User is not a patient');
+      throw new ConflictException("User is not a patient");
     }
 
     // Connect to the clinic's database and register the patient
@@ -1002,21 +1075,28 @@ export class ClinicService {
     // For now, we'll just return a success message
 
     // After successfully registering patient, invalidate patients cache
-    await this.cacheService.invalidateCacheByTag('clinic-patients');
+    await this.cacheService.invalidateCacheByTag("clinic-patients");
     await this.cacheService.invalidateCacheByTag(`clinic:${clinicUUID}`);
-    
-    return { success: true, message: 'Patient registered to clinic successfully' };
+
+    return {
+      success: true,
+      message: "Patient registered to clinic successfully",
+    };
   }
 
   /**
    * Update clinic
    */
-  async updateClinic(id: string, data: {
-    name?: string;
-    address?: string;
-    phone?: string;
-    email?: string;
-  }, userId: string) {
+  async updateClinic(
+    id: string,
+    data: {
+      name?: string;
+      address?: string;
+      phone?: string;
+      email?: string;
+    },
+    userId: string,
+  ) {
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
@@ -1028,12 +1108,12 @@ export class ClinicService {
 
       if (!user) {
         await this.errorService.logError(
-          { message: 'User not found' },
-          'ClinicService',
-          'find user',
-          { userId }
+          { message: "User not found" },
+          "ClinicService",
+          "find user",
+          { userId },
         );
-        throw new NotFoundException('User not found');
+        throw new NotFoundException("User not found");
       }
 
       const clinicUUID = await resolveClinicUUID(this.prisma, id);
@@ -1050,34 +1130,40 @@ export class ClinicService {
 
       if (!clinic) {
         await this.errorService.logError(
-          { message: 'Clinic not found' },
-          'ClinicService',
-          'find clinic',
-          { clinicId: clinicUUID }
+          { message: "Clinic not found" },
+          "ClinicService",
+          "find clinic",
+          { clinicId: clinicUUID },
         );
-        throw new NotFoundException('Clinic not found');
+        throw new NotFoundException("Clinic not found");
       }
 
       if (user.role !== Role.SUPER_ADMIN) {
         if (user.role === Role.CLINIC_ADMIN) {
-          const isAdmin = clinic.admins.some((admin) => admin.userId === userId);
+          const isAdmin = clinic.admins.some(
+            (admin) => admin.userId === userId,
+          );
           if (!isAdmin) {
             await this.errorService.logError(
-              { message: 'Unauthorized clinic update attempt' },
-              'ClinicService',
-              'authorize user',
-              { clinicId: clinicUUID, userId, role: user.role }
+              { message: "Unauthorized clinic update attempt" },
+              "ClinicService",
+              "authorize user",
+              { clinicId: clinicUUID, userId, role: user.role },
             );
-            throw new UnauthorizedException('You do not have permission to update this clinic');
+            throw new UnauthorizedException(
+              "You do not have permission to update this clinic",
+            );
           }
         } else {
           await this.errorService.logError(
-            { message: 'Unauthorized clinic update attempt' },
-            'ClinicService',
-            'authorize user',
-            { clinicId: clinicUUID, userId, role: user.role }
+            { message: "Unauthorized clinic update attempt" },
+            "ClinicService",
+            "authorize user",
+            { clinicId: clinicUUID, userId, role: user.role },
           );
-          throw new UnauthorizedException('You do not have permission to update clinics');
+          throw new UnauthorizedException(
+            "You do not have permission to update clinics",
+          );
         }
       }
 
@@ -1087,33 +1173,35 @@ export class ClinicService {
       });
 
       await this.errorService.logSuccess(
-        'Clinic updated successfully',
-        'ClinicService',
-        'update clinic',
-        { clinicId: clinicUUID, updatedFields: Object.keys(data) }
+        "Clinic updated successfully",
+        "ClinicService",
+        "update clinic",
+        { clinicId: clinicUUID, updatedFields: Object.keys(data) },
       );
 
-      await this.eventService.emit('clinic.updated', {
+      await this.eventService.emit("clinic.updated", {
         clinicId: clinicUUID,
         updatedFields: Object.keys(data),
-        updatedBy: userId
+        updatedBy: userId,
       });
 
       // After successfully updating clinic, invalidate clinic caches
       await Promise.all([
         this.cacheService.invalidateByPattern(`clinics:detail:${clinicUUID}:*`),
-        this.cacheService.invalidateByPattern(`clinics:appname:${clinic.app_name}`),
-        this.cacheService.invalidateCacheByTag('clinics'),
-        this.cacheService.invalidateCacheByTag(`clinic:${clinicUUID}`)
+        this.cacheService.invalidateByPattern(
+          `clinics:appname:${clinic.app_name}`,
+        ),
+        this.cacheService.invalidateCacheByTag("clinics"),
+        this.cacheService.invalidateCacheByTag(`clinic:${clinicUUID}`),
       ]);
 
       return updatedClinic;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'update clinic',
-        { clinicId: id, ...data }
+        "ClinicService",
+        "update clinic",
+        { clinicId: id, ...data },
       );
       throw error;
     }
@@ -1133,12 +1221,12 @@ export class ClinicService {
 
       if (!user || user.role !== Role.SUPER_ADMIN) {
         await this.errorService.logError(
-          { message: 'Unauthorized delete attempt' },
-          'ClinicService',
-          'authorize user',
-          { userId, role: user?.role }
+          { message: "Unauthorized delete attempt" },
+          "ClinicService",
+          "authorize user",
+          { userId, role: user?.role },
         );
-        throw new UnauthorizedException('Only SuperAdmin can delete clinics');
+        throw new UnauthorizedException("Only SuperAdmin can delete clinics");
       }
 
       // Check if the clinic exists
@@ -1148,18 +1236,18 @@ export class ClinicService {
         select: {
           id: true,
           name: true,
-          app_name: true
-        }
+          app_name: true,
+        },
       });
 
       if (!clinic) {
         await this.errorService.logError(
-          { message: 'Clinic not found for deletion' },
-          'ClinicService',
-          'find clinic',
-          { clinicId: clinicUUID }
+          { message: "Clinic not found for deletion" },
+          "ClinicService",
+          "find clinic",
+          { clinicId: clinicUUID },
         );
-        throw new NotFoundException('Clinic not found');
+        throw new NotFoundException("Clinic not found");
       }
 
       // No need to delete database, simply delete the clinic record
@@ -1168,35 +1256,37 @@ export class ClinicService {
       });
 
       await this.errorService.logSuccess(
-        'Clinic deleted successfully',
-        'ClinicService',
-        'delete clinic',
-        { clinicId: clinicUUID, name: clinic.name }
+        "Clinic deleted successfully",
+        "ClinicService",
+        "delete clinic",
+        { clinicId: clinicUUID, name: clinic.name },
       );
 
-      await this.eventService.emit('clinic.deleted', {
+      await this.eventService.emit("clinic.deleted", {
         clinicId: clinicUUID,
         name: clinic.name,
-        deletedBy: userId
+        deletedBy: userId,
       });
 
       // After successfully deleting clinic, invalidate all clinic-related caches
       await Promise.all([
         this.cacheService.invalidateByPattern(`clinics:detail:${clinicUUID}:*`),
-        this.cacheService.invalidateByPattern(`clinics:appname:${clinic.app_name}`),
-        this.cacheService.invalidateCacheByTag('clinics'),
+        this.cacheService.invalidateByPattern(
+          `clinics:appname:${clinic.app_name}`,
+        ),
+        this.cacheService.invalidateCacheByTag("clinics"),
         this.cacheService.invalidateCacheByTag(`clinic:${clinicUUID}`),
-        this.cacheService.invalidateCacheByTag('clinic-doctors'),
-        this.cacheService.invalidateCacheByTag('clinic-patients')
+        this.cacheService.invalidateCacheByTag("clinic-doctors"),
+        this.cacheService.invalidateCacheByTag("clinic-patients"),
       ]);
 
-      return { success: true, message: 'Clinic deleted successfully' };
+      return { success: true, message: "Clinic deleted successfully" };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'delete clinic',
-        { clinicId: id, userId }
+        "ClinicService",
+        "delete clinic",
+        { clinicId: id, userId },
       );
       throw error;
     }
@@ -1208,7 +1298,7 @@ export class ClinicService {
       const locations = await this.prisma.clinicLocation.findMany({
         where: {
           clinicId: clinicUUID,
-          isActive: true
+          isActive: true,
         },
         select: {
           id: true,
@@ -1222,20 +1312,20 @@ export class ClinicService {
           phone: true,
           email: true,
           timezone: true,
-          workingHours: true
+          workingHours: true,
         },
         orderBy: {
-          locationId: 'asc'
-        }
+          locationId: "asc",
+        },
       });
 
       return locations;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get active locations',
-        { clinicId: clinicUUID }
+        "ClinicService",
+        "get active locations",
+        { clinicId: clinicUUID },
       );
       throw error;
     }
@@ -1245,19 +1335,19 @@ export class ClinicService {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
     try {
       const user = await this.prisma.user.findUnique({
-        where: { id: userId }
+        where: { id: userId },
       });
 
       if (!user) {
-        throw new NotFoundException('User not found');
+        throw new NotFoundException("User not found");
       }
 
       const clinic = await this.prisma.clinic.findUnique({
-        where: { id: clinicUUID }
+        where: { id: clinicUUID },
       });
 
       if (!clinic) {
-        throw new NotFoundException('Clinic not found');
+        throw new NotFoundException("Clinic not found");
       }
 
       // Add the clinic to the user's clinics
@@ -1265,31 +1355,31 @@ export class ClinicService {
         where: { id: userId },
         data: {
           clinics: {
-            connect: { id: clinicUUID }
-          }
-        }
+            connect: { id: clinicUUID },
+          },
+        },
       });
 
       await this.errorService.logSuccess(
-        'User associated with clinic successfully',
-        'ClinicService',
-        'associate user with clinic',
-        { userId, clinicId }
+        "User associated with clinic successfully",
+        "ClinicService",
+        "associate user with clinic",
+        { userId, clinicId },
       );
 
-      await this.eventService.emit('clinic.user.associated', {
+      await this.eventService.emit("clinic.user.associated", {
         userId,
         clinicId,
-        clinicName: clinic.name
+        clinicName: clinic.name,
       });
 
       return true;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'associate user with clinic',
-        { userId, clinicId }
+        "ClinicService",
+        "associate user with clinic",
+        { userId, clinicId },
       );
       throw error;
     }
@@ -1303,17 +1393,19 @@ export class ClinicService {
         include: {
           clinics: {
             where: { id: clinicUUID },
-            select: { clinicId: true }
-          }
-        }
+            select: { clinicId: true },
+          },
+        },
       });
 
       if (!user) {
-        throw new NotFoundException('User not found');
+        throw new NotFoundException("User not found");
       }
 
       if (!user.clinics.length) {
-        throw new UnauthorizedException('User is not associated with this clinic');
+        throw new UnauthorizedException(
+          "User is not associated with this clinic",
+        );
       }
 
       // Generate a JWT token with clinic-specific claims
@@ -1322,16 +1414,16 @@ export class ClinicService {
         email: user.email,
         role: user.role,
         clinicId: clinicUUID,
-        clinicIdentifier: user.clinics[0].clinicId
+        clinicIdentifier: user.clinics[0].clinicId,
       });
 
       return token;
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'generate clinic token',
-        { userId, clinicId }
+        "ClinicService",
+        "generate clinic token",
+        { userId, clinicId },
       );
       throw error;
     }
@@ -1346,43 +1438,46 @@ export class ClinicService {
       // Get user's primary clinic or first associated clinic
       const userWithClinics = await this.prisma.user.findUnique({
         where: { id: userId },
-        include: { 
+        include: {
           primaryClinic: true,
-          clinics: true
-        }
+          clinics: true,
+        },
       });
-      
+
       if (!userWithClinics) {
         await this.errorService.logError(
-          { message: 'User not found' },
-          'ClinicService',
-          'find user',
-          { userId }
+          { message: "User not found" },
+          "ClinicService",
+          "find user",
+          { userId },
         );
-        throw new NotFoundException('User not found');
+        throw new NotFoundException("User not found");
       }
-      
+
       // Get the clinic ID (primary clinic or first associated clinic)
-      const clinicId = userWithClinics.primaryClinicId || 
-                      (userWithClinics.clinics.length > 0 ? userWithClinics.clinics[0].id : null);
-      
+      const clinicId =
+        userWithClinics.primaryClinicId ||
+        (userWithClinics.clinics.length > 0
+          ? userWithClinics.clinics[0].id
+          : null);
+
       if (!clinicId) {
         await this.errorService.logError(
-          { message: 'User not associated with any clinic' },
-          'ClinicService',
-          'find user clinic',
-          { userId }
+          { message: "User not associated with any clinic" },
+          "ClinicService",
+          "find user clinic",
+          { userId },
         );
-        throw new NotFoundException('User not associated with any clinic');
+        throw new NotFoundException("User not associated with any clinic");
       }
-      
+
       return this.getClinicById(clinicId, userId);
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get current user clinic',
-        { userId }
+        "ClinicService",
+        "get current user clinic",
+        { userId },
       );
       throw error;
     }
@@ -1400,22 +1495,24 @@ export class ClinicService {
     try {
       // Validate clinic access
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-      
+
       // Execute dashboard operation with data isolation using healthcare database client
-      const dashboardResult = await this.healthcareDatabaseClient.getClinicDashboardStats(clinicUUID);
-      
+      const dashboardResult =
+        await this.healthcareDatabaseClient.getClinicDashboardStats(clinicUUID);
+
       if (dashboardResult.isSuccess) {
         // Get additional metrics
-        const metricsResult = await this.healthcareDatabaseClient.getClinicMetrics(clinicUUID);
-        
+        const metricsResult =
+          await this.healthcareDatabaseClient.getClinicMetrics(clinicUUID);
+
         return {
           success: true,
           data: {
             dashboard: dashboardResult.data,
             metrics: metricsResult,
             clinicId: clinicUUID,
-            executionTime: dashboardResult.metadata?.executionTime
-          }
+            executionTime: dashboardResult.metadata?.executionTime,
+          },
         };
       } else {
         throw dashboardResult.error;
@@ -1423,9 +1520,9 @@ export class ClinicService {
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get clinic dashboard enterprise',
-        { clinicId, userId }
+        "ClinicService",
+        "get clinic dashboard enterprise",
+        { clinicId, userId },
       );
       throw error;
     }
@@ -1435,25 +1532,26 @@ export class ClinicService {
    * Get clinic patients with enterprise pagination and filtering
    */
   async getClinicPatientsEnterprise(
-    clinicId: string, 
+    clinicId: string,
     userId: string,
     options: {
       page?: number;
       limit?: number;
       locationId?: string;
       searchTerm?: string;
-    } = {}
+    } = {},
   ) {
     try {
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-      
-      const patientsResult = await this.healthcareDatabaseClient.getClinicPatients(clinicUUID, {
-        page: options.page || 1,
-        limit: options.limit || 20,
-        locationId: options.locationId,
-        searchTerm: options.searchTerm,
-        includeInactive: false
-      });
+
+      const patientsResult =
+        await this.healthcareDatabaseClient.getClinicPatients(clinicUUID, {
+          page: options.page || 1,
+          limit: options.limit || 20,
+          locationId: options.locationId,
+          searchTerm: options.searchTerm,
+          includeInactive: false,
+        });
 
       if (patientsResult.isSuccess) {
         return {
@@ -1461,8 +1559,8 @@ export class ClinicService {
           data: patientsResult.data,
           metadata: {
             executionTime: patientsResult.metadata?.executionTime,
-            clinicId: clinicUUID
-          }
+            clinicId: clinicUUID,
+          },
         };
       } else {
         throw patientsResult.error;
@@ -1470,9 +1568,9 @@ export class ClinicService {
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get clinic patients enterprise',
-        { clinicId, userId, options }
+        "ClinicService",
+        "get clinic patients enterprise",
+        { clinicId, userId, options },
       );
       throw error;
     }
@@ -1492,20 +1590,21 @@ export class ClinicService {
       doctorId?: string;
       page?: number;
       limit?: number;
-    } = {}
+    } = {},
   ) {
     try {
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-      
-      const appointmentsResult = await this.healthcareDatabaseClient.getClinicAppointments(clinicUUID, {
-        page: filters.page || 1,
-        limit: filters.limit || 50,
-        locationId: filters.locationId,
-        dateFrom: filters.dateFrom,
-        dateTo: filters.dateTo,
-        status: filters.status,
-        doctorId: filters.doctorId
-      });
+
+      const appointmentsResult =
+        await this.healthcareDatabaseClient.getClinicAppointments(clinicUUID, {
+          page: filters.page || 1,
+          limit: filters.limit || 50,
+          locationId: filters.locationId,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          status: filters.status,
+          doctorId: filters.doctorId,
+        });
 
       if (appointmentsResult.isSuccess) {
         return {
@@ -1514,8 +1613,8 @@ export class ClinicService {
           filters,
           metadata: {
             executionTime: appointmentsResult.metadata?.executionTime,
-            clinicId: clinicUUID
-          }
+            clinicId: clinicUUID,
+          },
         };
       } else {
         throw appointmentsResult.error;
@@ -1523,9 +1622,9 @@ export class ClinicService {
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get clinic appointments enterprise',
-        { clinicId, userId, filters }
+        "ClinicService",
+        "get clinic appointments enterprise",
+        { clinicId, userId, filters },
       );
       throw error;
     }
@@ -1537,10 +1636,10 @@ export class ClinicService {
   async createPatientEnterprise(
     clinicId: string,
     userId: string,
-    patientData: any
+    patientData: any,
   ): Promise<RepositoryResult<any>> {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-    
+
     try {
       // Execute patient creation with clinic context and audit trail
       const patient = await this.prisma.patient.create({
@@ -1555,9 +1654,9 @@ export class ClinicService {
               name: true,
               email: true,
               phone: true,
-            }
-          }
-        }
+            },
+          },
+        },
       });
 
       return RepositoryResult.success(patient);
@@ -1572,9 +1671,10 @@ export class ClinicService {
   async getClinicDatabaseHealth(clinicId: string): Promise<any> {
     try {
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
-      
+
       // Get basic health status using healthcare database client
-      const healthStatus = await this.healthcareDatabaseClient.getHealthStatus();
+      const healthStatus =
+        await this.healthcareDatabaseClient.getHealthStatus();
       const metrics = await this.healthcareDatabaseClient.getMetrics();
 
       return {
@@ -1583,15 +1683,15 @@ export class ClinicService {
           health: healthStatus,
           metrics,
           clinicId: clinicUUID,
-          timestamp: new Date()
-        }
+          timestamp: new Date(),
+        },
       };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get clinic database health',
-        { clinicId }
+        "ClinicService",
+        "get clinic database health",
+        { clinicId },
       );
       throw error;
     }
@@ -1604,36 +1704,38 @@ export class ClinicService {
     try {
       // Resolve all clinic UUIDs
       const resolvedClinicIds = await Promise.all(
-        clinicIds.map(id => resolveClinicUUID(this.prisma, id))
+        clinicIds.map((id) => resolveClinicUUID(this.prisma, id)),
       );
-      
+
       // Execute parallel operations with proper isolation using healthcare database client
       const summaryPromises = resolvedClinicIds.map(async (clinicId) => {
         try {
           const [dashboardResult, metricsResult] = await Promise.all([
             this.healthcareDatabaseClient.getClinicDashboardStats(clinicId),
-            this.healthcareDatabaseClient.getMetrics()
+            this.healthcareDatabaseClient.getMetrics(),
           ]);
-          
+
           return {
             clinicId,
             dashboard: dashboardResult.isSuccess ? dashboardResult.data : null,
             metrics: metricsResult,
-            error: dashboardResult.isFailure ? dashboardResult.error?.message : null
+            error: dashboardResult.isFailure
+              ? dashboardResult.error?.message
+              : null,
           };
         } catch (error) {
           return {
             clinicId,
             dashboard: null,
             metrics: null,
-            error: error instanceof Error ? (error as Error).message : 'Unknown error'
+            error: error instanceof Error ? error.message : "Unknown error",
           };
         }
       });
 
       const results = await Promise.all(summaryPromises);
-      
-      const successful = results.filter(r => !r.error).length;
+
+      const successful = results.filter((r) => !r.error).length;
       const failed = results.length - successful;
 
       return {
@@ -1642,15 +1744,15 @@ export class ClinicService {
         summary: {
           totalClinics: results.length,
           successful,
-          failed
-        }
+          failed,
+        },
       };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get multi clinic summary enterprise',
-        { clinicIds, userId }
+        "ClinicService",
+        "get multi clinic summary enterprise",
+        { clinicIds, userId },
       );
       throw error;
     }
@@ -1664,27 +1766,27 @@ export class ClinicService {
       // Get basic database health and metrics using healthcare database client
       const healthCheck = await this.healthcareDatabaseClient.getHealthStatus();
       const metrics = await this.healthcareDatabaseClient.getMetrics();
-      
+
       return {
         success: true,
         data: {
           factory: {
             activeConnections: (metrics as any).activeConnections || 0,
             totalConnections: (metrics as any).totalConnections || 0,
-            connectionPoolSize: (metrics as any).connectionPool?.size || 0
+            connectionPoolSize: (metrics as any).connectionPool?.size || 0,
           },
           health: healthCheck,
-          timestamp: new Date()
-        }
+          timestamp: new Date(),
+        },
       };
     } catch (error) {
       await this.errorService.logError(
         error,
-        'ClinicService',
-        'get database factory stats',
-        {}
+        "ClinicService",
+        "get database factory stats",
+        {},
       );
       throw error;
     }
   }
-} 
+}

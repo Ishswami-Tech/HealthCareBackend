@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from "@nestjs/common";
 
 export interface BusinessRule {
   id: string;
@@ -33,23 +33,29 @@ export class BusinessRulesEngine {
    */
   async evaluateRules(context: RuleContext): Promise<RuleResult> {
     try {
-      this.logger.log(`Evaluating business rules for context: ${JSON.stringify(context)}`);
-      
+      this.logger.log(
+        `Evaluating business rules for context: ${JSON.stringify(context)}`,
+      );
+
       // Placeholder rule evaluation logic
       return {
         valid: true,
         violations: [],
         warnings: [],
-        actions: []
+        actions: [],
       };
     } catch (error) {
-      this.logger.error(`Rule evaluation failed:`, error instanceof Error ? (error as Error).stack : '');
-      const errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+      this.logger.error(
+        `Rule evaluation failed:`,
+        error instanceof Error ? error.stack : "",
+      );
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       return {
         valid: false,
-        violations: [error instanceof Error ? (error as Error).message : 'Unknown error'],
+        violations: [error instanceof Error ? error.message : "Unknown error"],
         warnings: [errorMessage],
-        actions: []
+        actions: [],
       };
     }
   }

@@ -5,10 +5,10 @@ import { PrismaModule } from "../../libs/infrastructure/database/prisma/prisma.m
 import { GuardsModule } from "../../libs/core/guards/guards.module";
 import { RateLimitModule } from "../../libs/utils/rate-limit/rate-limit.module";
 import { EventsModule } from "../../libs/infrastructure/events/events.module";
-import { RbacModule } from '../../libs/core/rbac/rbac.module';
-import { AuthModule } from '../auth/auth.module';
-import { LoggingServiceModule } from '../../libs/infrastructure/logging/logging-service.module';
-import { ErrorsModule } from '../../libs/core/errors/errors.module';
+import { RbacModule } from "../../libs/core/rbac/rbac.module";
+import { AuthModule } from "../auth/auth.module";
+import { LoggingServiceModule } from "../../libs/infrastructure/logging/logging-service.module";
+import { ErrorsModule } from "../../libs/core/errors/errors.module";
 
 @Module({
   imports: [

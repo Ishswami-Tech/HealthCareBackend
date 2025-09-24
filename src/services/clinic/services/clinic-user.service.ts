@@ -1,9 +1,12 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { PrismaService } from 'src/libs/infrastructure/database/prisma/prisma.service';
-import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
-import { LogType, LogLevel } from 'src/libs/infrastructure/logging/types/logging.types';
-import { Role } from 'src/libs/infrastructure/database/prisma/prisma.types';
-import { resolveClinicUUID } from 'src/libs/utils/clinic.utils';
+import { Injectable, NotFoundException, Logger } from "@nestjs/common";
+import { PrismaService } from "src/libs/infrastructure/database/prisma/prisma.service";
+import { LoggingService } from "src/libs/infrastructure/logging/logging.service";
+import {
+  LogType,
+  LogLevel,
+} from "src/libs/infrastructure/logging/types/logging.types";
+import { Role } from "src/libs/infrastructure/database/prisma/prisma.types";
+import { resolveClinicUUID } from "src/libs/utils/clinic.utils";
 
 @Injectable()
 export class ClinicUserService {
@@ -21,10 +24,10 @@ export class ClinicUserService {
         include: {
           doctor: {
             include: {
-              user: true
-            }
-          }
-        }
+              user: true,
+            },
+          },
+        },
       });
 
       // Get receptionists
@@ -32,8 +35,8 @@ export class ClinicUserService {
         where: { clinicId },
         include: {
           user: true,
-          clinic: true
-        }
+          clinic: true,
+        },
       });
 
       // Get patients with clinic association
@@ -42,28 +45,32 @@ export class ClinicUserService {
           user: {
             clinics: {
               some: {
-                id: clinicId
-              }
-            }
-          }
+                id: clinicId,
+              },
+            },
+          },
         },
         include: {
-          user: true
-        }
+          user: true,
+        },
       });
 
       return {
         doctors,
         receptionists,
-        patients
+        patients,
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
-        'ClinicUserService',
-        { clinicId, error: error instanceof Error ? (error as Error).stack : 'No stack trace available' }
+        `Failed to get clinic users: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "ClinicUserService",
+        {
+          clinicId,
+          error:
+            error instanceof Error ? error.stack : "No stack trace available",
+        },
       );
       throw error;
     }
@@ -79,18 +86,18 @@ export class ClinicUserService {
             include: {
               doctor: {
                 include: {
-                  user: true
-                }
-              }
-            }
+                  user: true,
+                },
+              },
+            },
           });
         case Role.RECEPTIONIST:
           return await this.prisma.receptionist.findMany({
             where: { clinicId },
             include: {
               user: true,
-              clinic: true
-            }
+              clinic: true,
+            },
           });
         case Role.PATIENT:
           return await this.prisma.patient.findMany({
@@ -98,14 +105,14 @@ export class ClinicUserService {
               user: {
                 clinics: {
                   some: {
-                    id: clinicId
-                  }
-                }
-              }
+                    id: clinicId,
+                  },
+                },
+              },
             },
             include: {
-              user: true
-            }
+              user: true,
+            },
           });
         default:
           return [];
@@ -114,11 +121,16 @@ export class ClinicUserService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users by role: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
-        'ClinicUserService',
-        { clinicId, role, error: error instanceof Error ? (error as Error).stack : 'No stack trace available' }
+        `Failed to get clinic users by role: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "ClinicUserService",
+        {
+          clinicId,
+          role,
+          error:
+            error instanceof Error ? error.stack : "No stack trace available",
+        },
       );
       throw error;
     }
   }
-} 
+}

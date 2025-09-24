@@ -5,10 +5,15 @@
  * Handles all queue types with domain-specific processing
  */
 
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { Worker, Job } from 'bullmq';
-import { ConfigService } from '@nestjs/config';
-import { CacheService } from '../../cache';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from "@nestjs/common";
+import { Worker, Job } from "bullmq";
+import { ConfigService } from "@nestjs/config";
+import { CacheService } from "../../cache";
 
 // Queue constants
 import {
@@ -31,10 +36,10 @@ import {
   REMINDER_QUEUE,
   FOLLOW_UP_QUEUE,
   RECURRING_APPOINTMENT_QUEUE,
-} from './queue.constants';
+} from "./queue.constants";
 
 export interface QueueJobData {
-  domain: 'clinic';
+  domain: "clinic";
   action: string;
   data: any;
   metadata?: Record<string, any>;
@@ -62,10 +67,10 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   private async initializeWorkers() {
     try {
       const redisConnection = {
-        host: this.configService.get('redis.host', 'localhost'),
-        port: this.configService.get('redis.port', 6379),
-        password: this.configService.get('redis.password'),
-        db: this.configService.get('redis.db', 0),
+        host: this.configService.get("redis.host", "localhost"),
+        port: this.configService.get("redis.port", 6379),
+        password: this.configService.get("redis.password"),
+        db: this.configService.get("redis.db", 0),
         maxRetriesPerRequest: null,
         retryDelayOnFailover: 100,
         connectTimeout: 10000,
@@ -103,21 +108,29 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // Initialize workers for each queue
       for (const config of queueConfigs) {
-        await this.createWorker(config.name, config.concurrency, redisConnection);
+        await this.createWorker(
+          config.name,
+          config.concurrency,
+          redisConnection,
+        );
       }
 
-      this.logger.log(`Shared worker service initialized with ${queueConfigs.length} queues`);
-
+      this.logger.log(
+        `Shared worker service initialized with ${queueConfigs.length} queues`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to initialize shared worker service: ${(error as Error).message}`, (error as Error).stack);
+      this.logger.error(
+        `Failed to initialize shared worker service: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
       throw error;
     }
   }
 
   private async createWorker(
-    queueName: string, 
-    concurrency: number, 
-    redisConnection: any
+    queueName: string,
+    concurrency: number,
+    redisConnection: any,
   ) {
     try {
       const worker = new Worker(
@@ -128,44 +141,38 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
         {
           connection: redisConnection,
           concurrency,
-          prefix: 'healthcare:worker',
+          prefix: "healthcare:worker",
           autorun: true,
           stalledInterval: 30000,
           maxStalledCount: 1,
-        }
+        },
       );
 
       // Worker event handlers
-      worker.on('completed', async (job) => {
-        this.logger.log(
-          `Job completed: ${job.name} on queue ${queueName}`,
-          { jobId: job.id, queueName }
-        );
+      worker.on("completed", async (job) => {
+        this.logger.log(`Job completed: ${job.name} on queue ${queueName}`, {
+          jobId: job.id,
+          queueName,
+        });
       });
 
-      worker.on('failed', async (job, err) => {
-        this.logger.log(
-          `Job failed: ${job?.name} on queue ${queueName}`,
-          { jobId: job?.id, queueName, error: err.message }
-        );
+      worker.on("failed", async (job, err) => {
+        this.logger.log(`Job failed: ${job?.name} on queue ${queueName}`, {
+          jobId: job?.id,
+          queueName,
+          error: err.message,
+        });
       });
 
-      worker.on('error', async (err) => {
-        this.logger.log(
-          `Worker error on queue ${queueName}`,
-        );
+      worker.on("error", async (err) => {
+        this.logger.log(`Worker error on queue ${queueName}`);
       });
 
       this.workers.set(queueName, worker);
 
-      this.logger.log(
-        `Worker created for queue: ${queueName}`,
-      );
-
+      this.logger.log(`Worker created for queue: ${queueName}`);
     } catch (error) {
-      this.logger.log(
-        `Failed to create worker for queue ${queueName}`,
-      );
+      this.logger.log(`Failed to create worker for queue ${queueName}`);
       throw error;
     }
   }
@@ -178,84 +185,128 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // Process healthcare job
       return await this.processClinicJob(action, data, metadata);
-
     } catch (error) {
-      this.logger.log(
-        `Job processing failed: ${(error as Error).message}`,
-      );
+      this.logger.log(`Job processing failed: ${(error as Error).message}`);
       throw error;
     }
   }
 
-  private async processClinicJob(action: string, data: any, metadata?: Record<string, any>): Promise<{success: boolean; message: string; data?: any}> {
+  private async processClinicJob(
+    action: string,
+    data: any,
+    metadata?: Record<string, any>,
+  ): Promise<{ success: boolean; message: string; data?: any }> {
     try {
       // Implement proper clinic job processing based on action type
       switch (action) {
-        case 'appointment_created':
+        case "appointment_created":
           return await this.processAppointmentCreated(data, metadata);
-        case 'appointment_updated':
+        case "appointment_updated":
           return await this.processAppointmentUpdated(data, metadata);
-        case 'appointment_cancelled':
+        case "appointment_cancelled":
           return await this.processAppointmentCancelled(data, metadata);
-        case 'patient_checkin':
+        case "patient_checkin":
           return await this.processPatientCheckin(data, metadata);
-        case 'notification_send':
+        case "notification_send":
           return await this.processNotificationSend(data, metadata);
         default:
           this.logger.warn(`Unknown clinic job action: ${action}`);
-          return { success: false, message: `Unknown clinic job action: ${action}` };
+          return {
+            success: false,
+            message: `Unknown clinic job action: ${action}`,
+          };
       }
     } catch (error) {
       this.logger.error(`Error processing clinic job ${action}:`, error);
-      return { success: false, message: `Error processing clinic job: ${(error as Error).message}` };
+      return {
+        success: false,
+        message: `Error processing clinic job: ${(error as Error).message}`,
+      };
     }
   }
 
-  private async processAppointmentCreated(data: any, metadata?: Record<string, any>): Promise<{success: boolean; message: string}> {
-    this.logger.log('Processing appointment creation job', { appointmentId: data?.appointmentId });
+  private async processAppointmentCreated(
+    data: any,
+    metadata?: Record<string, any>,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log("Processing appointment creation job", {
+      appointmentId: data?.appointmentId,
+    });
     // Process appointment creation logic here
-    return { success: true, message: 'Appointment creation processed successfully' };
+    return {
+      success: true,
+      message: "Appointment creation processed successfully",
+    };
   }
 
-  private async processAppointmentUpdated(data: any, metadata?: Record<string, any>): Promise<{success: boolean; message: string}> {
-    this.logger.log('Processing appointment update job', { appointmentId: data?.appointmentId });
+  private async processAppointmentUpdated(
+    data: any,
+    metadata?: Record<string, any>,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log("Processing appointment update job", {
+      appointmentId: data?.appointmentId,
+    });
     // Process appointment update logic here
-    return { success: true, message: 'Appointment update processed successfully' };
+    return {
+      success: true,
+      message: "Appointment update processed successfully",
+    };
   }
 
-  private async processAppointmentCancelled(data: any, metadata?: Record<string, any>): Promise<{success: boolean; message: string}> {
-    this.logger.log('Processing appointment cancellation job', { appointmentId: data?.appointmentId });
+  private async processAppointmentCancelled(
+    data: any,
+    metadata?: Record<string, any>,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log("Processing appointment cancellation job", {
+      appointmentId: data?.appointmentId,
+    });
     // Process appointment cancellation logic here
-    return { success: true, message: 'Appointment cancellation processed successfully' };
+    return {
+      success: true,
+      message: "Appointment cancellation processed successfully",
+    };
   }
 
-  private async processPatientCheckin(data: any, metadata?: Record<string, any>): Promise<{success: boolean; message: string}> {
-    this.logger.log('Processing patient check-in job', { patientId: data?.patientId });
+  private async processPatientCheckin(
+    data: any,
+    metadata?: Record<string, any>,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log("Processing patient check-in job", {
+      patientId: data?.patientId,
+    });
     // Process patient check-in logic here
-    return { success: true, message: 'Patient check-in processed successfully' };
+    return {
+      success: true,
+      message: "Patient check-in processed successfully",
+    };
   }
 
-  private async processNotificationSend(data: any, metadata?: Record<string, any>): Promise<{success: boolean; message: string}> {
-    this.logger.log('Processing notification send job', { notificationType: data?.type });
+  private async processNotificationSend(
+    data: any,
+    metadata?: Record<string, any>,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log("Processing notification send job", {
+      notificationType: data?.type,
+    });
     // Process notification sending logic here
-    return { success: true, message: 'Notification sent successfully' };
+    return { success: true, message: "Notification sent successfully" };
   }
-
 
   private async shutdownWorkers() {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
 
     try {
-      const shutdownPromises = Array.from(this.workers.values()).map(async (worker) => {
-        await worker.close();
-      });
+      const shutdownPromises = Array.from(this.workers.values()).map(
+        async (worker) => {
+          await worker.close();
+        },
+      );
 
       await Promise.all(shutdownPromises);
       this.workers.clear();
 
-      this.logger.log('All workers shut down successfully');
-
+      this.logger.log("All workers shut down successfully");
     } catch (error) {
       this.logger.log(
         `Error during worker shutdown: ${(error as Error).message}`,

@@ -1,16 +1,16 @@
 /**
  * Enterprise Plugin Interface Library
- * 
+ *
  * Provides unified plugin system for all healthcare platform services.
  * Supports domain-specific plugins with enterprise-grade features.
  */
 
 // Core Interfaces
-export * from './plugin.interface';
+export * from "./plugin.interface";
 
 // Implementations
-export * from './plugin.registry';
-export * from './plugin.manager';
+export * from "./plugin.registry";
+export * from "./plugin.manager";
 
 // Re-export commonly used types for convenience
 export type {
@@ -28,13 +28,9 @@ export type {
   PluginValidationError,
   PluginEvent,
   PluginMetrics,
-  PluginFactory
-} from './plugin.interface';
+  PluginFactory,
+} from "./plugin.interface";
 
-export {
-  EnterprisePluginRegistry
-} from './plugin.registry';
+export { EnterprisePluginRegistry } from "./plugin.registry";
 
-export {
-  EnterprisePluginManager
-} from './plugin.manager';
+export { EnterprisePluginManager } from "./plugin.manager";

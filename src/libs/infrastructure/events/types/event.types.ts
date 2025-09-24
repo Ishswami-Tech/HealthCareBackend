@@ -6,68 +6,68 @@
  */
 
 export enum EventPriority {
-  LOW = 'LOW',
-  NORMAL = 'NORMAL',
-  HIGH = 'HIGH',
-  CRITICAL = 'CRITICAL',
-  EMERGENCY = 'EMERGENCY'
+  LOW = "LOW",
+  NORMAL = "NORMAL",
+  HIGH = "HIGH",
+  CRITICAL = "CRITICAL",
+  EMERGENCY = "EMERGENCY",
 }
 
 export enum EventStatus {
-  PENDING = 'PENDING',
-  PROCESSING = 'PROCESSING',
-  COMPLETED = 'COMPLETED',
-  FAILED = 'FAILED',
-  RETRYING = 'RETRYING',
-  CANCELLED = 'CANCELLED'
+  PENDING = "PENDING",
+  PROCESSING = "PROCESSING",
+  COMPLETED = "COMPLETED",
+  FAILED = "FAILED",
+  RETRYING = "RETRYING",
+  CANCELLED = "CANCELLED",
 }
 
 export enum EventCategory {
   // Healthcare Business Events
-  APPOINTMENT = 'APPOINTMENT',
-  PATIENT = 'PATIENT',
-  DOCTOR = 'DOCTOR',
-  MEDICAL_RECORD = 'MEDICAL_RECORD',
-  PRESCRIPTION = 'PRESCRIPTION',
-  DIAGNOSIS = 'DIAGNOSIS',
-  TREATMENT = 'TREATMENT',
-  BILLING = 'BILLING',
-  
+  APPOINTMENT = "APPOINTMENT",
+  PATIENT = "PATIENT",
+  DOCTOR = "DOCTOR",
+  MEDICAL_RECORD = "MEDICAL_RECORD",
+  PRESCRIPTION = "PRESCRIPTION",
+  DIAGNOSIS = "DIAGNOSIS",
+  TREATMENT = "TREATMENT",
+  BILLING = "BILLING",
+
   // System Events
-  SYSTEM = 'SYSTEM',
-  AUTHENTICATION = 'AUTHENTICATION',
-  AUTHORIZATION = 'AUTHORIZATION',
-  AUDIT = 'AUDIT',
-  SECURITY = 'SECURITY',
-  
+  SYSTEM = "SYSTEM",
+  AUTHENTICATION = "AUTHENTICATION",
+  AUTHORIZATION = "AUTHORIZATION",
+  AUDIT = "AUDIT",
+  SECURITY = "SECURITY",
+
   // Infrastructure Events
-  DATABASE = 'DATABASE',
-  CACHE = 'CACHE',
-  QUEUE = 'QUEUE',
-  STORAGE = 'STORAGE',
-  NETWORK = 'NETWORK',
-  
+  DATABASE = "DATABASE",
+  CACHE = "CACHE",
+  QUEUE = "QUEUE",
+  STORAGE = "STORAGE",
+  NETWORK = "NETWORK",
+
   // Communication Events
-  EMAIL = 'EMAIL',
-  SMS = 'SMS',
-  NOTIFICATION = 'NOTIFICATION',
-  WEBSOCKET = 'WEBSOCKET',
-  
+  EMAIL = "EMAIL",
+  SMS = "SMS",
+  NOTIFICATION = "NOTIFICATION",
+  WEBSOCKET = "WEBSOCKET",
+
   // Integration Events
-  WEBHOOK = 'WEBHOOK',
-  API = 'API',
-  EXTERNAL_SERVICE = 'EXTERNAL_SERVICE',
-  
+  WEBHOOK = "WEBHOOK",
+  API = "API",
+  EXTERNAL_SERVICE = "EXTERNAL_SERVICE",
+
   // Compliance Events
-  HIPAA = 'HIPAA',
-  GDPR = 'GDPR',
-  AUDIT_TRAIL = 'AUDIT_TRAIL',
-  
+  HIPAA = "HIPAA",
+  GDPR = "GDPR",
+  AUDIT_TRAIL = "AUDIT_TRAIL",
+
   // Performance Events
-  PERFORMANCE = 'PERFORMANCE',
-  MONITORING = 'MONITORING',
-  SCALING = 'SCALING',
-  HEALTH_CHECK = 'HEALTH_CHECK'
+  PERFORMANCE = "PERFORMANCE",
+  MONITORING = "MONITORING",
+  SCALING = "SCALING",
+  HEALTH_CHECK = "HEALTH_CHECK",
 }
 
 export interface BaseEventPayload {
@@ -97,7 +97,7 @@ export interface EnterpriseEventPayload extends BaseEventPayload {
     region: string;
     city: string;
   };
-  
+
   // Performance tracking
   performanceMetrics?: {
     executionTime?: number;
@@ -105,16 +105,16 @@ export interface EnterpriseEventPayload extends BaseEventPayload {
     cpuUsage?: number;
     networkLatency?: number;
   };
-  
+
   // Retry mechanism
   retryAttempt?: number;
   maxRetries?: number;
   retryDelay?: number;
-  
+
   // Scheduling
   scheduledFor?: string;
   expiresAt?: string;
-  
+
   // Error handling
   errorInfo?: {
     message: string;
@@ -122,11 +122,11 @@ export interface EnterpriseEventPayload extends BaseEventPayload {
     stack?: string;
     context?: Record<string, any>;
   };
-  
+
   // Compliance
   complianceInfo?: {
     requiresAudit: boolean;
-    dataClassification: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'PHI';
+    dataClassification: "PUBLIC" | "INTERNAL" | "CONFIDENTIAL" | "PHI";
     retentionPeriod: number;
     encryptionRequired: boolean;
   };
@@ -139,7 +139,13 @@ export interface AppointmentEvent extends EnterpriseEventPayload {
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
-  status: 'SCHEDULED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
+  status:
+    | "SCHEDULED"
+    | "CONFIRMED"
+    | "IN_PROGRESS"
+    | "COMPLETED"
+    | "CANCELLED"
+    | "NO_SHOW";
   appointmentType: string;
   duration: number;
   notes?: string;
@@ -147,7 +153,7 @@ export interface AppointmentEvent extends EnterpriseEventPayload {
 
 export interface PatientEvent extends EnterpriseEventPayload {
   patientId: string;
-  action: 'CREATED' | 'UPDATED' | 'DELETED' | 'ARCHIVED' | 'MERGED';
+  action: "CREATED" | "UPDATED" | "DELETED" | "ARCHIVED" | "MERGED";
   patientData?: {
     name: string;
     age: number;
@@ -157,22 +163,35 @@ export interface PatientEvent extends EnterpriseEventPayload {
     allergies?: string[];
     emergencyContact?: Record<string, any>;
   };
-  consentStatus?: 'GRANTED' | 'DENIED' | 'WITHDRAWN' | 'EXPIRED';
+  consentStatus?: "GRANTED" | "DENIED" | "WITHDRAWN" | "EXPIRED";
 }
 
 export interface MedicalRecordEvent extends EnterpriseEventPayload {
   recordId: string;
   patientId: string;
   providerId: string;
-  recordType: 'CLINICAL_NOTE' | 'LAB_RESULT' | 'IMAGING' | 'PRESCRIPTION' | 'PROCEDURE';
-  action: 'CREATED' | 'UPDATED' | 'ACCESSED' | 'SHARED' | 'DELETED';
+  recordType:
+    | "CLINICAL_NOTE"
+    | "LAB_RESULT"
+    | "IMAGING"
+    | "PRESCRIPTION"
+    | "PROCEDURE";
+  action: "CREATED" | "UPDATED" | "ACCESSED" | "SHARED" | "DELETED";
   phi: boolean;
-  accessReason: 'TREATMENT' | 'PAYMENT' | 'OPERATIONS' | 'RESEARCH' | 'LEGAL';
+  accessReason: "TREATMENT" | "PAYMENT" | "OPERATIONS" | "RESEARCH" | "LEGAL";
 }
 
 export interface SecurityEvent extends EnterpriseEventPayload {
-  securityEventType: 'LOGIN_SUCCESS' | 'LOGIN_FAILURE' | 'LOGOUT' | 'PASSWORD_CHANGE' | 'ACCOUNT_LOCKED' | 'SUSPICIOUS_ACTIVITY' | 'UNAUTHORIZED_ACCESS' | 'DATA_BREACH';
-  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  securityEventType:
+    | "LOGIN_SUCCESS"
+    | "LOGIN_FAILURE"
+    | "LOGOUT"
+    | "PASSWORD_CHANGE"
+    | "ACCOUNT_LOCKED"
+    | "SUSPICIOUS_ACTIVITY"
+    | "UNAUTHORIZED_ACCESS"
+    | "DATA_BREACH";
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   ipAddress: string;
   userAgent: string;
   deviceFingerprint?: string;
@@ -187,14 +206,21 @@ export interface SecurityEvent extends EnterpriseEventPayload {
 
 export interface SystemEvent extends EnterpriseEventPayload {
   systemComponent: string;
-  action: 'START' | 'STOP' | 'RESTART' | 'DEPLOY' | 'SCALE' | 'BACKUP' | 'MAINTENANCE';
+  action:
+    | "START"
+    | "STOP"
+    | "RESTART"
+    | "DEPLOY"
+    | "SCALE"
+    | "BACKUP"
+    | "MAINTENANCE";
   resourceMetrics?: {
     cpu: number;
     memory: number;
     disk: number;
     network: number;
   };
-  serviceHealth?: 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'CRITICAL';
+  serviceHealth?: "HEALTHY" | "DEGRADED" | "UNHEALTHY" | "CRITICAL";
 }
 
 export interface EventResult<T = any> {

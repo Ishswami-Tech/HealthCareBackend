@@ -21,7 +21,7 @@ export interface OTPResult {
   success: boolean;
   message: string;
   expiresIn?: number;
-  method?: 'sms' | 'email';
+  method?: "sms" | "email";
 }
 
 export interface UserProfile {
@@ -75,6 +75,10 @@ export interface TokenPayload {
   sessionId?: string;
   iat?: number;
   exp?: number;
+  jti?: string; // JWT ID for blacklist tracking
+  deviceFingerprint?: string; // Device fingerprint for security
+  userAgent?: string; // User agent for security tracking
+  ipAddress?: string; // IP address for security validation
 }
 
 export interface AuthenticatedRequest {
@@ -97,7 +101,7 @@ export interface DomainValidationResult {
 
 // Health Check Types
 export interface HealthCheckResponse {
-  status: 'healthy' | 'unhealthy' | 'degraded';
+  status: "healthy" | "unhealthy" | "degraded";
   timestamp: string;
   environment: string;
   version: string;
@@ -112,7 +116,7 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
 }
 
 export interface ServiceHealth {
-  status: 'healthy' | 'unhealthy';
+  status: "healthy" | "unhealthy";
   details?: string;
   error?: string;
   responseTime: number;

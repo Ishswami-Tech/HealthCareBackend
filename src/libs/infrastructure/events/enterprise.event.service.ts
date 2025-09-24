@@ -5,11 +5,11 @@
  * ===================================================================
  */
 
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { LoggingService } from '../logging/logging.service';
-import { LogLevel, LogType } from '../logging/types/logging.types';
-import { RedisService } from '../cache/redis/redis.service';
+import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
+import { LoggingService } from "../logging/logging.service";
+import { LogLevel, LogType } from "../logging/types/logging.types";
+import { RedisService } from "../cache/redis/redis.service";
 import {
   EnterpriseEventPayload,
   EventCategory,
@@ -18,8 +18,8 @@ import {
   EventResult,
   EventFilter,
   EventMetrics,
-  EventSubscription
-} from './types/event.types';
+  EventSubscription,
+} from "./types/event.types";
 
 @Injectable()
 export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
@@ -30,9 +30,9 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
   private processedEvents = 0;
   private failedEvents = 0;
   private totalProcessingTime = 0;
-  
+
   // Circuit breaker pattern
-  private circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  private circuitBreakerState: "CLOSED" | "OPEN" | "HALF_OPEN" = "CLOSED";
   private failureCount = 0;
   private lastFailureTime = 0;
   private circuitBreakerTimeout = 60000; // 1 minute
@@ -62,35 +62,38 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
   private async initializeEnterpriseFeatures() {
     // Initialize enterprise event storage
-    await this.redisService.set('event_service:initialized', Date.now().toString());
-    
+    await this.redisService.set(
+      "event_service:initialized",
+      Date.now().toString(),
+    );
+
     // Setup event indexing for fast queries
     await this.createEventIndices();
-    
+
     // Initialize metrics
     await this.resetMetrics();
 
     this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Enterprise Event Service initialized with A++ grade features',
-      'EnterpriseEventService'
+      "Enterprise Event Service initialized with A++ grade features",
+      "EnterpriseEventService",
     );
   }
 
   private async createEventIndices() {
     try {
       // Create sorted sets for efficient querying
-      await this.redisService.zadd('events:by_timestamp', Date.now(), 'init');
-      await this.redisService.zadd('events:by_priority', 1, 'init');
-      await this.redisService.zadd('events:by_category', 1, 'init');
+      await this.redisService.zadd("events:by_timestamp", Date.now(), "init");
+      await this.redisService.zadd("events:by_priority", 1, "init");
+      await this.redisService.zadd("events:by_category", 1, "init");
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to create event indices',
-        'EnterpriseEventService',
-        { error: (error as Error).message }
+        "Failed to create event indices",
+        "EnterpriseEventService",
+        { error: (error as Error).message },
       );
     }
   }
@@ -116,14 +119,16 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
   private setupCircuitBreaker() {
     // Reset circuit breaker periodically
     setInterval(() => {
-      if (this.circuitBreakerState === 'OPEN' && 
-          Date.now() - this.lastFailureTime > this.circuitBreakerTimeout) {
-        this.circuitBreakerState = 'HALF_OPEN';
+      if (
+        this.circuitBreakerState === "OPEN" &&
+        Date.now() - this.lastFailureTime > this.circuitBreakerTimeout
+      ) {
+        this.circuitBreakerState = "HALF_OPEN";
         this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'Circuit breaker moved to HALF_OPEN state',
-          'EnterpriseEventService'
+          "Circuit breaker moved to HALF_OPEN state",
+          "EnterpriseEventService",
         );
       }
     }, 30000);
@@ -140,14 +145,14 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       retryPolicy?: { maxRetries: number; retryDelay: number };
       async?: boolean;
       timeout?: number;
-    }
+    },
   ): Promise<EventResult> {
     const startTime = Date.now();
-    
+
     try {
       // Circuit breaker check
-      if (this.circuitBreakerState === 'OPEN') {
-        throw new Error('Event service circuit breaker is OPEN');
+      if (this.circuitBreakerState === "OPEN") {
+        throw new Error("Event service circuit breaker is OPEN");
       }
 
       // Create enriched event payload
@@ -156,8 +161,8 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         eventId: payload.eventId || this.generateEventId(),
         eventType,
         timestamp: payload.timestamp || new Date().toISOString(),
-        source: payload.source || 'EnterpriseEventService',
-        version: payload.version || '1.0.0',
+        source: payload.source || "EnterpriseEventService",
+        version: payload.version || "1.0.0",
         priority: options?.priority || payload.priority || EventPriority.NORMAL,
         correlationId: payload.correlationId || this.generateCorrelationId(),
         traceId: payload.traceId || this.generateTraceId(),
@@ -167,8 +172,10 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       this.eventBuffer.push(enrichedPayload);
 
       // Immediate processing for high priority events
-      if (enrichedPayload.priority === EventPriority.CRITICAL || 
-          enrichedPayload.priority === EventPriority.EMERGENCY) {
+      if (
+        enrichedPayload.priority === EventPriority.CRITICAL ||
+        enrichedPayload.priority === EventPriority.EMERGENCY
+      ) {
         await this.processEventImmediate(enrichedPayload);
       }
 
@@ -187,8 +194,8 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       this.totalProcessingTime += Date.now() - startTime;
 
       // Reset circuit breaker on success
-      if (this.circuitBreakerState === 'HALF_OPEN') {
-        this.circuitBreakerState = 'CLOSED';
+      if (this.circuitBreakerState === "HALF_OPEN") {
+        this.circuitBreakerState = "CLOSED";
         this.failureCount = 0;
       }
 
@@ -197,23 +204,22 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         eventId: enrichedPayload.eventId,
         result: enrichedPayload,
         processingTime: Date.now() - startTime,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
-
     } catch (error) {
       this.handleEventFailure(error);
-      
+
       return {
         success: false,
-        eventId: payload?.eventId || 'unknown',
+        eventId: payload?.eventId || "unknown",
         error: {
-          code: 'EVENT_PROCESSING_ERROR',
+          code: "EVENT_PROCESSING_ERROR",
           message: (error as Error).message,
           stack: (error as Error).stack,
-          retryable: true
+          retryable: true,
         },
         processingTime: Date.now() - startTime,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -224,35 +230,34 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       await this.redisService.set(
         `event:critical:${event.eventId}`,
         JSON.stringify(event),
-        3600 // 1 hour TTL for critical events
+        3600, // 1 hour TTL for critical events
       );
 
       // Add to priority queue
       await this.redisService.zadd(
-        'events:priority_queue',
+        "events:priority_queue",
         this.getPriorityScore(event.priority),
-        event.eventId
+        event.eventId,
       );
 
       // Log critical event
       await this.loggingService.logPhiAccess(
-        event.userId || 'system',
-        'EVENT_PROCESSOR',
-        event.clinicId || 'unknown',
-        'CREATE',
+        event.userId || "system",
+        "EVENT_PROCESSOR",
+        event.clinicId || "unknown",
+        "CREATE",
         {
           resource: event.eventType,
-          outcome: 'SUCCESS'
-        }
+          outcome: "SUCCESS",
+        },
       );
-
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to process critical event immediately',
-        'EnterpriseEventService',
-        { eventId: event.eventId, error: (error as Error).message }
+        "Failed to process critical event immediately",
+        "EnterpriseEventService",
+        { eventId: event.eventId, error: (error as Error).message },
       );
     }
   }
@@ -262,7 +267,9 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       const eventKey = `event:${event.eventId}`;
       const categoryKey = `events:category:${event.category}`;
       const userKey = event.userId ? `events:user:${event.userId}` : null;
-      const clinicKey = event.clinicId ? `events:clinic:${event.clinicId}` : null;
+      const clinicKey = event.clinicId
+        ? `events:clinic:${event.clinicId}`
+        : null;
 
       // Store event with TTL based on priority
       const ttl = this.getTTLByPriority(event.priority);
@@ -270,8 +277,16 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
       // Add to indices
       const timestamp = new Date(event.timestamp).getTime();
-      await this.redisService.zadd('events:by_timestamp', timestamp, event.eventId);
-      await this.redisService.zadd('events:by_priority', this.getPriorityScore(event.priority), event.eventId);
+      await this.redisService.zadd(
+        "events:by_timestamp",
+        timestamp,
+        event.eventId,
+      );
+      await this.redisService.zadd(
+        "events:by_priority",
+        this.getPriorityScore(event.priority),
+        event.eventId,
+      );
       await this.redisService.zadd(categoryKey, timestamp, event.eventId);
 
       if (userKey) {
@@ -281,14 +296,13 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       if (clinicKey) {
         await this.redisService.zadd(clinicKey, timestamp, event.eventId);
       }
-
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to store event in cache',
-        'EnterpriseEventService',
-        { eventId: event.eventId, error: (error as Error).message }
+        "Failed to store event in cache",
+        "EnterpriseEventService",
+        { eventId: event.eventId, error: (error as Error).message },
       );
     }
   }
@@ -303,10 +317,23 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       // Batch process events
       const pipeline = [];
       for (const event of events) {
-        if (event.priority !== EventPriority.CRITICAL && 
-            event.priority !== EventPriority.EMERGENCY) {
-          pipeline.push(['SET', `event:${event.eventId}`, JSON.stringify(event), 'EX', this.getTTLByPriority(event.priority)]);
-          pipeline.push(['ZADD', 'events:by_timestamp', new Date(event.timestamp).getTime(), event.eventId]);
+        if (
+          event.priority !== EventPriority.CRITICAL &&
+          event.priority !== EventPriority.EMERGENCY
+        ) {
+          pipeline.push([
+            "SET",
+            `event:${event.eventId}`,
+            JSON.stringify(event),
+            "EX",
+            this.getTTLByPriority(event.priority),
+          ]);
+          pipeline.push([
+            "ZADD",
+            "events:by_timestamp",
+            new Date(event.timestamp).getTime(),
+            event.eventId,
+          ]);
         }
       }
 
@@ -319,17 +346,22 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         LogType.PERFORMANCE,
         LogLevel.INFO,
         `Flushed ${events.length} events from buffer`,
-        'EnterpriseEventService',
-        { batchSize: events.length, bufferUtilization: (events.length / this.maxBufferSize) * 100 }
+        "EnterpriseEventService",
+        {
+          batchSize: events.length,
+          bufferUtilization: (events.length / this.maxBufferSize) * 100,
+        },
       );
-
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to flush event buffer',
-        'EnterpriseEventService',
-        { error: (error as Error).message, bufferSize: this.eventBuffer.length }
+        "Failed to flush event buffer",
+        "EnterpriseEventService",
+        {
+          error: (error as Error).message,
+          bufferSize: this.eventBuffer.length,
+        },
       );
     }
   }
@@ -377,25 +409,24 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       this.loggingService.log(
         LogType.PERFORMANCE,
         LogLevel.INFO,
-        'Event query executed',
-        'EnterpriseEventService',
+        "Event query executed",
+        "EnterpriseEventService",
         {
           queryTime,
           resultCount: events.length,
           totalFound: eventIds.length,
-          filter: JSON.stringify(filter)
-        }
+          filter: JSON.stringify(filter),
+        },
       );
 
       return events;
-
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to query events',
-        'EnterpriseEventService',
-        { error: (error as Error).message, filter }
+        "Failed to query events",
+        "EnterpriseEventService",
+        { error: (error as Error).message, filter },
       );
       return [];
     }
@@ -406,9 +437,11 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
    */
   async getEventMetrics(): Promise<EventMetrics> {
     try {
-      const totalEvents = await this.redisService.zcard('events:by_timestamp');
-      const avgProcessingTime = this.processedEvents > 0 ? 
-        this.totalProcessingTime / this.processedEvents : 0;
+      const totalEvents = await this.redisService.zcard("events:by_timestamp");
+      const avgProcessingTime =
+        this.processedEvents > 0
+          ? this.totalProcessingTime / this.processedEvents
+          : 0;
 
       const metrics: EventMetrics = {
         totalEvents,
@@ -417,23 +450,24 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         eventsByCategory: await this.getEventsByCategory(),
         eventsByPriority: await this.getEventsByPriority(),
         eventsByStatus: await this.getEventsByStatus(),
-        failureRate: this.processedEvents > 0 ? 
-          (this.failedEvents / this.processedEvents) * 100 : 0,
+        failureRate:
+          this.processedEvents > 0
+            ? (this.failedEvents / this.processedEvents) * 100
+            : 0,
         retryRate: 0, // TODO: Implement retry tracking
-        errorDistribution: await this.getErrorDistribution()
+        errorDistribution: await this.getErrorDistribution(),
       };
 
       return metrics;
-
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to get event metrics',
-        'EnterpriseEventService',
-        { error: (error as Error).message }
+        "Failed to get event metrics",
+        "EnterpriseEventService",
+        { error: (error as Error).message },
       );
-      
+
       return {
         totalEvents: 0,
         eventsPerSecond: 0,
@@ -443,7 +477,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         eventsByStatus: {} as Record<EventStatus, number>,
         failureRate: 0,
         retryRate: 0,
-        errorDistribution: {}
+        errorDistribution: {},
       };
     }
   }
@@ -467,18 +501,18 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       [EventPriority.NORMAL]: 2,
       [EventPriority.HIGH]: 3,
       [EventPriority.CRITICAL]: 4,
-      [EventPriority.EMERGENCY]: 5
+      [EventPriority.EMERGENCY]: 5,
     };
     return scores[priority] || 2;
   }
 
   private getTTLByPriority(priority: EventPriority): number {
     const ttls = {
-      [EventPriority.LOW]: 3600,      // 1 hour
-      [EventPriority.NORMAL]: 7200,   // 2 hours
-      [EventPriority.HIGH]: 14400,    // 4 hours
+      [EventPriority.LOW]: 3600, // 1 hour
+      [EventPriority.NORMAL]: 7200, // 2 hours
+      [EventPriority.HIGH]: 14400, // 4 hours
       [EventPriority.CRITICAL]: 43200, // 12 hours
-      [EventPriority.EMERGENCY]: 86400 // 24 hours
+      [EventPriority.EMERGENCY]: 86400, // 24 hours
     };
     return ttls[priority] || 7200;
   }
@@ -489,13 +523,13 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     this.lastFailureTime = Date.now();
 
     if (this.failureCount >= this.failureThreshold) {
-      this.circuitBreakerState = 'OPEN';
+      this.circuitBreakerState = "OPEN";
       this.loggingService.log(
         LogType.SECURITY,
         LogLevel.ERROR,
-        'Circuit breaker OPENED due to high failure rate',
-        'EnterpriseEventService',
-        { failureCount: this.failureCount, threshold: this.failureThreshold }
+        "Circuit breaker OPENED due to high failure rate",
+        "EnterpriseEventService",
+        { failureCount: this.failureCount, threshold: this.failureThreshold },
       );
     }
   }
@@ -516,23 +550,39 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async queryByUser(filter: EventFilter): Promise<string[]> {
-    return await this.redisService.zrevrange(`events:user:${filter.userId}`, 0, -1);
+    return await this.redisService.zrevrange(
+      `events:user:${filter.userId}`,
+      0,
+      -1,
+    );
   }
 
   private async queryByClinic(filter: EventFilter): Promise<string[]> {
-    return await this.redisService.zrevrange(`events:clinic:${filter.clinicId}`, 0, -1);
+    return await this.redisService.zrevrange(
+      `events:clinic:${filter.clinicId}`,
+      0,
+      -1,
+    );
   }
 
   private async queryByTimeRange(filter: EventFilter): Promise<string[]> {
     const start = filter.startTime ? new Date(filter.startTime).getTime() : 0;
-    const end = filter.endTime ? new Date(filter.endTime).getTime() : Date.now();
-    return await this.redisService.zrangebyscore('events:by_timestamp', start, end);
+    const end = filter.endTime
+      ? new Date(filter.endTime).getTime()
+      : Date.now();
+    return await this.redisService.zrangebyscore(
+      "events:by_timestamp",
+      start,
+      end,
+    );
   }
 
   private async getEventsByCategory(): Promise<Record<EventCategory, number>> {
     const categories = {} as Record<EventCategory, number>;
     for (const category of Object.values(EventCategory)) {
-      const count = await this.redisService.zcard(`events:category:${category}`);
+      const count = await this.redisService.zcard(
+        `events:category:${category}`,
+      );
       categories[category] = count;
     }
     return categories;
@@ -561,7 +611,10 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       bufferSize: this.eventBuffer.length,
       bufferUtilization: (this.eventBuffer.length / this.maxBufferSize) * 100,
       circuitBreakerState: this.circuitBreakerState,
-      avgProcessingTime: this.processedEvents > 0 ? this.totalProcessingTime / this.processedEvents : 0
+      avgProcessingTime:
+        this.processedEvents > 0
+          ? this.totalProcessingTime / this.processedEvents
+          : 0,
     };
 
     this.metricsBuffer.push(metrics);
@@ -574,31 +627,39 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
   private async cleanupExpiredEvents() {
     try {
-      const expiredTime = Date.now() - (7 * 24 * 60 * 60 * 1000); // 7 days ago
-      const expiredIds = await this.redisService.zrangebyscore('events:by_timestamp', 0, expiredTime);
-      
+      const expiredTime = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days ago
+      const expiredIds = await this.redisService.zrangebyscore(
+        "events:by_timestamp",
+        0,
+        expiredTime,
+      );
+
       if (expiredIds.length > 0) {
         // Remove expired events
         for (const eventId of expiredIds) {
           await this.redisService.del(`event:${eventId}`);
         }
-        
-        await this.redisService.zremrangebyscore('events:by_timestamp', 0, expiredTime);
-        
+
+        await this.redisService.zremrangebyscore(
+          "events:by_timestamp",
+          0,
+          expiredTime,
+        );
+
         this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           `Cleaned up ${expiredIds.length} expired events`,
-          'EnterpriseEventService'
+          "EnterpriseEventService",
         );
       }
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to cleanup expired events',
-        'EnterpriseEventService',
-        { error: (error as Error).message }
+        "Failed to cleanup expired events",
+        "EnterpriseEventService",
+        { error: (error as Error).message },
       );
     }
   }
@@ -635,9 +696,9 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       category: EventCategory.SYSTEM,
       priority: EventPriority.NORMAL,
       timestamp: new Date().toISOString(),
-      source: 'LegacyCompatibility',
-      version: '1.0.0',
-      payload
+      source: "LegacyCompatibility",
+      version: "1.0.0",
+      payload,
     } as EnterpriseEventPayload);
   }
 

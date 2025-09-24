@@ -1,6 +1,6 @@
 /**
  * Enterprise-grade Repository Result Wrapper
- * 
+ *
  * Provides type-safe error handling for database operations
  * Reduces runtime errors and improves code reliability
  * Designed for high-scale applications (10 lakh+ users)
@@ -17,14 +17,25 @@ export class RepositoryResult<TData, TError = Error> {
   /**
    * Create a successful result
    */
-  static success<T>(data: T, metadata?: ResultMetadata): RepositoryResult<T, never> {
-    return new RepositoryResult(true, data, undefined, metadata) as RepositoryResult<T, never>;
+  static success<T>(
+    data: T,
+    metadata?: ResultMetadata,
+  ): RepositoryResult<T, never> {
+    return new RepositoryResult(
+      true,
+      data,
+      undefined,
+      metadata,
+    ) as RepositoryResult<T, never>;
   }
 
   /**
    * Create a failed result
    */
-  static failure<T, E = Error>(error: E, metadata?: ResultMetadata): RepositoryResult<T, E> {
+  static failure<T, E = Error>(
+    error: E,
+    metadata?: ResultMetadata,
+  ): RepositoryResult<T, E> {
     return new RepositoryResult<T, E>(false, undefined, error, metadata);
   }
 
@@ -33,7 +44,7 @@ export class RepositoryResult<TData, TError = Error> {
    */
   static async fromPromise<T>(
     promise: Promise<T>,
-    metadata?: ResultMetadata
+    metadata?: ResultMetadata,
   ): Promise<RepositoryResult<T, Error>> {
     try {
       const data = await promise;
@@ -48,7 +59,7 @@ export class RepositoryResult<TData, TError = Error> {
    */
   static fromCallback<T>(
     callback: () => T,
-    metadata?: ResultMetadata
+    metadata?: ResultMetadata,
   ): RepositoryResult<T, Error> {
     try {
       const data = callback();
@@ -63,7 +74,7 @@ export class RepositoryResult<TData, TError = Error> {
    */
   static async fromAsyncCallback<T>(
     callback: () => Promise<T>,
-    metadata?: ResultMetadata
+    metadata?: ResultMetadata,
   ): Promise<RepositoryResult<T, Error>> {
     try {
       const data = await callback();
@@ -92,7 +103,9 @@ export class RepositoryResult<TData, TError = Error> {
    */
   get data(): TData {
     if (!this._success || this._data === undefined) {
-      throw new Error('Cannot access data on failed result. Check isSuccess first.');
+      throw new Error(
+        "Cannot access data on failed result. Check isSuccess first.",
+      );
     }
     return this._data;
   }
@@ -102,7 +115,9 @@ export class RepositoryResult<TData, TError = Error> {
    */
   get error(): TError {
     if (this._success || this._error === undefined) {
-      throw new Error('Cannot access error on successful result. Check isFailure first.');
+      throw new Error(
+        "Cannot access error on successful result. Check isFailure first.",
+      );
     }
     return this._error;
   }
@@ -118,14 +133,18 @@ export class RepositoryResult<TData, TError = Error> {
    * Safely get data with fallback
    */
   getDataOrDefault(defaultValue: TData): TData {
-    return this._success && this._data !== undefined ? this._data : defaultValue;
+    return this._success && this._data !== undefined
+      ? this._data
+      : defaultValue;
   }
 
   /**
    * Safely get error with fallback
    */
   getErrorOrDefault(defaultError: TError): TError {
-    return !this._success && this._error !== undefined ? this._error : defaultError;
+    return !this._success && this._error !== undefined
+      ? this._error
+      : defaultError;
   }
 
   /**
@@ -133,30 +152,62 @@ export class RepositoryResult<TData, TError = Error> {
    */
   map<U>(transform: (data: TData) => U): RepositoryResult<U, TError> {
     if (!this._success) {
-      return new RepositoryResult<U, TError>(false, undefined, this._error, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        this._error,
+        this._metadata,
+      );
     }
-    
+
     try {
       const transformedData = transform(this._data!);
-      return new RepositoryResult<U, TError>(true, transformedData, undefined, this._metadata);
+      return new RepositoryResult<U, TError>(
+        true,
+        transformedData,
+        undefined,
+        this._metadata,
+      );
     } catch (error) {
-      return new RepositoryResult<U, TError>(false, undefined, error as TError, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        error as TError,
+        this._metadata,
+      );
     }
   }
 
   /**
    * Transform data asynchronously if successful
    */
-  async mapAsync<U>(transform: (data: TData) => Promise<U>): Promise<RepositoryResult<U, TError>> {
+  async mapAsync<U>(
+    transform: (data: TData) => Promise<U>,
+  ): Promise<RepositoryResult<U, TError>> {
     if (!this._success) {
-      return new RepositoryResult<U, TError>(false, undefined, this._error, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        this._error,
+        this._metadata,
+      );
     }
-    
+
     try {
       const transformedData = await transform(this._data!);
-      return new RepositoryResult<U, TError>(true, transformedData, undefined, this._metadata);
+      return new RepositoryResult<U, TError>(
+        true,
+        transformedData,
+        undefined,
+        this._metadata,
+      );
     } catch (error) {
-      return new RepositoryResult<U, TError>(false, undefined, error as TError, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        error as TError,
+        this._metadata,
+      );
     }
   }
 
@@ -164,16 +215,26 @@ export class RepositoryResult<TData, TError = Error> {
    * Chain operations with flatMap
    */
   flatMap<U>(
-    transform: (data: TData) => RepositoryResult<U, TError>
+    transform: (data: TData) => RepositoryResult<U, TError>,
   ): RepositoryResult<U, TError> {
     if (!this._success) {
-      return new RepositoryResult<U, TError>(false, undefined, this._error, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        this._error,
+        this._metadata,
+      );
     }
-    
+
     try {
       return transform(this._data!);
     } catch (error) {
-      return new RepositoryResult<U, TError>(false, undefined, error as TError, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        error as TError,
+        this._metadata,
+      );
     }
   }
 
@@ -181,16 +242,26 @@ export class RepositoryResult<TData, TError = Error> {
    * Chain async operations with flatMap
    */
   async flatMapAsync<U>(
-    transform: (data: TData) => Promise<RepositoryResult<U, TError>>
+    transform: (data: TData) => Promise<RepositoryResult<U, TError>>,
   ): Promise<RepositoryResult<U, TError>> {
     if (!this._success) {
-      return new RepositoryResult<U, TError>(false, undefined, this._error, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        this._error,
+        this._metadata,
+      );
     }
-    
+
     try {
       return await transform(this._data!);
     } catch (error) {
-      return new RepositoryResult<U, TError>(false, undefined, error as TError, this._metadata);
+      return new RepositoryResult<U, TError>(
+        false,
+        undefined,
+        error as TError,
+        this._metadata,
+      );
     }
   }
 
@@ -199,14 +270,29 @@ export class RepositoryResult<TData, TError = Error> {
    */
   mapError<U>(transform: (error: TError) => U): RepositoryResult<TData, U> {
     if (this._success) {
-      return new RepositoryResult<TData, U>(true, this._data, undefined, this._metadata);
+      return new RepositoryResult<TData, U>(
+        true,
+        this._data,
+        undefined,
+        this._metadata,
+      );
     }
-    
+
     try {
       const transformedError = transform(this._error!);
-      return new RepositoryResult<TData, U>(false, undefined, transformedError, this._metadata);
+      return new RepositoryResult<TData, U>(
+        false,
+        undefined,
+        transformedError,
+        this._metadata,
+      );
     } catch (error) {
-      return new RepositoryResult<TData, U>(false, undefined, error as U, this._metadata);
+      return new RepositoryResult<TData, U>(
+        false,
+        undefined,
+        error as U,
+        this._metadata,
+      );
     }
   }
 
@@ -227,7 +313,9 @@ export class RepositoryResult<TData, TError = Error> {
   /**
    * Execute async side effect if successful
    */
-  async tapAsync(sideEffect: (data: TData) => Promise<void>): Promise<RepositoryResult<TData, TError>> {
+  async tapAsync(
+    sideEffect: (data: TData) => Promise<void>,
+  ): Promise<RepositoryResult<TData, TError>> {
     if (this._success && this._data !== undefined) {
       try {
         await sideEffect(this._data);
@@ -241,7 +329,9 @@ export class RepositoryResult<TData, TError = Error> {
   /**
    * Execute side effect if failed
    */
-  tapError(sideEffect: (error: TError) => void): RepositoryResult<TData, TError> {
+  tapError(
+    sideEffect: (error: TError) => void,
+  ): RepositoryResult<TData, TError> {
     if (!this._success && this._error !== undefined) {
       try {
         sideEffect(this._error);
@@ -255,16 +345,13 @@ export class RepositoryResult<TData, TError = Error> {
   /**
    * Match on success/failure with handlers
    */
-  match<U>(
-    onSuccess: (data: TData) => U,
-    onFailure: (error: TError) => U
-  ): U {
+  match<U>(onSuccess: (data: TData) => U, onFailure: (error: TError) => U): U {
     if (this._success && this._data !== undefined) {
       return onSuccess(this._data);
     } else if (!this._success && this._error !== undefined) {
       return onFailure(this._error);
     } else {
-      throw new Error('Invalid result state');
+      throw new Error("Invalid result state");
     }
   }
 
@@ -273,14 +360,14 @@ export class RepositoryResult<TData, TError = Error> {
    */
   async matchAsync<U>(
     onSuccess: (data: TData) => Promise<U>,
-    onFailure: (error: TError) => Promise<U>
+    onFailure: (error: TError) => Promise<U>,
   ): Promise<U> {
     if (this._success && this._data !== undefined) {
       return await onSuccess(this._data);
     } else if (!this._success && this._error !== undefined) {
       return await onFailure(this._error);
     } else {
-      throw new Error('Invalid result state');
+      throw new Error("Invalid result state");
     }
   }
 
@@ -298,7 +385,7 @@ export class RepositoryResult<TData, TError = Error> {
    * Provide fallback result on failure
    */
   orElseGet(
-    fallbackProvider: (error: TError) => RepositoryResult<TData, TError>
+    fallbackProvider: (error: TError) => RepositoryResult<TData, TError>,
   ): RepositoryResult<TData, TError> {
     if (this._success) {
       return this;
@@ -311,20 +398,30 @@ export class RepositoryResult<TData, TError = Error> {
    */
   filter(
     predicate: (data: TData) => boolean,
-    errorOnFilter: TError
+    errorOnFilter: TError,
   ): RepositoryResult<TData, TError> {
     if (!this._success) {
       return this;
     }
-    
+
     try {
       if (predicate(this._data!)) {
         return this;
       } else {
-        return new RepositoryResult<TData, TError>(false, undefined, errorOnFilter, this._metadata);
+        return new RepositoryResult<TData, TError>(
+          false,
+          undefined,
+          errorOnFilter,
+          this._metadata,
+        );
       }
     } catch (error) {
-      return new RepositoryResult<TData, TError>(false, undefined, error as TError, this._metadata);
+      return new RepositoryResult<TData, TError>(
+        false,
+        undefined,
+        error as TError,
+        this._metadata,
+      );
     }
   }
 
@@ -348,7 +445,7 @@ export class RepositoryResult<TData, TError = Error> {
       data: this._data,
       error: this._error ? this.serializeError(this._error) : undefined,
       metadata: this._metadata,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   }
 
@@ -359,7 +456,9 @@ export class RepositoryResult<TData, TError = Error> {
     if (json.success) {
       return RepositoryResult.success(json.data!, json.metadata);
     } else {
-      const error = json.error ? this.deserializeError(json.error) as E : undefined;
+      const error = json.error
+        ? (this.deserializeError(json.error) as E)
+        : undefined;
       return RepositoryResult.failure(error!, json.metadata);
     }
   }
@@ -369,12 +468,12 @@ export class RepositoryResult<TData, TError = Error> {
    */
   static combine<T1, T2, E>(
     result1: RepositoryResult<T1, E>,
-    result2: RepositoryResult<T2, E>
+    result2: RepositoryResult<T2, E>,
   ): RepositoryResult<[T1, T2], E> {
     if (result1.isSuccess && result2.isSuccess) {
       return RepositoryResult.success([result1.data, result2.data]);
     }
-    
+
     const firstError = result1.isFailure ? result1.error : result2.error;
     return RepositoryResult.failure(firstError);
   }
@@ -385,7 +484,7 @@ export class RepositoryResult<TData, TError = Error> {
   static combineWith<T1, T2, U, E>(
     result1: RepositoryResult<T1, E>,
     result2: RepositoryResult<T2, E>,
-    combiner: (data1: T1, data2: T2) => U
+    combiner: (data1: T1, data2: T2) => U,
   ): RepositoryResult<U, E> {
     if (result1.isSuccess && result2.isSuccess) {
       try {
@@ -395,7 +494,7 @@ export class RepositoryResult<TData, TError = Error> {
         return RepositoryResult.failure(error as E);
       }
     }
-    
+
     const firstError = result1.isFailure ? result1.error : result2.error;
     return RepositoryResult.failure(firstError);
   }
@@ -404,14 +503,14 @@ export class RepositoryResult<TData, TError = Error> {
    * Process array of results into single result with array data
    */
   static all<T, E>(
-    results: RepositoryResult<T, E>[]
+    results: RepositoryResult<T, E>[],
   ): RepositoryResult<T[], E> {
-    const failures = results.filter(r => r.isFailure);
+    const failures = results.filter((r) => r.isFailure);
     if (failures.length > 0) {
       return RepositoryResult.failure(failures[0].error);
     }
-    
-    const data = results.map(r => r.data);
+
+    const data = results.map((r) => r.data);
     return RepositoryResult.success(data);
   }
 
@@ -420,17 +519,22 @@ export class RepositoryResult<TData, TError = Error> {
       return {
         name: error.name,
         message: (error as Error).message,
-        stack: (error as Error).stack
+        stack: (error as Error).stack,
       };
     }
     return error;
   }
 
   private static deserializeError(serialized: any): Error {
-    if (serialized && typeof serialized === 'object' && serialized.name && serialized.message) {
+    if (
+      serialized &&
+      typeof serialized === "object" &&
+      serialized.name &&
+      serialized.message
+    ) {
       const error = new Error(serialized.message);
       error.name = serialized.name;
-      (error as Error).stack = serialized.stack;
+      error.stack = serialized.stack;
       return error;
     }
     return new Error(String(serialized));
@@ -478,10 +582,10 @@ export class HealthcareError extends Error {
     message: string,
     public readonly code: string,
     public readonly details?: any,
-    public readonly isRetryable: boolean = false
+    public readonly isRetryable: boolean = false,
   ) {
     super(message);
-    this.name = 'HealthcareError';
+    this.name = "HealthcareError";
   }
 }
 
@@ -491,10 +595,10 @@ export class ClinicError extends HealthcareError {
     code: string,
     public readonly clinicId?: string,
     details?: any,
-    isRetryable: boolean = false
+    isRetryable: boolean = false,
   ) {
     super(message, code, details, isRetryable);
-    this.name = 'ClinicError';
+    this.name = "ClinicError";
   }
 }
 
@@ -505,9 +609,9 @@ export class PatientError extends HealthcareError {
     public readonly patientId?: string,
     public readonly clinicId?: string,
     details?: any,
-    isRetryable: boolean = false
+    isRetryable: boolean = false,
   ) {
     super(message, code, details, isRetryable);
-    this.name = 'PatientError';
+    this.name = "PatientError";
   }
 }

@@ -1,5 +1,5 @@
 export interface ServiceHealth {
-  status: 'healthy' | 'unhealthy';
+  status: "healthy" | "unhealthy";
   details?: string;
   error?: string;
   responseTime: number;
@@ -42,7 +42,7 @@ export interface RedisMetrics {
 
 // Basic health check response used by app controller
 export interface HealthCheckResponse {
-  status: 'healthy' | 'degraded';
+  status: "healthy" | "degraded";
   timestamp: string;
   environment: string;
   version: string;
@@ -91,7 +91,7 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
 }
 
 export interface HealthCheckResult {
-  status: 'healthy' | 'unhealthy';
+  status: "healthy" | "unhealthy";
   timestamp: Date;
   services: {
     api: ServiceHealth;
@@ -127,4 +127,4 @@ export interface DetailedHealthCheckResult extends HealthCheckResult {
     platform: string;
     versions: Record<string, string>;
   };
-} 
+}

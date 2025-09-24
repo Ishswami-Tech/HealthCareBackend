@@ -1,14 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { BasePlugin, PluginContext, PluginHealth } from '../../../../libs/core/plugin-interface';
+import { Injectable, Logger } from "@nestjs/common";
+import {
+  BasePlugin,
+  PluginContext,
+  PluginHealth,
+} from "../../../../libs/core/plugin-interface";
 
 @Injectable()
 export abstract class BaseAppointmentPlugin implements BasePlugin {
   protected readonly logger = new Logger(this.constructor.name);
-  
+
   abstract readonly name: string;
   abstract readonly version: string;
   abstract readonly features: string[];
-  
 
   async initialize(context: PluginContext): Promise<void> {
     this.logger.log(`🚀 Initializing plugin: ${this.name}`);
@@ -35,8 +38,8 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
       metrics: {
         pluginName: this.name,
         features: this.features,
-        uptime: process.uptime()
-      }
+        uptime: process.uptime(),
+      },
     };
   }
 
@@ -45,7 +48,10 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
     // Default implementation - can be overridden
   }
 
-  protected createContext(config: any, metadata: Record<string, any> = {}): PluginContext {
+  protected createContext(
+    config: any,
+    metadata: Record<string, any> = {},
+  ): PluginContext {
     return {
       clinicId: metadata.clinicId,
       userId: metadata.userId,
@@ -54,10 +60,10 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
         config: {
           enabled: true,
           priority: 1,
-          settings: config || {}
+          settings: config || {},
         },
-        ...metadata
-      }
+        ...metadata,
+      },
     };
   }
 

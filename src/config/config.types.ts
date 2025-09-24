@@ -80,4 +80,4 @@ export interface Config {
   cors: CorsConfig;
   security: SecurityConfig;
   whatsapp: WhatsappConfig;
-} 
+}

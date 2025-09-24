@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { CacheService } from '../../infrastructure/cache';
-import { RateLimitConfig, RateLimitRule } from './rate-limit.config';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { CacheService } from "../../infrastructure/cache";
+import { RateLimitConfig, RateLimitRule } from "./rate-limit.config";
 
 @Injectable()
 export class RateLimitService {
@@ -9,15 +9,23 @@ export class RateLimitService {
 
   constructor(
     private readonly cacheService: CacheService,
-    private readonly config: RateLimitConfig
+    private readonly config: RateLimitConfig,
   ) {}
 
   // Cache operations wrapper methods
-  private async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
+  private async zremrangebyscore(
+    key: string,
+    min: number,
+    max: number,
+  ): Promise<number> {
     return this.cacheService.zremrangebyscore(key, min, max);
   }
 
-  private async zadd(key: string, score: number, member: string): Promise<number> {
+  private async zadd(
+    key: string,
+    score: number,
+    member: string,
+  ): Promise<number> {
     return this.cacheService.zadd(key, score, member);
   }
 
@@ -25,13 +33,17 @@ export class RateLimitService {
     return this.cacheService.zcard(key);
   }
 
-  private async hincrby(key: string, field: string, increment: number): Promise<number> {
+  private async hincrby(
+    key: string,
+    field: string,
+    increment: number,
+  ): Promise<number> {
     return this.cacheService.hincrby(key, field, increment);
   }
 
   async isRateLimited(
     identifier: string,
-    type: string = 'api',
+    type: string = "api",
   ): Promise<{ limited: boolean; remaining: number }> {
     if (this.cacheService.isDevelopmentMode) {
       return { limited: false, remaining: Number.MAX_SAFE_INTEGER };
@@ -63,13 +75,16 @@ export class RateLimitService {
         remaining: Math.max(0, maxRequests - requestCount),
       };
     } catch (error) {
-      this.logger.error(`Rate limiting error: ${(error as Error).message}`, (error as Error).stack);
+      this.logger.error(
+        `Rate limiting error: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
       return { limited: false, remaining: maxRequests }; // Fail open in case of Redis errors
     }
   }
 
   private async trackMetrics(type: string, wasLimited: boolean): Promise<void> {
-    const date = new Date().toISOString().split('T')[0];
+    const date = new Date().toISOString().split("T")[0];
     const metricsKey = `ratelimit:metrics:${date}`;
 
     try {
@@ -79,58 +94,65 @@ export class RateLimitService {
       }
       await this.cacheService.expire(metricsKey, 86400 * 7); // Keep metrics for 7 days
     } catch (error) {
-      this.logger.warn(`Failed to track rate limit metrics: ${(error as Error).message}`);
+      this.logger.warn(
+        `Failed to track rate limit metrics: ${(error as Error).message}`,
+      );
     }
   }
 
   private buildRateKey(key: string, type: string, options: any): string {
-    const parts = ['rate', type];
-    
+    const parts = ["rate", type];
+
     if (options.userId) {
       parts.push(`user:${options.userId}`);
     }
-    
+
     if (options.ip) {
       parts.push(`ip:${options.ip}`);
     }
-    
+
     parts.push(key);
-    
-    return parts.join(':');
+
+    return parts.join(":");
   }
 
-  async getRateLimitMetrics(type: string, minutes: number = 5): Promise<{
+  async getRateLimitMetrics(
+    type: string,
+    minutes: number = 5,
+  ): Promise<{
     total: number;
     limited: number;
     limitedPercentage: number;
   }> {
     const now = Math.floor(Date.now() / 1000);
     const keys = [];
-    
+
     for (let i = 0; i < minutes; i++) {
-      const timestamp = now - (now % 60) - (i * 60);
+      const timestamp = now - (now % 60) - i * 60;
       keys.push(`metrics:ratelimit:${type}:${timestamp}`);
     }
 
     try {
       const results = await Promise.all(
-        keys.map(key => this.cacheService.hGetAll(key))
+        keys.map((key) => this.cacheService.hGetAll(key)),
       );
 
       const totals = results.reduce(
         (acc, curr) => ({
           total: acc.total + (parseInt(curr?.total) || 0),
-          limited: acc.limited + (parseInt(curr?.limited) || 0)
+          limited: acc.limited + (parseInt(curr?.limited) || 0),
         }),
-        { total: 0, limited: 0 }
+        { total: 0, limited: 0 },
       );
 
       return {
         ...totals,
-        limitedPercentage: totals.total ? (totals.limited / totals.total) * 100 : 0
+        limitedPercentage: totals.total
+          ? (totals.limited / totals.total) * 100
+          : 0,
       };
     } catch (error) {
-      this.logger.error('Error getting rate limit metrics:', error);
+      this.logger.error("Error getting rate limit metrics:", error);
       return { total: 0, limited: 0, limitedPercentage: 0 };
     }
   }
@@ -143,4 +165,4 @@ export class RateLimitService {
     const rateKey = this.buildRateKey(key, type, {});
     await this.cacheService.del(rateKey);
   }
-} 
+}

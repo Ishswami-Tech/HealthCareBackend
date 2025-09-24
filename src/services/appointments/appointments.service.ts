@@ -1,21 +1,29 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { InjectQueue } from '@nestjs/bull';
-import { Queue } from 'bull';
+import { Injectable, Logger, Inject, forwardRef } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { EventEmitter2 } from "@nestjs/event-emitter";
+import { InjectQueue } from "@nestjs/bull";
+import { Queue } from "bull";
 
 // Infrastructure Services
-import { CacheService, QueueService } from 'src/libs/infrastructure';
-import { LoggingService, LogType, LogLevel } from 'src/libs/infrastructure/logging';
+import { CacheService, QueueService } from "src/libs/infrastructure";
+import {
+  LoggingService,
+  LogType,
+  LogLevel,
+} from "src/libs/infrastructure/logging";
 
 // Core Services
-import { CoreAppointmentService, AppointmentContext, AppointmentResult } from './core/core-appointment.service';
-import { ConflictResolutionService } from './core/conflict-resolution.service';
-import { AppointmentWorkflowEngine } from './core/appointment-workflow-engine.service';
-import { BusinessRulesEngine } from './core/business-rules-engine.service';
+import {
+  CoreAppointmentService,
+  AppointmentContext,
+  AppointmentResult,
+} from "./core/core-appointment.service";
+import { ConflictResolutionService } from "./core/conflict-resolution.service";
+import { AppointmentWorkflowEngine } from "./core/appointment-workflow-engine.service";
+import { BusinessRulesEngine } from "./core/business-rules-engine.service";
 
 // Plugin System
-import { AppointmentEnterprisePluginManager } from './plugins/enterprise-plugin-manager';
+import { AppointmentEnterprisePluginManager } from "./plugins/enterprise-plugin-manager";
 
 // DTOs and Types
 import {
@@ -33,19 +41,19 @@ import {
   Language,
   ProcessCheckInDto,
   CompleteAppointmentDto,
-  StartConsultationDto
-} from './appointment.dto';
+  StartConsultationDto,
+} from "./appointment.dto";
 
 // Legacy imports for backward compatibility
-import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
-import { QrService } from '../../libs/utils/QR';
+import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import { QrService } from "../../libs/utils/QR";
 
 // Auth Integration
-import { AuthService } from '../auth/auth.service';
+import { AuthService } from "../auth/auth.service";
 
 /**
  * Enhanced Appointments Service
- * 
+ *
  * This service integrates with the new enhanced service layer architecture:
  * - Uses CoreAppointmentService for enterprise-grade operations
  * - Integrates with plugin system for extensible functionality
@@ -66,28 +74,29 @@ export class AppointmentsService {
     private readonly workflowEngine: AppointmentWorkflowEngine,
     @Inject(forwardRef(() => BusinessRulesEngine))
     private readonly businessRules: BusinessRulesEngine,
-    
+
     // Plugin System
     private readonly pluginManager: AppointmentEnterprisePluginManager,
-    
+
     // Infrastructure Services
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
     private readonly queueService: QueueService,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
-    
+
     // Legacy Services (for backward compatibility)
     private readonly prisma: PrismaService,
     private readonly qrService: QrService,
-    
+
     // Auth Integration
     private readonly authService: AuthService,
-    
+
     // Queue Injections
-    @InjectQueue('clinic-appointment') private readonly appointmentQueue: Queue,
-    @InjectQueue('clinic-notification') private readonly notificationQueue: Queue,
-    @InjectQueue('clinic-analytics') private readonly analyticsQueue: Queue,
+    @InjectQueue("clinic-appointment") private readonly appointmentQueue: Queue,
+    @InjectQueue("clinic-notification")
+    private readonly notificationQueue: Queue,
+    @InjectQueue("clinic-analytics") private readonly analyticsQueue: Queue,
   ) {}
 
   // =============================================
@@ -101,16 +110,19 @@ export class AppointmentsService {
     createDto: CreateAppointmentDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<AppointmentResult> {
     // Validate user access with auth service
-    const hasAccess = await this.authService.getUserPermissions(userId, clinicId);
-    
-    if (!hasAccess || !hasAccess.includes('appointments:create')) {
+    const hasAccess = await this.authService.getUserPermissions(
+      userId,
+      clinicId,
+    );
+
+    if (!hasAccess || !hasAccess.includes("appointments:create")) {
       return {
         success: false,
-        error: 'Insufficient permissions to create appointment',
-        message: 'Access denied',
+        error: "Insufficient permissions to create appointment",
+        message: "Access denied",
       };
     }
 
@@ -120,25 +132,28 @@ export class AppointmentsService {
       clinicId,
       locationId: createDto.locationId,
       doctorId: createDto.doctorId,
-      patientId: createDto.patientId
+      patientId: createDto.patientId,
     };
 
-    const result = await this.coreAppointmentService.createAppointment(createDto, context);
-    
+    const result = await this.coreAppointmentService.createAppointment(
+      createDto,
+      context,
+    );
+
     // Log security event for appointment creation
     if (result.success) {
       await this.loggingService.log(
         LogType.SECURITY,
         LogLevel.INFO,
-        'Appointment created successfully',
-        'AppointmentsService',
+        "Appointment created successfully",
+        "AppointmentsService",
         {
           appointmentId: result.data?.id,
           doctorId: createDto.doctorId,
           patientId: createDto.patientId,
           userId,
           clinicId,
-        }
+        },
       );
 
       // Invalidate related cache entries
@@ -146,7 +161,7 @@ export class AppointmentsService {
         result.data?.id,
         createDto.patientId,
         createDto.doctorId,
-        clinicId
+        clinicId,
       );
     }
 
@@ -160,18 +175,21 @@ export class AppointmentsService {
     filters: AppointmentFilterDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER',
+    role: string = "USER",
     page: number = 1,
-    limit: number = 20
+    limit: number = 20,
   ): Promise<AppointmentResult> {
     // Validate user access with auth service
-    const hasAccess = await this.authService.getUserPermissions(userId, clinicId);
-    
-    if (!hasAccess || !hasAccess.includes('appointments:read')) {
+    const hasAccess = await this.authService.getUserPermissions(
+      userId,
+      clinicId,
+    );
+
+    if (!hasAccess || !hasAccess.includes("appointments:read")) {
       return {
         success: false,
-        error: 'Insufficient permissions to view appointments',
-        message: 'Access denied',
+        error: "Insufficient permissions to view appointments",
+        message: "Access denied",
       };
     }
 
@@ -181,23 +199,29 @@ export class AppointmentsService {
       clinicId,
       locationId: filters.locationId,
       doctorId: filters.providerId,
-      patientId: filters.patientId
+      patientId: filters.patientId,
     };
 
     // Use cache service for appointment data
     const cacheKey = `appointments:list:${clinicId}:${JSON.stringify(filters)}:${page}:${limit}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
-      () => this.coreAppointmentService.getAppointments(filters, context, page, limit),
+      () =>
+        this.coreAppointmentService.getAppointments(
+          filters,
+          context,
+          page,
+          limit,
+        ),
       {
         ttl: 300,
-        tags: ['appointments', 'clinic_appointments', `clinic:${clinicId}`],
-        priority: 'normal',
+        tags: ["appointments", "clinic_appointments", `clinic:${clinicId}`],
+        priority: "normal",
         enableSwr: true,
         containsPHI: true,
-        compress: true
-      }
+        compress: true,
+      },
     );
   }
 
@@ -209,34 +233,41 @@ export class AppointmentsService {
     updateDto: UpdateAppointmentDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<AppointmentResult> {
     // Validate user access with auth service
-    const hasAccess = await this.authService.getUserPermissions(userId, clinicId);
-    
-    if (!hasAccess || !hasAccess.includes('appointments:update')) {
+    const hasAccess = await this.authService.getUserPermissions(
+      userId,
+      clinicId,
+    );
+
+    if (!hasAccess || !hasAccess.includes("appointments:update")) {
       return {
         success: false,
-        error: 'Insufficient permissions to update appointment',
-        message: 'Access denied',
+        error: "Insufficient permissions to update appointment",
+        message: "Access denied",
       };
     }
 
     const context: AppointmentContext = {
       userId,
       role,
-      clinicId
+      clinicId,
     };
 
-    const result = await this.coreAppointmentService.updateAppointment(appointmentId, updateDto, context);
-    
+    const result = await this.coreAppointmentService.updateAppointment(
+      appointmentId,
+      updateDto,
+      context,
+    );
+
     // Invalidate related cache entries
     if (result.success) {
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
         result.data?.patientId,
         result.data?.doctorId,
-        clinicId
+        clinicId,
       );
     }
 
@@ -251,34 +282,41 @@ export class AppointmentsService {
     reason: string,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<AppointmentResult> {
     // Validate user access with auth service
-    const hasAccess = await this.authService.getUserPermissions(userId, clinicId);
-    
-    if (!hasAccess || !hasAccess.includes('appointments:update')) {
+    const hasAccess = await this.authService.getUserPermissions(
+      userId,
+      clinicId,
+    );
+
+    if (!hasAccess || !hasAccess.includes("appointments:update")) {
       return {
         success: false,
-        error: 'Insufficient permissions to cancel appointment',
-        message: 'Access denied',
+        error: "Insufficient permissions to cancel appointment",
+        message: "Access denied",
       };
     }
 
     const context: AppointmentContext = {
       userId,
       role,
-      clinicId
+      clinicId,
     };
 
-    const result = await this.coreAppointmentService.cancelAppointment(appointmentId, reason, context);
-    
+    const result = await this.coreAppointmentService.cancelAppointment(
+      appointmentId,
+      reason,
+      context,
+    );
+
     // Invalidate related cache entries
     if (result.success) {
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
         result.data?.patientId,
         result.data?.doctorId,
-        clinicId
+        clinicId,
       );
     }
 
@@ -292,15 +330,19 @@ export class AppointmentsService {
     clinicId: string,
     dateRange: { from: Date; to: Date },
     userId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<AppointmentResult> {
     const context: AppointmentContext = {
       userId,
       role,
-      clinicId
+      clinicId,
     };
 
-    return this.coreAppointmentService.getAppointmentMetrics(clinicId, dateRange, context);
+    return this.coreAppointmentService.getAppointmentMetrics(
+      clinicId,
+      dateRange,
+      context,
+    );
   }
 
   // =============================================
@@ -314,16 +356,16 @@ export class AppointmentsService {
     checkInDto: ProcessCheckInDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<any> {
     try {
       // Execute through clinic check-in plugin
       const result = await this.pluginManager.executePluginOperation(
-        'healthcare',
-        'queue',
-        'process_checkin',
+        "healthcare",
+        "queue",
+        "process_checkin",
         checkInDto,
-        { clinicId, userId, role }
+        { clinicId, userId, role },
       );
 
       if (result.success) {
@@ -331,14 +373,16 @@ export class AppointmentsService {
         await this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.INFO,
-          'Check-in processed successfully',
-          'AppointmentsService',
-          { appointmentId: checkInDto.appointmentId, userId, clinicId }
+          "Check-in processed successfully",
+          "AppointmentsService",
+          { appointmentId: checkInDto.appointmentId, userId, clinicId },
         );
       }
       return result;
     } catch (error) {
-      this.logger.error(`Failed to process check-in through plugin: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(
+        `Failed to process check-in through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       throw error;
     }
   }
@@ -351,16 +395,16 @@ export class AppointmentsService {
     completeDto: CompleteAppointmentDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<any> {
     try {
       // Execute through clinic confirmation plugin
       const result = await this.pluginManager.executePluginOperation(
-        'healthcare',
-        'scheduling',
-        'complete_appointment',
+        "healthcare",
+        "scheduling",
+        "complete_appointment",
         { appointmentId, ...completeDto },
-        { clinicId, userId, role }
+        { clinicId, userId, role },
       );
 
       if (result.success) {
@@ -368,14 +412,16 @@ export class AppointmentsService {
         await this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.INFO,
-          'Appointment completed successfully',
-          'AppointmentsService',
-          { appointmentId, userId, clinicId }
+          "Appointment completed successfully",
+          "AppointmentsService",
+          { appointmentId, userId, clinicId },
         );
       }
       return result;
     } catch (error) {
-      this.logger.error(`Failed to complete appointment through plugin: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(
+        `Failed to complete appointment through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       throw error;
     }
   }
@@ -388,16 +434,16 @@ export class AppointmentsService {
     startDto: StartConsultationDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<any> {
     try {
       // Execute through clinic check-in plugin
       const result = await this.pluginManager.executePluginOperation(
-        'healthcare',
-        'scheduling',
-        'start_consultation',
+        "healthcare",
+        "scheduling",
+        "start_consultation",
         { appointmentId, ...startDto },
-        { clinicId, userId, role }
+        { clinicId, userId, role },
       );
 
       if (result.success) {
@@ -405,14 +451,16 @@ export class AppointmentsService {
         await this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.INFO,
-          'Consultation started successfully',
-          'AppointmentsService',
-          { appointmentId, userId, clinicId }
+          "Consultation started successfully",
+          "AppointmentsService",
+          { appointmentId, userId, clinicId },
         );
       }
       return result;
     } catch (error) {
-      this.logger.error(`Failed to start consultation through plugin: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(
+        `Failed to start consultation through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       throw error;
     }
   }
@@ -425,16 +473,16 @@ export class AppointmentsService {
     date: string,
     clinicId: string,
     userId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<any> {
     try {
       // Execute through clinic queue plugin
       const result = await this.pluginManager.executePluginOperation(
-        'healthcare',
-        'queue',
-        'get_doctor_queue',
+        "healthcare",
+        "queue",
+        "get_doctor_queue",
         { doctorId, date },
-        { clinicId, userId, role }
+        { clinicId, userId, role },
       );
 
       if (result.success) {
@@ -442,14 +490,16 @@ export class AppointmentsService {
         await this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.INFO,
-          'Queue information retrieved successfully',
-          'AppointmentsService',
-          { doctorId, date, userId, clinicId }
+          "Queue information retrieved successfully",
+          "AppointmentsService",
+          { doctorId, date, userId, clinicId },
         );
       }
       return result;
     } catch (error) {
-      this.logger.error(`Failed to get queue info through plugin: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(
+        `Failed to get queue info through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       throw error;
     }
   }
@@ -461,16 +511,16 @@ export class AppointmentsService {
     locationId: string,
     clinicId: string,
     userId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<any> {
     try {
       // Execute through clinic location plugin - use scheduling as fallback since 'location' plugin doesn't exist in our plugin manager
       const result = await this.pluginManager.executePluginOperation(
-        'healthcare',
-        'scheduling',
-        'get_location_info',
+        "healthcare",
+        "scheduling",
+        "get_location_info",
         { locationId },
-        { clinicId, userId, role }
+        { clinicId, userId, role },
       );
 
       if (result.success) {
@@ -478,14 +528,16 @@ export class AppointmentsService {
         await this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.INFO,
-          'Location information retrieved successfully',
-          'AppointmentsService',
-          { locationId, userId, clinicId }
+          "Location information retrieved successfully",
+          "AppointmentsService",
+          { locationId, userId, clinicId },
         );
       }
       return result;
     } catch (error) {
-      this.logger.error(`Failed to get location info through plugin: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(
+        `Failed to get location info through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       throw error;
     }
   }
@@ -499,37 +551,37 @@ export class AppointmentsService {
    */
   async getAppointmentById(id: string, clinicId: string): Promise<any> {
     const cacheKey = `appointments:detail:${id}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
         const appointment = await this.prisma.appointment.findFirst({
           where: {
             id,
-            clinicId
+            clinicId,
           },
           include: {
             patient: true,
             doctor: true,
             clinic: true,
             location: true,
-          }
+          },
         });
 
         if (!appointment) {
-          throw new Error('Appointment not found');
+          throw new Error("Appointment not found");
         }
 
         return appointment;
       },
       {
         ttl: 1800,
-        tags: ['appointments', 'appointment_details', `appointment:${id}`],
-        priority: 'high',
+        tags: ["appointments", "appointment_details", `appointment:${id}`],
+        priority: "high",
         enableSwr: true,
         containsPHI: true,
-        compress: true
-      }
+        compress: true,
+      },
     );
   }
 
@@ -538,29 +590,29 @@ export class AppointmentsService {
    */
   async getPatientByUserId(userId: string): Promise<any> {
     const cacheKey = `patient:user:${userId}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
         const patient = await this.prisma.patient.findFirst({
           where: {
-            userId
+            userId,
           },
           include: {
-            user: true
-          }
+            user: true,
+          },
         });
 
         return patient;
       },
       {
         ttl: 3600,
-        tags: ['patients', 'user_patients', `user:${userId}`],
-        priority: 'high',
+        tags: ["patients", "user_patients", `user:${userId}`],
+        priority: "high",
         enableSwr: true,
         containsPHI: true,
-        compress: true
-      }
+        compress: true,
+      },
     );
   }
 
@@ -583,8 +635,10 @@ export class AppointmentsService {
     notes?: string;
     clinicId: string;
   }): Promise<any> {
-    this.logger.warn('Using legacy createAppointment method. Please migrate to enhanced version.');
-    
+    this.logger.warn(
+      "Using legacy createAppointment method. Please migrate to enhanced version.",
+    );
+
     // Convert legacy data to enhanced DTO
     const createDto: CreateAppointmentDto = {
       patientId: data.userId, // Assuming userId is patientId in legacy
@@ -600,9 +654,9 @@ export class AppointmentsService {
       paymentStatus: PaymentStatus.PENDING,
       paymentMethod: PaymentMethod.CASH,
       amount: 0,
-      currency: 'INR',
+      currency: "INR",
       language: Language.EN,
-      isRecurring: false
+      isRecurring: false,
     };
 
     return this.createAppointment(createDto, data.userId, data.clinicId);
@@ -622,8 +676,10 @@ export class AppointmentsService {
     page?: number;
     limit?: number;
   }): Promise<any> {
-    this.logger.warn('Using legacy getAppointments method. Please migrate to enhanced version.');
-    
+    this.logger.warn(
+      "Using legacy getAppointments method. Please migrate to enhanced version.",
+    );
+
     // Convert legacy filters to enhanced filters
     const enhancedFilters: AppointmentFilterDto = {
       patientId: filters.userId,
@@ -633,10 +689,14 @@ export class AppointmentsService {
       startDate: filters.date,
       endDate: filters.date,
       page: filters.page,
-      limit: filters.limit
+      limit: filters.limit,
     };
 
-    return this.getAppointments(enhancedFilters, filters.userId || 'system', filters.clinicId);
+    return this.getAppointments(
+      enhancedFilters,
+      filters.userId || "system",
+      filters.clinicId,
+    );
   }
 
   /**
@@ -652,30 +712,42 @@ export class AppointmentsService {
       status?: string;
       notes?: string;
     },
-    clinicId: string
+    clinicId: string,
   ): Promise<any> {
-    this.logger.warn('Using legacy updateAppointment method. Please migrate to enhanced version.');
-    
+    this.logger.warn(
+      "Using legacy updateAppointment method. Please migrate to enhanced version.",
+    );
+
     // Convert legacy data to enhanced DTO
     const updateDto: UpdateAppointmentDto = {
       date: updateData.date,
       time: updateData.time,
       duration: updateData.duration,
       status: updateData.status as any,
-      notes: updateData.notes
+      notes: updateData.notes,
     };
 
-    return this.updateAppointment(appointmentId, updateDto, 'system', clinicId);
+    return this.updateAppointment(appointmentId, updateDto, "system", clinicId);
   }
 
   /**
    * Legacy cancel appointment method
    * @deprecated Use cancelAppointment with enhanced parameters instead
    */
-  async cancelAppointmentLegacy(appointmentId: string, clinicId: string): Promise<any> {
-    this.logger.warn('Using legacy cancelAppointment method. Please migrate to enhanced version.');
-    
-    return this.cancelAppointment(appointmentId, 'Cancelled via legacy method', 'system', clinicId);
+  async cancelAppointmentLegacy(
+    appointmentId: string,
+    clinicId: string,
+  ): Promise<any> {
+    this.logger.warn(
+      "Using legacy cancelAppointment method. Please migrate to enhanced version.",
+    );
+
+    return this.cancelAppointment(
+      appointmentId,
+      "Cancelled via legacy method",
+      "system",
+      clinicId,
+    );
   }
 
   // =============================================
@@ -704,9 +776,15 @@ export class AppointmentsService {
     feature: string,
     operation: string,
     data: any,
-    context?: any
+    context?: any,
   ): Promise<any> {
-    return this.pluginManager.executePluginOperation(domain, feature, operation, data, context);
+    return this.pluginManager.executePluginOperation(
+      domain,
+      feature,
+      operation,
+      data,
+      context,
+    );
   }
 
   /**
@@ -724,21 +802,21 @@ export class AppointmentsService {
     date: string,
     clinicId: string,
     userId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<any> {
     const cacheKey = `appointments:availability:${doctorId}:${date}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
         try {
           // Execute through clinic queue plugin
           const result = await this.pluginManager.executePluginOperation(
-            'healthcare',
-            'queue',
-            'get_doctor_availability',
+            "healthcare",
+            "queue",
+            "get_doctor_availability",
             { doctorId, date },
-            { clinicId, userId, role }
+            { clinicId, userId, role },
           );
 
           if (result.success) {
@@ -746,27 +824,29 @@ export class AppointmentsService {
             await this.loggingService.log(
               LogType.BUSINESS,
               LogLevel.INFO,
-              'Doctor availability retrieved successfully',
-              'AppointmentsService',
-              { doctorId, date, userId, clinicId }
+              "Doctor availability retrieved successfully",
+              "AppointmentsService",
+              { doctorId, date, userId, clinicId },
             );
           }
           return result;
         } catch (error) {
-          this.logger.error(`Failed to get doctor availability through plugin: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          
+          this.logger.error(
+            `Failed to get doctor availability through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+          );
+
           // Fallback to legacy method if plugin fails
           return this.getDoctorAvailabilityLegacy(doctorId, date);
         }
       },
       {
         ttl: 180,
-        tags: ['appointments', 'doctor_availability', `doctor:${doctorId}`],
-        priority: 'high',
+        tags: ["appointments", "doctor_availability", `doctor:${doctorId}`],
+        priority: "high",
         enableSwr: true,
         containsPHI: false,
-        compress: false
-      }
+        compress: false,
+      },
     );
   }
 
@@ -774,9 +854,14 @@ export class AppointmentsService {
    * Legacy doctor availability method
    * @deprecated Use getDoctorAvailability with enhanced parameters instead
    */
-  async getDoctorAvailabilityLegacy(doctorId: string, date: string): Promise<any> {
-    this.logger.warn('Using legacy getDoctorAvailability method. Please migrate to enhanced version.');
-    
+  async getDoctorAvailabilityLegacy(
+    doctorId: string,
+    date: string,
+  ): Promise<any> {
+    this.logger.warn(
+      "Using legacy getDoctorAvailability method. Please migrate to enhanced version.",
+    );
+
     try {
       const startDate = new Date(date);
       const endDate = new Date(date);
@@ -787,26 +872,28 @@ export class AppointmentsService {
           doctorId,
           date: {
             gte: startDate,
-            lt: endDate
+            lt: endDate,
           },
           status: {
-            in: ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS']
-          }
+            in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_PROGRESS"],
+          },
         },
-        orderBy: { time: 'asc' }
+        orderBy: { time: "asc" },
       });
 
       // Generate time slots (9 AM to 6 PM)
       const timeSlots = [];
       for (let hour = 9; hour < 18; hour++) {
         for (let minute = 0; minute < 60; minute += 30) {
-          const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+          const time = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
           const isBooked = appointments.some((apt: any) => apt.time === time);
-          
+
           timeSlots.push({
             time,
             available: !isBooked,
-            appointmentId: isBooked ? appointments.find((apt: any) => apt.time === time)?.id : null
+            appointmentId: isBooked
+              ? appointments.find((apt: any) => apt.time === time)?.id
+              : null,
           });
         }
       }
@@ -814,19 +901,25 @@ export class AppointmentsService {
       return {
         doctorId,
         date,
-        available: timeSlots.some(slot => slot.available),
-        availableSlots: timeSlots.filter(slot => slot.available).map(slot => slot.time),
-        bookedSlots: timeSlots.filter(slot => !slot.available).map(slot => slot.time),
+        available: timeSlots.some((slot) => slot.available),
+        availableSlots: timeSlots
+          .filter((slot) => slot.available)
+          .map((slot) => slot.time),
+        bookedSlots: timeSlots
+          .filter((slot) => !slot.available)
+          .map((slot) => slot.time),
         workingHours: {
-          start: '09:00',
-          end: '18:00'
+          start: "09:00",
+          end: "18:00",
         },
-        message: timeSlots.some(slot => slot.available) 
-          ? 'Doctor has available slots' 
-          : 'Doctor is fully booked for this date'
+        message: timeSlots.some((slot) => slot.available)
+          ? "Doctor has available slots"
+          : "Doctor is fully booked for this date",
       };
     } catch (error) {
-      this.logger.error(`Failed to get doctor availability: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(
+        `Failed to get doctor availability: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       throw error;
     }
   }
@@ -837,30 +930,37 @@ export class AppointmentsService {
   async getUserUpcomingAppointments(
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = "USER",
   ): Promise<any> {
     const cacheKey = `appointments:upcoming:${userId}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
         const filters: AppointmentFilterDto = {
           patientId: userId,
-          startDate: new Date().toISOString().split('T')[0],
-          status: AppointmentStatus.SCHEDULED
+          startDate: new Date().toISOString().split("T")[0],
+          status: AppointmentStatus.SCHEDULED,
         };
 
-        const result = await this.getAppointments(filters, userId, clinicId, role, 1, 10);
+        const result = await this.getAppointments(
+          filters,
+          userId,
+          clinicId,
+          role,
+          1,
+          10,
+        );
         return result;
       },
       {
         ttl: 600,
-        tags: ['appointments', 'upcoming_appointments', `user:${userId}`],
-        priority: 'high',
+        tags: ["appointments", "upcoming_appointments", `user:${userId}`],
+        priority: "high",
         enableSwr: true,
         containsPHI: true,
-        compress: true
-      }
+        compress: true,
+      },
     );
   }
 
@@ -869,8 +969,10 @@ export class AppointmentsService {
    * @deprecated Use getUserUpcomingAppointments with enhanced parameters instead
    */
   async getUserUpcomingAppointmentsLegacy(userId: string): Promise<any> {
-    this.logger.warn('Using legacy getUserUpcomingAppointments method. Please migrate to enhanced version.');
-    
+    this.logger.warn(
+      "Using legacy getUserUpcomingAppointments method. Please migrate to enhanced version.",
+    );
+
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -879,31 +981,30 @@ export class AppointmentsService {
         where: {
           patientId: userId,
           date: {
-            gte: today
+            gte: today,
           },
           status: {
-            in: ['SCHEDULED', 'CONFIRMED']
-          }
+            in: ["SCHEDULED", "CONFIRMED"],
+          },
         },
         include: {
           doctor: {
             include: {
-              user: true
-            }
+              user: true,
+            },
           },
           location: true,
-          clinic: true
+          clinic: true,
         },
-        orderBy: [
-          { date: 'asc' },
-          { time: 'asc' }
-        ],
-        take: 10
+        orderBy: [{ date: "asc" }, { time: "asc" }],
+        take: 10,
       });
 
       return appointments;
     } catch (error) {
-      this.logger.error(`Failed to get user upcoming appointments: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.error(
+        `Failed to get user upcoming appointments: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       throw error;
     }
   }
@@ -915,11 +1016,15 @@ export class AppointmentsService {
   /**
    * Build user context from request
    */
-  private buildUserContext(userId: string, clinicId: string, role: string = 'USER'): AppointmentContext {
+  private buildUserContext(
+    userId: string,
+    clinicId: string,
+    role: string = "USER",
+  ): AppointmentContext {
     return {
       userId,
       role,
-      clinicId
+      clinicId,
     };
   }
 
@@ -930,24 +1035,24 @@ export class AppointmentsService {
     operation: string,
     userId: string,
     clinicId: string,
-    details: any
+    details: any,
   ): Promise<void> {
     try {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Appointment operation: ${operation}`,
-        'AppointmentsService',
+        "AppointmentsService",
         {
           operation,
           userId,
           clinicId,
           timestamp: new Date().toISOString(),
-          details
-        }
+          details,
+        },
       );
     } catch (error) {
-      this.logger.error('Failed to log operation:', error);
+      this.logger.error("Failed to log operation:", error);
     }
   }
-} 
+}

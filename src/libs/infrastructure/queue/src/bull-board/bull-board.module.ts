@@ -1,10 +1,9 @@
-
-import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
-import { FastifyAdapter } from '@bull-board/fastify';
-import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullBoardService } from './bull-board.service';
+import { Module, MiddlewareConsumer, RequestMethod } from "@nestjs/common";
+import { BullBoardModule as BullBoardNestModule } from "@bull-board/nestjs";
+import { FastifyAdapter } from "@bull-board/fastify";
+import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { BullBoardService } from "./bull-board.service";
 import {
   SERVICE_QUEUE,
   APPOINTMENT_QUEUE,
@@ -13,8 +12,8 @@ import {
   VIDHAKARMA_QUEUE,
   PANCHAKARMA_QUEUE,
   CHEQUP_QUEUE,
-} from '../queue.constants';
-import { Queue } from 'bullmq';
+} from "../queue.constants";
+import { Queue } from "bullmq";
 
 @Module({
   providers: [BullBoardService],
@@ -23,24 +22,24 @@ import { Queue } from 'bullmq';
     BullBoardNestModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        route: '/queue-dashboard',
+        route: "/queue-dashboard",
         adapter: FastifyAdapter,
         auth: {
-          user: config.get('QUEUE_DASHBOARD_USER', 'admin'),
-          password: config.get('QUEUE_DASHBOARD_PASSWORD', 'admin')
+          user: config.get("QUEUE_DASHBOARD_USER", "admin"),
+          password: config.get("QUEUE_DASHBOARD_PASSWORD", "admin"),
         },
-        basePath: '/queue-dashboard',
+        basePath: "/queue-dashboard",
         middleware: (req: any, res: any, next: any) => {
           // Only handle queue-dashboard routes
-          if (req.url.startsWith('/queue-dashboard')) {
+          if (req.url.startsWith("/queue-dashboard")) {
             next();
           } else {
             // Pass through for non-queue routes
-            next('route');
+            next("route");
           }
-        }
+        },
       }),
-      inject: [ConfigService]
+      inject: [ConfigService],
     }),
     BullBoardNestModule.forFeature({
       name: SERVICE_QUEUE,
@@ -78,12 +77,12 @@ export class BullBoardModule {
     consumer
       .apply()
       .forRoutes(
-        { path: 'queue-dashboard', method: RequestMethod.ALL },
-        { path: 'queue-dashboard/*', method: RequestMethod.ALL }
+        { path: "queue-dashboard", method: RequestMethod.ALL },
+        { path: "queue-dashboard/*", method: RequestMethod.ALL },
       );
   }
 }
 
 // IMPORTANT: Secure Bull Board in production!
 // Example: Use strong authentication and restrict by IP
-// See: https://docs.nestjs.com/techniques/queues#monitoring-queues-with-bull-board 
+// See: https://docs.nestjs.com/techniques/queues#monitoring-queues-with-bull-board
