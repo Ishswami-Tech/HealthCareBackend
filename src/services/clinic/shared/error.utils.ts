@@ -1,6 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { LoggingService } from 'src/libs/infrastructure/logging/logging.service';
-import { LogLevel, LogType } from 'src/libs/infrastructure/logging/types/logging.types';
+import { Injectable } from "@nestjs/common";
+import { LoggingService } from "src/libs/infrastructure/logging/logging.service";
+import {
+  LogLevel,
+  LogType,
+} from "src/libs/infrastructure/logging/types/logging.types";
 
 @Injectable()
 export class ClinicErrorService {
@@ -13,13 +16,18 @@ export class ClinicErrorService {
    * @param operation The operation being performed
    * @param metadata Additional metadata
    */
-  async logError(error: any, service: string, operation: string, metadata: any) {
+  async logError(
+    error: any,
+    service: string,
+    operation: string,
+    metadata: any,
+  ) {
     await this.loggingService.log(
       LogType.ERROR,
       LogLevel.ERROR,
       `Failed to ${operation}`,
       service,
-      { error: (error as Error).message, ...metadata }
+      { error: (error as Error).message, ...metadata },
     );
   }
 
@@ -30,13 +38,18 @@ export class ClinicErrorService {
    * @param operation The operation being performed
    * @param metadata Additional metadata
    */
-  async logSuccess(message: string, service: string, operation: string, metadata: any) {
+  async logSuccess(
+    message: string,
+    service: string,
+    operation: string,
+    metadata: any,
+  ) {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       message,
       service,
-      metadata
+      metadata,
     );
   }
-} 
+}

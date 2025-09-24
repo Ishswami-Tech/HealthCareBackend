@@ -1,2 +1,2 @@
-export * from './email';
-export * from './whatsapp';
+export * from "./email";
+export * from "./whatsapp";

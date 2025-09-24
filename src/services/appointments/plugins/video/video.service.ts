@@ -1,7 +1,12 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
-import { CacheService } from '../../../../libs/infrastructure/cache';
-import { LoggingService } from '../../../../libs/infrastructure/logging/logging.service';
-import { LogType, LogLevel } from '../../../../libs/infrastructure/logging';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+} from "@nestjs/common";
+import { CacheService } from "../../../../libs/infrastructure/cache";
+import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
+import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
 
 export interface VideoCall {
   id: string;
@@ -9,7 +14,7 @@ export interface VideoCall {
   patientId: string;
   doctorId: string;
   clinicId: string;
-  status: 'scheduled' | 'active' | 'completed' | 'cancelled';
+  status: "scheduled" | "active" | "completed" | "cancelled";
   startTime?: string;
   endTime?: string;
   duration?: number;
@@ -38,15 +43,25 @@ export class VideoService {
 
   constructor(
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
   ) {}
 
-  async createVideoCall(appointmentId: string, patientId: string, doctorId: string, clinicId: string): Promise<any> {
+  async createVideoCall(
+    appointmentId: string,
+    patientId: string,
+    doctorId: string,
+    clinicId: string,
+  ): Promise<any> {
     const startTime = Date.now();
 
     try {
       // Validate appointment exists and belongs to participants
-      const appointment = await this.validateAppointment(appointmentId, patientId, doctorId, clinicId);
+      const appointment = await this.validateAppointment(
+        appointmentId,
+        patientId,
+        doctorId,
+        clinicId,
+      );
 
       // Generate unique meeting URL
       const meetingUrl = await this.generateMeetingUrl(appointmentId);
@@ -58,7 +73,7 @@ export class VideoService {
         patientId,
         doctorId,
         clinicId,
-        status: 'scheduled',
+        status: "scheduled",
         meetingUrl,
         participants: [patientId, doctorId],
         settings: {
@@ -67,8 +82,8 @@ export class VideoService {
           screenSharingEnabled: true,
           chatEnabled: true,
           waitingRoomEnabled: true,
-          autoRecord: false
-        }
+          autoRecord: false,
+        },
       };
 
       // Store in database (placeholder implementation)
@@ -76,14 +91,24 @@ export class VideoService {
 
       // Cache the video call
       const cacheKey = `videocall:${videoCall.id}`;
-      await this.cacheService.set(cacheKey, JSON.stringify(videoCall), this.VIDEO_CACHE_TTL);
+      await this.cacheService.set(
+        cacheKey,
+        JSON.stringify(videoCall),
+        this.VIDEO_CACHE_TTL,
+      );
 
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Video call created successfully',
-        'VideoService',
-        { appointmentId, patientId, doctorId, clinicId, responseTime: Date.now() - startTime }
+        "Video call created successfully",
+        "VideoService",
+        {
+          appointmentId,
+          patientId,
+          doctorId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        },
       );
 
       return videoCall;
@@ -91,9 +116,15 @@ export class VideoService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to create video call: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { appointmentId, patientId, doctorId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to create video call: ${error instanceof Error ? error.message : String(error)}`,
+        "VideoService",
+        {
+          appointmentId,
+          patientId,
+          doctorId,
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -106,17 +137,17 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException('Video call not found');
+        throw new NotFoundException("Video call not found");
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException('User is not a participant in this call');
+        throw new BadRequestException("User is not a participant in this call");
       }
 
       // Update call status if first participant
-      if (videoCall.status === 'scheduled') {
-        videoCall.status = 'active';
+      if (videoCall.status === "scheduled") {
+        videoCall.status = "active";
         videoCall.startTime = new Date().toISOString();
         await this.updateVideoCall(videoCall);
       }
@@ -127,24 +158,28 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'User joined video call successfully',
-        'VideoService',
-        { callId, userId, responseTime: Date.now() - startTime }
+        "User joined video call successfully",
+        "VideoService",
+        { callId, userId, responseTime: Date.now() - startTime },
       );
 
       return {
         callId,
         meetingUrl: videoCall.meetingUrl,
         joinToken,
-        settings: videoCall.settings
+        settings: videoCall.settings,
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to join video call: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to join video call: ${error instanceof Error ? error.message : String(error)}`,
+        "VideoService",
+        {
+          callId,
+          userId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -157,12 +192,12 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException('Video call not found');
+        throw new NotFoundException("Video call not found");
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException('User is not a participant in this call');
+        throw new BadRequestException("User is not a participant in this call");
       }
 
       // Start recording (placeholder implementation)
@@ -175,24 +210,28 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Recording started successfully',
-        'VideoService',
-        { callId, userId, recordingId, responseTime: Date.now() - startTime }
+        "Recording started successfully",
+        "VideoService",
+        { callId, userId, recordingId, responseTime: Date.now() - startTime },
       );
 
       return {
         success: true,
         recordingId,
         recordingUrl: videoCall.recordingUrl,
-        message: 'Recording started'
+        message: "Recording started",
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to start recording: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to start recording: ${error instanceof Error ? error.message : String(error)}`,
+        "VideoService",
+        {
+          callId,
+          userId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -205,12 +244,12 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException('Video call not found');
+        throw new NotFoundException("Video call not found");
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException('User is not a participant in this call');
+        throw new BadRequestException("User is not a participant in this call");
       }
 
       // Stop recording (placeholder implementation)
@@ -219,24 +258,28 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Recording stopped successfully',
-        'VideoService',
-        { callId, userId, responseTime: Date.now() - startTime }
+        "Recording stopped successfully",
+        "VideoService",
+        { callId, userId, responseTime: Date.now() - startTime },
       );
 
       return {
         success: true,
         recordingUrl: videoCall.recordingUrl,
         duration: recordingResult.duration,
-        message: 'Recording stopped'
+        message: "Recording stopped",
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to stop recording: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to stop recording: ${error instanceof Error ? error.message : String(error)}`,
+        "VideoService",
+        {
+          callId,
+          userId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -249,19 +292,23 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException('Video call not found');
+        throw new NotFoundException("Video call not found");
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException('User is not a participant in this call');
+        throw new BadRequestException("User is not a participant in this call");
       }
 
       // End the call
-      videoCall.status = 'completed';
+      videoCall.status = "completed";
       videoCall.endTime = new Date().toISOString();
       if (videoCall.startTime) {
-        videoCall.duration = Math.floor((new Date(videoCall.endTime).getTime() - new Date(videoCall.startTime).getTime()) / 1000);
+        videoCall.duration = Math.floor(
+          (new Date(videoCall.endTime).getTime() -
+            new Date(videoCall.startTime).getTime()) /
+            1000,
+        );
       }
 
       await this.updateVideoCall(videoCall);
@@ -274,42 +321,55 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Video call ended successfully',
-        'VideoService',
-        { callId, userId, duration: videoCall.duration, responseTime: Date.now() - startTime }
+        "Video call ended successfully",
+        "VideoService",
+        {
+          callId,
+          userId,
+          duration: videoCall.duration,
+          responseTime: Date.now() - startTime,
+        },
       );
 
       return {
         success: true,
         callId,
         duration: videoCall.duration,
-        message: 'Video call ended'
+        message: "Video call ended",
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to end video call: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to end video call: ${error instanceof Error ? error.message : String(error)}`,
+        "VideoService",
+        {
+          callId,
+          userId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
   }
 
-  async shareMedicalImage(callId: string, userId: string, imageData: any): Promise<any> {
+  async shareMedicalImage(
+    callId: string,
+    userId: string,
+    imageData: any,
+  ): Promise<any> {
     const startTime = Date.now();
 
     try {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException('Video call not found');
+        throw new NotFoundException("Video call not found");
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException('User is not a participant in this call');
+        throw new BadRequestException("User is not a participant in this call");
       }
 
       // Upload and share image (placeholder implementation)
@@ -318,23 +378,27 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Medical image shared successfully',
-        'VideoService',
-        { callId, userId, imageUrl, responseTime: Date.now() - startTime }
+        "Medical image shared successfully",
+        "VideoService",
+        { callId, userId, imageUrl, responseTime: Date.now() - startTime },
       );
 
       return {
         success: true,
         imageUrl,
-        message: 'Medical image shared'
+        message: "Medical image shared",
       };
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to share medical image: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { callId, userId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to share medical image: ${error instanceof Error ? error.message : String(error)}`,
+        "VideoService",
+        {
+          callId,
+          userId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -344,7 +408,7 @@ export class VideoService {
 
   async getVideoCallHistory(userId: string, clinicId?: string): Promise<any> {
     const startTime = Date.now();
-    const cacheKey = `videocalls:history:${userId}:${clinicId || 'all'}`;
+    const cacheKey = `videocalls:history:${userId}:${clinicId || "all"}`;
 
     try {
       // Try to get from cache first
@@ -361,18 +425,27 @@ export class VideoService {
         clinicId,
         calls,
         total: calls.length,
-        retrievedAt: new Date().toISOString()
+        retrievedAt: new Date().toISOString(),
       };
 
       // Cache the result
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.VIDEO_CACHE_TTL);
+      await this.cacheService.set(
+        cacheKey,
+        JSON.stringify(result),
+        this.VIDEO_CACHE_TTL,
+      );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Video call history retrieved successfully',
-        'VideoService',
-        { userId, clinicId, count: calls.length, responseTime: Date.now() - startTime }
+        "Video call history retrieved successfully",
+        "VideoService",
+        {
+          userId,
+          clinicId,
+          count: calls.length,
+          responseTime: Date.now() - startTime,
+        },
       );
 
       return result;
@@ -380,9 +453,13 @@ export class VideoService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get video call history: ${error instanceof Error ? (error as Error).message : String(error)}`,
-        'VideoService',
-        { userId, clinicId, error: error instanceof Error ? (error as Error).stack : undefined }
+        `Failed to get video call history: ${error instanceof Error ? error.message : String(error)}`,
+        "VideoService",
+        {
+          userId,
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        },
       );
       throw error;
     }
@@ -391,7 +468,12 @@ export class VideoService {
   // getVirtualFittingHistory method removed - healthcare application only
 
   // Helper methods (placeholder implementations that would integrate with actual services)
-  private async validateAppointment(appointmentId: string, patientId: string, doctorId: string, clinicId: string): Promise<any> {
+  private async validateAppointment(
+    appointmentId: string,
+    patientId: string,
+    doctorId: string,
+    clinicId: string,
+  ): Promise<any> {
     // This would integrate with the actual appointment service
     // For now, return mock data
     return {
@@ -399,7 +481,7 @@ export class VideoService {
       patientId,
       doctorId,
       clinicId,
-      status: 'CONFIRMED'
+      status: "CONFIRMED",
     };
   }
 
@@ -411,7 +493,10 @@ export class VideoService {
     return `https://meet.example.com/${appointmentId}-${Date.now()}`;
   }
 
-  private async generateJoinToken(callId: string, userId: string): Promise<string> {
+  private async generateJoinToken(
+    callId: string,
+    userId: string,
+  ): Promise<string> {
     // This would integrate with actual video service
     // For now, return mock token
     return `token-${callId}-${userId}-${Date.now()}`;
@@ -435,28 +520,32 @@ export class VideoService {
     // For now, return mock data
     return {
       id: callId,
-      appointmentId: 'app-1',
-      patientId: 'patient-1',
-      doctorId: 'doctor-1',
-      clinicId: 'clinic-1',
-      status: 'scheduled',
-      meetingUrl: 'https://meet.example.com/test',
-      participants: ['patient-1', 'doctor-1'],
+      appointmentId: "app-1",
+      patientId: "patient-1",
+      doctorId: "doctor-1",
+      clinicId: "clinic-1",
+      status: "scheduled",
+      meetingUrl: "https://meet.example.com/test",
+      participants: ["patient-1", "doctor-1"],
       settings: {
         maxParticipants: 2,
         recordingEnabled: true,
         screenSharingEnabled: true,
         chatEnabled: true,
         waitingRoomEnabled: true,
-        autoRecord: false
-      }
+        autoRecord: false,
+      },
     };
   }
 
   private async updateVideoCall(videoCall: VideoCall): Promise<void> {
     // Update cache
     const cacheKey = `videocall:${videoCall.id}`;
-    await this.cacheService.set(cacheKey, JSON.stringify(videoCall), this.VIDEO_CACHE_TTL);
+    await this.cacheService.set(
+      cacheKey,
+      JSON.stringify(videoCall),
+      this.VIDEO_CACHE_TTL,
+    );
 
     // This would integrate with the actual database
     // For now, just log
@@ -474,11 +563,15 @@ export class VideoService {
     // For now, return mock result
     return {
       duration: 1800, // 30 minutes
-      url: `https://recordings.example.com/${callId}`
+      url: `https://recordings.example.com/${callId}`,
     };
   }
 
-  private async uploadMedicalImage(imageData: any, callId: string, userId: string): Promise<string> {
+  private async uploadMedicalImage(
+    imageData: any,
+    callId: string,
+    userId: string,
+  ): Promise<string> {
     // This would integrate with actual file storage service
     // For now, return mock URL
     return `https://images.example.com/medical/${callId}/${userId}/${Date.now()}.jpg`;
@@ -486,31 +579,34 @@ export class VideoService {
 
   // storeVirtualFitting method removed - healthcare application only
 
-  private async fetchVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCall[]> {
+  private async fetchVideoCallHistory(
+    userId: string,
+    clinicId?: string,
+  ): Promise<VideoCall[]> {
     // This would integrate with the actual database
     // For now, return mock data
     return [
       {
-        id: 'vc-1',
-        appointmentId: 'app-1',
-        patientId: 'patient-1',
-        doctorId: 'doctor-1',
-        clinicId: 'clinic-1',
-        status: 'completed',
+        id: "vc-1",
+        appointmentId: "app-1",
+        patientId: "patient-1",
+        doctorId: "doctor-1",
+        clinicId: "clinic-1",
+        status: "completed",
         startTime: new Date(Date.now() - 3600000).toISOString(),
         endTime: new Date().toISOString(),
         duration: 3600,
-        meetingUrl: 'https://meet.example.com/test',
-        participants: ['patient-1', 'doctor-1'],
+        meetingUrl: "https://meet.example.com/test",
+        participants: ["patient-1", "doctor-1"],
         settings: {
           maxParticipants: 2,
           recordingEnabled: true,
           screenSharingEnabled: true,
           chatEnabled: true,
           waitingRoomEnabled: true,
-          autoRecord: false
-        }
-      }
+          autoRecord: false,
+        },
+      },
     ];
   }
 

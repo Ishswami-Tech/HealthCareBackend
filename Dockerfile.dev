@@ -55,7 +55,7 @@ RUN if [ -f "$PRISMA_SCHEMA_PATH" ]; then \
 RUN if [ -f "/app/src/libs/infrastructure/database/prisma/wait-for-postgres.sh" ]; then chmod +x /app/src/libs/infrastructure/database/prisma/wait-for-postgres.sh; fi
 
 # Set proper permissions for hot reloading
-RUN chmod -R 777 /app
+RUN chmod -R 755 /app/src && chmod -R 777 /app/logs /app/dist
 
 # Expose ports
 EXPOSE 8088 5555

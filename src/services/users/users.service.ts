@@ -1,15 +1,31 @@
-import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
-import { Injectable, NotFoundException, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { CacheService } from '../../libs/infrastructure/cache';
-import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
-import { EventService } from '../../libs/infrastructure/events/event.service';
-import { LogLevel, LogType } from '../../libs/infrastructure/logging/types/logging.types';
-import { Role, Gender } from '../../libs/infrastructure/database/prisma/prisma.types';
-import type { User } from '../../libs/infrastructure/database/prisma/prisma.types';
-import { RbacService } from '../../libs/core/rbac/rbac.service';
-import { CreateUserDto, UserResponseDto, UpdateUserDto } from '../../libs/dtos/user.dto';
-import { AuthService } from '../auth/auth.service';
-import { HealthcareErrorsService } from '../../libs/core/errors';
+import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  UnauthorizedException,
+  BadRequestException,
+} from "@nestjs/common";
+import { CacheService } from "../../libs/infrastructure/cache";
+import { LoggingService } from "../../libs/infrastructure/logging/logging.service";
+import { EventService } from "../../libs/infrastructure/events/event.service";
+import {
+  LogLevel,
+  LogType,
+} from "../../libs/infrastructure/logging/types/logging.types";
+import {
+  Role,
+  Gender,
+} from "../../libs/infrastructure/database/prisma/prisma.types";
+import type { User } from "../../libs/infrastructure/database/prisma/prisma.types";
+import { RbacService } from "../../libs/core/rbac/rbac.service";
+import {
+  CreateUserDto,
+  UserResponseDto,
+  UpdateUserDto,
+} from "../../libs/dtos/user.dto";
+import { AuthService } from "../auth/auth.service";
+import { HealthcareErrorsService } from "../../libs/core/errors";
 
 @Injectable()
 export class UsersService {
@@ -24,8 +40,8 @@ export class UsersService {
   ) {}
 
   async findAll(role?: Role): Promise<UserResponseDto[]> {
-    const cacheKey = `users:all:${role || 'all'}`;
-    
+    const cacheKey = `users:all:${role || "all"}`;
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
@@ -43,7 +59,9 @@ export class UsersService {
         const result = users.map(({ password, ...user }) => {
           const userResponse = { ...user } as any;
           if (userResponse.dateOfBirth) {
-            userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+            userResponse.dateOfBirth = userResponse.dateOfBirth
+              .toISOString()
+              .split("T")[0];
           }
           return userResponse;
         }) as UserResponseDto[];
@@ -52,18 +70,18 @@ export class UsersService {
       },
       {
         ttl: 1800, // 30 minutes
-        tags: ['users', 'user_lists', role ? `role:${role}` : 'all_roles'],
-        priority: 'normal',
+        tags: ["users", "user_lists", role ? `role:${role}` : "all_roles"],
+        priority: "normal",
         enableSwr: true,
         compress: true, // Compress user lists
         containsPHI: true, // User lists contain PHI
-      }
+      },
     );
   }
 
   async findOne(id: string): Promise<UserResponseDto> {
     const cacheKey = `users:one:${id}`;
-    
+
     return this.cacheService.cache(
       cacheKey,
       async () => {
@@ -85,19 +103,21 @@ export class UsersService {
         const { password, ...result } = user;
         const userResponse = { ...result } as any;
         if (userResponse.dateOfBirth) {
-          userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+          userResponse.dateOfBirth = userResponse.dateOfBirth
+            .toISOString()
+            .split("T")[0];
         }
-        
+
         return userResponse as UserResponseDto;
       },
       {
         ttl: 3600, // 1 hour
-        tags: [`user:${id}`, 'user_details'],
-        priority: 'high',
+        tags: [`user:${id}`, "user_details"],
+        priority: "high",
         enableSwr: true,
         compress: true, // Compress user details
         containsPHI: true, // User details contain PHI
-      }
+      },
     );
   }
 
@@ -118,7 +138,11 @@ export class UsersService {
   /**
    * Change user password with auth service integration
    */
-  async changeUserPassword(userId: string, currentPassword: string, newPassword: string): Promise<{ message: string }> {
+  async changeUserPassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
     return this.authService.changePassword(userId, {
       currentPassword,
       newPassword,
@@ -136,7 +160,10 @@ export class UsersService {
   /**
    * Reset password with auth service integration
    */
-  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+  async resetPassword(
+    token: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
     return this.authService.resetPassword({
       token,
       newPassword,
@@ -148,9 +175,9 @@ export class UsersService {
     const user = await this.prisma.user.findFirst({
       where: {
         email: {
-          mode: 'insensitive',
-          equals: email
-        }
+          mode: "insensitive",
+          equals: email,
+        },
       },
       include: {
         doctor: true,
@@ -168,7 +195,9 @@ export class UsersService {
     const { password, ...result } = user;
     const userResponse = { ...result } as any;
     if (userResponse.dateOfBirth) {
-      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      userResponse.dateOfBirth = userResponse.dateOfBirth
+        .toISOString()
+        .split("T")[0];
     }
     return userResponse as UserResponseDto;
   }
@@ -178,11 +207,11 @@ export class UsersService {
   }
 
   private async getNextNumericId(): Promise<string> {
-    const COUNTER_KEY = 'user:counter';
+    const COUNTER_KEY = "user:counter";
     const currentId = await this.cacheService.get(COUNTER_KEY);
     const nextId = currentId ? parseInt(currentId as string) + 1 : 1;
     await this.cacheService.set(COUNTER_KEY, nextId.toString());
-    return `UID${nextId.toString().padStart(6, '0')}`;
+    return `UID${nextId.toString().padStart(6, "0")}`;
   }
 
   async createUser(data: CreateUserDto): Promise<User> {
@@ -211,41 +240,54 @@ export class UsersService {
       });
 
       if (!user) {
-        throw new Error('User creation failed - user not found after registration');
+        throw new Error(
+          "User creation failed - user not found after registration",
+        );
       }
 
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'User created successfully with auth integration',
-        'UsersService',
-        { userId: user.id, email: data.email, role: data.role, clinicId: data.clinicId }
+        "User created successfully with auth integration",
+        "UsersService",
+        {
+          userId: user.id,
+          email: data.email,
+          role: data.role,
+          clinicId: data.clinicId,
+        },
       );
-      await this.eventService.emit('user.created', { 
-        userId: user.id, 
-        email: data.email, 
+      await this.eventService.emit("user.created", {
+        userId: user.id,
+        email: data.email,
         role: data.role,
         clinicId: data.clinicId,
-        authIntegrated: true
+        authIntegrated: true,
       });
-      await this.cacheService.invalidateCacheByTag('users');
+      await this.cacheService.invalidateCacheByTag("users");
 
       return user as unknown as User;
     } catch (error) {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        'User creation failed',
-        'UsersService',
-        { error: error instanceof Error ? error.message : 'Unknown error', email: data.email }
+        "User creation failed",
+        "UsersService",
+        {
+          error: error instanceof Error ? error.message : "Unknown error",
+          email: data.email,
+        },
       );
       throw error;
     }
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<UserResponseDto> {
-    if (!id || id === 'undefined') {
-      throw new BadRequestException('User ID is required');
+  async update(
+    id: string,
+    updateUserDto: UpdateUserDto,
+  ): Promise<UserResponseDto> {
+    if (!id || id === "undefined") {
+      throw new BadRequestException("User ID is required");
     }
     try {
       // Check if user exists first
@@ -268,35 +310,38 @@ export class UsersService {
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Attempting to update user',
-        'UsersService',
-        { 
+        "Attempting to update user",
+        "UsersService",
+        {
           userId: id,
           updateFields: Object.keys(updateUserDto),
-          role: existingUser.role
-        }
+          role: existingUser.role,
+        },
       );
 
       // Clean up the data to prevent errors
       const cleanedData: any = { ...updateUserDto };
-      
+
       // Prevent users from updating clinicId and appName
       delete cleanedData.clinicId;
       delete cleanedData.appName;
-      
+
       // Handle date conversion properly
-      if (cleanedData.dateOfBirth && typeof cleanedData.dateOfBirth === 'string') {
+      if (
+        cleanedData.dateOfBirth &&
+        typeof cleanedData.dateOfBirth === "string"
+      ) {
         try {
           cleanedData.dateOfBirth = new Date(cleanedData.dateOfBirth);
         } catch (error) {
           this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
-            'Invalid date format for dateOfBirth',
-            'UsersService',
-            { userId: id, dateOfBirth: cleanedData.dateOfBirth }
+            "Invalid date format for dateOfBirth",
+            "UsersService",
+            { userId: id, dateOfBirth: cleanedData.dateOfBirth },
           );
-          throw new Error('Invalid date format for dateOfBirth');
+          throw new Error("Invalid date format for dateOfBirth");
         }
       }
 
@@ -316,11 +361,13 @@ export class UsersService {
             where: { userId: id },
             data: {
               specialization: cleanedData.specialization,
-              experience: parseInt(cleanedData.experience as string) || (existingUser as any).doctor.experience,
+              experience:
+                parseInt(cleanedData.experience as string) ||
+                (existingUser as any).doctor.experience,
             },
           });
         }
-        
+
         // Remove doctor-specific fields from main update
         delete cleanedData.specialization;
         delete cleanedData.experience;
@@ -342,23 +389,28 @@ export class UsersService {
       // Invalidate cache
       await Promise.all([
         this.cacheService.invalidateCache(`users:one:${id}`),
-        this.cacheService.invalidateCacheByTag('users'),
+        this.cacheService.invalidateCacheByTag("users"),
         this.cacheService.invalidateCacheByTag(`user:${id}`),
       ]);
 
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'User updated successfully',
-        'UsersService',
-        { userId: id }
+        "User updated successfully",
+        "UsersService",
+        { userId: id },
       );
-      await this.eventService.emit('user.updated', { userId: id, data: updateUserDto });
+      await this.eventService.emit("user.updated", {
+        userId: id,
+        data: updateUserDto,
+      });
 
       const { password, ...result } = user;
       const userResponse = { ...result } as any;
       if (userResponse.dateOfBirth) {
-        userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+        userResponse.dateOfBirth = userResponse.dateOfBirth
+          .toISOString()
+          .split("T")[0];
       }
       return userResponse as UserResponseDto;
     } catch (error) {
@@ -366,88 +418,104 @@ export class UsersService {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Error updating user: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`,
-        'UsersService',
-        { userId: id, error: error instanceof Error ? (error as Error).stack : '' }
+        `Error updating user: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "UsersService",
+        {
+          userId: id,
+          error: error instanceof Error ? error.stack : "",
+        },
       );
-      
+
       // Rethrow as appropriate exception
-      if (error instanceof Error && error.name === 'PrismaClientKnownRequestError') {
+      if (
+        error instanceof Error &&
+        error.name === "PrismaClientKnownRequestError"
+      ) {
         const prismaError = error as any;
-        if (prismaError.code === 'P2025') {
+        if (prismaError.code === "P2025") {
           throw new NotFoundException(`User with ID ${id} not found`);
-        } else if (prismaError.code === 'P2002') {
-          throw new ConflictException(`Unique constraint violation: ${prismaError.meta?.target}`);
+        } else if (prismaError.code === "P2002") {
+          throw new ConflictException(
+            `Unique constraint violation: ${prismaError.meta?.target}`,
+          );
         }
       }
-      
+
       throw error;
     }
   }
 
   async remove(id: string): Promise<void> {
-      const user = await this.prisma.user.findUnique({
-        where: { id },
-        include: {
-          doctor: true,
-          patient: true,
-          receptionists: true,
-          clinicAdmins: true,
-          superAdmin: true,
-        },
-      });
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        doctor: true,
+        patient: true,
+        receptionists: true,
+        clinicAdmins: true,
+        superAdmin: true,
+      },
+    });
 
-      if (!user) {
+    if (!user) {
       throw new NotFoundException(`User with ID ${id} not found`);
     }
 
     // Delete role-specific record first
     if (user.role === Role.DOCTOR && (user as any).doctor) {
       await this.prisma.doctor.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
     if (user.role === Role.PATIENT && (user as any).patient) {
       await this.prisma.patient.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
-    if (user.role === Role.RECEPTIONIST && (user as any).receptionists && (user as any).receptionists.length > 0) {
+    if (
+      user.role === Role.RECEPTIONIST &&
+      (user as any).receptionists &&
+      (user as any).receptionists.length > 0
+    ) {
       await this.prisma.receptionist.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
-    if (user.role === Role.CLINIC_ADMIN && (user as any).clinicAdmins && (user as any).clinicAdmins.length > 0) {
+    if (
+      user.role === Role.CLINIC_ADMIN &&
+      (user as any).clinicAdmins &&
+      (user as any).clinicAdmins.length > 0
+    ) {
       await this.prisma.clinicAdmin.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
     if (user.role === Role.SUPER_ADMIN && (user as any).superAdmin) {
       await this.prisma.superAdmin.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
 
     // Delete user record
     await this.prisma.user.delete({
-      where: { id }
+      where: { id },
     });
 
     // Invalidate cache
     await Promise.all([
       this.cacheService.invalidateCache(`users:one:${id}`),
-      this.cacheService.invalidateCacheByTag('users'),
+      this.cacheService.invalidateCacheByTag("users"),
       this.cacheService.invalidateCacheByTag(`user:${id}`),
     ]);
 
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-      'User deleted successfully',
-        'UsersService',
-        { userId: id }
-      );
-    await this.eventService.emit('user.deleted', { userId: id });
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      "User deleted successfully",
+      "UsersService",
+      { userId: id },
+    );
+    await this.eventService.emit("user.deleted", { userId: id });
   }
 
   private async logAuditEvent(
@@ -462,8 +530,8 @@ export class UsersService {
         action,
         description,
         timestamp: new Date(),
-        ipAddress: '127.0.0.1',
-        device: 'API',
+        ipAddress: "127.0.0.1",
+        device: "API",
       },
     });
   }
@@ -485,10 +553,14 @@ export class UsersService {
     return this.findAll(Role.CLINIC_ADMIN);
   }
 
-  async logout(userId: string, sessionId?: string, clinicId?: string): Promise<void> {
+  async logout(
+    userId: string,
+    sessionId?: string,
+    clinicId?: string,
+  ): Promise<void> {
     // Check if user exists
     const user = await this.prisma.user.findUnique({
-      where: { id: userId }
+      where: { id: userId },
     });
 
     if (!user) {
@@ -498,13 +570,13 @@ export class UsersService {
     try {
       // Use auth service for proper logout with session management
       await this.authService.logout(userId);
-      
+
       // Update last login timestamp
       await this.prisma.user.update({
         where: { id: userId },
         data: {
-          lastLogin: null
-        }
+          lastLogin: null,
+        },
       });
 
       // Clear all user-related cache
@@ -512,23 +584,35 @@ export class UsersService {
         this.cacheService.del(`users:one:${userId}`),
         this.cacheService.del(`users:all`),
         this.cacheService.del(`users:${user.role.toLowerCase()}`),
-        this.cacheService.del(`user:sessions:${userId}`)
+        this.cacheService.del(`user:sessions:${userId}`),
       ]);
 
       // Log the logout event
-      await this.logAuditEvent(userId, 'LOGOUT', 'User logged out successfully');
+      await this.logAuditEvent(
+        userId,
+        "LOGOUT",
+        "User logged out successfully",
+      );
     } catch (error) {
       // Log the error
-      await this.logAuditEvent(userId, 'LOGOUT_ERROR', `Logout failed: ${error instanceof Error ? (error as Error).message : 'Unknown error'}`);
-      
+      await this.logAuditEvent(
+        userId,
+        "LOGOUT_ERROR",
+        `Logout failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+
       // Re-throw the error
       throw error;
     }
   }
 
-  async updateUserRole(id: string, role: Role, createUserDto: CreateUserDto): Promise<UserResponseDto> {
-      const user = await this.prisma.user.findUnique({
-        where: { id },
+  async updateUserRole(
+    id: string,
+    role: Role,
+    createUserDto: CreateUserDto,
+  ): Promise<UserResponseDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
       include: {
         doctor: true,
         patient: true,
@@ -536,36 +620,44 @@ export class UsersService {
         clinicAdmins: true,
         superAdmin: true,
       },
-      });
+    });
 
-      if (!user) {
+    if (!user) {
       throw new NotFoundException(`User with ID ${id} not found`);
     }
 
     // Delete old role-specific record
     if (user.role === Role.DOCTOR && user.doctor) {
       await this.prisma.doctor.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
     if (user.role === Role.PATIENT && user.patient) {
       await this.prisma.patient.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
-    if (user.role === Role.RECEPTIONIST && (user as any).receptionists && (user as any).receptionists.length > 0) {
+    if (
+      user.role === Role.RECEPTIONIST &&
+      (user as any).receptionists &&
+      (user as any).receptionists.length > 0
+    ) {
       await this.prisma.receptionist.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
-    if (user.role === Role.CLINIC_ADMIN && (user as any).clinicAdmins && (user as any).clinicAdmins.length > 0) {
+    if (
+      user.role === Role.CLINIC_ADMIN &&
+      (user as any).clinicAdmins &&
+      (user as any).clinicAdmins.length > 0
+    ) {
       await this.prisma.clinicAdmin.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
     if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
       await this.prisma.superAdmin.delete({
-        where: { userId: id }
+        where: { userId: id },
       });
     }
 
@@ -573,40 +665,40 @@ export class UsersService {
     switch (role) {
       case Role.PATIENT:
         await this.prisma.patient.create({
-          data: { userId: id }
+          data: { userId: id },
         });
         break;
       case Role.DOCTOR:
         await this.prisma.doctor.create({
           data: {
             userId: id,
-            specialization: '',
-            experience: 0
-          }
+            specialization: "",
+            experience: 0,
+          },
         });
         break;
       case Role.RECEPTIONIST:
         await this.prisma.receptionist.create({
-          data: { userId: id }
+          data: { userId: id },
         });
         break;
       case Role.CLINIC_ADMIN:
         const clinics = await this.prisma.clinic.findMany({
-          take: 1
+          take: 1,
         });
         if (!clinics.length) {
-          throw new Error('No clinic found. Please create a clinic first.');
+          throw new Error("No clinic found. Please create a clinic first.");
         }
         await this.prisma.clinicAdmin.create({
-          data: { 
-        userId: id,
-            clinicId: createUserDto.clinicId || clinics[0].id
-          }
+          data: {
+            userId: id,
+            clinicId: createUserDto.clinicId || clinics[0].id,
+          },
         });
         break;
       case Role.SUPER_ADMIN:
         await this.prisma.superAdmin.create({
-          data: { userId: id }
+          data: { userId: id },
         });
         break;
     }
@@ -625,18 +717,22 @@ export class UsersService {
     });
 
     // Invalidate cache
-      await Promise.all([
+    await Promise.all([
       this.cacheService.invalidateCache(`users:one:${id}`),
-        this.cacheService.invalidateCacheByTag('users'),
+      this.cacheService.invalidateCacheByTag("users"),
       this.cacheService.invalidateCacheByTag(`user:${id}`),
-      this.cacheService.invalidateCacheByTag(`users:${user.role.toLowerCase()}`),
+      this.cacheService.invalidateCacheByTag(
+        `users:${user.role.toLowerCase()}`,
+      ),
       this.cacheService.invalidateCacheByTag(`users:${role.toLowerCase()}`),
     ]);
 
     const { password, ...result } = updatedUser;
     const userResponse = { ...result } as any;
     if (userResponse.dateOfBirth) {
-      userResponse.dateOfBirth = userResponse.dateOfBirth.toISOString().split('T')[0];
+      userResponse.dateOfBirth = userResponse.dateOfBirth
+        .toISOString()
+        .split("T")[0];
     }
     return userResponse as UserResponseDto;
   }

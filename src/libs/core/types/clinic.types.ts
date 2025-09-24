@@ -1,5 +1,5 @@
-import { Role } from '../../infrastructure/database/prisma/prisma.types';
-import { FastifyRequest } from 'fastify';
+import { Role } from "../../infrastructure/database/prisma/prisma.types";
+import { FastifyRequest } from "fastify";
 
 export interface WorkingHours {
   start: string;
@@ -82,4 +82,4 @@ export interface ClinicInfo {
   appName: string;
   isActive: boolean;
   createdAt: Date;
-} 
+}

@@ -19,7 +19,22 @@
       "Bash(timeout 15 npm start)",
       "Bash(npm search:*)",
       "Bash(npm install:*)",
-      "Bash(yarn add:*)"
+      "Bash(yarn add:*)",
+      "Bash(npm run start:dev:stable:*)",
+      "Bash(pkill:*)",
+      "Bash(redis-cli:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(taskkill:*)",
+      "Bash(git checkout:*)",
+      "Bash(cross-env PORT=8089 npm run start:dev)",
+      "Bash(set PORT=8089)",
+      "Bash(npm run start:dev:*)",
+      "Bash(timeout 30 npm run start:dev:stable)",
+      "Bash(npx prisma db seed:*)",
+      "Bash(npx prisma db push:*)",
+      "Read(//d/tmp/**)",
+      "Bash(git add:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

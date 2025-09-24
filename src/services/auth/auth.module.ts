@@ -1,28 +1,29 @@
-import { Module, OnModuleInit } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { Module, OnModuleInit } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { APP_INTERCEPTOR } from "@nestjs/core";
 
 // Core modules
-import { DatabaseModule } from '../../libs/infrastructure/database';
-import { RbacModule } from '../../libs/core/rbac/rbac.module';
-import { SessionModule } from '../../libs/core/session/session.module';
-import { GuardsModule } from '../../libs/core/guards/guards.module';
-import { EmailModule } from '../../libs/communication/messaging/email/email.module';
-import { LoggingServiceModule } from '../../libs/infrastructure/logging';
+import { DatabaseModule } from "../../libs/infrastructure/database";
+import { CacheModule } from "../../libs/infrastructure/cache/cache.module";
+import { RbacModule } from "../../libs/core/rbac/rbac.module";
+import { SessionModule } from "../../libs/core/session/session.module";
+import { GuardsModule } from "../../libs/core/guards/guards.module";
+import { EmailModule } from "../../libs/communication/messaging/email/email.module";
+import { LoggingServiceModule } from "../../libs/infrastructure/logging";
 
 // Cache interceptor
-import { HealthcareCacheInterceptor } from '../../libs/infrastructure/cache/interceptors/healthcare-cache.interceptor';
+import { HealthcareCacheInterceptor } from "../../libs/infrastructure/cache/interceptors/healthcare-cache.interceptor";
 
 // Auth services
-import { AuthService } from './auth.service';
-import { AuthController } from './auth.controller';
+import { AuthService } from "./auth.service";
+import { AuthController } from "./auth.controller";
 
 // Core auth services
-import { JwtAuthService } from './core/jwt.service';
-import { OtpService } from './core/otp.service';
-import { PasswordService } from './core/password.service';
-import { SocialAuthService } from './core/social-auth.service';
+import { JwtAuthService } from "./core/jwt.service";
+import { OtpService } from "./core/otp.service";
+import { PasswordService } from "./core/password.service";
+import { SocialAuthService } from "./core/social-auth.service";
 
 // Guards - using shared guards from libs
 
@@ -31,14 +32,16 @@ import { SocialAuthService } from './core/social-auth.service';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'default-secret',
+        secret: configService.get<string>("JWT_SECRET") || "default-secret",
         signOptions: {
-          expiresIn: configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m',
+          expiresIn:
+            configService.get<string>("JWT_ACCESS_EXPIRES_IN") || "15m",
         },
       }),
       inject: [ConfigService],
     }),
     DatabaseModule,
+    CacheModule,
     RbacModule,
     SessionModule,
     GuardsModule,
@@ -49,13 +52,13 @@ import { SocialAuthService } from './core/social-auth.service';
   providers: [
     // Main auth service
     AuthService,
-    
+
     // Core auth services
     JwtAuthService,
     OtpService,
     PasswordService,
     SocialAuthService,
-    
+
     // Healthcare cache interceptor
     {
       provide: APP_INTERCEPTOR,
@@ -74,6 +77,6 @@ export class AuthModule implements OnModuleInit {
   constructor() {}
 
   async onModuleInit() {
-    console.log('✅ Auth Module initialized successfully');
+    console.log("✅ Auth Module initialized successfully");
   }
 }

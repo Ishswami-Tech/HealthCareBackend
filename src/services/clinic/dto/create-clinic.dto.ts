@@ -1,28 +1,40 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsPhoneNumber, IsOptional, IsUrl, IsBoolean, IsEmail, Matches, ValidateNested, IsObject, IsUUID } from 'class-validator';
-import { Type } from 'class-transformer';
-import { CreateClinicLocationDto } from './create-clinic-location.dto';
+import { ApiProperty } from "@nestjs/swagger";
+import {
+  IsString,
+  IsNotEmpty,
+  IsPhoneNumber,
+  IsOptional,
+  IsUrl,
+  IsBoolean,
+  IsEmail,
+  Matches,
+  ValidateNested,
+  IsObject,
+  IsUUID,
+} from "class-validator";
+import { Type } from "class-transformer";
+import { CreateClinicLocationDto } from "./create-clinic-location.dto";
 
 export class CreateClinicDto {
   @ApiProperty({
-    description: 'The name of the clinic',
-    example: 'Aadesh Ayurvedalay',
+    description: "The name of the clinic",
+    example: "Aadesh Ayurvedalay",
   })
   @IsString()
   @IsNotEmpty()
   name!: string;
 
   @ApiProperty({
-    description: 'The address of the clinic headquarters',
-    example: '123 Main Street, Pune, Maharashtra',
+    description: "The address of the clinic headquarters",
+    example: "123 Main Street, Pune, Maharashtra",
   })
   @IsString()
   @IsNotEmpty()
   address!: string;
 
   @ApiProperty({
-    description: 'The phone number of the clinic',
-    example: '+919876543210',
+    description: "The phone number of the clinic",
+    example: "+919876543210",
   })
   @IsString()
   @IsNotEmpty()
@@ -30,8 +42,8 @@ export class CreateClinicDto {
   phone!: string;
 
   @ApiProperty({
-    description: 'The email of the clinic (will be used for app subdomain)',
-    example: 'aadesh@ayurvedalay.com',
+    description: "The email of the clinic (will be used for app subdomain)",
+    example: "aadesh@ayurvedalay.com",
   })
   @IsString()
   @IsNotEmpty()
@@ -39,32 +51,34 @@ export class CreateClinicDto {
   email!: string;
 
   @ApiProperty({
-    description: 'The subdomain for the clinic app',
-    example: 'aadesh',
+    description: "The subdomain for the clinic app",
+    example: "aadesh",
     required: true,
   })
   @IsString()
   @IsNotEmpty()
   @Matches(/^[a-z0-9-]+$/, {
-    message: 'Subdomain can only contain lowercase letters, numbers, and hyphens',
+    message:
+      "Subdomain can only contain lowercase letters, numbers, and hyphens",
   })
   subdomain!: string;
 
   @ApiProperty({
-    description: 'The app name for the clinic (unique identifier)',
-    example: 'aadesh-ayurvedalay',
+    description: "The app name for the clinic (unique identifier)",
+    example: "aadesh-ayurvedalay",
     required: true,
   })
   @IsString()
   @IsNotEmpty()
   @Matches(/^[a-z0-9-]+$/, {
-    message: 'App name can only contain lowercase letters, numbers, and hyphens',
+    message:
+      "App name can only contain lowercase letters, numbers, and hyphens",
   })
   app_name!: string;
 
   @ApiProperty({
-    description: 'The database connection string for the clinic',
-    example: 'postgresql://user:pass@localhost:5432/clinic_db',
+    description: "The database connection string for the clinic",
+    example: "postgresql://user:pass@localhost:5432/clinic_db",
     required: false,
   })
   @IsOptional()
@@ -72,7 +86,7 @@ export class CreateClinicDto {
   db_connection_string?: string;
 
   @ApiProperty({
-    description: 'The main location of the clinic',
+    description: "The main location of the clinic",
     type: CreateClinicLocationDto,
     required: true,
   })
@@ -82,8 +96,9 @@ export class CreateClinicDto {
   mainLocation!: CreateClinicLocationDto;
 
   @ApiProperty({
-    description: 'Identifier of the Clinic Admin (required if Super Admin is creating the clinic). Can be email or ID.',
-    example: 'admin@example.com',
+    description:
+      "Identifier of the Clinic Admin (required if Super Admin is creating the clinic). Can be email or ID.",
+    example: "admin@example.com",
     required: false,
   })
   @IsOptional()
@@ -91,20 +106,21 @@ export class CreateClinicDto {
   clinicAdminIdentifier?: string;
 
   @ApiProperty({
-    description: 'The database name for the clinic',
-    example: 'clinic_aadesh_db',
+    description: "The database name for the clinic",
+    example: "clinic_aadesh_db",
     required: false,
   })
   @IsString()
   @IsOptional()
   @Matches(/^[a-z0-9_]+$/, {
-    message: 'Database name can only contain lowercase letters, numbers, and underscores',
+    message:
+      "Database name can only contain lowercase letters, numbers, and underscores",
   })
   databaseName?: string;
 
   @ApiProperty({
-    description: 'The logo URL of the clinic',
-    example: 'https://ayurvedalay.com/logos/aadesh.png',
+    description: "The logo URL of the clinic",
+    example: "https://ayurvedalay.com/logos/aadesh.png",
     required: false,
   })
   @IsString()
@@ -113,8 +129,8 @@ export class CreateClinicDto {
   logo?: string;
 
   @ApiProperty({
-    description: 'The website of the clinic',
-    example: 'https://aadesh.ayurvedalay.com',
+    description: "The website of the clinic",
+    example: "https://aadesh.ayurvedalay.com",
     required: false,
   })
   @IsString()
@@ -123,8 +139,8 @@ export class CreateClinicDto {
   website?: string;
 
   @ApiProperty({
-    description: 'The description of the clinic',
-    example: 'A leading Ayurvedic clinic providing traditional treatments',
+    description: "The description of the clinic",
+    example: "A leading Ayurvedic clinic providing traditional treatments",
     required: false,
   })
   @IsString()
@@ -132,8 +148,8 @@ export class CreateClinicDto {
   description?: string;
 
   @ApiProperty({
-    description: 'The timezone of the clinic',
-    example: 'Asia/Kolkata',
+    description: "The timezone of the clinic",
+    example: "Asia/Kolkata",
     required: false,
   })
   @IsString()
@@ -141,8 +157,8 @@ export class CreateClinicDto {
   timezone?: string;
 
   @ApiProperty({
-    description: 'The currency used by the clinic',
-    example: 'INR',
+    description: "The currency used by the clinic",
+    example: "INR",
     required: false,
   })
   @IsString()
@@ -150,8 +166,8 @@ export class CreateClinicDto {
   currency?: string;
 
   @ApiProperty({
-    description: 'The language used by the clinic',
-    example: 'en',
+    description: "The language used by the clinic",
+    example: "en",
     required: false,
   })
   @IsString()
@@ -159,7 +175,7 @@ export class CreateClinicDto {
   language?: string;
 
   @ApiProperty({
-    description: 'Whether the clinic is active',
+    description: "Whether the clinic is active",
     example: true,
     required: false,
   })
@@ -168,11 +184,11 @@ export class CreateClinicDto {
   isActive?: boolean;
 
   @ApiProperty({
-    description: 'Clinic settings as JSON object',
-    example: { theme: 'dark', notifications: true },
+    description: "Clinic settings as JSON object",
+    example: { theme: "dark", notifications: true },
     required: false,
   })
   @IsOptional()
   @IsObject()
   settings?: Record<string, any>;
-} 
+}
