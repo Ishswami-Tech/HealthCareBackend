@@ -28,7 +28,7 @@ export class SocketService {
           `Socket.IO server error: ${error instanceof Error ? error.message : "Unknown error"}`,
           error instanceof Error ? error.stack : undefined,
         );
-        this.handleServerError(error);
+        this.handleServerError();
       });
 
       this.server.on("connection_error", (error: Error) => {
@@ -36,7 +36,7 @@ export class SocketService {
           `Socket.IO connection error: ${error instanceof Error ? error.message : "Unknown error"}`,
           error instanceof Error ? error.stack : undefined,
         );
-        this.handleConnectionError(error);
+        this.handleConnectionError();
       });
 
       // Start health check
@@ -58,7 +58,9 @@ export class SocketService {
     }
 
     this.healthCheckInterval = setInterval(() => {
-      this.checkServerHealth();
+      this.checkServerHealth().catch((error) => {
+        this.logger.error("Health check failed:", error);
+      });
     }, this.HEALTH_CHECK_INTERVAL);
   }
 
@@ -83,13 +85,13 @@ export class SocketService {
     }
   }
 
-  private handleServerError(error: Error) {
+  private handleServerError() {
     this.logger.error("Server error occurred, attempting recovery...");
     // Implement recovery logic here
     // For example, try to reinitialize the server or notify administrators
   }
 
-  private handleConnectionError(error: Error) {
+  private handleConnectionError() {
     this.logger.error("Connection error occurred, attempting recovery...");
     // Implement recovery logic here
     // For example, try to reconnect or notify administrators
@@ -250,7 +252,9 @@ export class SocketService {
       clearInterval(this.healthCheckInterval);
     }
     if (this.server) {
-      this.server.close();
+      this.server.close().catch((error) => {
+        this.logger.error("Error closing server:", error);
+      });
     }
   }
 }

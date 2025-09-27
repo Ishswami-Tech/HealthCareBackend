@@ -31,7 +31,7 @@ export class BusinessRulesEngine {
   /**
    * Evaluate business rules
    */
-  async evaluateRules(context: RuleContext): Promise<RuleResult> {
+  evaluateRules(context: RuleContext): RuleResult {
     try {
       this.logger.log(
         `Evaluating business rules for context: ${JSON.stringify(context)}`,
@@ -63,21 +63,21 @@ export class BusinessRulesEngine {
   /**
    * Validate appointment creation rules
    */
-  async validateCreationRules(context: RuleContext): Promise<RuleResult> {
+  validateCreationRules(context: RuleContext): RuleResult {
     return this.evaluateRules(context);
   }
 
   /**
    * Validate appointment update rules
    */
-  async validateUpdateRules(context: RuleContext): Promise<RuleResult> {
+  validateUpdateRules(context: RuleContext): RuleResult {
     return this.evaluateRules(context);
   }
 
   /**
    * Validate appointment cancellation rules
    */
-  async validateCancellationRules(context: RuleContext): Promise<RuleResult> {
+  validateCancellationRules(context: RuleContext): RuleResult {
     return this.evaluateRules(context);
   }
 }

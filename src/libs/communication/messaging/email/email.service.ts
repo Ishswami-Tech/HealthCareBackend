@@ -16,6 +16,15 @@ import {
 import * as nodemailer from "nodemailer";
 import { MailtrapClient } from "mailtrap";
 
+interface EmailConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  password: string;
+  from: string;
+}
+
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
@@ -32,13 +41,13 @@ export class EmailService implements OnModuleInit {
     if (this.provider === "smtp") {
       await this.initSMTP();
     } else {
-      await this.initAPI();
+      this.initAPI();
     }
   }
 
   private async initSMTP() {
     try {
-      const emailConfig = this.configService.get("email");
+      const emailConfig = this.configService.get<EmailConfig>("email");
       if (!emailConfig || !emailConfig.user || !emailConfig.password) {
         this.logger.warn(
           "SMTP credentials not provided, email service will be disabled",
@@ -71,7 +80,7 @@ export class EmailService implements OnModuleInit {
     }
   }
 
-  private async initAPI() {
+  private initAPI(): void {
     try {
       const token = this.configService.get<string>("MAILTRAP_API_TOKEN");
       if (!token) {
@@ -105,14 +114,16 @@ export class EmailService implements OnModuleInit {
 
   private async sendViaSMTP(options: EmailOptions): Promise<boolean> {
     try {
-      const emailConfig = this.configService.get("email");
+      const emailConfig = this.configService.get<EmailConfig>("email");
       const mailOptions = {
-        from: emailConfig.from,
+        from: emailConfig?.from || "noreply@healthcare.com",
         to: options.to,
         subject: options.subject,
         html: this.getEmailTemplate(options.template, options.context),
       };
-      const info = await this.transporter.sendMail(mailOptions);
+      const info = (await this.transporter.sendMail(mailOptions)) as {
+        messageId: string;
+      };
       this.logger.debug(`SMTP Email sent: ${info.messageId}`);
       return true;
     } catch (error) {
@@ -127,9 +138,14 @@ export class EmailService implements OnModuleInit {
   private async sendViaAPI(options: EmailOptions): Promise<boolean> {
     try {
       // Use defaults if not present in options
-      const fromEmail = (options as any).from || "noreply@healthcare.com";
-      const fromName = (options as any).fromName || "Healthcare App";
-      const category = (options as any).category || "Notification";
+      const extendedOptions = options as EmailOptions & {
+        from?: string;
+        fromName?: string;
+        category?: string;
+      };
+      const fromEmail = extendedOptions.from || "noreply@healthcare.com";
+      const fromName = extendedOptions.fromName || "Healthcare App";
+      const category = extendedOptions.category || "Notification";
       await this.mailtrap.send({
         from: { email: fromEmail, name: fromName },
         to: [{ email: options.to }],

@@ -23,7 +23,6 @@ import { UsersService } from "../users.service";
 import {
   UpdateUserDto,
   UserResponseDto,
-  CreateUserDto,
   UpdateUserRoleDto,
 } from "../../../libs/dtos/user.dto";
 import {
@@ -38,8 +37,6 @@ import { RequireResourcePermission } from "../../../libs/core/rbac/rbac.decorato
 import { RbacService } from "../../../libs/core/rbac/rbac.service";
 import { RateLimitAPI } from "../../../libs/security/rate-limit/rate-limit.decorator";
 import {
-  Cache,
-  InvalidateCache,
   PatientCache,
   InvalidatePatientCache,
 } from "../../../libs/infrastructure/cache/decorators/cache.decorator";

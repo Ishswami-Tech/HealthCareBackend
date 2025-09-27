@@ -114,7 +114,7 @@ export class BaseSocket
   private async initializeSocketService(): Promise<void> {
     while (this.initializationAttempts < this.MAX_INITIALIZATION_ATTEMPTS) {
       try {
-        await this.socketService.setServer(this.server);
+        this.socketService.setServer(this.server);
         this.logger.log("SocketService initialized successfully");
         return;
       } catch (error) {
@@ -137,7 +137,7 @@ export class BaseSocket
     );
   }
 
-  async handleConnection(client: Socket): Promise<WsResponse<any>> {
+  handleConnection(client: Socket): WsResponse<any> {
     try {
       if (!this.server) {
         this.logger.error("WebSocket server not initialized");
@@ -149,7 +149,7 @@ export class BaseSocket
 
       // Send connection confirmation
       if (this.socketService?.getInitializationState()) {
-        await this.socketService.sendToUser(clientId, "connection_confirmed", {
+        this.socketService.sendToUser(clientId, "connection_confirmed", {
           status: "connected",
         });
       }
@@ -163,7 +163,7 @@ export class BaseSocket
     }
   }
 
-  async handleDisconnect(client: Socket): Promise<void> {
+  handleDisconnect(client: Socket): void {
     try {
       const clientId = client.id;
       this.logger.log(`Client disconnected: ${clientId}`);
@@ -189,7 +189,7 @@ export class BaseSocket
     }
   }
 
-  private handleSocketError(client: Socket, error: Error): void {
+  private handleSocketError(client: Socket): void {
     try {
       const attempts = this.reconnectAttempts.get(client.id) || 0;
       if (attempts < this.MAX_RECONNECT_ATTEMPTS) {

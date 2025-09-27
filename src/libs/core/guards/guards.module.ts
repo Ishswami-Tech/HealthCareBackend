@@ -1,5 +1,5 @@
-import { Module, forwardRef } from "@nestjs/common";
-import { JwtModule, JwtService } from "@nestjs/jwt";
+import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { RolesGuard } from "./roles.guard";
 import { ClinicGuard } from "./clinic.guard";

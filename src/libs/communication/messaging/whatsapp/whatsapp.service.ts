@@ -38,7 +38,7 @@ export class WhatsAppService {
       try {
         const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-        const response = await this.sendTemplateMessage(
+        await this.sendTemplateMessage(
           formattedPhone,
           this.whatsAppConfig.otpTemplateId,
           [
@@ -107,7 +107,7 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      const response = await this.sendTemplateMessage(
+      await this.sendTemplateMessage(
         formattedPhone,
         this.whatsAppConfig.appointmentTemplateId,
         [
@@ -163,7 +163,7 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      const response = await this.sendTemplateMessage(
+      await this.sendTemplateMessage(
         formattedPhone,
         this.whatsAppConfig.prescriptionTemplateId,
         [
@@ -218,7 +218,7 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      const response = await axios.post(
+      await axios.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
         {
           messaging_product: "whatsapp",

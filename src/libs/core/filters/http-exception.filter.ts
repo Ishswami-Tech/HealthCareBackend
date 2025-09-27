@@ -8,6 +8,28 @@ import {
 } from "@nestjs/common";
 import { FastifyReply } from "fastify";
 
+// Type definition for request object with expected properties
+interface CustomFastifyRequest {
+  url: string;
+  method: string;
+  body?: any;
+  headers: {
+    "user-agent"?: string;
+    "x-forwarded-for"?: string;
+    "x-real-ip"?: string;
+    "x-clinic-id"?: string;
+    [key: string]: string | undefined;
+  };
+  query?: Record<string, any>;
+  params?: Record<string, any>;
+  ip?: string;
+  user?: {
+    sub: string;
+    role: string;
+    [key: string]: any;
+  };
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -46,7 +68,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: any, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<FastifyReply>();
-    const request = ctx.getRequest();
+    const request = ctx.getRequest<CustomFastifyRequest>();
 
     // Get status code and message
     const status =
@@ -65,8 +87,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
       method: request.method,
       statusCode: status,
       timestamp: new Date().toISOString(),
-      message: exception.message || "Internal server error",
-      stack: exception.stack,
+      message: (exception as Error).message || "Internal server error",
+      stack: (exception as Error).stack,
       body: this.sanitizeRequestBody(request.body),
       headers: this.sanitizeHeaders(request.headers),
       query: request.query,
@@ -82,7 +104,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // Enhanced error categorization and logging
     if (status >= 500) {
       this.logger.error(
-        `[ERROR] [API] ${request.method} ${request.url} failed: ${exception.message}`,
+        `[ERROR] [API] ${request.method} ${request.url} failed: ${(exception as Error).message}`,
         errorLog,
       );
     } else if (status === 404 && this.isIgnored404(request.url, status)) {
@@ -90,9 +112,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // Do nothing
     } else if (status >= 400) {
       // Enhanced client error logging
-      const errorType = this.categorizeError(status, exception);
+      const errorType = this.categorizeError(status);
       this.logger.warn(
-        `[${errorType}] [API] ${request.method} ${request.url} failed: ${exception.message}`,
+        `[${errorType}] [API] ${request.method} ${request.url} failed: ${(exception as Error).message}`,
         {
           ...errorLog,
           errorType,
@@ -104,7 +126,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
 
     // Enhanced error response with more context
-    const errorResponse: any = {
+    const errorResponse: Record<string, any> = {
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
@@ -116,24 +138,23 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // Add additional context for specific error types
     if (status === 404) {
-      errorResponse["suggestion"] =
+      errorResponse.suggestion =
         "Check if the endpoint exists and you have the correct permissions";
     } else if (status === 401) {
-      errorResponse["suggestion"] =
+      errorResponse.suggestion =
         "Please provide valid authentication credentials";
     } else if (status === 403) {
-      errorResponse["suggestion"] =
+      errorResponse.suggestion =
         "You do not have permission to access this resource";
     } else if (status === 422) {
-      errorResponse["suggestion"] =
-        "Please check your request data and try again";
+      errorResponse.suggestion = "Please check your request data and try again";
     } else if (status >= 500) {
-      errorResponse["suggestion"] =
+      errorResponse.suggestion =
         "An internal server error occurred. Please try again later";
       // Don't expose internal error details in production
       if (process.env.NODE_ENV === "production") {
-        errorResponse["message"] = "Internal server error";
-        delete errorResponse["stack"];
+        errorResponse.message = "Internal server error";
+        delete errorResponse.stack;
       }
     }
 
@@ -142,7 +163,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   // Categorize errors for better logging
-  private categorizeError(status: number, exception: any): string {
+  private categorizeError(status: number): string {
     if (status === 400) return "BAD_REQUEST";
     if (status === 401) return "UNAUTHORIZED";
     if (status === 403) return "FORBIDDEN";
@@ -155,10 +176,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   // Remove sensitive data from request body for logging
-  private sanitizeRequestBody(body: any): any {
-    if (!body) return {};
+  private sanitizeRequestBody(body: unknown): Record<string, any> {
+    if (!body || typeof body !== "object") return {};
 
-    const sanitized = { ...body };
+    const sanitized = { ...(body as Record<string, any>) };
 
     // Remove sensitive fields
     const sensitiveFields = [
@@ -176,7 +197,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       "private_key",
     ];
     sensitiveFields.forEach((field) => {
-      if (sanitized[field]) {
+      if (field in sanitized && sanitized[field]) {
         sanitized[field] = "[REDACTED]";
       }
     });
@@ -185,10 +206,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   // Remove sensitive headers for logging
-  private sanitizeHeaders(headers: any): any {
-    if (!headers) return {};
+  private sanitizeHeaders(headers: unknown): Record<string, any> {
+    if (!headers || typeof headers !== "object") return {};
 
-    const sanitized = { ...headers };
+    const sanitized = { ...(headers as Record<string, any>) };
 
     // Remove sensitive headers
     const sensitiveHeaders = [
@@ -200,7 +221,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       "x-secret",
     ];
     sensitiveHeaders.forEach((header) => {
-      if (sanitized[header]) {
+      if (header in sanitized && sanitized[header]) {
         sanitized[header] = "[REDACTED]";
       }
     });
