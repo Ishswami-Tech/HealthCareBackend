@@ -26,25 +26,30 @@ interface ServiceMetrics {
   usedMemory?: number;
   totalKeys?: number;
   lastSave?: string;
-  [key: string]: any;
+  [key: string]: string | number | boolean | undefined;
 }
 
-interface ServiceHealth {
-  status: "healthy" | "unhealthy";
-  details?: string;
-  responseTime?: number;
-  lastChecked?: string;
-  metrics?: ServiceMetrics;
+interface LogEntry {
+  timestamp: Date | string;
+  level: string;
+  message: string;
+  type?: string;
+  source?: string;
+  metadata?: any;
+  data?: string;
 }
 
-interface HealthData {
-  status: "healthy" | "degraded";
-  timestamp: string;
-  environment: string;
-  version: string;
-  services: {
-    [key: string]: ServiceHealth;
-  };
+interface LoggingServiceLogEntry {
+  id?: string;
+  type?: string;
+  level?: string;
+  message?: string;
+  context?: string;
+  metadata?: any;
+  timestamp?: string;
+  userId?: string;
+  ipAddress?: string;
+  userAgent?: string;
 }
 
 interface DashboardData {
@@ -93,14 +98,13 @@ export class AppController {
   })
   async getDashboard(@Res() res: FastifyReply) {
     try {
-      const host =
-        this.configService.get("API_URL") || "https://api.ishswami.in";
+      const host: string =
+        this.configService.get<string>("API_URL") || "https://api.ishswami.in";
       const baseUrl = host.endsWith("/") ? host.slice(0, -1) : host;
       const isProduction = process.env.NODE_ENV === "production";
 
       // Get real-time service status from health controller
-      const healthData: HealthData =
-        await this.healthController.getDetailedHealth();
+      const healthData = await this.healthController.getDetailedHealth();
 
       // Map health data to service status format
       const healthStatus = {
@@ -281,7 +285,7 @@ export class AppController {
                 ? "Service is responding normally"
                 : "Service is experiencing issues"),
             lastChecked: service.lastChecked || new Date().toLocaleString(),
-            metrics: service.metrics || {},
+            metrics: {},
           }),
         ),
       };
@@ -317,8 +321,8 @@ export class AppController {
     description: "WebSocket test page HTML",
   })
   async getSocketTestPage(@Res() res: FastifyReply) {
-    const baseUrl =
-      this.configService.get("API_URL") || "http://localhost:8088";
+    const baseUrl: string =
+      this.configService.get<string>("API_URL") || "http://localhost:8088";
 
     const html = `
 <!DOCTYPE html>
@@ -547,30 +551,35 @@ export class AppController {
     return res.send(html);
   }
 
-  private async getRecentLogs(limit: number = 10) {
+  private async getRecentLogs(limit: number = 10): Promise<LogEntry[]> {
     try {
       // Use your logging service to get recent logs
-      const logs = await this.loggingService.getLogs();
+      const logs =
+        (await this.loggingService.getLogs()) as LoggingServiceLogEntry[];
 
-      return logs.slice(0, limit).map((log) => ({
-        timestamp: log.timestamp,
-        level: log.level,
-        message: log.message,
-        source: log.type || "Unknown",
-        data: log.metadata || "{}",
-      }));
+      return logs.slice(0, limit).map(
+        (log: LoggingServiceLogEntry): LogEntry => ({
+          timestamp: log.timestamp || new Date().toISOString(),
+          level: log.level || "info",
+          message: log.message || "No message",
+          source: log.type || "Unknown",
+          data: log.metadata ? JSON.stringify(log.metadata) : "{}",
+        }),
+      );
     } catch (error) {
       this.logger.error("Error fetching logs:", error);
       // Return placeholder data if there's an error
       return Array(limit)
         .fill(null)
-        .map((_, i) => ({
-          timestamp: new Date(),
-          level: "info",
-          message: `This is a placeholder log entry ${i + 1}`,
-          source: "System",
-          data: "{}",
-        }));
+        .map(
+          (_, i): LogEntry => ({
+            timestamp: new Date().toISOString(),
+            level: "info",
+            message: `This is a placeholder log entry ${i + 1}`,
+            source: "System",
+            data: "{}",
+          }),
+        );
     }
   }
 
@@ -1070,12 +1079,12 @@ export class AppController {
                                 <span class="metric-label">Response Time</span>
                                 <span class="metric-value">${service.responseTime} ms</span>
                             </div>
-                            ${Object.entries(service.metrics)
+                            ${Object.entries(service.metrics || {})
                               .map(
-                                ([key, value]) => `
+                                ([key, value]: [string, any]) => `
                                 <div class="metric">
                                     <span class="metric-label">${key}</span>
-                                    <span class="metric-value">${value}</span>
+                                    <span class="metric-value">${value ?? "N/A"}</span>
                                 </div>
                             `,
                               )
@@ -1110,10 +1119,14 @@ export class AppController {
                         </thead>
                         <tbody>
                             ${recentLogs
-                              .map(
-                                (log) => `
+                              .map((log: LogEntry) => {
+                                const timestamp =
+                                  typeof log.timestamp === "string"
+                                    ? log.timestamp
+                                    : new Date(log.timestamp).toISOString();
+                                return `
                                 <tr>
-                                    <td>${formatDateTime(new Date(log.timestamp).toISOString())}</td>
+                                    <td>${formatDateTime(timestamp)}</td>
                                     <td>
                                         <span class="log-level ${
                                           log.level === "error"
@@ -1122,14 +1135,14 @@ export class AppController {
                                               ? "log-level-warn"
                                               : "log-level-info"
                                         }">
-                                            ${log.level}
+                                            ${log.level || "info"}
                                         </span>
                                     </td>
-                                    <td>${log.source}</td>
-                                    <td>${log.message}</td>
+                                    <td>${log.source || "Unknown"}</td>
+                                    <td>${log.message || "No message"}</td>
                                 </tr>
-                            `,
-                              )
+                            `;
+                              })
                               .join("")}
                         </tbody>
                     </table>

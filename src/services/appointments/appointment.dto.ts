@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { ApiProperty } from "@nestjs/swagger";
 import {
   IsString,
   IsOptional,
@@ -9,9 +9,7 @@ import {
   IsBoolean,
   IsArray,
   IsObject,
-  IsEmail,
   Length,
-  Matches,
 } from "class-validator";
 import { Transform } from "class-transformer";
 
@@ -171,12 +169,16 @@ export class CreateAppointmentDto {
     example: "2024-06-01",
   })
   @IsDateString()
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: string }) =>
+    typeof value === "string" ? value.trim() : value,
+  )
   date!: string;
 
   @ApiProperty({ description: "Appointment time (HH:mm)", example: "10:00" })
   @IsString()
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: string }) =>
+    typeof value === "string" ? value.trim() : value,
+  )
   time!: string;
 
   @ApiProperty({ description: "Duration in minutes", example: 30 })
@@ -292,13 +294,17 @@ export class UpdateAppointmentDto {
   })
   @IsOptional()
   @IsDateString()
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: string }) =>
+    typeof value === "string" ? value.trim() : value,
+  )
   date?: string;
 
   @ApiProperty({ description: "Appointment time (HH:mm)", required: false })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: string }) =>
+    typeof value === "string" ? value.trim() : value,
+  )
   time?: string;
 
   @ApiProperty({ description: "Duration in minutes", required: false })

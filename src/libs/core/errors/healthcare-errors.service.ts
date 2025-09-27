@@ -1,7 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { HttpStatus } from "@nestjs/common";
 import { ErrorCode } from "./error-codes.enum";
-import { ErrorMessages } from "./error-messages.constant";
 import { HealthcareError } from "./healthcare-error.class";
 
 /**
@@ -498,7 +497,10 @@ export class HealthcareErrorsService {
       ErrorCode.PHI_ACCESS_UNAUTHORIZED,
     ];
 
-    return criticalCodes.includes(error.code) || error.statusCode >= 500;
+    return (
+      criticalCodes.includes(error.code) ||
+      error.statusCode >= HttpStatus.INTERNAL_SERVER_ERROR
+    );
   }
 
   private isWarningError(error: HealthcareError): boolean {
@@ -513,7 +515,8 @@ export class HealthcareErrorsService {
 
     return (
       warningCodes.includes(error.code) ||
-      (error.statusCode >= 400 && error.statusCode < 500)
+      (error.statusCode >= HttpStatus.BAD_REQUEST &&
+        error.statusCode < HttpStatus.INTERNAL_SERVER_ERROR)
     );
   }
 }
