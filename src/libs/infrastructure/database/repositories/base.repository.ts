@@ -92,7 +92,7 @@ export class RepositoryResult<T, E = Error> {
       })
       .catch((error) => {
         const executionTime = Date.now() - startTime;
-        return RepositoryResult.failure(
+        return RepositoryResult.failure<T, E>(
           error as E,
           { source: "promise" },
           executionTime,
@@ -100,7 +100,7 @@ export class RepositoryResult<T, E = Error> {
           clinicId,
           userId,
         );
-      });
+      }) as Promise<RepositoryResult<T, E>>;
   }
 
   get isSuccess(): boolean {

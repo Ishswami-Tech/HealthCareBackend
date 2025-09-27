@@ -3,7 +3,6 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
-  UnauthorizedException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
@@ -13,6 +12,51 @@ import {
   LogLevel,
 } from "../../infrastructure/logging/types/logging.types";
 import { ClinicIsolationService } from "../../infrastructure/database/clinic-isolation.service";
+
+// Type definitions for request objects
+interface AuthenticatedUser {
+  id?: string;
+  sub?: string;
+  role?: string;
+  clinicId?: string;
+  [key: string]: any;
+}
+
+interface ClinicRequest {
+  url: string;
+  method: string;
+  user?: AuthenticatedUser;
+  headers: {
+    "x-clinic-id"?: string;
+    "clinic-id"?: string;
+    [key: string]: string | undefined;
+  };
+  query?: {
+    clinicId?: string;
+    clinic_id?: string;
+    [key: string]: any;
+  };
+  params?: {
+    clinicId?: string;
+    clinic_id?: string;
+    [key: string]: any;
+  };
+  body?: {
+    clinicId?: string;
+    [key: string]: any;
+  };
+  clinicId?: string;
+  clinicContext?: any;
+}
+
+interface ClinicValidationResult {
+  success: boolean;
+  error?: string;
+  clinicContext?: {
+    clinicName?: string;
+    [key: string]: any;
+  };
+}
 
 @Injectable()
 export class ClinicGuard implements CanActivate {
@@ -24,11 +68,11 @@ export class ClinicGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<ClinicRequest>();
     const user = request.user;
 
     // Log the request details for debugging
-    this.loggingService.log(
+    void this.loggingService.log(
       LogType.AUTH,
       LogLevel.DEBUG,
       `ClinicGuard processing request`,
@@ -46,7 +90,7 @@ export class ClinicGuard implements CanActivate {
 
     // If not a clinic route, allow access
     if (!isClinicRoute) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.AUTH,
         LogLevel.DEBUG,
         `Not a clinic route, allowing access`,
@@ -60,7 +104,7 @@ export class ClinicGuard implements CanActivate {
     const clinicId = this.extractClinicId(request);
 
     if (!clinicId) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.AUTH,
         LogLevel.WARN,
         `Clinic ID required for clinic route`,
@@ -73,13 +117,14 @@ export class ClinicGuard implements CanActivate {
     }
 
     // Validate clinic access using ClinicIsolationService
-    const clinicResult = await this.clinicIsolationService.validateClinicAccess(
-      user?.sub || user?.id || "anonymous",
-      clinicId,
-    );
+    const clinicResult: ClinicValidationResult =
+      await this.clinicIsolationService.validateClinicAccess(
+        user?.sub || user?.id || "anonymous",
+        clinicId,
+      );
 
     if (!clinicResult.success) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.AUTH,
         LogLevel.WARN,
         `Invalid clinic access`,
@@ -99,7 +144,7 @@ export class ClinicGuard implements CanActivate {
     request.clinicId = clinicId;
     request.clinicContext = clinicResult.clinicContext;
 
-    this.loggingService.log(
+    void this.loggingService.log(
       LogType.AUTH,
       LogLevel.DEBUG,
       `Clinic access validated`,
@@ -139,7 +184,7 @@ export class ClinicGuard implements CanActivate {
     }
 
     // Otherwise, check the route path to determine if it's a clinic route
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<ClinicRequest>();
     const path = request.url;
 
     // Clinic routes typically include /clinics/ or /appointments/ or similar
@@ -156,7 +201,7 @@ export class ClinicGuard implements CanActivate {
     return clinicRoutePatterns.some((pattern) => pattern.test(path));
   }
 
-  private extractClinicId(request: any): string | null {
+  private extractClinicId(request: ClinicRequest): string | null {
     // Try to get clinic ID from various sources
 
     // 1. From headers

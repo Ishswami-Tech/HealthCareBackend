@@ -56,7 +56,16 @@ export class HealthcareError extends Error {
    * Convert error to API response format (without sensitive information)
    */
   toApiResponse(): Record<string, any> {
-    const response: Record<string, any> = {
+    interface ErrorResponse {
+      error: {
+        code: ErrorCode;
+        message: string;
+        timestamp: string;
+        metadata?: Record<string, any>;
+      };
+    }
+
+    const response: ErrorResponse = {
       error: {
         code: this.code,
         message: this.message,

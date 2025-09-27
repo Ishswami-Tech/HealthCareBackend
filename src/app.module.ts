@@ -1,10 +1,4 @@
-import {
-  Module,
-  MiddlewareConsumer,
-  RequestMethod,
-  NestModule,
-  forwardRef,
-} from "@nestjs/common";
+import { Module, NestModule } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { UsersModule } from "./services/users/users.module";
 import { AuthModule } from "./services/auth/auth.module";
@@ -22,13 +16,11 @@ import { BullBoardModule } from "./libs/infrastructure/queue/src/bull-board/bull
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { ScheduleModule } from "@nestjs/schedule";
 import { QueueModule } from "./libs/infrastructure/queue/src/queue.module";
-import {
-  APPOINTMENT_QUEUE,
-  SERVICE_QUEUE,
-} from "./libs/infrastructure/queue/src/queue.constants";
+// Queue constants imported but not used in module configuration
 import configuration from "./config/configuration";
 import { HealthController } from "./services/health/health.controller";
 import { SocketModule } from "./libs/communication/socket/socket.module";
+import { NotificationModule } from "./services/notification/notification.module";
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -100,6 +92,8 @@ import { SocketModule } from "./libs/communication/socket/socket.module";
     // Business modules
     AppointmentsModule,
     ClinicModule,
+    // Communication modules
+    NotificationModule,
     // Support modules
     HealthModule,
     WhatsAppModule,
@@ -110,7 +104,7 @@ import { SocketModule } from "./libs/communication/socket/socket.module";
   providers: [AppService, HealthController],
 })
 export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
+  configure() {
     // Apply clinic context middleware to all routes for clinic isolation
     // ClinicContextMiddleware implementation - currently using auth-based clinic isolation
     // consumer

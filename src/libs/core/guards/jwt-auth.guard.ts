@@ -8,19 +8,59 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { JwtService } from "@nestjs/jwt";
-import { FastifyRequest } from "fastify";
 import { RedisService } from "../../infrastructure/cache/redis/redis.service";
 import { RateLimitService } from "../../utils/rate-limit/rate-limit.service";
-import { AuthGuard } from "@nestjs/passport";
 import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
 import { LoggingService } from "../../infrastructure/logging/logging.service";
 import {
   LogLevel,
   LogType,
 } from "../../infrastructure/logging/types/logging.types";
-import { Logger } from "@nestjs/common";
 import { JwtAuthService } from "../../../services/auth/core/jwt.service";
 import * as crypto from "crypto";
+
+interface User {
+  id?: string;
+  email?: string;
+  role?: string;
+  sessionId?: string;
+  sub?: string;
+  jti?: string;
+  [key: string]: unknown;
+}
+
+interface FastifyRequestWithUser {
+  user?: User;
+  ip?: string;
+  headers: Record<string, string | undefined>;
+  method: string;
+  raw: {
+    url: string;
+  };
+}
+
+interface JwtPayload {
+  sub?: string;
+  sessionId?: string;
+  jti?: string;
+  [key: string]: unknown;
+}
+
+interface SessionData {
+  sessionId: string;
+  isActive: boolean;
+  lastActivityAt: string;
+  deviceFingerprint: string;
+  deviceInfo: {
+    userAgent: string;
+  };
+  ipAddress: string;
+}
+
+interface LockoutStatus {
+  isLocked: boolean;
+  remainingMinutes: number;
+}
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -48,15 +88,18 @@ export class JwtAuthGuard implements CanActivate {
     private loggingService: LoggingService,
   ) {}
 
-  async canActivate(context: ExecutionContext) {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     try {
       const isPublic = this.reflector.getAllAndOverride<boolean>(
         IS_PUBLIC_KEY,
         [context.getHandler(), context.getClass()],
       );
 
-      const request = context.switchToHttp().getRequest();
-      const path = request.raw.url;
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      const request = context
+        .switchToHttp()
+        .getRequest() as FastifyRequestWithUser;
+      const path = request.raw?.url || "";
 
       // Allow public endpoints without token
       if (isPublic || this.isPublicPath(path)) {
@@ -77,8 +120,6 @@ export class JwtAuthGuard implements CanActivate {
       // Get client info
       const clientIp =
         request.ip || request.headers["x-forwarded-for"] || "unknown";
-      const userAgent = request.headers["user-agent"] || "unknown";
-      const deviceFingerprint = this.generateDeviceFingerprint(request);
 
       // Rate limiting disabled for development stage
       // TODO: Enable rate limiting in production
@@ -125,7 +166,7 @@ export class JwtAuthGuard implements CanActivate {
       */
 
       // Validate security headers and request integrity
-      await this.validateRequest(request);
+      this.validateRequest(request);
 
       const token = this.extractTokenFromHeader(request);
       if (!token) {
@@ -137,21 +178,21 @@ export class JwtAuthGuard implements CanActivate {
       const payload = await this.verifyToken(token);
       request.user = payload;
 
-      // Store payload in request for session validation
-      request.user = payload;
-
       // Validate session
       const sessionData = await this.validateSession(
-        payload.sub,
+        payload.sub || "anonymous",
         request,
-        deviceFingerprint,
       );
 
       // Check concurrent sessions limit
-      await this.checkConcurrentSessions(payload.sub);
+      if (payload.sub) {
+        await this.checkConcurrentSessions(payload.sub);
+      }
 
       // Update session data
-      await this.updateSessionData(payload.sub, sessionData, request);
+      if (payload.sub) {
+        await this.updateSessionData(payload.sub, sessionData, request);
+      }
 
       // Reset failed attempts on successful authentication
       await this.resetFailedAttempts(clientIp);
@@ -162,12 +203,12 @@ export class JwtAuthGuard implements CanActivate {
       if (this.redisService.isDevelopmentMode()) {
         throw error;
       }
-      await this.handleAuthenticationError(error, context);
+      await this.handleAuthenticationError(error as Error, context);
       throw error;
     }
   }
 
-  private async validateRequest(request: any): Promise<void> {
+  private validateRequest(request: FastifyRequestWithUser): void {
     // Validate Content-Type for POST/PUT/PATCH requests
     if (
       ["POST", "PUT", "PATCH"].includes(request.method) &&
@@ -197,9 +238,9 @@ export class JwtAuthGuard implements CanActivate {
     }
   }
 
-  private async verifyToken(token: string): Promise<any> {
+  private async verifyToken(token: string): Promise<JwtPayload> {
     const logger = this.loggingService;
-    logger.log(
+    void logger.log(
       LogType.AUTH,
       LogLevel.DEBUG,
       "Attempting to verify JWT token",
@@ -207,25 +248,25 @@ export class JwtAuthGuard implements CanActivate {
       { tokenStart: token.substring(0, 20) + "..." },
     );
 
-    let payload: any;
+    let payload: JwtPayload | null = null;
     let lastError: Error | null = null;
 
     // Try basic JWT service first
     try {
-      payload = this.jwtService.verify(token);
-      logger.log(
+      payload = this.jwtService.verify(token) as JwtPayload;
+      void logger.log(
         LogType.AUTH,
         LogLevel.DEBUG,
         "JWT token verified with basic service",
         "JwtAuthGuard",
-        { userId: payload.sub },
+        { userId: payload?.sub },
       );
     } catch (basicError) {
       lastError =
         basicError instanceof Error
           ? basicError
           : new Error("Unknown basic JWT error");
-      logger.log(
+      void logger.log(
         LogType.AUTH,
         LogLevel.DEBUG,
         "Basic JWT verification failed, trying enhanced service",
@@ -235,13 +276,13 @@ export class JwtAuthGuard implements CanActivate {
 
       // Try enhanced JWT service as fallback
       try {
-        payload = await this.jwtAuthService.verifyEnhancedToken(token);
-        logger.log(
+        payload = (await this.jwtAuthService.verifyEnhancedToken(token)) as unknown as JwtPayload;
+        void logger.log(
           LogType.AUTH,
           LogLevel.DEBUG,
           "JWT token verified with enhanced service",
           "JwtAuthGuard",
-          { userId: payload.sub },
+          { userId: payload?.sub },
         );
         lastError = null; // Clear error since enhanced verification succeeded
       } catch (enhancedError) {
@@ -249,7 +290,7 @@ export class JwtAuthGuard implements CanActivate {
           enhancedError instanceof Error
             ? enhancedError
             : new Error("Unknown enhanced JWT error");
-        logger.log(
+        void logger.log(
           LogType.AUTH,
           LogLevel.ERROR,
           "Enhanced JWT verification also failed",
@@ -261,7 +302,7 @@ export class JwtAuthGuard implements CanActivate {
 
     // If both verifications failed, handle the error
     if (!payload && lastError) {
-      logger.log(
+      void logger.log(
         LogType.AUTH,
         LogLevel.ERROR,
         `All token verification methods failed: ${lastError.name}`,
@@ -287,7 +328,7 @@ export class JwtAuthGuard implements CanActivate {
         const blacklistKey = `jwt:blacklist:${payload.jti}`;
         const isBlacklisted = await this.redisService.get(blacklistKey);
         if (isBlacklisted) {
-          logger.log(
+          void logger.log(
             LogType.AUTH,
             LogLevel.WARN,
             "Token validation failed: Token is blacklisted",
@@ -297,7 +338,7 @@ export class JwtAuthGuard implements CanActivate {
           throw new UnauthorizedException("Token has been revoked");
         }
       } catch (blacklistError) {
-        logger.log(
+        void logger.log(
           LogType.AUTH,
           LogLevel.ERROR,
           "Failed to check token blacklist",
@@ -313,19 +354,24 @@ export class JwtAuthGuard implements CanActivate {
       }
     }
 
+    if (!payload) {
+      throw new UnauthorizedException("Invalid token");
+    }
     return payload;
   }
 
   /**
    * Get session data from Redis and parse it
    */
-  private async getSessionData(sessionKey: string): Promise<any> {
+  private async getSessionData(
+    sessionKey: string,
+  ): Promise<SessionData | null> {
     const session = await this.redisService.get(sessionKey);
     if (!session) {
       return null;
     }
 
-    const sessionData = JSON.parse(session);
+    const sessionData = JSON.parse(session) as SessionData;
 
     // Verify session is active
     if (!sessionData.isActive) {
@@ -345,21 +391,24 @@ export class JwtAuthGuard implements CanActivate {
 
   private async validateSession(
     userId: string,
-    request: any,
-    deviceFingerprint: string,
-  ): Promise<any> {
+    request: FastifyRequestWithUser,
+  ): Promise<SessionData> {
     const logger = this.loggingService;
     // Get sessionId from token payload (more reliable than request.user which might not be set yet)
     const token = this.extractTokenFromHeader(request);
-    let sessionId = request.user?.sessionId || request.headers["x-session-id"];
+    let sessionId =
+      (request.user as JwtPayload)?.sessionId ||
+      (request.headers["x-session-id"] as string);
 
     // If sessionId not found in request.user, try to decode token to get it
     if (!sessionId && token) {
       try {
         const decoded = this.jwtService.decode(token);
-        sessionId = decoded?.sessionId;
+        if (decoded && typeof decoded === "object" && "sessionId" in decoded) {
+          sessionId = decoded.sessionId;
+        }
       } catch (error) {
-        logger.log(
+        void logger.log(
           LogType.AUTH,
           LogLevel.ERROR,
           "Failed to decode token for sessionId",
@@ -369,7 +418,7 @@ export class JwtAuthGuard implements CanActivate {
       }
     }
 
-    logger.log(
+    void logger.log(
       LogType.AUTH,
       LogLevel.DEBUG,
       "Attempting to validate session",
@@ -378,7 +427,7 @@ export class JwtAuthGuard implements CanActivate {
     );
 
     if (!sessionId) {
-      logger.log(
+      void logger.log(
         LogType.AUTH,
         LogLevel.WARN,
         "Session validation failed: No session ID provided in token or headers",
@@ -392,7 +441,7 @@ export class JwtAuthGuard implements CanActivate {
     const sessionData = await this.getSessionData(sessionKey);
 
     if (!sessionData) {
-      logger.log(
+      void logger.log(
         LogType.AUTH,
         LogLevel.WARN,
         "Session validation failed: Session not found in Redis",
@@ -402,7 +451,7 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException("Invalid session");
     }
 
-    logger.log(
+    void logger.log(
       LogType.AUTH,
       LogLevel.DEBUG,
       "Session found in Redis",
@@ -414,7 +463,7 @@ export class JwtAuthGuard implements CanActivate {
     if (!this.redisService.isDevelopmentMode()) {
       const currentFingerprint = this.generateDeviceFingerprint(request);
       if (sessionData.deviceFingerprint !== currentFingerprint) {
-        logger.log(
+        void logger.log(
           LogType.AUTH,
           LogLevel.WARN,
           "Session validation failed: Device fingerprint mismatch",
@@ -431,7 +480,7 @@ export class JwtAuthGuard implements CanActivate {
       }
     }
 
-    logger.log(
+    void logger.log(
       LogType.AUTH,
       LogLevel.INFO,
       "Session validated successfully",
@@ -500,8 +549,8 @@ export class JwtAuthGuard implements CanActivate {
 
   private async updateSessionData(
     userId: string,
-    sessionData: any,
-    request: any,
+    sessionData: SessionData,
+    request: FastifyRequestWithUser,
   ): Promise<void> {
     try {
       const clientIp = request.ip || "unknown";
@@ -524,7 +573,7 @@ export class JwtAuthGuard implements CanActivate {
         3600, // Keep session alive for another hour
       );
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to update session data",
@@ -534,7 +583,7 @@ export class JwtAuthGuard implements CanActivate {
     }
   }
 
-  private generateDeviceFingerprint(request: any): string {
+  private generateDeviceFingerprint(request: FastifyRequestWithUser): string {
     const userAgent = request.headers["user-agent"] || "unknown";
     // Use a stable hash of the user agent. IP address is removed to support dynamic IPs.
     return crypto.createHash("sha256").update(userAgent).digest("hex");
@@ -543,7 +592,7 @@ export class JwtAuthGuard implements CanActivate {
   private async trackSecurityEvent(
     identifier: string,
     eventType: string,
-    details: any,
+    details: Record<string, any>,
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
@@ -568,7 +617,7 @@ export class JwtAuthGuard implements CanActivate {
         this.SECURITY_EVENT_RETENTION,
       );
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to track security event",
@@ -579,7 +628,7 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private async handleAuthenticationError(
-    error: any,
+    error: Error,
     context: ExecutionContext,
   ): Promise<void> {
     const request = context.switchToHttp().getRequest();
@@ -591,8 +640,8 @@ export class JwtAuthGuard implements CanActivate {
 
     // Track security event
     await this.trackSecurityEvent(clientIp, "AUTHENTICATION_FAILURE", {
-      error: (error as Error).message,
-      path: request.raw.url,
+      error: error.message,
+      path: request.raw?.url || "",
       method: request.method,
     });
 
@@ -600,23 +649,20 @@ export class JwtAuthGuard implements CanActivate {
     if (error instanceof UnauthorizedException) {
       const lockoutStatus = await this.checkLockoutStatus(clientIp);
       if (lockoutStatus.isLocked) {
-        (error as Error).message =
-          `Account is temporarily locked. Please try again in ${lockoutStatus.remainingMinutes} minutes.`;
+        error.message = `Account is temporarily locked. Please try again in ${lockoutStatus.remainingMinutes} minutes.`;
       }
     }
   }
 
-  private async checkLockoutStatus(
-    identifier: string,
-  ): Promise<{ isLocked: boolean; remainingMinutes: number }> {
-    const attemptsKey = `auth:attempts:${identifier}`;
+  private async checkLockoutStatus(identifier: string): Promise<LockoutStatus> {
     const lockoutKey = `auth:lockout:${identifier}`;
 
-    const attempts = await this.redisService.get(attemptsKey);
     const lockoutData = await this.redisService.get(lockoutKey);
 
     if (lockoutData) {
-      const { lockedUntil } = JSON.parse(lockoutData);
+      const { lockedUntil } = JSON.parse(lockoutData) as {
+        lockedUntil: number;
+      };
       const now = Date.now();
       if (now < lockedUntil) {
         const remainingMinutes = Math.ceil((lockedUntil - now) / (1000 * 60));
@@ -681,7 +727,7 @@ export class JwtAuthGuard implements CanActivate {
     ]);
   }
 
-  private validateSecurityHeaders(request: any): void {
+  private validateSecurityHeaders(request: FastifyRequestWithUser): void {
     // Validate Content-Type for POST requests
     if (
       request.method === "POST" &&
@@ -700,10 +746,12 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private generateDeviceId(userAgent: string): string {
-    return require("crypto").createHash("md5").update(userAgent).digest("hex");
+    return crypto.createHash("md5").update(userAgent).digest("hex");
   }
 
-  private extractTokenFromHeader(request: any): string | undefined {
+  private extractTokenFromHeader(
+    request: FastifyRequestWithUser,
+  ): string | undefined {
     const [type, token] = request.headers.authorization?.split(" ") ?? [];
     return type === "Bearer" ? token : undefined;
   }

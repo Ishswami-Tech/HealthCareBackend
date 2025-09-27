@@ -12,7 +12,6 @@
 
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
-import { SharedWorkerService } from "./libs/infrastructure/queue/src/shared-worker.service";
 import { DatabaseModule } from "./libs/infrastructure/database";
 import { CacheModule } from "./libs/infrastructure/cache/cache.module";
 import { QueueModule } from "./libs/infrastructure/queue/src/queue.module";
@@ -69,16 +68,30 @@ async function bootstrap() {
     );
 
     // Graceful shutdown handlers
-    process.on("SIGTERM", async () => {
+    process.on("SIGTERM", () => {
       console.log("📤 Received SIGTERM, shutting down worker gracefully...");
-      await app.close();
-      process.exit(0);
+      app
+        .close()
+        .then(() => {
+          process.exit(0);
+        })
+        .catch((error) => {
+          console.error("❌ Error during SIGTERM shutdown:", error);
+          process.exit(1);
+        });
     });
 
-    process.on("SIGINT", async () => {
+    process.on("SIGINT", () => {
       console.log("📤 Received SIGINT, shutting down worker gracefully...");
-      await app.close();
-      process.exit(0);
+      app
+        .close()
+        .then(() => {
+          process.exit(0);
+        })
+        .catch((error) => {
+          console.error("❌ Error during SIGINT shutdown:", error);
+          process.exit(1);
+        });
     });
 
     // Health check endpoint for Docker

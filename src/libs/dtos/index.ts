@@ -5,3 +5,4 @@ export * from "./common-response.dto";
 export * from "./appointment.dto";
 export * from "./clinic.dto";
 export * from "./health.dto";
+export * from "./notification.dto";

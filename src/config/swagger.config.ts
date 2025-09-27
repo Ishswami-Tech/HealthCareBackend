@@ -22,9 +22,6 @@ const getApiServers = () => {
       },
     );
   } else {
-    const devConfig = config as typeof developmentConfig extends () => infer R
-      ? R
-      : never;
     // Docker-first development configuration
     servers.push(
       // Primary Docker network URLs

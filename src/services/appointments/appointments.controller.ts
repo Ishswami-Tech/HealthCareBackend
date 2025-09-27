@@ -15,7 +15,6 @@ import {
   ValidationPipe,
   UsePipes,
   BadRequestException,
-  NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
 import { AppointmentsService } from "./appointments.service";
@@ -33,7 +32,7 @@ import {
   ApiProduces,
 } from "@nestjs/swagger";
 import { UseGuards } from "@nestjs/common";
-import { Role } from "../../libs/infrastructure/database/prisma/prisma.types";
+import { Role, AppointmentStatus } from "../../libs/infrastructure/database/prisma/prisma.types";
 import { JwtAuthGuard, RolesGuard, Roles } from "../../libs/core";
 import { ClinicGuard } from "../../libs/core/guards/clinic.guard";
 import { ClinicRoute } from "../../libs/core/decorators/clinic-route.decorator";
@@ -49,11 +48,9 @@ import {
 import { CacheService } from "../../libs/infrastructure/cache/cache.service";
 import {
   Cache,
-  InvalidateCache,
   PatientCache,
   InvalidatePatientCache,
 } from "../../libs/infrastructure/cache/decorators/cache.decorator";
-import { UseInterceptors } from "@nestjs/common";
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
@@ -63,9 +60,27 @@ import {
 } from "./appointment.dto";
 import { RbacGuard } from "../../libs/core/rbac/rbac.guard";
 import { RequireResourcePermission } from "../../libs/core/rbac/rbac.decorators";
-import { FastifyRequest } from "fastify";
 import { AuthenticatedRequest } from "../../libs/core/types/clinic.types";
 import { RateLimitAPI } from "../../libs/security/rate-limit/rate-limit.decorator";
+
+// Type definitions for controller interfaces
+interface AppointmentFilters {
+  userId?: string;
+  doctorId?: string;
+  status?: AppointmentStatus;
+  date?: string;
+  locationId?: string;
+  clinicId: string;
+  page: number;
+  limit: number;
+}
+
+interface ServiceResponse<T = any> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
+}
 
 @ApiTags("Appointments")
 @Controller("appointments")
@@ -136,7 +151,7 @@ export class AppointmentsController {
   async createAppointment(
     @Body() appointmentData: CreateAppointmentDto,
     @Request() req: AuthenticatedRequest,
-  ) {
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const userId = req.user?.sub;
@@ -157,7 +172,7 @@ export class AppointmentsController {
         appointmentData,
         userId,
         clinicId,
-        req.user?.role || "USER",
+        req.user?.role || Role.PATIENT,
       );
 
       this.logger.log(
@@ -250,7 +265,7 @@ export class AppointmentsController {
     @Query("date") date?: string,
     @Query("page") page: number = 1,
     @Query("limit") limit: number = 10,
-  ) {
+  ): Promise<ServiceResponse<AppointmentListResponseDto>> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const userId = req.user?.sub;
@@ -267,10 +282,10 @@ export class AppointmentsController {
         `Getting appointments for user ${userId} in clinic ${clinicId}`,
       );
 
-      const filters: any = {
+      const filters: AppointmentFilters = {
         userId,
         clinicId,
-        status,
+        status: status as AppointmentStatus,
         date,
         page: Math.max(1, page),
         limit: Math.min(100, Math.max(1, limit)),
@@ -280,13 +295,13 @@ export class AppointmentsController {
         filters,
         userId,
         clinicId,
-        req.user?.role || "USER",
+        req.user?.role || Role.PATIENT,
         filters.page || 1,
         filters.limit || 20,
       );
 
       this.logger.log(
-        `Retrieved ${result.data?.length || 0} appointments for user ${userId}`,
+        `Retrieved ${(result.data as AppointmentResponseDto[])?.length || 0} appointments for user ${userId}`,
       );
       return result;
     } catch (error) {
@@ -385,7 +400,7 @@ export class AppointmentsController {
     @Query("locationId") locationId?: string,
     @Query("page") page: number = 1,
     @Query("limit") limit: number = 10,
-  ) {
+  ): Promise<ServiceResponse<AppointmentListResponseDto>> {
     const context = "AppointmentsController.getAppointments";
 
     try {
@@ -414,10 +429,10 @@ export class AppointmentsController {
         },
       );
 
-      const filters: any = {
+      const filters: AppointmentFilters = {
         userId,
         doctorId,
-        status,
+        status: status as AppointmentStatus,
         date,
         locationId,
         clinicId,
@@ -435,12 +450,13 @@ export class AppointmentsController {
       await this.loggingService.log(
         LogType.RESPONSE,
         LogLevel.INFO,
-        `Retrieved ${result.data?.length || 0} appointments successfully`,
+        `Retrieved ${(result.data as AppointmentResponseDto[])?.length || 0} appointments successfully`,
         context,
         {
           userId: currentUserId,
           clinicId,
-          appointmentCount: result.data?.length || 0,
+          appointmentCount:
+            (result.data as AppointmentResponseDto[])?.length || 0,
           operation: "getAppointments",
         },
       );
@@ -523,10 +539,15 @@ export class AppointmentsController {
     @Param("doctorId", ParseUUIDPipe) doctorId: string,
     @Query("date") date: string,
     @Request() req: AuthenticatedRequest,
-  ) {
+  ): Promise<DoctorAvailabilityResponseDto> {
     try {
       const clinicId =
-        req.user?.clinicId || (req.headers?.["clinic-id"] as string);
+        req.user?.clinicId ||
+        (req.headers?.["clinic-id"] as string | undefined);
+
+      if (!clinicId) {
+        throw new BadRequestException("Clinic ID is required");
+      }
 
       if (!date) {
         throw new BadRequestException("Date parameter is required");
@@ -553,13 +574,13 @@ export class AppointmentsController {
         `Checking availability for doctor ${doctorId} on ${date}`,
       );
 
-      const result = await this.appointmentService.getDoctorAvailability(
+      const result = (await this.appointmentService.getDoctorAvailability(
         doctorId,
         date,
         clinicId,
         req.user?.sub,
-        req.user?.role || "USER",
-      );
+        req.user?.role || Role.PATIENT,
+      )) as DoctorAvailabilityResponseDto;
 
       this.logger.log(
         `Retrieved availability for doctor ${doctorId}: ${result.availableSlots?.length || 0} slots available`,
@@ -618,14 +639,19 @@ export class AppointmentsController {
   async getUserUpcomingAppointments(
     @Param("userId", ParseUUIDPipe) userId: string,
     @Request() req: AuthenticatedRequest,
-  ) {
+  ): Promise<AppointmentResponseDto[]> {
     try {
       const currentUserId = req.user?.sub;
       const clinicId =
-        req.user?.clinicId || (req.headers?.["clinic-id"] as string);
+        req.user?.clinicId ||
+        (req.headers?.["clinic-id"] as string | undefined);
+
+      if (!clinicId) {
+        throw new BadRequestException("Clinic ID is required");
+      }
 
       // Patients can only access their own upcoming appointments
-      if (req.user?.role === "PATIENT" && currentUserId !== userId) {
+      if (req.user?.role === Role.PATIENT && currentUserId !== userId) {
         throw new ForbiddenException(
           "Patients can only access their own appointments",
         );
@@ -635,11 +661,11 @@ export class AppointmentsController {
         `Getting upcoming appointments for user ${userId} (requested by ${currentUserId})`,
       );
 
-      const result = await this.appointmentService.getUserUpcomingAppointments(
+      const result = (await this.appointmentService.getUserUpcomingAppointments(
         userId,
         clinicId,
-        req.user?.role || "USER",
-      );
+        req.user?.role || Role.PATIENT,
+      )) as AppointmentResponseDto[];
 
       this.logger.log(
         `Retrieved ${result?.length || 0} upcoming appointments for user ${userId}`,
@@ -699,7 +725,7 @@ export class AppointmentsController {
   async getAppointmentById(
     @Param("id", ParseUUIDPipe) id: string,
     @Request() req: AuthenticatedRequest,
-  ) {
+  ): Promise<AppointmentResponseDto> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const currentUserId = req.user?.sub;
@@ -712,16 +738,17 @@ export class AppointmentsController {
         `Getting appointment ${id} for user ${currentUserId} in clinic ${clinicId}`,
       );
 
-      const result = await this.appointmentService.getAppointmentById(
+      const result = (await this.appointmentService.getAppointmentById(
         id,
         clinicId,
-      );
+      )) as AppointmentResponseDto;
 
       // Additional security check for patients
-      if (req.user?.role === "PATIENT") {
-        const patient =
-          await this.appointmentService.getPatientByUserId(currentUserId);
-        if (result.patientId !== patient?.id) {
+      if (req.user?.role === Role.PATIENT) {
+        const patient = (await this.appointmentService.getPatientByUserId(
+          currentUserId,
+        )) as { id: string } | null;
+        if (result.patient?.id !== patient?.id) {
           throw new ForbiddenException(
             "Patients can only access their own appointments",
           );
@@ -803,7 +830,7 @@ export class AppointmentsController {
     @Param("id", ParseUUIDPipe) id: string,
     @Body() updateData: UpdateAppointmentDto,
     @Request() req: AuthenticatedRequest,
-  ) {
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const currentUserId = req.user?.sub;
@@ -817,13 +844,14 @@ export class AppointmentsController {
       );
 
       // Additional security check for patients
-      if (req.user?.role === "PATIENT") {
-        const patient =
-          await this.appointmentService.getPatientByUserId(currentUserId);
-        const appointment = await this.appointmentService.getAppointmentById(
+      if (req.user?.role === Role.PATIENT) {
+        const patient = (await this.appointmentService.getPatientByUserId(
+          currentUserId,
+        )) as { id: string } | null;
+        const appointment = (await this.appointmentService.getAppointmentById(
           id,
           clinicId,
-        );
+        )) as { patientId: string };
         if (appointment.patientId !== patient?.id) {
           throw new ForbiddenException(
             "Patients can only update their own appointments",
@@ -836,7 +864,7 @@ export class AppointmentsController {
         updateData,
         currentUserId,
         clinicId,
-        req.user?.role || "USER",
+        req.user?.role || Role.PATIENT,
       );
 
       this.logger.log(`Appointment ${id} updated successfully`);
@@ -909,7 +937,7 @@ export class AppointmentsController {
   async cancelAppointment(
     @Param("id", ParseUUIDPipe) id: string,
     @Request() req: AuthenticatedRequest,
-  ) {
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
     const context = "AppointmentsController.cancelAppointment";
 
     try {
@@ -939,13 +967,14 @@ export class AppointmentsController {
       );
 
       // Additional security check for patients
-      if (req.user?.role === "PATIENT") {
-        const patient =
-          await this.appointmentService.getPatientByUserId(currentUserId);
-        const appointment = await this.appointmentService.getAppointmentById(
+      if (req.user?.role === Role.PATIENT) {
+        const patient = (await this.appointmentService.getPatientByUserId(
+          currentUserId,
+        )) as { id: string } | null;
+        const appointment = (await this.appointmentService.getAppointmentById(
           id,
           clinicId,
-        );
+        )) as { patientId: string };
         if (appointment.patientId !== patient?.id) {
           throw this.errors.insufficientPermissions(
             "Patients can only cancel their own appointments",
@@ -958,7 +987,7 @@ export class AppointmentsController {
         "Cancelled by user",
         currentUserId,
         clinicId,
-        req.user?.role || "USER",
+        req.user?.role || Role.PATIENT,
       );
 
       // Log successful operation
@@ -1024,7 +1053,28 @@ export class AppointmentsController {
     status: HttpStatus.UNAUTHORIZED,
     description: "Unauthorized",
   })
-  async testAppointmentContext(@Request() req: AuthenticatedRequest) {
+  testAppointmentContext(@Request() req: AuthenticatedRequest): {
+    message: string;
+    timestamp: string;
+    user: {
+      id?: string;
+      sub?: string;
+      role?: Role;
+      email?: string;
+    };
+    clinicContext: {
+      identifier?: string;
+      clinicId?: string;
+      subdomain?: string;
+      appName?: string;
+      isValid?: boolean;
+    };
+    headers: {
+      "x-clinic-id"?: string | string[];
+      "x-clinic-identifier"?: string | string[];
+      authorization: string;
+    };
+  } {
     const clinicContext = req.clinicContext;
     const user = req.user;
 
