@@ -9,7 +9,7 @@ export interface PluginContext {
   clinicId?: string;
   userId?: string;
   sessionId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PluginMetadata {
@@ -25,7 +25,7 @@ export interface PluginHealth {
   isHealthy: boolean;
   lastCheck: Date;
   errors?: string[];
-  metrics?: Record<string, any>;
+  metrics?: Record<string, unknown>;
 }
 
 export interface PluginConfig {
@@ -34,7 +34,7 @@ export interface PluginConfig {
   timeout: number;
   retryAttempts: number;
   fallbackEnabled: boolean;
-  customSettings?: Record<string, any>;
+  customSettings?: Record<string, unknown>;
 }
 
 /**
@@ -54,12 +54,12 @@ export interface BasePlugin {
   /**
    * Process plugin operation
    */
-  process(data: any): Promise<any>;
+  process(data: unknown): Promise<unknown>;
 
   /**
    * Validate input data
    */
-  validate(data: any): Promise<boolean>;
+  validate(data: unknown): Promise<boolean>;
 
   /**
    * Get plugin health status
@@ -80,12 +80,15 @@ export interface AppointmentPlugin extends BasePlugin {
   /**
    * Handle appointment-specific operations
    */
-  handleAppointmentOperation(operation: string, data: any): Promise<any>;
+  handleAppointmentOperation(
+    operation: string,
+    data: unknown,
+  ): Promise<unknown>;
 
   /**
    * Get appointment-specific metrics
    */
-  getAppointmentMetrics(): Promise<Record<string, any>>;
+  getAppointmentMetrics(): Promise<Record<string, unknown>>;
 }
 
 /**
@@ -96,7 +99,7 @@ export interface AuthPlugin extends BasePlugin {
   /**
    * Handle authentication operations
    */
-  handleAuthOperation(operation: string, data: any): Promise<any>;
+  handleAuthOperation(operation: string, data: unknown): Promise<unknown>;
 
   /**
    * Validate user permissions
@@ -116,12 +119,12 @@ export interface QueuePlugin extends BasePlugin {
   /**
    * Handle queue operations
    */
-  handleQueueOperation(operation: string, data: any): Promise<any>;
+  handleQueueOperation(operation: string, data: unknown): Promise<unknown>;
 
   /**
    * Get queue metrics
    */
-  getQueueMetrics(): Promise<Record<string, any>>;
+  getQueueMetrics(): Promise<Record<string, unknown>>;
 }
 
 /**
@@ -168,7 +171,11 @@ export interface PluginManager {
   /**
    * Execute plugin operation
    */
-  executePlugin(pluginName: string, operation: string, data: any): Promise<any>;
+  executePlugin(
+    pluginName: string,
+    operation: string,
+    data: unknown,
+  ): Promise<unknown>;
 
   /**
    * Execute plugins by feature
@@ -176,7 +183,7 @@ export interface PluginManager {
   executePluginsByFeature(
     feature: string,
     operation: string,
-    data: any,
+    data: unknown,
   ): Promise<any[]>;
 
   /**
@@ -274,7 +281,7 @@ export interface PluginEvent {
     | "plugin.health.changed";
   pluginName: string;
   timestamp: Date;
-  data?: any;
+  data?: unknown;
 }
 
 /**
@@ -288,7 +295,7 @@ export interface PluginMetrics {
   averageExecutionTime: number;
   lastExecution: Date;
   errorRate: number;
-  customMetrics?: Record<string, any>;
+  customMetrics?: Record<string, unknown>;
 }
 
 /**

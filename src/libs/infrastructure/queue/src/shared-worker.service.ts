@@ -38,11 +38,32 @@ import {
   RECURRING_APPOINTMENT_QUEUE,
 } from "./queue.constants";
 
-export interface QueueJobData {
-  domain: "clinic";
-  action: string;
-  data: any;
-  metadata?: Record<string, any>;
+// Import proper types
+import {
+  QueueJobData,
+  AppointmentJobData,
+  NotificationJobData,
+  PatientCheckinData,
+  JobProcessingResult,
+  WorkerStatus,
+  JobMetadata,
+} from "./types/queue-job.types";
+
+// Redis connection configuration
+interface RedisConnection {
+  host: string;
+  port: number;
+  password?: string;
+  db: number;
+  maxRetriesPerRequest: number | null;
+  retryDelayOnFailover: number;
+  connectTimeout: number;
+  commandTimeout: number;
+  lazyConnect: boolean;
+  keepAlive: number;
+  family: number;
+  enableReadyCheck: boolean;
+  retryDelayOnCloseConnection: number;
 }
 
 @Injectable()
@@ -118,19 +139,19 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Shared worker service initialized with ${queueConfigs.length} queues`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to initialize shared worker service: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to initialize shared worker service: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
   private async createWorker(
     queueName: string,
     concurrency: number,
-    redisConnection: any,
+    redisConnection: RedisConnection,
   ) {
     try {
       const worker = new Worker(
@@ -160,7 +181,7 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`Job failed: ${job?.name} on queue ${queueName}`, {
           jobId: job?.id,
           queueName,
-          error: err.message,
+          _error: err.message,
         });
       });
 
@@ -171,9 +192,9 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       this.workers.set(queueName, worker);
 
       this.logger.log(`Worker created for queue: ${queueName}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.log(`Failed to create worker for queue ${queueName}`);
-      throw error;
+      throw _error;
     }
   }
 
@@ -185,30 +206,30 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // Process healthcare job
       return await this.processClinicJob(action, data, metadata);
-    } catch (error) {
-      this.logger.log(`Job processing failed: ${(error as Error).message}`);
-      throw error;
+    } catch (_error) {
+      this.logger.log(`Job processing failed: ${(_error as Error).message}`);
+      throw _error;
     }
   }
 
   private async processClinicJob(
     action: string,
-    data: any,
-    metadata?: Record<string, any>,
-  ): Promise<{ success: boolean; message: string; data?: any }> {
+    data: unknown,
+    metadata?: JobMetadata,
+  ): Promise<JobProcessingResult> {
     try {
       // Implement proper clinic job processing based on action type
       switch (action) {
         case "appointment_created":
-          return await this.processAppointmentCreated(data, metadata);
+          return await this.processAppointmentCreated(data as AppointmentJobData, metadata);
         case "appointment_updated":
-          return await this.processAppointmentUpdated(data, metadata);
+          return await this.processAppointmentUpdated(data as AppointmentJobData, metadata);
         case "appointment_cancelled":
-          return await this.processAppointmentCancelled(data, metadata);
+          return await this.processAppointmentCancelled(data as AppointmentJobData, metadata);
         case "patient_checkin":
-          return await this.processPatientCheckin(data, metadata);
+          return await this.processPatientCheckin(data as PatientCheckinData, metadata);
         case "notification_send":
-          return await this.processNotificationSend(data, metadata);
+          return await this.processNotificationSend(data as NotificationJobData, metadata);
         default:
           this.logger.warn(`Unknown clinic job action: ${action}`);
           return {
@@ -216,21 +237,21 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
             message: `Unknown clinic job action: ${action}`,
           };
       }
-    } catch (error) {
-      this.logger.error(`Error processing clinic job ${action}:`, error);
+    } catch (_error) {
+      this.logger.error(`Error processing clinic job ${action}:`, _error);
       return {
         success: false,
-        message: `Error processing clinic job: ${(error as Error).message}`,
+        message: `Error processing clinic job: ${(_error as Error).message}`,
       };
     }
   }
 
   private async processAppointmentCreated(
-    data: any,
-    metadata?: Record<string, any>,
-  ): Promise<{ success: boolean; message: string }> {
+    data: AppointmentJobData,
+    metadata?: JobMetadata,
+  ): Promise<JobProcessingResult> {
     this.logger.log("Processing appointment creation job", {
-      appointmentId: data?.appointmentId,
+      appointmentId: data.appointmentId || data.appointment?.appointmentId,
     });
     // Process appointment creation logic here
     return {
@@ -240,11 +261,11 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processAppointmentUpdated(
-    data: any,
-    metadata?: Record<string, any>,
-  ): Promise<{ success: boolean; message: string }> {
+    data: AppointmentJobData,
+    metadata?: JobMetadata,
+  ): Promise<JobProcessingResult> {
     this.logger.log("Processing appointment update job", {
-      appointmentId: data?.appointmentId,
+      appointmentId: data.appointmentId || data.appointment?.appointmentId,
     });
     // Process appointment update logic here
     return {
@@ -254,11 +275,11 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processAppointmentCancelled(
-    data: any,
-    metadata?: Record<string, any>,
-  ): Promise<{ success: boolean; message: string }> {
+    data: AppointmentJobData,
+    metadata?: JobMetadata,
+  ): Promise<JobProcessingResult> {
     this.logger.log("Processing appointment cancellation job", {
-      appointmentId: data?.appointmentId,
+      appointmentId: data.appointmentId || data.appointment?.appointmentId,
     });
     // Process appointment cancellation logic here
     return {
@@ -268,11 +289,12 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processPatientCheckin(
-    data: any,
-    metadata?: Record<string, any>,
-  ): Promise<{ success: boolean; message: string }> {
+    data: PatientCheckinData,
+    metadata?: JobMetadata,
+  ): Promise<JobProcessingResult> {
     this.logger.log("Processing patient check-in job", {
-      patientId: data?.patientId,
+      patientId: data.patientId,
+      appointmentId: data.appointmentId,
     });
     // Process patient check-in logic here
     return {
@@ -282,11 +304,11 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processNotificationSend(
-    data: any,
-    metadata?: Record<string, any>,
-  ): Promise<{ success: boolean; message: string }> {
+    data: NotificationJobData,
+    metadata?: JobMetadata,
+  ): Promise<JobProcessingResult> {
     this.logger.log("Processing notification send job", {
-      notificationType: data?.type,
+      notificationType: data.type || data.notification?.type,
     });
     // Process notification sending logic here
     return { success: true, message: "Notification sent successfully" };
@@ -307,18 +329,18 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       this.workers.clear();
 
       this.logger.log("All workers shut down successfully");
-    } catch (error) {
+    } catch (_error) {
       this.logger.log(
-        `Error during worker shutdown: ${(error as Error).message}`,
+        `Error during worker shutdown: ${(_error as Error).message}`,
       );
     }
   }
 
   // Public methods for health checks and monitoring
-  async getWorkerStatus() {
-    const status = {};
+  async getWorkerStatus(): Promise<Record<string, WorkerStatus>> {
+    const status: Record<string, WorkerStatus> = {};
     for (const [queueName, worker] of this.workers) {
-      (status as any)[queueName] = {
+      status[queueName] = {
         isRunning: true, // Assume running if worker exists in map
         queueName,
         concurrency: worker.concurrency,

@@ -46,9 +46,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const pluginInfo = this.enterprisePluginManager
-        .getEnterpriseRegistry()
-        .getPluginInfo();
+      const pluginInfo = (this.enterprisePluginManager
+        .getEnterpriseRegistry() as any)
+        .getPluginInfo() as any[];
 
       const duration = Date.now() - startTime;
       this.logger.log(`Plugin info retrieved successfully in ${duration}ms`);
@@ -58,16 +58,16 @@ export class AppointmentPluginController {
         total: pluginInfo.length,
         retrievedAt: new Date().toISOString(),
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get plugin info: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -85,9 +85,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const plugins = this.enterprisePluginManager
-        .getEnterpriseRegistry()
-        .getPluginsByFeature(domain);
+      const plugins = (this.enterprisePluginManager
+        .getEnterpriseRegistry() as any)
+        .getPluginsByFeature(domain) as any[];
 
       const duration = Date.now() - startTime;
       this.logger.log(
@@ -105,16 +105,16 @@ export class AppointmentPluginController {
         total: plugins.length,
         retrievedAt: new Date().toISOString(),
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get domain plugins: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -132,9 +132,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const features = this.enterprisePluginManager
-        .getEnterpriseRegistry()
-        .getPluginsByFeature(domain);
+      const features = (this.enterprisePluginManager
+        .getEnterpriseRegistry() as any)
+        .getPluginsByFeature(domain) as any[];
 
       const duration = Date.now() - startTime;
       this.logger.log(
@@ -147,16 +147,16 @@ export class AppointmentPluginController {
         total: features.length,
         retrievedAt: new Date().toISOString(),
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get domain features: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -177,7 +177,7 @@ export class AppointmentPluginController {
       domain: string;
       feature: string;
       operation: string;
-      data: any;
+      data: unknown;
     },
   ) {
     const startTime = Date.now();
@@ -214,14 +214,14 @@ export class AppointmentPluginController {
         executedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to execute plugin operation: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
 
       // Update health metrics for failed operation
@@ -234,7 +234,7 @@ export class AppointmentPluginController {
 
       return {
         success: false,
-        error: errorMessage,
+        _error: errorMessage,
         domain: body.domain,
         feature: body.feature,
         operation: body.operation,
@@ -261,7 +261,7 @@ export class AppointmentPluginController {
         domain: string;
         feature: string;
         operation: string;
-        data: any;
+        data: unknown;
       }>;
     },
   ) {
@@ -291,16 +291,16 @@ export class AppointmentPluginController {
         executedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to execute batch plugin operations: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -317,9 +317,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const pluginInfo = this.enterprisePluginManager
-        .getEnterpriseRegistry()
-        .getPluginInfo();
+      const pluginInfo = (this.enterprisePluginManager
+        .getEnterpriseRegistry() as any)
+        .getPluginInfo() as any[];
       const domains = [...new Set(pluginInfo.map((p: any) => p.domain))];
       const healthSummary =
         await this.pluginHealthService.getPluginHealthSummary();
@@ -329,10 +329,11 @@ export class AppointmentPluginController {
         totalPlugins: pluginInfo.length,
         domains: domains.map((domain) => ({
           domain,
-          plugins: pluginInfo.filter((p: any) => p.domain === domain).length,
-          features: this.enterprisePluginManager
-            .getEnterpriseRegistry()
-            .getPluginsByFeature(domain),
+          plugins: pluginInfo.filter((p: any) => p.domain === domain)
+            .length,
+          features: (this.enterprisePluginManager
+            .getEnterpriseRegistry() as any)
+            .getPluginsByFeature(domain) as any,
         })),
         healthSummary,
         uptime: process.uptime(),
@@ -343,19 +344,19 @@ export class AppointmentPluginController {
       this.logger.log(`Plugin system health retrieved in ${duration}ms`);
 
       return health;
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get plugin system health: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
 
       return {
         status: "unhealthy",
-        error: errorMessage,
+        _error: errorMessage,
         timestamp: new Date().toISOString(),
         duration,
       };
@@ -386,16 +387,16 @@ export class AppointmentPluginController {
         retrievedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get plugin health metrics: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -428,16 +429,16 @@ export class AppointmentPluginController {
         retrievedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get domain plugin health: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -468,16 +469,16 @@ export class AppointmentPluginController {
         retrievedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get plugin alerts: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -505,16 +506,16 @@ export class AppointmentPluginController {
         retrievedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get plugin configurations: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -537,7 +538,7 @@ export class AppointmentPluginController {
       if (!config) {
         return {
           success: false,
-          error: `Plugin ${pluginName} not found`,
+          _error: `Plugin ${pluginName} not found`,
           retrievedAt: new Date().toISOString(),
         };
       }
@@ -554,16 +555,16 @@ export class AppointmentPluginController {
         retrievedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to get plugin configuration: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -579,14 +580,14 @@ export class AppointmentPluginController {
   @ApiResponse({ status: 404, description: "Plugin not found" })
   async updatePluginConfig(
     @Param("pluginName") pluginName: string,
-    @Body() config: any,
+    @Body() config: unknown,
   ) {
     const startTime = Date.now();
 
     try {
       const success = await this.pluginConfigService.updatePluginConfig(
         pluginName,
-        config,
+        config as any,
       );
 
       const duration = Date.now() - startTime;
@@ -600,16 +601,16 @@ export class AppointmentPluginController {
         updatedAt: new Date().toISOString(),
         duration,
       };
-    } catch (error) {
+    } catch (_error) {
       const duration = Date.now() - startTime;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : "";
+        _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : "";
       this.logger.error(
         `Failed to update plugin configuration: ${errorMessage}`,
-        errorStack,
+        _errorStack,
       );
-      throw error;
+      throw _error;
     }
   }
 }

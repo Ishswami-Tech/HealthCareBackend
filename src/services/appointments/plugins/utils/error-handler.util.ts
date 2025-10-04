@@ -8,7 +8,7 @@ export interface ErrorContext {
   pluginName: string;
   operation: string;
   domain: string;
-  data?: any;
+  data?: unknown;
   userId?: string;
 }
 
@@ -16,7 +16,8 @@ export class PluginErrorHandler {
   private static readonly logger = new Logger("PluginErrorHandler");
 
   static handleError(error: unknown, context: ErrorContext): never {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : "";
 
     this.logger.error(
@@ -40,12 +41,12 @@ export class PluginErrorHandler {
   }
 
   static validateRequiredFields(
-    data: any,
+    data: unknown,
     requiredFields: string[],
     context: ErrorContext,
   ): void {
     const missingFields = requiredFields.filter(
-      (field) => data[field] === undefined,
+      (field) => (data as any)[field] === undefined,
     );
 
     if (missingFields.length > 0) {
@@ -67,8 +68,9 @@ export class PluginErrorHandler {
     }
   }
 
-  static createErrorResponse(error: unknown, context: ErrorContext): any {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+  static createErrorResponse(error: unknown, context: ErrorContext): unknown {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
 
     return {
       success: false,

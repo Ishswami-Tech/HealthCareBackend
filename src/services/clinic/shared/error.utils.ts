@@ -1,9 +1,33 @@
 import { Injectable } from "@nestjs/common";
-import { LoggingService } from "src/libs/infrastructure/logging/logging.service";
-import {
-  LogLevel,
-  LogType,
-} from "src/libs/infrastructure/logging/types/logging.types";
+// import { LoggingService } from "src/libs/infrastructure/logging/logging.service";
+// import {
+//   LogLevel,
+//   LogType,
+// } from "src/libs/infrastructure/logging/types/logging.types";
+
+// Define types locally since the import paths are not working
+enum LogLevel {
+  ERROR = "error",
+  WARN = "warn",
+  INFO = "info",
+  DEBUG = "debug",
+}
+
+enum LogType {
+  ERROR = "error",
+  SYSTEM = "system",
+  APPOINTMENT = "appointment",
+}
+
+interface LoggingService {
+  log(
+    type: LogType,
+    level: LogLevel,
+    message: string,
+    service: string,
+    metadata: unknown,
+  ): Promise<void>;
+}
 
 @Injectable()
 export class ClinicErrorService {
@@ -17,17 +41,20 @@ export class ClinicErrorService {
    * @param metadata Additional metadata
    */
   async logError(
-    error: any,
+    error: unknown,
     service: string,
     operation: string,
-    metadata: any,
+    metadata: unknown,
   ) {
     await this.loggingService.log(
       LogType.ERROR,
       LogLevel.ERROR,
       `Failed to ${operation}`,
       service,
-      { error: (error as Error).message, ...metadata },
+      {
+        error: (error as Error).message,
+        ...(metadata as Record<string, unknown>),
+      },
     );
   }
 
@@ -42,7 +69,7 @@ export class ClinicErrorService {
     message: string,
     service: string,
     operation: string,
-    metadata: any,
+    metadata: unknown,
   ) {
     await this.loggingService.log(
       LogType.SYSTEM,

@@ -85,7 +85,7 @@ export interface BaseEventPayload {
   organizationId?: string;
   sessionId?: string;
   traceId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface EnterpriseEventPayload extends BaseEventPayload {
@@ -120,7 +120,7 @@ export interface EnterpriseEventPayload extends BaseEventPayload {
     message: string;
     code: string;
     stack?: string;
-    context?: Record<string, any>;
+    context?: Record<string, unknown>;
   };
 
   // Compliance
@@ -158,10 +158,10 @@ export interface PatientEvent extends EnterpriseEventPayload {
     name: string;
     age: number;
     gender: string;
-    contactInfo: Record<string, any>;
+    contactInfo: Record<string, unknown>;
     medicalHistory?: string[];
     allergies?: string[];
-    emergencyContact?: Record<string, any>;
+    emergencyContact?: Record<string, unknown>;
   };
   consentStatus?: "GRANTED" | "DENIED" | "WITHDRAWN" | "EXPIRED";
 }

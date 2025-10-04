@@ -26,7 +26,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
   private readonly subscriptions = new Map<string, EventSubscription>();
   private readonly eventBuffer: EnterpriseEventPayload[] = [];
   private readonly maxBufferSize = 50000; // Increased for 1M+ users
-  private metricsBuffer: any[] = [];
+  private metricsBuffer: unknown[] = [];
   private processedEvents = 0;
   private failedEvents = 0;
   private totalProcessingTime = 0;
@@ -517,7 +517,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     return ttls[priority] || 7200;
   }
 
-  private handleEventFailure(error: any) {
+  private handleEventFailure(error: unknown) {
     this.failedEvents++;
     this.failureCount++;
     this.lastFailureTime = Date.now();
@@ -546,7 +546,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       const ids = await this.redisService.zrevrange(categoryKey, 0, -1);
       results.push(...ids);
     }
-    return [...new Set(results)]; // Remove duplicates
+    return Array.from(new Set(results)); // Remove duplicates
   }
 
   private async queryByUser(filter: EventFilter): Promise<string[]> {
@@ -689,7 +689,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Legacy compatibility methods
-  async emit(event: string, payload: any): Promise<void> {
+  async emit(event: string, payload: unknown): Promise<void> {
     await this.emitEnterprise(event, {
       eventId: this.generateEventId(),
       eventType: event,
@@ -702,15 +702,15 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     } as EnterpriseEventPayload);
   }
 
-  on(event: string, listener: (...args: any[]) => void): void {
+  on(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.on(event, listener);
   }
 
-  once(event: string, listener: (...args: any[]) => void): void {
+  once(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.once(event, listener);
   }
 
-  off(event: string, listener: (...args: any[]) => void): void {
+  off(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.off(event, listener);
   }
 }

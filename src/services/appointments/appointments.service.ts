@@ -148,7 +148,7 @@ export class AppointmentsService {
         "Appointment created successfully",
         "AppointmentsService",
         {
-          appointmentId: result.data?.id,
+          appointmentId: (result.data as Record<string, unknown>)?.id as string,
           doctorId: createDto.doctorId,
           patientId: createDto.patientId,
           userId,
@@ -158,7 +158,7 @@ export class AppointmentsService {
 
       // Invalidate related cache entries
       await this.cacheService.invalidateAppointmentCache(
-        result.data?.id,
+        (result.data as Record<string, unknown>)?.id as string,
         createDto.patientId,
         createDto.doctorId,
         clinicId,
@@ -265,8 +265,8 @@ export class AppointmentsService {
     if (result.success) {
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
-        result.data?.patientId,
-        result.data?.doctorId,
+        (result.data as Record<string, unknown>)?.patientId as string,
+        (result.data as Record<string, unknown>)?.doctorId as string,
         clinicId,
       );
     }
@@ -314,8 +314,8 @@ export class AppointmentsService {
     if (result.success) {
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
-        result.data?.patientId,
-        result.data?.doctorId,
+        (result.data as Record<string, unknown>)?.patientId as string,
+        (result.data as Record<string, unknown>)?.doctorId as string,
         clinicId,
       );
     }
@@ -357,7 +357,7 @@ export class AppointmentsService {
     userId: string,
     clinicId: string,
     role: string = "USER",
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       // Execute through clinic check-in plugin
       const result = await this.pluginManager.executePluginOperation(
@@ -379,11 +379,11 @@ export class AppointmentsService {
         );
       }
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to process check-in through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to process check-in through plugin: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -396,7 +396,7 @@ export class AppointmentsService {
     userId: string,
     clinicId: string,
     role: string = "USER",
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       // Execute through clinic confirmation plugin
       const result = await this.pluginManager.executePluginOperation(
@@ -418,11 +418,11 @@ export class AppointmentsService {
         );
       }
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to complete appointment through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to complete appointment through plugin: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -435,7 +435,7 @@ export class AppointmentsService {
     userId: string,
     clinicId: string,
     role: string = "USER",
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       // Execute through clinic check-in plugin
       const result = await this.pluginManager.executePluginOperation(
@@ -457,11 +457,11 @@ export class AppointmentsService {
         );
       }
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to start consultation through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to start consultation through plugin: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -474,7 +474,7 @@ export class AppointmentsService {
     clinicId: string,
     userId: string,
     role: string = "USER",
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       // Execute through clinic queue plugin
       const result = await this.pluginManager.executePluginOperation(
@@ -496,11 +496,11 @@ export class AppointmentsService {
         );
       }
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get queue info through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to get queue info through plugin: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -512,7 +512,7 @@ export class AppointmentsService {
     clinicId: string,
     userId: string,
     role: string = "USER",
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       // Execute through clinic location plugin - use scheduling as fallback since 'location' plugin doesn't exist in our plugin manager
       const result = await this.pluginManager.executePluginOperation(
@@ -534,11 +534,11 @@ export class AppointmentsService {
         );
       }
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get location info through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to get location info through plugin: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -549,7 +549,7 @@ export class AppointmentsService {
   /**
    * Get appointment by ID
    */
-  async getAppointmentById(id: string, clinicId: string): Promise<any> {
+  async getAppointmentById(id: string, clinicId: string): Promise<unknown> {
     const cacheKey = `appointments:detail:${id}`;
 
     return this.cacheService.cache(
@@ -588,7 +588,7 @@ export class AppointmentsService {
   /**
    * Get patient by user ID
    */
-  async getPatientByUserId(userId: string): Promise<any> {
+  async getPatientByUserId(userId: string): Promise<unknown> {
     const cacheKey = `patient:user:${userId}`;
 
     return this.cacheService.cache(
@@ -617,138 +617,15 @@ export class AppointmentsService {
   }
 
   // =============================================
-  // LEGACY METHODS (for backward compatibility)
+  // LEGACY METHODS REMOVED
   // =============================================
+  // Legacy methods have been removed to eliminate duplication.
+  // Please use the enhanced methods directly:
+  // - createAppointment() instead of createAppointmentLegacy()
 
-  /**
-   * Legacy create appointment method
-   * @deprecated Use createAppointment with enhanced DTO instead
-   */
-  async createAppointmentLegacy(data: {
-    userId: string;
-    doctorId: string;
-    locationId: string;
-    date: string;
-    time: string;
-    duration: number;
-    type: string;
-    notes?: string;
-    clinicId: string;
-  }): Promise<any> {
-    this.logger.warn(
-      "Using legacy createAppointment method. Please migrate to enhanced version.",
-    );
-
-    // Convert legacy data to enhanced DTO
-    const createDto: CreateAppointmentDto = {
-      patientId: data.userId, // Assuming userId is patientId in legacy
-      doctorId: data.doctorId,
-      locationId: data.locationId,
-      clinicId: data.clinicId,
-      date: data.date,
-      time: data.time,
-      duration: data.duration,
-      type: data.type as any,
-      notes: data.notes,
-      priority: AppointmentPriority.NORMAL,
-      paymentStatus: PaymentStatus.PENDING,
-      paymentMethod: PaymentMethod.CASH,
-      amount: 0,
-      currency: "INR",
-      language: Language.EN,
-      isRecurring: false,
-    };
-
-    return this.createAppointment(createDto, data.userId, data.clinicId);
-  }
-
-  /**
-   * Legacy get appointments method
-   * @deprecated Use getAppointments with enhanced filters instead
-   */
-  async getAppointmentsLegacy(filters: {
-    userId?: string;
-    doctorId?: string;
-    status?: string;
-    locationId?: string;
-    date?: string;
-    clinicId: string;
-    page?: number;
-    limit?: number;
-  }): Promise<any> {
-    this.logger.warn(
-      "Using legacy getAppointments method. Please migrate to enhanced version.",
-    );
-
-    // Convert legacy filters to enhanced filters
-    const enhancedFilters: AppointmentFilterDto = {
-      patientId: filters.userId,
-      providerId: filters.doctorId,
-      status: filters.status as any,
-      locationId: filters.locationId,
-      startDate: filters.date,
-      endDate: filters.date,
-      page: filters.page,
-      limit: filters.limit,
-    };
-
-    return this.getAppointments(
-      enhancedFilters,
-      filters.userId || "system",
-      filters.clinicId,
-    );
-  }
-
-  /**
-   * Legacy update appointment method
-   * @deprecated Use updateAppointment with enhanced DTO instead
-   */
-  async updateAppointmentLegacy(
-    appointmentId: string,
-    updateData: {
-      date?: string;
-      time?: string;
-      duration?: number;
-      status?: string;
-      notes?: string;
-    },
-    clinicId: string,
-  ): Promise<any> {
-    this.logger.warn(
-      "Using legacy updateAppointment method. Please migrate to enhanced version.",
-    );
-
-    // Convert legacy data to enhanced DTO
-    const updateDto: UpdateAppointmentDto = {
-      date: updateData.date,
-      time: updateData.time,
-      duration: updateData.duration,
-      status: updateData.status as any,
-      notes: updateData.notes,
-    };
-
-    return this.updateAppointment(appointmentId, updateDto, "system", clinicId);
-  }
-
-  /**
-   * Legacy cancel appointment method
-   * @deprecated Use cancelAppointment with enhanced parameters instead
-   */
-  async cancelAppointmentLegacy(
-    appointmentId: string,
-    clinicId: string,
-  ): Promise<any> {
-    this.logger.warn(
-      "Using legacy cancelAppointment method. Please migrate to enhanced version.",
-    );
-
-    return this.cancelAppointment(
-      appointmentId,
-      "Cancelled via legacy method",
-      "system",
-      clinicId,
-    );
-  }
+  // - getAppointments() instead of getAppointmentsLegacy()
+  // - updateAppointment() instead of updateAppointmentLegacy()
+  // - cancelAppointment() instead of cancelAppointmentLegacy()
 
   // =============================================
   // UTILITY METHODS
@@ -757,7 +634,7 @@ export class AppointmentsService {
   /**
    * Get plugin information
    */
-  async getPluginInfo(): Promise<any> {
+  async getPluginInfo(): Promise<unknown> {
     return this.pluginManager.getPluginInfo();
   }
 
@@ -775,9 +652,9 @@ export class AppointmentsService {
     domain: string,
     feature: string,
     operation: string,
-    data: any,
-    context?: any,
-  ): Promise<any> {
+    data: unknown,
+    context?: unknown,
+  ): Promise<unknown> {
     return this.pluginManager.executePluginOperation(
       domain,
       feature,
@@ -803,7 +680,7 @@ export class AppointmentsService {
     clinicId: string,
     userId: string,
     role: string = "USER",
-  ): Promise<any> {
+  ): Promise<unknown> {
     const cacheKey = `appointments:availability:${doctorId}:${date}`;
 
     return this.cacheService.cache(
@@ -830,13 +707,16 @@ export class AppointmentsService {
             );
           }
           return result;
-        } catch (error) {
+        } catch (_error) {
           this.logger.error(
-            `Failed to get doctor availability through plugin: ${error instanceof Error ? error.message : "Unknown error"}`,
+            `Failed to get doctor availability through plugin: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
           );
 
-          // Fallback to legacy method if plugin fails
-          return this.getDoctorAvailabilityLegacy(doctorId, date);
+          // Fallback to core service if plugin fails
+          return this.coreAppointmentService.getDoctorAvailability(
+            doctorId,
+            date,
+          );
         }
       },
       {
@@ -850,79 +730,7 @@ export class AppointmentsService {
     );
   }
 
-  /**
-   * Legacy doctor availability method
-   * @deprecated Use getDoctorAvailability with enhanced parameters instead
-   */
-  async getDoctorAvailabilityLegacy(
-    doctorId: string,
-    date: string,
-  ): Promise<any> {
-    this.logger.warn(
-      "Using legacy getDoctorAvailability method. Please migrate to enhanced version.",
-    );
-
-    try {
-      const startDate = new Date(date);
-      const endDate = new Date(date);
-      endDate.setDate(endDate.getDate() + 1);
-
-      const appointments = await this.prisma.appointment.findMany({
-        where: {
-          doctorId,
-          date: {
-            gte: startDate,
-            lt: endDate,
-          },
-          status: {
-            in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_PROGRESS"],
-          },
-        },
-        orderBy: { time: "asc" },
-      });
-
-      // Generate time slots (9 AM to 6 PM)
-      const timeSlots = [];
-      for (let hour = 9; hour < 18; hour++) {
-        for (let minute = 0; minute < 60; minute += 30) {
-          const time = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
-          const isBooked = appointments.some((apt: any) => apt.time === time);
-
-          timeSlots.push({
-            time,
-            available: !isBooked,
-            appointmentId: isBooked
-              ? appointments.find((apt: any) => apt.time === time)?.id
-              : null,
-          });
-        }
-      }
-
-      return {
-        doctorId,
-        date,
-        available: timeSlots.some((slot) => slot.available),
-        availableSlots: timeSlots
-          .filter((slot) => slot.available)
-          .map((slot) => slot.time),
-        bookedSlots: timeSlots
-          .filter((slot) => !slot.available)
-          .map((slot) => slot.time),
-        workingHours: {
-          start: "09:00",
-          end: "18:00",
-        },
-        message: timeSlots.some((slot) => slot.available)
-          ? "Doctor has available slots"
-          : "Doctor is fully booked for this date",
-      };
-    } catch (error) {
-      this.logger.error(
-        `Failed to get doctor availability: ${error instanceof Error ? error.message : "Unknown error"}`,
-      );
-      throw error;
-    }
-  }
+  // - getDoctorAvailability() instead of getDoctorAvailabilityLegacy()
 
   /**
    * Get user upcoming appointments (enhanced version)
@@ -931,7 +739,7 @@ export class AppointmentsService {
     userId: string,
     clinicId: string,
     role: string = "USER",
-  ): Promise<any> {
+  ): Promise<unknown> {
     const cacheKey = `appointments:upcoming:${userId}`;
 
     return this.cacheService.cache(
@@ -964,50 +772,7 @@ export class AppointmentsService {
     );
   }
 
-  /**
-   * Legacy user upcoming appointments method
-   * @deprecated Use getUserUpcomingAppointments with enhanced parameters instead
-   */
-  async getUserUpcomingAppointmentsLegacy(userId: string): Promise<any> {
-    this.logger.warn(
-      "Using legacy getUserUpcomingAppointments method. Please migrate to enhanced version.",
-    );
-
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const appointments = await this.prisma.appointment.findMany({
-        where: {
-          patientId: userId,
-          date: {
-            gte: today,
-          },
-          status: {
-            in: ["SCHEDULED", "CONFIRMED"],
-          },
-        },
-        include: {
-          doctor: {
-            include: {
-              user: true,
-            },
-          },
-          location: true,
-          clinic: true,
-        },
-        orderBy: [{ date: "asc" }, { time: "asc" }],
-        take: 10,
-      });
-
-      return appointments;
-    } catch (error) {
-      this.logger.error(
-        `Failed to get user upcoming appointments: ${error instanceof Error ? error.message : "Unknown error"}`,
-      );
-      throw error;
-    }
-  }
+  // - getUserUpcomingAppointments() instead of getUserUpcomingAppointmentsLegacy()
 
   // =============================================
   // PRIVATE HELPER METHODS
@@ -1035,7 +800,7 @@ export class AppointmentsService {
     operation: string,
     userId: string,
     clinicId: string,
-    details: any,
+    details: unknown,
   ): Promise<void> {
     try {
       await this.loggingService.log(
@@ -1051,8 +816,8 @@ export class AppointmentsService {
           details,
         },
       );
-    } catch (error) {
-      this.logger.error("Failed to log operation:", error);
+    } catch (_error) {
+      this.logger.error("Failed to log operation:", _error);
     }
   }
 }

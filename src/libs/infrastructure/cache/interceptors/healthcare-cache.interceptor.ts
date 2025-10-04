@@ -44,7 +44,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
 
     const request = context.switchToHttp().getRequest();
-    const response = context.switchToHttp().getResponse();
+    const _response = context.switchToHttp().getResponse();
 
     // Handle cache read operations
     if (cacheOptions && request.method === "GET") {
@@ -82,9 +82,9 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       if (options.condition) {
         // We need to execute first to check condition with result
         return next.handle().pipe(
-          tap(async (result) => {
+          tap((result) => {
             if (options.condition!(context, result)) {
-              await this.setCacheValue(cacheKey, result, options, context);
+              void this.setCacheValue(cacheKey, result, options, context);
             }
           }),
         );
@@ -99,9 +99,9 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Cache miss - execute and cache the result
       return next.handle().pipe(
-        tap(async (result) => {
+        tap((result) => {
           if (result !== null && result !== undefined) {
-            await this.setCacheValue(cacheKey, result, options, context);
+            void this.setCacheValue(cacheKey, result, options, context);
           }
         }),
         catchError((error) => {
@@ -118,20 +118,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
   }
 
-  private async handleCacheInvalidation(
+  private handleCacheInvalidation(
     context: ExecutionContext,
     next: CallHandler,
     options: CacheInvalidationOptions,
-  ): Promise<Observable<any>> {
+  ): Observable<any> {
     return next.handle().pipe(
-      tap(async (result) => {
+      tap((result) => {
         try {
           // Check condition before invalidating
           if (options.condition && !options.condition(context, result)) {
             return;
           }
 
-          await this.performCacheInvalidation(context, result, options);
+          void this.performCacheInvalidation(context, result, options);
         } catch (error) {
           this.logger.error("Error in cache invalidation:", error);
           // Don't throw error here to avoid affecting the main operation
@@ -140,7 +140,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       catchError((error) => {
         // Even if the operation fails, we might want to invalidate cache
         // to prevent serving stale data
-        this.performCacheInvalidation(context, null, options).catch(
+        void this.performCacheInvalidation(context, null, options).catch(
           (invalidationError) => {
             this.logger.error(
               "Error in error-case cache invalidation:",
@@ -220,7 +220,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   private async getCachedValue(
     cacheKey: string,
     options: UnifiedCacheOptions,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       // Route to appropriate cache method based on healthcare data type
       if (options.patientSpecific) {
@@ -258,7 +258,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
   private async setCacheValue(
     cacheKey: string,
-    value: any,
+    value: unknown,
     options: UnifiedCacheOptions,
     context: ExecutionContext,
   ): Promise<void> {
@@ -310,7 +310,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
   private async performCacheInvalidation(
     context: ExecutionContext,
-    result: any,
+    result: unknown,
     options: CacheInvalidationOptions,
   ): Promise<void> {
     try {
@@ -377,7 +377,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
   private calculateTTL(
     options: UnifiedCacheOptions,
-    context: ExecutionContext,
+    _context: ExecutionContext,
   ): number {
     if (options.ttl) {
       return options.ttl;

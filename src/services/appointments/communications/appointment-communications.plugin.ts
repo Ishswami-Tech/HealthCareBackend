@@ -20,71 +20,73 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
     super();
   }
 
-  async process(data: any): Promise<any> {
+  async process(data: unknown): Promise<unknown> {
+    const pluginData = data as any;
     this.logPluginAction("Processing appointment communications operation", {
-      operation: data.operation,
+      operation: pluginData.operation,
     });
 
     // Delegate to communications service - proper separation of concerns
-    switch (data.operation) {
+    switch (pluginData.operation) {
       case "sendQueueUpdate":
         return await this.communicationsService.sendQueueUpdate(
-          data.clinicId,
-          data.doctorId,
-          data.queueData,
+          pluginData.clinicId,
+          pluginData.doctorId,
+          pluginData.queueData,
         );
 
       case "sendAppointmentStatusUpdate":
         return await this.communicationsService.sendAppointmentStatusUpdate(
-          data.appointmentId,
-          data.clinicId,
-          data.userId,
-          data.statusData,
+          pluginData.appointmentId,
+          pluginData.clinicId,
+          pluginData.userId,
+          pluginData.statusData,
         );
 
       case "sendVideoCallNotification":
         return await this.communicationsService.sendVideoCallNotification(
-          data.appointmentId,
-          data.clinicId,
-          data.patientId,
-          data.doctorId,
-          data.callData,
+          pluginData.appointmentId,
+          pluginData.clinicId,
+          pluginData.patientId,
+          pluginData.doctorId,
+          pluginData.callData,
         );
 
       case "sendNotification":
         return await this.communicationsService.sendNotification(
-          data.userId,
-          data.clinicId,
-          data.notificationData,
+          pluginData.userId,
+          pluginData.clinicId,
+          pluginData.notificationData,
         );
 
       case "getActiveConnections":
         return await this.communicationsService.getActiveConnections(
-          data.clinicId,
+          pluginData.clinicId,
         );
 
       case "joinAppointmentRoom":
         return await this.communicationsService.joinAppointmentRoom(
-          data.userId,
-          data.appointmentId,
-          data.clinicId,
+          pluginData.userId,
+          pluginData.appointmentId,
+          pluginData.clinicId,
         );
 
       case "leaveAppointmentRoom":
         return await this.communicationsService.leaveAppointmentRoom(
-          data.userId,
-          data.appointmentId,
+          pluginData.userId,
+          pluginData.appointmentId,
         );
 
       default:
         this.logPluginError("Unknown communications operation", {
-          operation: data.operation,
+          operation: pluginData.operation,
         });
-        throw new Error(`Unknown communications operation: ${data.operation}`);
+        throw new Error(`Unknown communications operation: ${pluginData.operation}`);
     }
   }
 
-  async validate(data: any): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
+    const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
       sendQueueUpdate: ["clinicId", "doctorId", "queueData"],
@@ -107,7 +109,7 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
       leaveAppointmentRoom: ["userId", "appointmentId"],
     };
 
-    const operation = data.operation;
+    const operation = pluginData.operation;
     const fields = (requiredFields as any)[operation];
 
     if (!fields) {
@@ -115,7 +117,7 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
       return false;
     }
 
-    const isValid = fields.every((field: any) => data[field] !== undefined);
+    const isValid = fields.every((field: unknown) => pluginData[field as string] !== undefined);
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

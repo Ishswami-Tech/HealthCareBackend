@@ -5,7 +5,7 @@ import { CacheService } from "../../../../libs/infrastructure/cache";
 export interface PluginConfig {
   enabled: boolean;
   priority: number;
-  settings: Record<string, any>;
+  settings: Record<string, unknown>;
   features: string[];
   domain: string;
 }
@@ -32,10 +32,10 @@ export class PluginConfigService {
     try {
       const allConfigs = await this.getAllPluginConfigs();
       return allConfigs[pluginName] || null;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get plugin config for ${pluginName}:`,
-        error,
+        _error,
       );
       return null;
     }
@@ -240,8 +240,8 @@ export class PluginConfigService {
       );
 
       return configs;
-    } catch (error) {
-      this.logger.error("Failed to get all plugin configs:", error);
+    } catch (_error) {
+      this.logger.error("Failed to get all plugin configs:", _error);
       return {};
     }
   }
@@ -266,10 +266,10 @@ export class PluginConfigService {
 
       this.logger.log(`Updated plugin config for ${pluginName}`);
       return true;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to update plugin config for ${pluginName}:`,
-        error,
+        _error,
       );
       return false;
     }
@@ -290,10 +290,10 @@ export class PluginConfigService {
       });
 
       return domainConfigs;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get domain plugin configs for ${domain}:`,
-        error,
+        _error,
       );
       return {};
     }
@@ -306,10 +306,10 @@ export class PluginConfigService {
     try {
       const config = await this.getPluginConfig(pluginName);
       return config?.enabled || false;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to check if plugin ${pluginName} is enabled:`,
-        error,
+        _error,
       );
       return false;
     }
@@ -322,10 +322,10 @@ export class PluginConfigService {
     try {
       const config = await this.getPluginConfig(pluginName);
       return config?.priority || 1;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get plugin priority for ${pluginName}:`,
-        error,
+        _error,
       );
       return 1;
     }
@@ -338,10 +338,10 @@ export class PluginConfigService {
     try {
       await this.cacheService.del(this.CONFIG_CACHE_KEY);
       this.logger.log("Plugin configuration cache invalidated");
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to invalidate plugin configuration cache:",
-        error,
+        _error,
       );
     }
   }

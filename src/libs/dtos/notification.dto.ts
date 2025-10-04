@@ -131,7 +131,9 @@ export class SendEmailDto {
   })
   @IsOptional()
   @IsBoolean()
-  @Transform(({ value }: { value: any }) => value === "true" || value === true)
+  @Transform(
+    ({ value }: { value: unknown }) => value === "true" || value === true,
+  )
   isHtml?: boolean;
 
   @ApiPropertyOptional({ description: "Reply-to email address" })
@@ -323,7 +325,9 @@ export class UnifiedNotificationDto {
   })
   @IsOptional()
   @IsBoolean()
-  @Transform(({ value }: { value: any }) => value === "true" || value === true)
+  @Transform(
+    ({ value }: { value: unknown }) => value === "true" || value === true,
+  )
   useBackup?: boolean;
 }
 
@@ -362,7 +366,7 @@ export class GetMessageHistoryDto {
   @IsOptional()
   @IsNumber()
   @Type(() => Number)
-  @Transform(({ value }: { value: any }) =>
+  @Transform(({ value }: { value: unknown }) =>
     Math.min(Math.max(parseInt(String(value)) || 50, 1), 1000),
   )
   limit?: number;
@@ -391,7 +395,7 @@ export class NotificationResponseDto {
   error?: string;
 
   @ApiPropertyOptional({ description: "Additional metadata" })
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export class MessageHistoryResponseDto {
@@ -399,7 +403,7 @@ export class MessageHistoryResponseDto {
   success: boolean;
 
   @ApiPropertyOptional({ description: "Retrieved messages" })
-  messages?: Record<string, any>;
+  messages?: Record<string, unknown>;
 
   @ApiPropertyOptional({ description: "Number of messages retrieved" })
   count?: number;

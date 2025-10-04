@@ -15,7 +15,7 @@ export interface RbacContext {
   resource: string;
   action: string;
   resourceId?: string; // For ownership checks
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RoleAssignment {
@@ -34,7 +34,7 @@ export interface PermissionCheck {
   roles: string[];
   permissions: string[];
   reason?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -136,19 +136,19 @@ export class RbacService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Permission check failed for user ${context.userId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
 
       return {
         hasPermission: false,
         roles: [],
         permissions: [],
-        reason: "Permission check failed due to internal error",
+        reason: "Permission check failed due to internal _error",
         metadata: {
-          error: error instanceof Error ? error.message : "Unknown error",
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
         },
       };
     }
@@ -226,12 +226,12 @@ export class RbacService {
       );
 
       return roleAssignment;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Role assignment failed for user ${userId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -283,12 +283,12 @@ export class RbacService {
           revokedBy,
         },
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Role revocation failed for user ${userId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -319,16 +319,20 @@ export class RbacService {
         },
       });
 
-      const roles: RoleAssignment[] = assignments.map((assignment: any) => ({
-        userId: assignment.userId,
-        roleId: assignment.roleId,
-        roleName: assignment.role.name,
-        clinicId: assignment.clinicId || undefined,
-        assignedBy: assignment.assignedBy,
-        assignedAt: assignment.assignedAt,
-        expiresAt: assignment.expiresAt || undefined,
-        isActive: assignment.isActive,
-      }));
+      const roles: RoleAssignment[] = assignments.map((assignment: unknown) => {
+        const assign = assignment as Record<string, unknown>;
+        const role = assign.role as Record<string, unknown>;
+        return {
+          userId: assign.userId as string,
+          roleId: assign.roleId as string,
+          roleName: role.name as string,
+          clinicId: (assign.clinicId as string) || undefined,
+          assignedBy: assign.assignedBy as string,
+          assignedAt: assign.assignedAt as Date,
+          expiresAt: (assign.expiresAt as Date) || undefined,
+          isActive: assign.isActive as boolean,
+        };
+      });
 
       // Cache the result
       await this.redis.set(cacheKey, roles, this.CACHE_TTL);
@@ -369,21 +373,23 @@ export class RbacService {
         },
       });
 
-      const permissions = rolePermissions.map(
-        (rp: any) => `${rp.permission.resource}:${rp.permission.action}`,
-      );
+      const permissions = rolePermissions.map((rp: unknown): string => {
+        const rpData = rp as Record<string, unknown>;
+        const permission = rpData.permission as Record<string, unknown>;
+        return `${permission.resource}:${permission.action}`;
+      });
 
       // Remove duplicates
-      const uniquePermissions = [...new Set(permissions)];
+      const uniquePermissions: string[] = Array.from(new Set(permissions));
 
       // Cache the result
       await this.redis.set(cacheKey, uniquePermissions, this.CACHE_TTL);
 
       return uniquePermissions;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to get role permissions",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return [];
     }
@@ -455,7 +461,7 @@ export class RbacService {
    */
   private async clearUserCache(
     userId: string,
-    clinicId?: string,
+    _clinicId?: string,
   ): Promise<void> {
     try {
       const patterns = [
@@ -470,10 +476,10 @@ export class RbacService {
           await this.redis.del(...keys);
         }
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to clear cache for user ${userId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
     }
   }
@@ -513,21 +519,21 @@ export class RbacService {
             assignment.expiresAt,
           );
           results.push(result);
-        } catch (error) {
+        } catch (_error) {
           this.logger.warn(
             `Failed to assign role ${assignment.roleId} to user ${assignment.userId}`,
-            error instanceof Error ? error.message : "Unknown error",
+            _error instanceof Error ? _error.message : "Unknown _error",
           );
         }
       }
 
       return results;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Bulk role assignment failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -541,7 +547,7 @@ export class RbacService {
     roles: RoleAssignment[];
     permissions: string[];
     effectivePermissions: string[];
-    metadata: Record<string, any>;
+    metadata: Record<string, unknown>;
   }> {
     try {
       const roles = await this.getUserRoles(userId, clinicId);
@@ -572,12 +578,12 @@ export class RbacService {
           generatedAt: new Date().toISOString(),
         },
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get permissions summary for user ${userId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -614,10 +620,10 @@ export class RbacService {
         default:
           return false;
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Ownership check failed for ${context.resource}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return false;
     }
@@ -639,10 +645,10 @@ export class RbacService {
       return appointment
         ? appointment.patientId === userId || appointment.doctorId === userId
         : false;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to check appointment ownership`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return false;
     }
@@ -653,8 +659,8 @@ export class RbacService {
    * MedicalRecord model integration - currently using placeholder implementation
    */
   private async checkMedicalRecordOwnership(
-    recordId: string,
-    userId: string,
+    _recordId: string,
+    _userId: string,
   ): Promise<boolean> {
     // Commented out until MedicalRecord model is added to Prisma schema
     // try {
@@ -664,8 +670,8 @@ export class RbacService {
     //   });
 
     //   return record ? record.patientId === userId : false;
-    // } catch (error) {
-    //   this.logger.error(`Failed to check medical record ownership`, error instanceof Error ? (error as Error).stack : 'No stack trace available');
+    // } catch (_error) {
+    //   this.logger.error(`Failed to check medical record ownership`, _error instanceof Error ? (_error as Error).stack : 'No stack trace available');
     //   return false;
     // }
 

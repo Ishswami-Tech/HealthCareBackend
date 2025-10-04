@@ -5,7 +5,7 @@ import {
   QueryOptions,
 } from "./base.repository";
 import { PrismaService } from "../prisma/prisma.service";
-import { User as PrismaUser, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { CreateUserDto, UpdateUserDto } from "../../../dtos/user.dto";
 
 // Define User interface locally to match the expected return type
@@ -23,9 +23,9 @@ interface User {
 }
 
 export interface UserWithProfile extends User {
-  profile?: any;
-  appointments?: any[];
-  medicalHistory?: any[];
+  profile?: unknown;
+  appointments?: unknown[];
+  medicalHistory?: unknown[];
 }
 
 export interface UserSearchOptions extends QueryOptions {
@@ -63,7 +63,7 @@ export class UserRepository extends BaseRepository<
       this.logger.debug(`Finding user by email: ${email}`);
       const user = await this.prisma.user.findUnique({
         where: { email },
-        ...this.buildQueryOptions(options),
+        ...(this.buildQueryOptions(options) || {}),
       });
       // Convert null values to undefined for compatibility
       const convertedUser = user
@@ -75,9 +75,9 @@ export class UserRepository extends BaseRepository<
           }
         : null;
       return RepositoryResult.success(convertedUser);
-    } catch (error) {
-      this.logger.error("Failed to find user by email:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to find user by email:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -92,7 +92,7 @@ export class UserRepository extends BaseRepository<
       this.logger.debug(`Finding user by phone: ${phone}`);
       const user = await this.prisma.user.findFirst({
         where: { phone },
-        ...this.buildQueryOptions(options),
+        ...(this.buildQueryOptions(options) || {}),
       });
       // Convert null values to undefined for compatibility
       const convertedUser = user
@@ -104,9 +104,9 @@ export class UserRepository extends BaseRepository<
           }
         : null;
       return RepositoryResult.success(convertedUser);
-    } catch (error) {
-      this.logger.error("Failed to find user by phone:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to find user by phone:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -117,7 +117,7 @@ export class UserRepository extends BaseRepository<
     options: UserSearchOptions,
   ): Promise<RepositoryResult<UserWithProfile[]>> {
     try {
-      const where: Prisma.UserWhereInput = {};
+      const where: any = {};
 
       // Text search across multiple fields
       if (options.searchTerm) {
@@ -147,7 +147,7 @@ export class UserRepository extends BaseRepository<
         };
       }
 
-      const include: Prisma.UserInclude = {};
+      const include: any = {};
 
       if (options.includeProfile) {
         include.doctor = true; // Include doctor profile if user is a doctor
@@ -171,21 +171,21 @@ export class UserRepository extends BaseRepository<
       const users = await this.prisma.user.findMany({
         where,
         include,
-        ...this.buildQueryOptions(options),
+        ...(this.buildQueryOptions(options) || {}),
       });
 
       this.logger.debug(`Found ${users.length} users matching search criteria`);
       // Convert null values to undefined for compatibility
-      const convertedUsers = users.map((user) => ({
-        ...user,
-        firstName: user.firstName || undefined,
-        lastName: user.lastName || undefined,
-        phone: user.phone || undefined,
+      const convertedUsers = users.map((user: unknown) => ({
+        ...(user as any),
+        firstName: (user as any).firstName || undefined,
+        lastName: (user as any).lastName || undefined,
+        phone: (user as any).phone || undefined,
       }));
       return RepositoryResult.success(convertedUsers as UserWithProfile[]);
-    } catch (error) {
-      this.logger.error("Failed to search users:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to search users:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -200,19 +200,19 @@ export class UserRepository extends BaseRepository<
       this.logger.debug(`Finding users by role: ${role}`);
       const users = await this.prisma.user.findMany({
         where: { role },
-        ...this.buildQueryOptions(options),
+        ...(this.buildQueryOptions(options) || {}),
       });
       // Convert null values to undefined for compatibility
-      const convertedUsers = users.map((user) => ({
-        ...user,
-        firstName: user.firstName || undefined,
-        lastName: user.lastName || undefined,
-        phone: user.phone || undefined,
+      const convertedUsers = users.map((user: unknown) => ({
+        ...(user as any),
+        firstName: (user as any).firstName || undefined,
+        lastName: (user as any).lastName || undefined,
+        phone: (user as any).phone || undefined,
       }));
       return RepositoryResult.success(convertedUsers);
-    } catch (error) {
-      this.logger.error("Failed to find users by role:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to find users by role:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -238,19 +238,19 @@ export class UserRepository extends BaseRepository<
             take: 5,
           },
         },
-        ...this.buildQueryOptions(options),
+        ...(this.buildQueryOptions(options) || {}),
       });
       // Convert null values to undefined for compatibility
-      const convertedDoctors = doctors.map((doctor) => ({
-        ...doctor,
-        firstName: doctor.firstName || undefined,
-        lastName: doctor.lastName || undefined,
-        phone: doctor.phone || undefined,
+      const convertedDoctors = doctors.map((doctor: unknown) => ({
+        ...(doctor as any),
+        firstName: (doctor as any).firstName || undefined,
+        lastName: (doctor as any).lastName || undefined,
+        phone: (doctor as any).phone || undefined,
       }));
       return RepositoryResult.success(convertedDoctors as UserWithProfile[]);
-    } catch (error) {
-      this.logger.error("Failed to find active doctors:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to find active doctors:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -300,9 +300,9 @@ export class UserRepository extends BaseRepository<
 
       this.logger.debug("User statistics calculated:", stats);
       return RepositoryResult.success(stats);
-    } catch (error) {
-      this.logger.error("Failed to get user statistics:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to get user statistics:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -331,9 +331,9 @@ export class UserRepository extends BaseRepository<
         phone: user.phone || undefined,
       };
       return RepositoryResult.success(convertedUser);
-    } catch (error) {
-      this.logger.error("Failed to update user password:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to update user password:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -354,9 +354,9 @@ export class UserRepository extends BaseRepository<
         phone: user.phone || undefined,
       };
       return RepositoryResult.success(convertedUser);
-    } catch (error) {
-      this.logger.error("Failed to update last login:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to update last login:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -386,9 +386,9 @@ export class UserRepository extends BaseRepository<
         phone: user.phone || undefined,
       };
       return RepositoryResult.success(convertedUser);
-    } catch (error) {
-      this.logger.error("Failed to toggle user status:", error);
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      this.logger.error("Failed to toggle user status:", _error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -429,19 +429,19 @@ export class UserRepository extends BaseRepository<
       });
 
       // Convert null values to undefined for compatibility
-      const convertedUsers = users.map((user) => ({
-        ...user,
-        firstName: user.firstName || undefined,
-        lastName: user.lastName || undefined,
-        phone: user.phone || undefined,
+      const convertedUsers = users.map((user: unknown) => ({
+        ...(user as any),
+        firstName: (user as any).firstName || undefined,
+        lastName: (user as any).lastName || undefined,
+        phone: (user as any).phone || undefined,
       }));
       return RepositoryResult.success(convertedUsers as UserWithProfile[]);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to get users with upcoming appointments:",
-        error,
+        _error,
       );
-      return RepositoryResult.failure(error as Error);
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
@@ -452,8 +452,8 @@ export class UserRepository extends BaseRepository<
     userIds: string[],
     updateData: Partial<UpdateUserDto>,
   ): Promise<RepositoryResult<{ count: number }>> {
-    return this.executeInTransaction(async (tx) => {
-      const result = await tx.user.updateMany({
+    return this.executeInTransaction(async (tx: any) => {
+      const result = await (tx as any).user.updateMany({
         where: {
           id: { in: userIds },
         },
@@ -472,9 +472,9 @@ export class UserRepository extends BaseRepository<
    * Soft delete user (healthcare compliance)
    */
   async softDeleteUser(id: string): Promise<RepositoryResult<User>> {
-    return this.executeInTransaction(async (tx) => {
+    return this.executeInTransaction(async (tx: any) => {
       // First, anonymize sensitive data
-      const user = await tx.user.update({
+      const user = await (tx as any).user.update({
         where: { id },
         data: {
           email: `deleted_${id}@deleted.local`,
@@ -486,7 +486,7 @@ export class UserRepository extends BaseRepository<
       });
 
       // Update related records if needed - cancel their appointments
-      await tx.appointment.updateMany({
+      await (tx as any).appointment.updateMany({
         where: { userId: id },
         data: { status: "CANCELLED" },
       });

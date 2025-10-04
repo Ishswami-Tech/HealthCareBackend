@@ -12,7 +12,7 @@ import { FastifyReply } from "fastify";
 interface CustomFastifyRequest {
   url: string;
   method: string;
-  body?: any;
+  body?: unknown;
   headers: {
     "user-agent"?: string;
     "x-forwarded-for"?: string;
@@ -20,13 +20,13 @@ interface CustomFastifyRequest {
     "x-clinic-id"?: string;
     [key: string]: string | undefined;
   };
-  query?: Record<string, any>;
-  params?: Record<string, any>;
+  query?: Record<string, unknown>;
+  params?: Record<string, unknown>;
   ip?: string;
   user?: {
     sub: string;
     role: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -65,7 +65,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     return this.ignored404Patterns.some((pattern) => pattern.test(path));
   }
 
-  catch(exception: any, host: ArgumentsHost) {
+  catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<FastifyReply>();
     const request = ctx.getRequest<CustomFastifyRequest>();
@@ -126,7 +126,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
 
     // Enhanced error response with more context
-    const errorResponse: Record<string, any> = {
+    const errorResponse: Record<string, unknown> = {
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
@@ -176,10 +176,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   // Remove sensitive data from request body for logging
-  private sanitizeRequestBody(body: unknown): Record<string, any> {
+  private sanitizeRequestBody(body: unknown): Record<string, unknown> {
     if (!body || typeof body !== "object") return {};
 
-    const sanitized = { ...(body as Record<string, any>) };
+    const sanitized = { ...(body as Record<string, unknown>) };
 
     // Remove sensitive fields
     const sensitiveFields = [
@@ -206,10 +206,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   // Remove sensitive headers for logging
-  private sanitizeHeaders(headers: unknown): Record<string, any> {
+  private sanitizeHeaders(headers: unknown): Record<string, unknown> {
     if (!headers || typeof headers !== "object") return {};
 
-    const sanitized = { ...(headers as Record<string, any>) };
+    const sanitized = { ...(headers as Record<string, unknown>) };
 
     // Remove sensitive headers
     const sensitiveHeaders = [

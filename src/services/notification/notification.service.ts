@@ -96,7 +96,7 @@ export class NotificationService {
           } else if (notificationData.useBackup !== false) {
             // Try SNS backup if primary push fails
             this.logger.warn("Push notification failed, trying SNS backup", {
-              error: pushResult.error,
+              _error: pushResult.error,
               deviceToken: this.maskToken(notificationData.deviceToken),
             });
 
@@ -120,7 +120,7 @@ export class NotificationService {
               }
             } catch (snsError) {
               this.logger.error("SNS backup also failed", {
-                error:
+                _error:
                   snsError instanceof Error
                     ? snsError.message
                     : "Unknown error",
@@ -141,7 +141,7 @@ export class NotificationService {
           }
         } catch (pushError) {
           this.logger.error("Push notification failed", {
-            error:
+            _error:
               pushError instanceof Error ? pushError.message : "Unknown error",
             deviceToken: this.maskToken(notificationData.deviceToken),
           });
@@ -181,7 +181,7 @@ export class NotificationService {
           }
         } catch (emailError) {
           this.logger.error("Email notification failed", {
-            error:
+            _error:
               emailError instanceof Error
                 ? emailError.message
                 : "Unknown error",
@@ -218,10 +218,10 @@ export class NotificationService {
       });
 
       return { success: overallSuccess, results };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error("Failed to send unified notification", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
+        _error: _error instanceof Error ? _error.message : "Unknown _error",
+        stack: _error instanceof Error ? _error.stack : undefined,
         type: notificationData.type,
         title: notificationData.title,
       });
@@ -233,7 +233,7 @@ export class NotificationService {
             type: "push",
             result: {
               success: false,
-              error: error instanceof Error ? error.message : "Unknown error",
+              error: _error instanceof Error ? _error.message : "Unknown error",
             },
           },
         ],
@@ -305,16 +305,16 @@ export class NotificationService {
           pushResult: unifiedResult,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error("Failed to send appointment reminder", {
-        error: error instanceof Error ? error.message : "Unknown error",
+        _error: _error instanceof Error ? _error.message : "Unknown error",
         patientName: appointmentData.patientName,
         appointmentId: appointmentData.appointmentId,
       });
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
       };
     }
   }
@@ -378,16 +378,16 @@ export class NotificationService {
           pushResult: unifiedResult,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error("Failed to send prescription notification", {
-        error: error instanceof Error ? error.message : "Unknown error",
+        _error: _error instanceof Error ? _error.message : "Unknown error",
         patientName: prescriptionData.patientName,
         prescriptionId: prescriptionData.prescriptionId,
       });
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
       };
     }
   }
@@ -410,7 +410,7 @@ export class NotificationService {
         content: chatData.content,
         timestamp: chatData.timestamp,
         type: chatData.type,
-        metadata: chatData.metadata,
+        metadata: (chatData as any).metadata,
       });
 
       // Emit event for chat message backup
@@ -427,15 +427,15 @@ export class NotificationService {
         messageId: result.messageId,
         error: result.error,
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error("Failed to backup chat message", {
-        error: error instanceof Error ? error.message : "Unknown error",
+        _error: _error instanceof Error ? _error.message : "Unknown _error",
         messageId: chatData.id,
       });
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
       };
     }
   }

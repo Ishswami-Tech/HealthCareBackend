@@ -21,7 +21,7 @@ export interface SessionData {
   lastActivity: Date;
   expiresAt: Date;
   isActive: boolean;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export interface SessionConfig {
@@ -40,7 +40,7 @@ export interface CreateSessionDto {
   userAgent?: string;
   ipAddress?: string;
   deviceId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SessionSummary {
@@ -94,12 +94,12 @@ export class SessionManagementService implements OnModuleInit {
         distributed: this.config.distributed,
         partitions: this.config.partitions,
       });
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to initialize Session Management Service",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -155,12 +155,12 @@ export class SessionManagementService implements OnModuleInit {
       );
 
       return sessionData;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to create session for user ${createSessionDto.userId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -188,10 +188,10 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       return sessionData;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get session ${sessionId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return null;
     }
@@ -202,7 +202,7 @@ export class SessionManagementService implements OnModuleInit {
    */
   async updateSessionActivity(
     sessionId: string,
-    metadata?: Record<string, any>,
+    metadata?: Record<string, unknown>,
   ): Promise<boolean> {
     try {
       const session = await this.getSession(sessionId);
@@ -222,15 +222,18 @@ export class SessionManagementService implements OnModuleInit {
 
       // Update metadata
       if (metadata) {
-        session.metadata = { ...session.metadata, ...metadata };
+        (session as { metadata?: unknown }).metadata = {
+          ...((session as { metadata?: unknown }).metadata || {}),
+          ...(metadata || {}),
+        };
       }
 
       await this.storeSession(session);
       return true;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to update session activity ${sessionId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return false;
     }
@@ -270,10 +273,10 @@ export class SessionManagementService implements OnModuleInit {
       );
 
       return true;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to invalidate session ${sessionId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return false;
     }
@@ -304,10 +307,10 @@ export class SessionManagementService implements OnModuleInit {
           new Date(b.lastActivity).getTime() -
           new Date(a.lastActivity).getTime(),
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get sessions for user ${userId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return [];
     }
@@ -348,10 +351,10 @@ export class SessionManagementService implements OnModuleInit {
       );
 
       return revokedCount;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to revoke sessions for user ${userId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return 0;
     }
@@ -379,10 +382,10 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       return cleanedCount;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to cleanup expired sessions",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return 0;
     }
@@ -442,10 +445,10 @@ export class SessionManagementService implements OnModuleInit {
         .slice(0, 10);
 
       return summary;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to get session statistics",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return {
         totalSessions: 0,
@@ -518,10 +521,10 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       return { suspicious, reasons };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to detect suspicious sessions",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return { suspicious: [], reasons: {} };
     }
@@ -552,10 +555,10 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       return invalidatedCount;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to invalidate suspicious sessions",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return 0;
     }
@@ -674,16 +677,16 @@ export class SessionManagementService implements OnModuleInit {
     }
   }
 
-  private async setupCleanupJobs(): Promise<void> {
+  private setupCleanupJobs(): void {
     // Cleanup expired sessions every hour
     setInterval(
       async () => {
         try {
           await this.cleanupExpiredSessions();
-        } catch (error) {
+        } catch (_error) {
           this.logger.error(
             "Session cleanup job failed",
-            (error as Error).stack,
+            (_error as Error).stack,
           );
         }
       },
@@ -700,10 +703,10 @@ export class SessionManagementService implements OnModuleInit {
               `Detected ${suspicious.length} suspicious sessions`,
             );
           }
-        } catch (error) {
+        } catch (_error) {
           this.logger.error(
             "Suspicious session detection failed",
-            (error as Error).stack,
+            (_error as Error).stack,
           );
         }
       },
@@ -711,7 +714,7 @@ export class SessionManagementService implements OnModuleInit {
     );
   }
 
-  private async setupSessionMonitoring(): Promise<void> {
+  private setupSessionMonitoring(): void {
     // Log session statistics every 10 minutes
     setInterval(
       async () => {
@@ -724,10 +727,10 @@ export class SessionManagementService implements OnModuleInit {
             uniqueUsers: Object.keys(stats.sessionsPerUser).length,
             uniqueClinics: Object.keys(stats.sessionsPerClinic).length,
           });
-        } catch (error) {
+        } catch (_error) {
           this.logger.error(
             "Session monitoring failed",
-            (error as Error).stack,
+            (_error as Error).stack,
           );
         }
       },
@@ -749,9 +752,7 @@ export class SessionManagementService implements OnModuleInit {
     return suspiciousPatterns.some((pattern) => pattern.test(userAgent));
   }
 
-  private async detectRapidLocationChange(
-    session: SessionData,
-  ): Promise<boolean> {
+  private async detectRapidLocationChange(session: SessionData): Promise<boolean> {
     // This would implement geolocation checking logic
     // For now, return false as placeholder
     return false;

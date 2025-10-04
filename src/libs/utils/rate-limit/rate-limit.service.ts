@@ -74,10 +74,10 @@ export class RateLimitService {
         limited: requestCount > maxRequests,
         remaining: Math.max(0, maxRequests - requestCount),
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Rate limiting error: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Rate limiting _error: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
       return { limited: false, remaining: maxRequests }; // Fail open in case of Redis errors
     }
@@ -93,22 +93,22 @@ export class RateLimitService {
         await this.cacheService.hincrby(metricsKey, `${type}:limited`, 1);
       }
       await this.cacheService.expire(metricsKey, 86400 * 7); // Keep metrics for 7 days
-    } catch (error) {
+    } catch (_error) {
       this.logger.warn(
-        `Failed to track rate limit metrics: ${(error as Error).message}`,
+        `Failed to track rate limit metrics: ${(_error as Error).message}`,
       );
     }
   }
 
-  private buildRateKey(key: string, type: string, options: any): string {
+  private buildRateKey(key: string, type: string, options: unknown): string {
     const parts = ["rate", type];
 
-    if (options.userId) {
-      parts.push(`user:${options.userId}`);
+    if ((options as Record<string, unknown>).userId) {
+      parts.push(`user:${(options as Record<string, unknown>).userId}`);
     }
 
-    if (options.ip) {
-      parts.push(`ip:${options.ip}`);
+    if ((options as Record<string, unknown>).ip) {
+      parts.push(`ip:${(options as Record<string, unknown>).ip}`);
     }
 
     parts.push(key);
@@ -151,8 +151,8 @@ export class RateLimitService {
           ? (totals.limited / totals.total) * 100
           : 0,
       };
-    } catch (error) {
-      this.logger.error("Error getting rate limit metrics:", error);
+    } catch (_error) {
+      this.logger.error("Error getting rate limit metrics:", _error);
       return { total: 0, limited: 0, limitedPercentage: 0 };
     }
   }

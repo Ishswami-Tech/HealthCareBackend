@@ -57,11 +57,13 @@ export class PluginHealthService {
         return JSON.parse(cached as string);
       }
 
-      const pluginInfo: any[] = []; // Mock plugin info array since registry is not available
+      const pluginInfo: unknown[] = []; // Mock plugin info array since registry is not available
       const healthMetrics: PluginHealthMetrics[] = [];
 
       for (const plugin of pluginInfo) {
-        const metrics = await this.getPluginHealthMetrics(plugin.name);
+        const metrics = await this.getPluginHealthMetrics(
+          (plugin as Record<string, unknown>).name as string,
+        );
         healthMetrics.push(metrics);
       }
 
@@ -73,8 +75,8 @@ export class PluginHealthService {
       );
 
       return healthMetrics;
-    } catch (error) {
-      this.logger.error("Failed to get all plugin health:", error);
+    } catch (_error) {
+      this.logger.error("Failed to get all plugin health:", _error);
       return [];
     }
   }
@@ -93,8 +95,10 @@ export class PluginHealthService {
         return JSON.parse(cached as string);
       }
 
-      const pluginInfo: any[] = []; // Mock plugin info array since registry is not available
-      const plugin = pluginInfo.find((p) => p.name === pluginName);
+      const pluginInfo: unknown[] = []; // Mock plugin info array since registry is not available
+      const plugin = pluginInfo.find(
+        (p) => (p as Record<string, unknown>).name === pluginName,
+      );
 
       if (!plugin) {
         throw new Error(`Plugin ${pluginName} not found`);
@@ -105,7 +109,7 @@ export class PluginHealthService {
       // Calculate health metrics (simplified for now)
       const metrics: PluginHealthMetrics = {
         pluginName,
-        domain: plugin.domain,
+        domain: (plugin as Record<string, unknown>).domain as string,
         status: "healthy", // Default status
         uptime: process.uptime(),
         lastOperation: new Date(),
@@ -114,7 +118,7 @@ export class PluginHealthService {
         averageResponseTime: 0,
         memoryUsage: process.memoryUsage().heapUsed,
         cpuUsage: 0,
-        features: plugin.features,
+        features: (plugin as Record<string, unknown>).features as string[],
         enabled: config?.enabled || false,
       };
 
@@ -126,10 +130,10 @@ export class PluginHealthService {
       );
 
       return metrics;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get plugin health metrics for ${pluginName}:`,
-        error,
+        _error,
       );
 
       return {
@@ -177,7 +181,7 @@ export class PluginHealthService {
       }
 
       // Calculate domain-specific metrics
-      const domains = [...new Set(healthMetrics.map((p) => p.domain))];
+      const domains = Array.from(new Set(healthMetrics.map((p) => p.domain)));
       for (const domain of domains) {
         const domainPlugins = healthMetrics.filter((p) => p.domain === domain);
         summary.domains[domain] = {
@@ -190,8 +194,8 @@ export class PluginHealthService {
       }
 
       return summary;
-    } catch (error) {
-      this.logger.error("Failed to get plugin health summary:", error);
+    } catch (_error) {
+      this.logger.error("Failed to get plugin health summary:", _error);
 
       return {
         totalPlugins: 0,
@@ -212,10 +216,10 @@ export class PluginHealthService {
     try {
       const allHealth = await this.getAllPluginHealth();
       return allHealth.filter((plugin) => plugin.domain === domain);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get domain plugin health for ${domain}:`,
-        error,
+        _error,
       );
       return [];
     }
@@ -265,10 +269,10 @@ export class PluginHealthService {
           this.HEALTH_CACHE_TTL,
         );
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to update plugin metrics for ${pluginName}:`,
-        error,
+        _error,
       );
     }
   }
@@ -281,15 +285,15 @@ export class PluginHealthService {
       await this.cacheService.del(this.HEALTH_CACHE_KEY);
 
       // Invalidate individual plugin metrics
-      const pluginInfo: any[] = []; // Mock plugin info array since registry is not available
+      const pluginInfo: unknown[] = []; // Mock plugin info array since registry is not available
       for (const plugin of pluginInfo) {
-        const cacheKey = `${this.METRICS_CACHE_PREFIX}${plugin.name}`;
+        const cacheKey = `${this.METRICS_CACHE_PREFIX}${(plugin as Record<string, unknown>).name as string}`;
         await this.cacheService.del(cacheKey);
       }
 
       this.logger.log("Plugin health cache invalidated");
-    } catch (error) {
-      this.logger.error("Failed to invalidate plugin health cache:", error);
+    } catch (_error) {
+      this.logger.error("Failed to invalidate plugin health cache:", _error);
     }
   }
 
@@ -357,8 +361,8 @@ export class PluginHealthService {
       }
 
       return alerts;
-    } catch (error) {
-      this.logger.error("Failed to get plugin alerts:", error);
+    } catch (_error) {
+      this.logger.error("Failed to get plugin alerts:", _error);
       return [];
     }
   }

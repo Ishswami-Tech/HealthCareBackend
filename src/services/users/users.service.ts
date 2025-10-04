@@ -56,10 +56,11 @@ export class UsersService {
           },
         });
 
-        const result = users.map(({ password, ...user }) => {
-          const userResponse = { ...user } as any;
+        const result = users.map((userData: unknown) => {
+          const { password, ...user } = userData as Record<string, unknown>;
+          const userResponse = { ...user };
           if (userResponse.dateOfBirth) {
-            userResponse.dateOfBirth = userResponse.dateOfBirth
+            userResponse.dateOfBirth = (userResponse.dateOfBirth as Date)
               .toISOString()
               .split("T")[0];
           }
@@ -101,7 +102,7 @@ export class UsersService {
         }
 
         const { password, ...result } = user;
-        const userResponse = { ...result } as any;
+        const userResponse = { ...result };
         if (userResponse.dateOfBirth) {
           userResponse.dateOfBirth = userResponse.dateOfBirth
             .toISOString()
@@ -124,14 +125,14 @@ export class UsersService {
   /**
    * Get user profile with auth service integration
    */
-  async getUserProfile(userId: string, clinicId?: string): Promise<any> {
+  async getUserProfile(userId: string, clinicId?: string): Promise<unknown> {
     return this.authService.getUserProfile(userId, clinicId);
   }
 
   /**
    * Get user permissions with auth service integration
    */
-  async getUserPermissions(userId: string, clinicId: string): Promise<any> {
+  async getUserPermissions(userId: string, clinicId: string): Promise<unknown> {
     return this.authService.getUserPermissions(userId, clinicId);
   }
 
@@ -193,7 +194,7 @@ export class UsersService {
     }
 
     const { password, ...result } = user;
-    const userResponse = { ...result } as any;
+    const userResponse = { ...result };
     if (userResponse.dateOfBirth) {
       userResponse.dateOfBirth = userResponse.dateOfBirth
         .toISOString()
@@ -267,18 +268,18 @@ export class UsersService {
       await this.cacheService.invalidateCacheByTag("users");
 
       return user as unknown as User;
-    } catch (error) {
+    } catch (_error) {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         "User creation failed",
         "UsersService",
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
           email: data.email,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -320,57 +321,71 @@ export class UsersService {
       );
 
       // Clean up the data to prevent errors
-      const cleanedData: any = { ...updateUserDto };
+      const cleanedData: unknown = { ...updateUserDto };
 
       // Prevent users from updating clinicId and appName
-      delete cleanedData.clinicId;
-      delete cleanedData.appName;
+      delete (cleanedData as Record<string, unknown>).clinicId;
+      delete (cleanedData as Record<string, unknown>).appName;
 
       // Handle date conversion properly
       if (
-        cleanedData.dateOfBirth &&
-        typeof cleanedData.dateOfBirth === "string"
+        (cleanedData as Record<string, unknown>).dateOfBirth &&
+        typeof (cleanedData as Record<string, unknown>).dateOfBirth === "string"
       ) {
         try {
-          cleanedData.dateOfBirth = new Date(cleanedData.dateOfBirth);
-        } catch (error) {
+          (cleanedData as Record<string, unknown>).dateOfBirth = new Date(
+            (cleanedData as Record<string, unknown>).dateOfBirth as string,
+          );
+        } catch (_error) {
           this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             "Invalid date format for dateOfBirth",
             "UsersService",
-            { userId: id, dateOfBirth: cleanedData.dateOfBirth },
+            {
+              userId: id,
+              dateOfBirth: (cleanedData as Record<string, unknown>).dateOfBirth,
+            },
           );
           throw new Error("Invalid date format for dateOfBirth");
         }
       }
 
       // Handle role-specific data updates
-      if (existingUser.role === Role.DOCTOR && cleanedData.specialization) {
+      if (
+        existingUser.role === Role.DOCTOR &&
+        (cleanedData as Record<string, unknown>).specialization
+      ) {
         // Ensure doctor record exists
-        if (!(existingUser as any).doctor) {
+        if (!existingUser.doctor) {
           await this.prisma.doctor.create({
             data: {
               userId: id,
-              specialization: cleanedData.specialization,
-              experience: parseInt(cleanedData.experience as string) || 0,
+              specialization: (cleanedData as Record<string, unknown>)
+                .specialization as string,
+              experience:
+                parseInt(
+                  (cleanedData as Record<string, unknown>).experience as string,
+                ) || 0,
             },
           });
         } else {
           await this.prisma.doctor.update({
             where: { userId: id },
             data: {
-              specialization: cleanedData.specialization,
+              specialization: (cleanedData as Record<string, unknown>)
+                .specialization as string,
               experience:
-                parseInt(cleanedData.experience as string) ||
-                (existingUser as any).doctor.experience,
+                parseInt(
+                  (cleanedData as Record<string, unknown>).experience as string,
+                ) || existingUser.doctor.experience,
             },
           });
         }
 
         // Remove doctor-specific fields from main update
-        delete cleanedData.specialization;
-        delete cleanedData.experience;
+        delete (cleanedData as Record<string, unknown>).specialization;
+        delete (cleanedData as Record<string, unknown>).experience;
       }
 
       // Update the user record
@@ -406,42 +421,42 @@ export class UsersService {
       });
 
       const { password, ...result } = user;
-      const userResponse = { ...result } as any;
+      const userResponse = { ...result };
       if (userResponse.dateOfBirth) {
         userResponse.dateOfBirth = userResponse.dateOfBirth
           .toISOString()
           .split("T")[0];
       }
       return userResponse as UserResponseDto;
-    } catch (error) {
-      // Log the error
+    } catch (_error) {
+      // Log the _error
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Error updating user: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Error updating user: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         "UsersService",
         {
           userId: id,
-          error: error instanceof Error ? error.stack : "",
+          _error: _error instanceof Error ? _error.stack : "",
         },
       );
 
       // Rethrow as appropriate exception
       if (
-        error instanceof Error &&
-        error.name === "PrismaClientKnownRequestError"
+        _error instanceof Error &&
+        _error.name === "PrismaClientKnownRequestError"
       ) {
-        const prismaError = error as any;
-        if (prismaError.code === "P2025") {
+        const __prismaError = _error as any;
+        if (__prismaError.code === "P2025") {
           throw new NotFoundException(`User with ID ${id} not found`);
-        } else if (prismaError.code === "P2002") {
+        } else if (__prismaError.code === "P2002") {
           throw new ConflictException(
-            `Unique constraint violation: ${prismaError.meta?.target}`,
+            `Unique constraint violation: ${(__prismaError as { meta?: { target?: string } }).meta?.target}`,
           );
         }
       }
 
-      throw error;
+      throw _error;
     }
   }
 
@@ -462,20 +477,20 @@ export class UsersService {
     }
 
     // Delete role-specific record first
-    if (user.role === Role.DOCTOR && (user as any).doctor) {
+    if (user.role === Role.DOCTOR && user.doctor) {
       await this.prisma.doctor.delete({
         where: { userId: id },
       });
     }
-    if (user.role === Role.PATIENT && (user as any).patient) {
+    if (user.role === Role.PATIENT && user.patient) {
       await this.prisma.patient.delete({
         where: { userId: id },
       });
     }
     if (
       user.role === Role.RECEPTIONIST &&
-      (user as any).receptionists &&
-      (user as any).receptionists.length > 0
+      user.receptionists &&
+      user.receptionists.length > 0
     ) {
       await this.prisma.receptionist.delete({
         where: { userId: id },
@@ -483,14 +498,14 @@ export class UsersService {
     }
     if (
       user.role === Role.CLINIC_ADMIN &&
-      (user as any).clinicAdmins &&
-      (user as any).clinicAdmins.length > 0
+      user.clinicAdmins &&
+      user.clinicAdmins.length > 0
     ) {
       await this.prisma.clinicAdmin.delete({
         where: { userId: id },
       });
     }
-    if (user.role === Role.SUPER_ADMIN && (user as any).superAdmin) {
+    if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
       await this.prisma.superAdmin.delete({
         where: { userId: id },
       });
@@ -593,16 +608,16 @@ export class UsersService {
         "LOGOUT",
         "User logged out successfully",
       );
-    } catch (error) {
-      // Log the error
+    } catch (_error) {
+      // Log the _error
       await this.logAuditEvent(
         userId,
         "LOGOUT_ERROR",
-        `Logout failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Logout failed: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
 
       // Re-throw the error
-      throw error;
+      throw _error;
     }
   }
 
@@ -639,8 +654,8 @@ export class UsersService {
     }
     if (
       user.role === Role.RECEPTIONIST &&
-      (user as any).receptionists &&
-      (user as any).receptionists.length > 0
+      user.receptionists &&
+      user.receptionists.length > 0
     ) {
       await this.prisma.receptionist.delete({
         where: { userId: id },
@@ -648,8 +663,8 @@ export class UsersService {
     }
     if (
       user.role === Role.CLINIC_ADMIN &&
-      (user as any).clinicAdmins &&
-      (user as any).clinicAdmins.length > 0
+      user.clinicAdmins &&
+      user.clinicAdmins.length > 0
     ) {
       await this.prisma.clinicAdmin.delete({
         where: { userId: id },
@@ -728,7 +743,7 @@ export class UsersService {
     ]);
 
     const { password, ...result } = updatedUser;
-    const userResponse = { ...result } as any;
+    const userResponse = { ...result };
     if (userResponse.dateOfBirth) {
       userResponse.dateOfBirth = userResponse.dateOfBirth
         .toISOString()

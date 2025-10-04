@@ -85,7 +85,7 @@ export class HealthService {
           ? result.value
           : {
               status: "unhealthy" as const,
-              error:
+              _error:
                 result.reason instanceof Error
                   ? result.reason.message
                   : "Service check failed",
@@ -250,14 +250,14 @@ export class HealthService {
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
-    } catch (error) {
-      this.logger.error("Database health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Database health check failed:", _error);
       this.databaseStatus = "unhealthy";
       this.lastDatabaseCheck = now;
 
       return {
         status: "unhealthy",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -275,12 +275,12 @@ export class HealthService {
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
-    } catch (error) {
-      this.logger.error("Redis health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Redis health check failed:", _error);
 
       return {
         status: "unhealthy",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -289,15 +289,15 @@ export class HealthService {
 
   private async getRedisMetrics() {
     try {
-      const info = await this.cacheService.getCacheDebug();
+      const info = (await this.cacheService.getCacheDebug()) as any;
       return {
         connectedClients: 1,
-        usedMemory: info.info.memoryInfo?.usedMemory || 0,
-        totalKeys: info.info.dbSize || 0,
+        usedMemory: info?.info?.memoryInfo?.usedMemory || 0,
+        totalKeys: info?.info?.dbSize || 0,
         lastSave: new Date().toISOString(),
       };
-    } catch (error) {
-      this.logger.error("Failed to get Redis metrics:", error);
+    } catch (_error) {
+      this.logger.error("Failed to get Redis metrics:", _error);
       return {
         connectedClients: 0,
         usedMemory: 0,
@@ -320,12 +320,12 @@ export class HealthService {
       }
 
       // Get queue stats using the queue service
-      const stats = await this.queueService.getLocationQueueStats(
+      const stats = (await this.queueService.getLocationQueueStats(
         "system",
         "clinic",
-      );
+      )) as any;
       const isHealthy =
-        stats.waiting !== undefined && stats.active !== undefined;
+        stats?.waiting !== undefined && stats?.active !== undefined;
 
       return {
         status: isHealthy ? "healthy" : "unhealthy",
@@ -335,11 +335,11 @@ export class HealthService {
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
-    } catch (error) {
-      this.logger.error("Queue health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Queue health check failed:", _error);
       return {
         status: "unhealthy",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -372,11 +372,11 @@ export class HealthService {
           lastChecked: new Date().toISOString(),
         };
       }
-    } catch (error) {
-      this.logger.error("Logger health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Logger health check failed:", _error);
       return {
         status: "unhealthy",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -409,11 +409,11 @@ export class HealthService {
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
-    } catch (error) {
-      this.logger.error("Socket health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Socket health check failed:", _error);
       return {
         status: "unhealthy",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -433,11 +433,11 @@ export class HealthService {
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
-    } catch (error) {
-      this.logger.error("Email health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Email health check failed:", _error);
       return {
         status: "unhealthy",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : "Unknown error",
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };

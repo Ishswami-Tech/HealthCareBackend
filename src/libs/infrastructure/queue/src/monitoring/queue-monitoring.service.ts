@@ -115,10 +115,10 @@ export class QueueMonitoringService {
       this.logger.debug(
         `📊 Updated metrics for queue ${queueName}: ${JSON.stringify(updatedMetrics)}`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `❌ Failed to update metrics for queue ${queueName}:`,
-        error,
+        _error,
       );
     }
   }
@@ -242,9 +242,9 @@ export class QueueMonitoringService {
 
       this.logger.log(`📋 Generated performance report for period ${period}`);
       return report;
-    } catch (error) {
-      this.logger.error(`❌ Failed to generate performance report:`, error);
-      throw error;
+    } catch (_error) {
+      this.logger.error(`❌ Failed to generate performance report:`, _error);
+      throw _error;
     }
   }
 
@@ -276,8 +276,8 @@ export class QueueMonitoringService {
     setInterval(async () => {
       try {
         await this.performHealthChecks();
-      } catch (error) {
-        this.logger.error("❌ Health monitoring error:", error);
+      } catch (_error) {
+        this.logger.error("❌ Health monitoring _error:", _error);
       }
     }, this.ALERT_THRESHOLDS.healthCheckInterval);
 
@@ -288,7 +288,7 @@ export class QueueMonitoringService {
    * Perform health checks on all queues
    */
   private async performHealthChecks(): Promise<void> {
-    for (const [queueName, metrics] of this.metrics.entries()) {
+    for (const [queueName, metrics] of Array.from(this.metrics.entries())) {
       try {
         const health = this.calculateHealth(metrics);
 
@@ -307,10 +307,10 @@ export class QueueMonitoringService {
             `🏥 Queue ${queueName} health changed: ${metrics.health} → ${health}`,
           );
         }
-      } catch (error) {
+      } catch (_error) {
         this.logger.error(
           `❌ Health check failed for queue ${queueName}:`,
-          error,
+          _error,
         );
       }
     }

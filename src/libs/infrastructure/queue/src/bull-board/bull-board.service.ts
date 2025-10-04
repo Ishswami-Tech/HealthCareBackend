@@ -50,11 +50,11 @@ export class BullBoardService {
    */
   async getQueueStats() {
     const queues = this.getQueues();
-    const stats: Record<string, any> = {};
+    const stats: Record<string, unknown> = {};
 
     for (const [name, queue] of Object.entries(queues)) {
       if (!queue) {
-        stats[name] = { error: "Queue not available" };
+        stats[name] = { _error: "Queue not available" };
         continue;
       }
 
@@ -261,19 +261,19 @@ export class BullBoardService {
     };
 
     for (const [queueName, queueStats] of Object.entries(stats)) {
-      const stat = queueStats;
+      const stat = queueStats as Record<string, unknown>;
       if (stat.error) {
         health.queues[queueName] = "unhealthy";
         health.issues.push(`Queue ${queueName}: ${stat.error}`);
         health.overall = "unhealthy";
-      } else if (stat.failed > 100) {
+      } else if ((stat.failed as number) > 100) {
         health.queues[queueName] = "degraded";
         health.issues.push(
           `Queue ${queueName}: High failure rate (${stat.failed} failed jobs)`,
         );
         health.overall =
           health.overall === "healthy" ? "degraded" : health.overall;
-      } else if (stat.waiting > 1000) {
+      } else if ((stat.waiting as number) > 1000) {
         health.queues[queueName] = "degraded";
         health.issues.push(
           `Queue ${queueName}: High queue depth (${stat.waiting} waiting jobs)`,

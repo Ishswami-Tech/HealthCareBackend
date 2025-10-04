@@ -51,7 +51,7 @@ export class RepositoryResult<T, E = Error> {
   }
 
   static failure<T, E = Error>(
-    error: E,
+    _error: E,
     metadata?: ResultMetadata,
     executionTime?: number,
     operationType?: string,
@@ -61,7 +61,7 @@ export class RepositoryResult<T, E = Error> {
     return new RepositoryResult<T, E>(
       false,
       undefined as T | undefined,
-      error,
+      _error,
       metadata,
       executionTime,
       operationType,
@@ -90,10 +90,10 @@ export class RepositoryResult<T, E = Error> {
           userId,
         );
       })
-      .catch((error) => {
+      .catch((_error) => {
         const executionTime = Date.now() - startTime;
         return RepositoryResult.failure<T, E>(
-          error as E,
+          _error as E,
           { source: "promise" },
           executionTime,
           operationType,
@@ -154,10 +154,14 @@ export class RepositoryResult<T, E = Error> {
     if (this._success && this._data !== undefined) {
       return this._data;
     }
-    throw (
-      this._error ||
-      new Error(`Repository operation failed: ${this._operationType}`)
-    );
+    // Ensure we always throw an Error object
+    const errorToThrow =
+      this._error instanceof Error
+        ? this._error
+        : new Error(
+            `Repository operation failed: ${this._operationType}${this._error ? ` - ${String(this._error)}` : ""}`,
+          );
+    throw errorToThrow;
   }
 
   /**
@@ -183,9 +187,9 @@ export class RepositoryResult<T, E = Error> {
           this._clinicId,
           this._userId,
         );
-      } catch (error) {
+      } catch (_error) {
         return RepositoryResult.failure(
-          error as E,
+          _error as E,
           { ...this._metadata, transformationError: true },
           this._executionTime,
           this._operationType,
@@ -216,7 +220,7 @@ export class RepositoryResult<T, E = Error> {
     return this;
   }
 
-  addMetadata(key: string, value: any): RepositoryResult<T, E> {
+  addMetadata(key: string, value: unknown): RepositoryResult<T, E> {
     this._metadata[key] = value;
     return this;
   }
@@ -234,11 +238,11 @@ export class RepositoryResult<T, E = Error> {
   }
 
   // Serialization for logging/monitoring
-  toJSON(): any {
+  toJSON(): unknown {
     return {
       success: this._success,
       data: this._data,
-      error: this._error,
+      _error: this._error,
       metadata: this._metadata,
       timestamp: this._timestamp.toISOString(),
       executionTime: this._executionTime,
@@ -255,7 +259,7 @@ export class RepositoryResult<T, E = Error> {
     results: RepositoryResult<T, E>[],
   ): BatchResult<T, E> {
     const successful: T[] = [];
-    const failed: Array<{ error: E; index: number }> = [];
+    const failed: Array<{ _error: E; index: number }> = [];
     const totalExecutionTime = results.reduce(
       (sum, r) => sum + r.executionTime,
       0,
@@ -267,7 +271,7 @@ export class RepositoryResult<T, E = Error> {
       if (result.isSuccess) {
         successful.push(result.data!);
       } else {
-        failed.push({ error: result.error!, index });
+        failed.push({ _error: result.error!, index });
       }
     });
 
@@ -292,7 +296,7 @@ export class RepositoryResult<T, E = Error> {
 export interface BatchResult<T, E = Error> {
   success: boolean;
   successful: T[];
-  failed: Array<{ error: E; index: number }>;
+  failed: Array<{ _error: E; index: number }>;
   totalCount: number;
   successCount: number;
   failureCount: number;
@@ -312,7 +316,7 @@ export interface ResultMetadata {
   queryComplexity?: "simple" | "medium" | "complex";
   rowCount?: number;
   transformationError?: boolean;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -325,7 +329,7 @@ export interface AuditEntry {
   resourceId?: string;
   userId?: string;
   clinicId?: string;
-  details?: any;
+  details?: unknown;
   ipAddress?: string;
   userAgent?: string;
 }
@@ -337,9 +341,9 @@ export interface QueryOptions {
   page?: number;
   limit?: number;
   orderBy?: Record<string, "asc" | "desc">;
-  include?: Record<string, any>;
+  include?: Record<string, unknown>;
   select?: Record<string, boolean>;
-  where?: Record<string, any>;
+  where?: Record<string, unknown>;
 
   // Healthcare-specific options
   clinicId?: string;
@@ -396,7 +400,7 @@ export interface RepositoryContext {
   resourceType?: string;
   resourceId?: string;
   startTime: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -480,7 +484,7 @@ export interface IBaseRepository<
    * Update multiple entities
    */
   updateMany(
-    where: Record<string, any>,
+    where: Record<string, unknown>,
     data: TUpdateInput,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<{ count: number }>>;
@@ -498,7 +502,7 @@ export interface IBaseRepository<
    * Delete multiple entities
    */
   deleteMany(
-    where: Record<string, any>,
+    where: Record<string, unknown>,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<{ count: number }>>;
 
@@ -530,7 +534,7 @@ export interface IBaseRepository<
    * Execute operation in transaction
    */
   executeInTransaction?<T>(
-    operation: (tx: any) => Promise<T>,
+    operation: (tx: unknown) => Promise<T>,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<T>>;
 }
@@ -549,7 +553,7 @@ export abstract class BaseRepository<
 
   constructor(
     protected readonly entityName: string,
-    protected readonly prismaDelegate: any,
+    protected readonly prismaDelegate: unknown,
   ) {
     this.logger = new Logger(`${entityName}Repository`);
   }
@@ -562,7 +566,7 @@ export abstract class BaseRepository<
 
     try {
       this.logger.debug(`Creating ${this.entityName}`, data);
-      const entity = await this.prismaDelegate.create({ data });
+      const entity = await (this.prismaDelegate as any).create({ data });
       const executionTime = Date.now() - startTime;
 
       this.logger.debug(`Created ${this.entityName}:`, entity.id);
@@ -580,16 +584,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to create ${this.entityName}:`, error);
+      this.logger.error(`Failed to create ${this.entityName}:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "CREATE",
@@ -609,13 +613,13 @@ export abstract class BaseRepository<
       this.logger.debug(`Creating ${data.length} ${this.entityName}s`);
 
       // Use batch optimization for large datasets
-      const batchSize = context?.metadata?.batchSize || 100;
+      const batchSize = (context?.metadata?.batchSize as number) || 100;
       const results: TEntity[] = [];
 
       for (let i = 0; i < data.length; i += batchSize) {
         const batch = data.slice(i, i + batchSize);
 
-        const batchResult = await this.prismaDelegate.createMany({
+        const batchResult = await (this.prismaDelegate as any).createMany({
           data: batch,
           skipDuplicates: true,
         });
@@ -642,20 +646,20 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
       this.logger.error(
         `Failed to create multiple ${this.entityName}s:`,
-        error,
+        _error,
       );
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
           dataCount: data.length,
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "CREATE_MANY",
@@ -674,9 +678,9 @@ export abstract class BaseRepository<
 
     try {
       this.logger.debug(`Finding ${this.entityName} by ID:`, id);
-      const entity = await this.prismaDelegate.findUnique({
+      const entity = await (this.prismaDelegate as any).findUnique({
         where: { id },
-        ...this.buildQueryOptions(options),
+        ...(this.buildQueryOptions(options) || {}),
       });
 
       const executionTime = Date.now() - startTime;
@@ -695,16 +699,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to find ${this.entityName} by ID:`, error);
+      this.logger.error(`Failed to find ${this.entityName} by ID:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "FIND_BY_ID",
@@ -715,7 +719,7 @@ export abstract class BaseRepository<
   }
 
   async findUnique(
-    where: Record<string, any>,
+    where: Record<string, unknown>,
     context?: RepositoryContext,
     options?: QueryOptions,
   ): Promise<RepositoryResult<TEntity | null>> {
@@ -723,9 +727,9 @@ export abstract class BaseRepository<
 
     try {
       this.logger.debug(`Finding unique ${this.entityName}:`, where);
-      const entity = await this.prismaDelegate.findUnique({
+      const entity = await (this.prismaDelegate as any).findUnique({
         where,
-        ...this.buildQueryOptions(options, context),
+        ...(this.buildQueryOptions(options, context) || {}),
       });
 
       const executionTime = Date.now() - startTime;
@@ -743,16 +747,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to find unique ${this.entityName}:`, error);
+      this.logger.error(`Failed to find unique ${this.entityName}:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "FIND_UNIQUE",
@@ -763,7 +767,7 @@ export abstract class BaseRepository<
   }
 
   async findFirst(
-    where: Record<string, any>,
+    where: Record<string, unknown>,
     context?: RepositoryContext,
     options?: QueryOptions,
   ): Promise<RepositoryResult<TEntity | null>> {
@@ -771,9 +775,9 @@ export abstract class BaseRepository<
 
     try {
       this.logger.debug(`Finding first ${this.entityName}:`, where);
-      const entity = await this.prismaDelegate.findFirst({
+      const entity = await (this.prismaDelegate as any).findFirst({
         where,
-        ...this.buildQueryOptions(options, context),
+        ...(this.buildQueryOptions(options, context) || {}),
       });
 
       const executionTime = Date.now() - startTime;
@@ -790,16 +794,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to find first ${this.entityName}:`, error);
+      this.logger.error(`Failed to find first ${this.entityName}:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "FIND_FIRST",
@@ -817,7 +821,7 @@ export abstract class BaseRepository<
 
     try {
       this.logger.debug(`Finding many ${this.entityName}s`);
-      const entities = await this.prismaDelegate.findMany(
+      const entities = await (this.prismaDelegate as any).findMany(
         this.buildQueryOptions(options, context),
       );
 
@@ -836,16 +840,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to find many ${this.entityName}s:`, error);
+      this.logger.error(`Failed to find many ${this.entityName}s:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "FIND_MANY",
@@ -872,12 +876,12 @@ export abstract class BaseRepository<
 
       // Execute count and data queries in parallel for better performance
       const [entities, total] = await Promise.all([
-        this.prismaDelegate.findMany({
-          ...this.buildQueryOptions(options, context),
+        (this.prismaDelegate as any).findMany({
+          ...(this.buildQueryOptions(options, context) || {}),
           skip,
           take: limit,
         }),
-        this.prismaDelegate.count({
+        (this.prismaDelegate as any).count({
           where: options?.where,
         }),
       ]);
@@ -925,16 +929,19 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to find paginated ${this.entityName}s:`, error);
+      this.logger.error(
+        `Failed to find paginated ${this.entityName}s:`,
+        _error,
+      );
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "FIND_MANY_PAGINATED",
@@ -955,7 +962,7 @@ export abstract class BaseRepository<
       this.logger.debug(`Updating ${this.entityName}:`, id);
 
       // Get existing entity for audit trail
-      const existingEntity = await this.prismaDelegate.findUnique({
+      const existingEntity = await (this.prismaDelegate as any).findUnique({
         where: { id },
       });
 
@@ -973,7 +980,7 @@ export abstract class BaseRepository<
         );
       }
 
-      const entity = await this.prismaDelegate.update({
+      const entity = await (this.prismaDelegate as any).update({
         where: { id },
         data,
       });
@@ -1009,16 +1016,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to update ${this.entityName}:`, error);
+      this.logger.error(`Failed to update ${this.entityName}:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "UPDATE",
@@ -1029,7 +1036,7 @@ export abstract class BaseRepository<
   }
 
   async updateMany(
-    where: Record<string, any>,
+    where: Record<string, unknown>,
     data: TUpdateInput,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<{ count: number }>> {
@@ -1037,7 +1044,7 @@ export abstract class BaseRepository<
 
     try {
       this.logger.debug(`Updating many ${this.entityName}s:`, where);
-      const result = await this.prismaDelegate.updateMany({
+      const result = await (this.prismaDelegate as any).updateMany({
         where,
         data,
       });
@@ -1057,16 +1064,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to update many ${this.entityName}s:`, error);
+      this.logger.error(`Failed to update many ${this.entityName}s:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "UPDATE_MANY",
@@ -1093,7 +1100,7 @@ export abstract class BaseRepository<
 
       if (softDelete) {
         // Soft delete - update isActive and deletedAt fields
-        entity = await this.prismaDelegate.update({
+        entity = await (this.prismaDelegate as any).update({
           where: { id },
           data: {
             isActive: false,
@@ -1102,7 +1109,7 @@ export abstract class BaseRepository<
         });
       } else {
         // Hard delete
-        entity = await this.prismaDelegate.delete({
+        entity = await (this.prismaDelegate as any).delete({
           where: { id },
         });
       }
@@ -1141,16 +1148,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to delete ${this.entityName}:`, error);
+      this.logger.error(`Failed to delete ${this.entityName}:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "DELETE",
@@ -1161,14 +1168,14 @@ export abstract class BaseRepository<
   }
 
   async deleteMany(
-    where: Record<string, any>,
+    where: Record<string, unknown>,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<{ count: number }>> {
     const startTime = Date.now();
 
     try {
       this.logger.debug(`Deleting many ${this.entityName}s:`, where);
-      const result = await this.prismaDelegate.deleteMany({ where });
+      const result = await (this.prismaDelegate as any).deleteMany({ where });
 
       const executionTime = Date.now() - startTime;
       this.logger.debug(`Deleted ${result.count} ${this.entityName}s`);
@@ -1185,16 +1192,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to delete many ${this.entityName}s:`, error);
+      this.logger.error(`Failed to delete many ${this.entityName}s:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "DELETE_MANY",
@@ -1212,14 +1219,14 @@ export abstract class BaseRepository<
   }
 
   async count(
-    where?: Record<string, any>,
+    where?: Record<string, unknown>,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<number>> {
     const startTime = Date.now();
 
     try {
       this.logger.debug(`Counting ${this.entityName}s:`, where);
-      const count = await this.prismaDelegate.count({ where });
+      const count = await (this.prismaDelegate as any).count({ where });
 
       const executionTime = Date.now() - startTime;
 
@@ -1234,16 +1241,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to count ${this.entityName}s:`, error);
+      this.logger.error(`Failed to count ${this.entityName}s:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "COUNT",
@@ -1254,14 +1261,14 @@ export abstract class BaseRepository<
   }
 
   async exists(
-    where: Record<string, any>,
+    where: Record<string, unknown>,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<boolean>> {
     const startTime = Date.now();
 
     try {
       this.logger.debug(`Checking if ${this.entityName} exists:`, where);
-      const entity = await this.prismaDelegate.findFirst({ where });
+      const entity = await (this.prismaDelegate as any).findFirst({ where });
 
       const executionTime = Date.now() - startTime;
 
@@ -1276,16 +1283,19 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Failed to check if ${this.entityName} exists:`, error);
+      this.logger.error(
+        `Failed to check if ${this.entityName} exists:`,
+        _error,
+      );
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
         },
         executionTime,
         context?.operationType || "EXISTS",
@@ -1299,7 +1309,7 @@ export abstract class BaseRepository<
    * Execute operation in transaction
    */
   async executeInTransaction<T>(
-    operation: (tx: any) => Promise<T>,
+    operation: (tx: unknown) => Promise<T>,
     context?: RepositoryContext,
   ): Promise<RepositoryResult<T>> {
     const startTime = Date.now();
@@ -1308,7 +1318,7 @@ export abstract class BaseRepository<
       this.logger.debug(
         `Executing ${this.entityName} operation in transaction`,
       );
-      const result = await this.prismaDelegate.$transaction(operation);
+      const result = await (this.prismaDelegate as any).$transaction(operation);
 
       const executionTime = Date.now() - startTime;
 
@@ -1324,16 +1334,16 @@ export abstract class BaseRepository<
         context?.clinicId,
         context?.userId,
       );
-    } catch (error) {
+    } catch (_error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error(`Transaction failed for ${this.entityName}:`, error);
+      this.logger.error(`Transaction failed for ${this.entityName}:`, _error);
 
       return RepositoryResult.failure(
-        error as Error,
+        _error as Error,
         {
           executionTime,
           source: "base_repository",
-          error: error instanceof Error ? error.message : String(error),
+          _error: _error instanceof Error ? _error.message : String(_error),
           transaction: true,
         },
         executionTime,
@@ -1350,7 +1360,7 @@ export abstract class BaseRepository<
   protected buildQueryOptions(
     options?: QueryOptions,
     context?: RepositoryContext,
-  ): any {
+  ): unknown {
     if (!options) return {};
 
     const queryOptions: any = {};
@@ -1385,7 +1395,7 @@ export abstract class BaseRepository<
   /**
    * Build where clause with healthcare-specific features
    */
-  protected buildWhereClause(options?: QueryOptions): any {
+  protected buildWhereClause(options?: QueryOptions): unknown {
     const where: any = { ...options?.where };
 
     // Add clinic isolation if specified
@@ -1441,16 +1451,16 @@ export abstract class BaseRepository<
    * Get changes between previous and current data for audit trail
    */
   protected getChanges(
-    previous: any,
-    current: any,
-  ): Record<string, { from: any; to: any }> {
-    const changes: Record<string, { from: any; to: any }> = {};
+    previous: unknown,
+    current: unknown,
+  ): Record<string, { from: unknown; to: unknown }> {
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
 
-    for (const key in current) {
-      if (previous[key] !== current[key]) {
+    for (const key in (current as any)) {
+      if ((previous as any)[key] !== (current as any)[key]) {
         changes[key] = {
-          from: previous[key],
-          to: current[key],
+          from: (previous as any)[key],
+          to: (current as any)[key],
         };
       }
     }
@@ -1461,26 +1471,26 @@ export abstract class BaseRepository<
   /**
    * Log audit trail for compliance
    */
-  protected logAuditTrail(auditEntry: any): void {
+  protected logAuditTrail(auditEntry: unknown): void {
     try {
       // Log to audit system
       this.logger.log("AUDIT:", auditEntry);
 
       // In a real implementation, this would go to a dedicated audit service
       // await this.auditService.log(auditEntry);
-    } catch (error) {
-      this.logger.error("Failed to log audit trail:", error);
+    } catch (_error) {
+      this.logger.error("Failed to log audit trail:", _error);
     }
   }
 
   /**
    * Handle repository errors with context
    */
-  protected handleError(operation: string, error: any): Error {
-    const message = `${this.entityName}Repository.${operation} failed: ${(error as Error).message || error}`;
+  protected handleError(operation: string, _error: unknown): Error {
+    const message = `${this.entityName}Repository.${operation} failed: ${(_error as Error).message || _error}`;
     this.logger.error(
       message,
-      error instanceof Error ? error.stack : undefined,
+      _error instanceof Error ? _error.stack : undefined,
     );
     return new Error(message);
   }

@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   Logger,
+  NotFoundException,
   Request,
   HttpStatus,
   HttpCode,
@@ -32,7 +33,10 @@ import {
   ApiProduces,
 } from "@nestjs/swagger";
 import { UseGuards } from "@nestjs/common";
-import { Role, AppointmentStatus } from "../../libs/infrastructure/database/prisma/prisma.types";
+import {
+  Role,
+  AppointmentStatus,
+} from "../../libs/infrastructure/database/prisma/prisma.types";
 import { JwtAuthGuard, RolesGuard, Roles } from "../../libs/core";
 import { ClinicGuard } from "../../libs/core/guards/clinic.guard";
 import { ClinicRoute } from "../../libs/core/decorators/clinic-route.decorator";
@@ -62,6 +66,11 @@ import { RbacGuard } from "../../libs/core/rbac/rbac.guard";
 import { RequireResourcePermission } from "../../libs/core/rbac/rbac.decorators";
 import { AuthenticatedRequest } from "../../libs/core/types/clinic.types";
 import { RateLimitAPI } from "../../libs/security/rate-limit/rate-limit.decorator";
+import {
+  JitsiVideoService,
+  JitsiMeetingToken,
+  VideoConsultationSession,
+} from "./plugins/video/jitsi-video.service";
 
 // Type definitions for controller interfaces
 interface AppointmentFilters {
@@ -108,6 +117,7 @@ export class AppointmentsController {
     private readonly errors: HealthcareErrorsService,
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
+    private readonly jitsiVideoService: JitsiVideoService,
   ) {}
 
   @Post()
@@ -178,22 +188,22 @@ export class AppointmentsController {
       this.logger.log(
         `Appointment created successfully: ${result.success ? "Success" : "Failed"}`,
       );
-      return result;
-    } catch (error) {
+      return result as ServiceResponse<AppointmentResponseDto>;
+    } catch (_error) {
       this.logger.error(
-        `Failed to create appointment: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to create appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
+        _error instanceof Error ? _error.stack : undefined,
       );
 
-      if (error instanceof BadRequestException) {
-        throw error;
+      if (_error instanceof BadRequestException) {
+        throw _error;
       }
 
-      if (error instanceof Error && error.message.includes("not available")) {
-        throw new BadRequestException(error.message);
+      if (_error instanceof Error && _error.message.includes("not available")) {
+        throw new BadRequestException(_error.message);
       }
 
-      throw error;
+      throw _error;
     }
   }
 
@@ -303,13 +313,13 @@ export class AppointmentsController {
       this.logger.log(
         `Retrieved ${(result.data as AppointmentResponseDto[])?.length || 0} appointments for user ${userId}`,
       );
-      return result;
-    } catch (error) {
+      return result as ServiceResponse<AppointmentListResponseDto>;
+    } catch (_error) {
       this.logger.error(
-        `Failed to get my appointments: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to get my appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
+        _error instanceof Error ? _error.stack : undefined,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -461,24 +471,24 @@ export class AppointmentsController {
         },
       );
 
-      return result;
-    } catch (error) {
-      if (error instanceof HealthcareError) {
-        this.errors.handleError(error, context);
-        throw error;
+      return result as ServiceResponse<AppointmentListResponseDto>;
+    } catch (_error) {
+      if (_error instanceof HealthcareError) {
+        this.errors.handleError(_error, context);
+        throw _error;
       }
 
       // Log the error with proper structure
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to retrieve appointments: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to retrieve appointments: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         context,
         {
           userId: req.user?.sub,
           clinicId: req.clinicContext?.clinicId,
           filters: { userId, doctorId, status, date, locationId, page, limit },
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
           operation: "getAppointments",
         },
       );
@@ -586,12 +596,12 @@ export class AppointmentsController {
         `Retrieved availability for doctor ${doctorId}: ${result.availableSlots?.length || 0} slots available`,
       );
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get doctor availability: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to get doctor availability: ${_error instanceof Error ? _error.message : String(_error)}`,
+        _error instanceof Error ? _error.stack : undefined,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -671,12 +681,12 @@ export class AppointmentsController {
         `Retrieved ${result?.length || 0} upcoming appointments for user ${userId}`,
       );
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get user appointments: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to get user appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
+        _error instanceof Error ? _error.stack : undefined,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -757,12 +767,12 @@ export class AppointmentsController {
 
       this.logger.log(`Retrieved appointment ${id} successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get appointment ${id}: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to get appointment ${id}: ${_error instanceof Error ? _error.message : String(_error)}`,
+        _error instanceof Error ? _error.stack : undefined,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -868,13 +878,13 @@ export class AppointmentsController {
       );
 
       this.logger.log(`Appointment ${id} updated successfully`);
-      return result;
-    } catch (error) {
+      return result as ServiceResponse<AppointmentResponseDto>;
+    } catch (_error) {
       this.logger.error(
-        `Failed to update appointment ${id}: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to update appointment ${id}: ${_error instanceof Error ? _error.message : String(_error)}`,
+        _error instanceof Error ? _error.stack : undefined,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1004,24 +1014,24 @@ export class AppointmentsController {
         },
       );
 
-      return result;
-    } catch (error) {
-      if (error instanceof HealthcareError) {
-        this.errors.handleError(error, context);
-        throw error;
+      return result as ServiceResponse<AppointmentResponseDto>;
+    } catch (_error) {
+      if (_error instanceof HealthcareError) {
+        this.errors.handleError(_error, context);
+        throw _error;
       }
 
       // Log the error with proper structure
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to cancel appointment: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to cancel appointment: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         context,
         {
           appointmentId: id,
           userId: req.user?.sub,
           clinicId: req.clinicContext?.clinicId,
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
           operation: "cancelAppointment",
         },
       );
@@ -1029,6 +1039,482 @@ export class AppointmentsController {
       const healthcareError = this.errors.internalServerError(context);
       this.errors.handleError(healthcareError, context);
       throw healthcareError;
+    }
+  }
+
+  // =============================================
+  // VIDEO CONSULTATION ENDPOINTS
+  // =============================================
+
+  @Post(":id/video/create-room")
+  @HttpCode(HttpStatus.CREATED)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission("appointments", "update")
+  @ApiOperation({
+    summary: "Create video consultation room",
+    description:
+      "Create a secure Jitsi room for healthcare video consultation with HIPAA compliance.",
+  })
+  @ApiParam({
+    name: "id",
+    description: "ID of the appointment",
+    type: "string",
+    format: "uuid",
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: "Video consultation room created successfully",
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: "Appointment not found",
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: "Insufficient permissions",
+  })
+  async createVideoConsultationRoom(
+    @Param("id", ParseUUIDPipe) appointmentId: string,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<unknown> {
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      const userId = req.user?.sub;
+
+      if (!clinicId) {
+        throw new BadRequestException("Clinic context is required");
+      }
+
+      this.logger.log(`Creating video room for appointment ${appointmentId}`, {
+        clinicId,
+        createdBy: userId,
+      });
+
+      // Get appointment details
+      const appointment = await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId,
+      ) as any;
+      if (!appointment) {
+        throw new NotFoundException("Appointment not found");
+      }
+
+      // Create secure Jitsi room
+      const roomConfig = await this.jitsiVideoService.createConsultationRoom(
+        appointmentId,
+        appointment.patient?.id,
+        appointment.doctor?.id,
+        clinicId,
+        {
+          enableRecording: true,
+          enableChat: true,
+          enableScreenShare: true,
+          enableLobby: true,
+        },
+      );
+
+      return {
+        success: true,
+        data: {
+          roomName: roomConfig.roomName,
+          domain: roomConfig.domain,
+          appointmentId: roomConfig.appointmentId,
+          securityEnabled: roomConfig.isSecure,
+          recordingEnabled: roomConfig.enableRecording,
+          maxParticipants: roomConfig.maxParticipants,
+          hipaaCompliant: roomConfig.hipaaCompliant,
+        },
+        message: "Video consultation room created successfully",
+      };
+    } catch (_error) {
+      this.logger.error(
+        `Failed to create video room for appointment ${appointmentId}`,
+        {
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
+        },
+      );
+      throw _error;
+    }
+  }
+
+  @Post(":id/video/join-token")
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission("appointments", "read", { requireOwnership: true })
+  @ApiOperation({
+    summary: "Generate video consultation join token",
+    description:
+      "Generate secure JWT token for joining the video consultation with role-based permissions.",
+  })
+  @ApiParam({
+    name: "id",
+    description: "ID of the appointment",
+    type: "string",
+    format: "uuid",
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: "Join token generated successfully",
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: "Appointment or video room not found",
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: "Not authorized to join this consultation",
+  })
+  async generateVideoJoinToken(
+    @Param("id", ParseUUIDPipe) appointmentId: string,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<JitsiMeetingToken> {
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      const userId = req.user?.sub;
+      const userRole = req.user?.role;
+
+      if (!clinicId || !userId) {
+        throw new BadRequestException("User and clinic context required");
+      }
+
+      this.logger.log(
+        `Generating video join token for appointment ${appointmentId}`,
+        {
+          userId,
+          userRole,
+          clinicId,
+        },
+      );
+
+      // Get appointment details
+      const appointment = await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId,
+      ) as any;
+      if (!appointment) {
+        throw new NotFoundException("Appointment not found");
+      }
+
+      // Determine user role in consultation
+      let consultationRole: "patient" | "doctor";
+      if (userRole === Role.PATIENT) {
+        if (appointment.patient?.userId !== userId) {
+          throw new ForbiddenException(
+            "Patients can only join their own consultations",
+          );
+        }
+        consultationRole = "patient";
+      } else {
+        consultationRole = "doctor";
+      }
+
+      // Generate secure meeting token
+      const meetingToken = await this.jitsiVideoService.generateMeetingToken(
+        appointmentId,
+        userId,
+        consultationRole,
+        {
+          name:
+            consultationRole === "patient"
+              ? appointment.patient?.name
+              : appointment.doctor?.name,
+          email: req.user?.email || "",
+          avatar:
+            consultationRole === "patient"
+              ? appointment.patient?.avatar
+              : appointment.doctor?.avatar,
+        },
+      );
+
+      return meetingToken;
+    } catch (_error) {
+      this.logger.error(
+        `Failed to generate join token for appointment ${appointmentId}`,
+        {
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
+          userId: req.user?.sub,
+        },
+      );
+      throw _error;
+    }
+  }
+
+  @Post(":id/video/start")
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission("appointments", "update", {
+    requireOwnership: true,
+  })
+  @ApiOperation({
+    summary: "Start video consultation",
+    description:
+      "Start the video consultation session and track participant joining.",
+  })
+  @ApiParam({
+    name: "id",
+    description: "ID of the appointment",
+    type: "string",
+    format: "uuid",
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: "Video consultation started successfully",
+  })
+  async startVideoConsultation(
+    @Param("id", ParseUUIDPipe) appointmentId: string,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<VideoConsultationSession> {
+    try {
+      const userId = req.user?.sub;
+      const userRole = req.user?.role;
+
+      if (!userId) {
+        throw new BadRequestException("User ID required");
+      }
+
+      const consultationRole = userRole === Role.PATIENT ? "patient" : "doctor";
+
+      this.logger.log(
+        `Starting video consultation for appointment ${appointmentId}`,
+        {
+          userId,
+          role: consultationRole,
+        },
+      );
+
+      const session = await this.jitsiVideoService.startConsultation(
+        appointmentId,
+        userId,
+        consultationRole,
+      );
+
+      return session;
+    } catch (_error) {
+      this.logger.error(
+        `Failed to start consultation for appointment ${appointmentId}`,
+        {
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
+          userId: req.user?.sub,
+        },
+      );
+      throw _error;
+    }
+  }
+
+  @Post(":id/video/end")
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission("appointments", "update", {
+    requireOwnership: true,
+  })
+  @ApiOperation({
+    summary: "End video consultation",
+    description: "End the video consultation session and save meeting notes.",
+  })
+  @ApiParam({
+    name: "id",
+    description: "ID of the appointment",
+    type: "string",
+    format: "uuid",
+  })
+  @ApiBody({
+    schema: {
+      type: "object",
+      properties: {
+        meetingNotes: {
+          type: "string",
+          description: "Optional meeting notes from the consultation",
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: "Video consultation ended successfully",
+  })
+  async endVideoConsultation(
+    @Param("id", ParseUUIDPipe) appointmentId: string,
+    @Body() body: { meetingNotes?: string },
+    @Request() req: AuthenticatedRequest,
+  ): Promise<VideoConsultationSession> {
+    try {
+      const userId = req.user?.sub;
+      const userRole = req.user?.role;
+
+      if (!userId) {
+        throw new BadRequestException("User ID required");
+      }
+
+      const consultationRole = userRole === Role.PATIENT ? "patient" : "doctor";
+
+      this.logger.log(
+        `Ending video consultation for appointment ${appointmentId}`,
+        {
+          userId,
+          role: consultationRole,
+          hasNotes: !!body.meetingNotes,
+        },
+      );
+
+      const session = await this.jitsiVideoService.endConsultation(
+        appointmentId,
+        userId,
+        consultationRole,
+        body.meetingNotes,
+      );
+
+      return session;
+    } catch (_error) {
+      this.logger.error(
+        `Failed to end consultation for appointment ${appointmentId}`,
+        {
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
+          userId: req.user?.sub,
+        },
+      );
+      throw _error;
+    }
+  }
+
+  @Get(":id/video/status")
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission("appointments", "read", { requireOwnership: true })
+  @ApiOperation({
+    summary: "Get video consultation status",
+    description:
+      "Get the current status and details of the video consultation session.",
+  })
+  @ApiParam({
+    name: "id",
+    description: "ID of the appointment",
+    type: "string",
+    format: "uuid",
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: "Video consultation status retrieved successfully",
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: "Video consultation session not found",
+  })
+  async getVideoConsultationStatus(
+    @Param("id", ParseUUIDPipe) appointmentId: string,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<VideoConsultationSession | null> {
+    try {
+      this.logger.log(
+        `Getting video consultation status for appointment ${appointmentId}`,
+      );
+
+      const session =
+        await this.jitsiVideoService.getConsultationStatus(appointmentId);
+
+      if (!session) {
+        throw new NotFoundException("Video consultation session not found");
+      }
+
+      return session;
+    } catch (_error) {
+      this.logger.error(
+        `Failed to get consultation status for appointment ${appointmentId}`,
+        {
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
+        },
+      );
+      throw _error;
+    }
+  }
+
+  @Post(":id/video/report-issue")
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission("appointments", "update", {
+    requireOwnership: true,
+  })
+  @ApiOperation({
+    summary: "Report technical issue",
+    description:
+      "Report a technical issue during the video consultation for support tracking.",
+  })
+  @ApiParam({
+    name: "id",
+    description: "ID of the appointment",
+    type: "string",
+    format: "uuid",
+  })
+  @ApiBody({
+    schema: {
+      type: "object",
+      required: ["issueType", "description"],
+      properties: {
+        issueType: {
+          type: "string",
+          enum: ["audio", "video", "connection", "other"],
+          description: "Type of technical issue",
+        },
+        description: {
+          type: "string",
+          description: "Detailed description of the issue",
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: "Technical issue reported successfully",
+  })
+  async reportTechnicalIssue(
+    @Param("id", ParseUUIDPipe) appointmentId: string,
+    @Body()
+    body: {
+      issueType: "audio" | "video" | "connection" | "other";
+      description: string;
+    },
+    @Request() req: AuthenticatedRequest,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const userId = req.user?.sub;
+
+      if (!userId) {
+        throw new BadRequestException("User ID required");
+      }
+
+      this.logger.log(
+        `Technical issue reported for appointment ${appointmentId}`,
+        {
+          userId,
+          issueType: body.issueType,
+        },
+      );
+
+      await this.jitsiVideoService.reportTechnicalIssue(
+        appointmentId,
+        userId,
+        body.description,
+        body.issueType,
+      );
+
+      return {
+        success: true,
+        message: "Technical issue reported successfully",
+      };
+    } catch (_error) {
+      this.logger.error(
+        `Failed to report technical issue for appointment ${appointmentId}`,
+        {
+          _error: _error instanceof Error ? _error.message : "Unknown _error",
+          userId: req.user?.sub,
+        },
+      );
+      throw _error;
     }
   }
 
