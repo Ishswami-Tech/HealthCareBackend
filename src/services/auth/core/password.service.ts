@@ -24,12 +24,12 @@ export class PasswordService {
   async hashPassword(password: string): Promise<string> {
     try {
       return await bcrypt.hash(password, this.saltRounds);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to hash password",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -39,10 +39,10 @@ export class PasswordService {
   async comparePassword(password: string, hash: string): Promise<boolean> {
     try {
       return await bcrypt.compare(password, hash);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to compare password",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return false;
     }
@@ -86,7 +86,7 @@ export class PasswordService {
     }
 
     // Special character check
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
       errors.push("Password must contain at least one special character");
     } else {
       score += 20;
@@ -168,7 +168,7 @@ export class PasswordService {
     if (!/\d/.test(password)) {
       suggestions.push("Add numbers");
     }
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
       suggestions.push("Add special characters");
     }
 

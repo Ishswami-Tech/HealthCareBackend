@@ -1,6 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
-  BasePlugin,
   PluginManager,
   PluginContext,
   PluginHealth,
@@ -47,8 +46,8 @@ export class EnterprisePluginManager implements PluginManager {
   async executePlugin(
     pluginName: string,
     operation: string,
-    data: any,
-  ): Promise<any> {
+    data: unknown,
+  ): Promise<unknown> {
     const plugin = this.pluginRegistry.getPlugin(pluginName);
     if (!plugin) {
       throw new PluginError(
@@ -105,7 +104,7 @@ export class EnterprisePluginManager implements PluginManager {
   async executePluginsByFeature(
     feature: string,
     operation: string,
-    data: any,
+    data: unknown,
   ): Promise<any[]> {
     const plugins = this.pluginRegistry.getPluginsByFeature(feature);
 
@@ -135,8 +134,12 @@ export class EnterprisePluginManager implements PluginManager {
     const results = await Promise.all(executionPromises);
 
     // Filter out error results and log summary
-    const successfulResults = results.filter((result) => !result.error);
-    const failedResults = results.filter((result) => result.error);
+    const successfulResults = results.filter(
+      (result) => !(result as Record<string, unknown>).error,
+    );
+    const failedResults = results.filter(
+      (result) => (result as Record<string, unknown>).error,
+    );
 
     this.logger.debug(
       `📊 Feature ${feature} execution complete: ${successfulResults.length} successful, ${failedResults.length} failed`,
@@ -181,9 +184,9 @@ export class EnterprisePluginManager implements PluginManager {
   async executePluginWithRetry(
     pluginName: string,
     operation: string,
-    data: any,
+    data: unknown,
     maxRetries: number = this.DEFAULT_RETRY_ATTEMPTS,
-  ): Promise<any> {
+  ): Promise<unknown> {
     let lastError: Error | undefined;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -222,25 +225,34 @@ export class EnterprisePluginManager implements PluginManager {
   /**
    * Execute plugin operation with timeout
    */
-  private async executeWithTimeout<T>(
+  private executeWithTimeout<T>(
     operation: () => Promise<T>,
     pluginName: string,
     operationName: string,
     timeoutMs: number,
   ): Promise<T> {
-    return new Promise(async (resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        reject(new PluginTimeoutError(pluginName, operationName, timeoutMs));
+        reject(
+          new Error(
+            new PluginTimeoutError(
+              pluginName,
+              operationName,
+              timeoutMs,
+            ).message,
+          ),
+        );
       }, timeoutMs);
 
-      try {
-        const result = await operation();
-        clearTimeout(timeoutId);
-        resolve(result);
-      } catch (error) {
-        clearTimeout(timeoutId);
-        reject(error);
-      }
+      operation()
+        .then((result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timeoutId);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        });
     });
   }
 
@@ -260,6 +272,7 @@ export class EnterprisePluginManager implements PluginManager {
         "isHealthy" in healthResult
       ) {
         const health = healthResult as PluginHealth;
+        // Create updated health object (for future registry implementation)
         const updatedHealth: PluginHealth = {
           ...health,
           isHealthy: false,
@@ -268,6 +281,8 @@ export class EnterprisePluginManager implements PluginManager {
         };
 
         // Update health in registry (this would need to be implemented in the registry)
+        // For now, just log the update
+        void updatedHealth; // Acknowledge the variable is intentionally unused for now
         this.logger.warn(
           `⚠️ Marked plugin ${pluginName} as unhealthy: ${errorMessage}`,
         );
@@ -316,9 +331,9 @@ export class EnterprisePluginManager implements PluginManager {
   async executePluginsSequentially(
     pluginNames: string[],
     operation: string,
-    data: any,
+    data: unknown,
   ): Promise<any[]> {
-    const results: any[] = [];
+    const results: unknown[] = [];
 
     for (const pluginName of pluginNames) {
       try {
@@ -346,8 +361,8 @@ export class EnterprisePluginManager implements PluginManager {
     primaryPlugin: string,
     fallbackPlugins: string[],
     operation: string,
-    data: any,
-  ): Promise<any> {
+    data: unknown,
+  ): Promise<unknown> {
     try {
       // Try primary plugin first
       return await this.executePlugin(primaryPlugin, operation, data);

@@ -34,7 +34,8 @@ export class BaseSocket
   private readonly reconnectAttempts: Map<string, number> = new Map();
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly RECONNECT_INTERVAL = 5000; // 5 seconds
-  private readonly clientMetadata: Map<string, Record<string, any>> = new Map();
+  private readonly clientMetadata: Map<string, Record<string, unknown>> =
+    new Map();
   private initializationAttempts = 0;
   private readonly MAX_INITIALIZATION_ATTEMPTS = 3;
 
@@ -174,7 +175,9 @@ export class BaseSocket
       this.reconnectAttempts.delete(clientId);
 
       // Remove client from all rooms
-      for (const [roomId, clients] of this.clientsByRoom.entries()) {
+      for (const [roomId, clients] of Array.from(
+        this.clientsByRoom.entries(),
+      )) {
         if (clients.has(clientId)) {
           clients.delete(clientId);
           if (clients.size === 0) {
@@ -241,7 +244,7 @@ export class BaseSocket
     @MessageBody() data: { room: string },
   ): Promise<WsResponse<any>> {
     try {
-      const { room } = data;
+      const { room } = data as any;
       await this.joinRoom(client, room);
       return { event: "joinRoom", data: { success: true, room } };
     } catch (error) {
@@ -262,7 +265,7 @@ export class BaseSocket
     @MessageBody() data: { room: string },
   ): Promise<WsResponse<any>> {
     try {
-      const { room } = data;
+      const { room } = data as any;
       await this.leaveRoom(client, room);
       return { event: "leaveRoom", data: { success: true, room } };
     } catch (error) {
@@ -363,7 +366,7 @@ export class BaseSocket
 
   protected getClientMetadata(
     clientId: string,
-  ): Record<string, any> | undefined {
+  ): Record<string, unknown> | undefined {
     return this.clientMetadata.get(clientId);
   }
 

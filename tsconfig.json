@@ -20,6 +20,15 @@
     "strictBindCallApply": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "paths": {
+      "@database/*": ["src/libs/infrastructure/database/*"],
+      "@infrastructure/*": ["src/libs/infrastructure/*"],
+      "@services/*": ["src/services/*"],
+      "@dtos/*": ["src/libs/dtos/*"],
+      "@core/*": ["src/libs/core/*"],
+      "@utils/*": ["src/libs/utils/*"],
+      "@communication/*": ["src/libs/communication/*"]
+    }
   }
 }

@@ -3,7 +3,7 @@ import { Injectable, Logger } from "@nestjs/common";
 export interface EmailTemplateData {
   patientName: string;
   clinicName?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface AppointmentTemplateData extends EmailTemplateData {

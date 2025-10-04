@@ -31,6 +31,14 @@ export * from "./confirmation/clinic-confirmation.plugin";
 export * from "./checkin/clinic-checkin.plugin";
 export * from "./payment/clinic-payment.plugin";
 export * from "./video/clinic-video.plugin";
+export * from "./notifications/clinic-notification.plugin";
+export * from "./reminders/clinic-reminder.plugin";
+export * from "./analytics/clinic-analytics.plugin";
+export * from "./followup/clinic-followup.plugin";
+export * from "./templates/clinic-template.plugin";
+export * from "./waitlist/clinic-waitlist.plugin";
+export * from "./resources/clinic-resource.plugin";
+export * from "./eligibility/clinic-eligibility.plugin";
 
 // Communications Integration (uses libs/communication)
 export * from "../communications";
@@ -38,3 +46,16 @@ export * from "../communications";
 // Service Dependencies
 export * from "./video/video.service";
 export * from "./payment/payment.service";
+export * from "./queue/appointment-queue.service";
+export * from "./location/appointment-location.service";
+export * from "./confirmation/appointment-confirmation.service";
+export * from "./checkin/check-in.service";
+export * from "./notifications/appointment-notification.service";
+export * from "./reminders/appointment-reminder.service";
+export * from "./analytics/appointment-analytics.service";
+export * from "./followup/appointment-followup.service";
+export * from "./templates/appointment-template.service";
+export * from "./waitlist/appointment-waitlist.service";
+export * from "./resources/appointment-resource.service";
+export * from "./eligibility/clinic-eligibility.plugin";
+export * from "./eligibility/appointment-eligibility.service";

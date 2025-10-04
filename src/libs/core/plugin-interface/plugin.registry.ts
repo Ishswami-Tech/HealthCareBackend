@@ -125,7 +125,7 @@ export class EnterprisePluginRegistry implements PluginRegistry {
 
     // Return health for all plugins
     const allHealth: Record<string, PluginHealth> = {};
-    for (const [name, health] of this.pluginHealth.entries()) {
+    for (const [name, health] of Array.from(this.pluginHealth.entries())) {
       allHealth[name] = health;
     }
     return allHealth;
@@ -137,7 +137,7 @@ export class EnterprisePluginRegistry implements PluginRegistry {
   async checkAllPluginHealth(): Promise<void> {
     this.logger.log("🔍 Checking health of all plugins...");
 
-    for (const [name, plugin] of this.plugins.entries()) {
+    for (const [name, plugin] of Array.from(this.plugins.entries())) {
       try {
         const health = await plugin.getHealth();
         this.pluginHealth.set(name, {
@@ -148,15 +148,15 @@ export class EnterprisePluginRegistry implements PluginRegistry {
         if (!health.isHealthy) {
           this.logger.warn(`⚠️ Plugin ${name} is unhealthy:`, health.errors);
         }
-      } catch (error) {
+      } catch (_error) {
         this.logger.error(
           `❌ Failed to check health for plugin ${name}:`,
-          error,
+          _error,
         );
         this.pluginHealth.set(name, {
           isHealthy: false,
           lastCheck: new Date(),
-          errors: [error instanceof Error ? error.message : String(error)],
+          errors: [_error instanceof Error ? _error.message : String(_error)],
         });
       }
     }
@@ -178,7 +178,9 @@ export class EnterprisePluginRegistry implements PluginRegistry {
     const unhealthyPlugins = totalPlugins - healthyPlugins;
 
     const pluginsByFeature: Record<string, number> = {};
-    for (const [feature, plugins] of this.pluginsByFeature.entries()) {
+    for (const [feature, plugins] of Array.from(
+      this.pluginsByFeature.entries(),
+    )) {
       pluginsByFeature[feature] = plugins.length;
     }
 

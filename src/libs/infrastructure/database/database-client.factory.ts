@@ -254,8 +254,8 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     totalClients: number;
     clinicClients: number;
     activeClients: number;
-    connectionPoolStatus: any;
-    memoryUsage: any;
+    connectionPoolStatus: unknown;
+    memoryUsage: unknown;
   } {
     const activeClients = Array.from(this.clients.values()).filter(
       (client) =>
@@ -296,9 +296,9 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
         } else {
           issues.push(`Client ${clientId}: ${healthStatus.errors.join(", ")}`);
         }
-      } catch (error) {
+      } catch (_error) {
         issues.push(
-          `Client ${clientId}: Health check failed - ${error instanceof Error ? error.message : String(error)}`,
+          `Client ${clientId}: Health check failed - ${_error instanceof Error ? _error.message : String(_error)}`,
         );
       }
     }
@@ -355,9 +355,9 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
 
       await this.createHealthcareClient(defaultConfig);
       this.logger.log("Default healthcare database client initialized");
-    } catch (error) {
-      this.logger.error("Failed to initialize default clients:", error);
-      throw error;
+    } catch (_error) {
+      this.logger.error("Failed to initialize default clients:", _error);
+      throw _error;
     }
   }
 
@@ -464,8 +464,8 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
       if (client) {
         try {
           await client.disconnect();
-        } catch (error) {
-          this.logger.warn(`Error disconnecting client ${clientId}:`, error);
+        } catch (_error) {
+          this.logger.warn(`Error disconnecting client ${clientId}:`, _error);
         }
         this.clients.delete(clientId);
       }
@@ -481,8 +481,8 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
       try {
         await client.disconnect();
         this.logger.debug(`Disconnected client: ${clientId}`);
-      } catch (error) {
-        this.logger.warn(`Error disconnecting client ${clientId}:`, error);
+      } catch (_error) {
+        this.logger.warn(`Error disconnecting client ${clientId}:`, _error);
       }
     }
 
@@ -494,8 +494,8 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     this.healthCheckInterval = setInterval(async () => {
       try {
         await this.performHealthCheck();
-      } catch (error) {
-        this.logger.error("Health monitoring failed:", error);
+      } catch (_error) {
+        this.logger.error("Health monitoring failed:", _error);
       }
     }, 60000); // Every minute
   }
@@ -504,24 +504,24 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     this.cleanupInterval = setInterval(async () => {
       try {
         await this.cleanupInactiveClients();
-      } catch (error) {
-        this.logger.error("Cleanup process failed:", error);
+      } catch (_error) {
+        this.logger.error("Cleanup process failed:", _error);
       }
     }, 300000); // Every 5 minutes
   }
 
   private async logAuditTrail(
-    auditInfo: any,
+    auditInfo: unknown,
     operation: string,
     success: boolean,
   ): Promise<void> {
     try {
       // Log to audit system
       this.logger.log(
-        `AUDIT: ${operation} - User: ${auditInfo.userId}, Clinic: ${auditInfo.clinicId}, Success: ${success}`,
+        `AUDIT: ${operation} - User: ${(auditInfo as any).userId}, Clinic: ${(auditInfo as any).clinicId}, Success: ${success}`,
       );
-    } catch (error) {
-      this.logger.error("Failed to log audit trail:", error);
+    } catch (_error) {
+      this.logger.error("Failed to log audit trail:", _error);
     }
   }
 }

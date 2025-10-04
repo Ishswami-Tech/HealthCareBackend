@@ -9,8 +9,8 @@ import {
 export interface RateLimitOptions {
   windowMs: number;
   max: number;
-  keyGenerator?: (req: any) => string;
-  skipIf?: (req: any) => boolean;
+  keyGenerator?: (req: unknown) => string;
+  skipIf?: (req: unknown) => boolean;
   message?: string;
 }
 
@@ -79,10 +79,10 @@ export class RateLimitService {
         resetTime,
         total: options.max,
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Rate limit check failed for key: ${key}`,
-        error instanceof Error ? error.stack : undefined,
+        _error instanceof Error ? _error.stack : undefined,
       );
 
       // Fail open - allow request if Redis is down
@@ -111,28 +111,38 @@ export class RateLimitService {
           { key, keysCleared: keys.length },
         );
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to reset rate limit for key: ${key}`,
-        error instanceof Error ? error.stack : undefined,
+        _error instanceof Error ? _error.stack : undefined,
       );
     }
   }
 
-  generateDefaultKey(req: any): string {
-    return req.ip || req.connection?.remoteAddress || "unknown";
+  generateDefaultKey(req: unknown): string {
+    const request = req as Record<string, unknown>;
+    return (
+      (request.ip as string) ||
+      ((request.connection as Record<string, unknown>)
+        ?.remoteAddress as string) ||
+      "unknown"
+    );
   }
 
-  generateUserKey(req: any): string {
-    const userId = req.user?.id || req.user?.userId;
+  generateUserKey(req: unknown): string {
+    const request = req as Record<string, unknown>;
+    const user = request.user as Record<string, unknown>;
+    const userId = user?.id || user?.userId;
     if (userId) {
       return `user:${userId}`;
     }
     return this.generateDefaultKey(req);
   }
 
-  generateAuthKey(req: any): string {
-    const identifier = req.body?.email || req.body?.phone || req.body?.username;
+  generateAuthKey(req: unknown): string {
+    const request = req as Record<string, unknown>;
+    const body = request.body as Record<string, unknown>;
+    const identifier = body?.email || body?.phone || body?.username;
     if (identifier) {
       return `auth:${identifier}`;
     }

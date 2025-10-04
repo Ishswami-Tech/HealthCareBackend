@@ -22,7 +22,7 @@ export interface SocialUser {
 
 export interface SocialAuthResult {
   success: boolean;
-  user?: any;
+  user?: unknown;
   isNewUser?: boolean;
   message?: string;
 }
@@ -79,17 +79,18 @@ export class SocialAuthService {
       const googleUser = await this.verifyGoogleToken(googleToken);
 
       return await this.processSocialUser({
-        id: googleUser.id,
-        email: googleUser.email,
-        firstName: googleUser.given_name,
-        lastName: googleUser.family_name,
-        profilePicture: googleUser.picture,
+        id: (googleUser as Record<string, unknown>).id as string,
+        email: (googleUser as Record<string, unknown>).email as string,
+        firstName: (googleUser as Record<string, unknown>).given_name as string,
+        lastName: (googleUser as Record<string, unknown>).family_name as string,
+        profilePicture: (googleUser as Record<string, unknown>)
+          .picture as string,
         provider: "google",
       });
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Google authentication failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       throw new BadRequestException("Google authentication failed");
     }
@@ -106,17 +107,25 @@ export class SocialAuthService {
       const facebookUser = await this.verifyFacebookToken(facebookToken);
 
       return await this.processSocialUser({
-        id: facebookUser.id,
-        email: facebookUser.email,
-        firstName: facebookUser.first_name,
-        lastName: facebookUser.last_name,
-        profilePicture: facebookUser.picture?.data?.url,
+        id: (facebookUser as Record<string, unknown>).id as string,
+        email: (facebookUser as Record<string, unknown>).email as string,
+        firstName: (facebookUser as Record<string, unknown>)
+          .first_name as string,
+        lastName: (facebookUser as Record<string, unknown>).last_name as string,
+        profilePicture: (
+          (
+            (facebookUser as Record<string, unknown>).picture as Record<
+              string,
+              unknown
+            >
+          )?.data as Record<string, unknown>
+        )?.url as string,
         provider: "facebook",
       });
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Facebook authentication failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       throw new BadRequestException("Facebook authentication failed");
     }
@@ -131,16 +140,16 @@ export class SocialAuthService {
       const appleUser = await this.verifyAppleToken(appleToken);
 
       return await this.processSocialUser({
-        id: appleUser.sub,
-        email: appleUser.email,
-        firstName: appleUser.given_name,
-        lastName: appleUser.family_name,
+        id: (appleUser as Record<string, unknown>).sub as string,
+        email: (appleUser as Record<string, unknown>).email as string,
+        firstName: (appleUser as Record<string, unknown>).given_name as string,
+        lastName: (appleUser as Record<string, unknown>).family_name as string,
         provider: "apple",
       });
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Apple authentication failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       throw new BadRequestException("Apple authentication failed");
     }
@@ -200,7 +209,7 @@ export class SocialAuthService {
       } else {
         // Update existing user with social ID if not already set
         const socialIdField = this.getSocialIdField(socialUser.provider);
-        const currentSocialId = (user as any)[socialIdField];
+        const currentSocialId = user[socialIdField];
         if (!currentSocialId) {
           user = await this.prisma.user.update({
             where: { id: user.id },
@@ -232,12 +241,12 @@ export class SocialAuthService {
           ? "Account created successfully"
           : "Login successful",
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to process social user: ${socialUser.email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -262,7 +271,7 @@ export class SocialAuthService {
   /**
    * Verify Google token (placeholder implementation)
    */
-  private async verifyGoogleToken(token: string): Promise<any> {
+  private async verifyGoogleToken(token: string): Promise<unknown> {
     // In a real implementation, you would:
     // 1. Verify the token with Google's API
     // 2. Extract user information
@@ -281,7 +290,7 @@ export class SocialAuthService {
   /**
    * Verify Facebook token (placeholder implementation)
    */
-  private async verifyFacebookToken(token: string): Promise<any> {
+  private async verifyFacebookToken(token: string): Promise<unknown> {
     // In a real implementation, you would:
     // 1. Verify the token with Facebook's API
     // 2. Extract user information
@@ -304,7 +313,7 @@ export class SocialAuthService {
   /**
    * Verify Apple token (placeholder implementation)
    */
-  private async verifyAppleToken(token: string): Promise<any> {
+  private async verifyAppleToken(token: string): Promise<unknown> {
     // In a real implementation, you would:
     // 1. Verify the token with Apple's API
     // 2. Extract user information

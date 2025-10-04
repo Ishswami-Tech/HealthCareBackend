@@ -22,8 +22,8 @@ export interface PatientWithUser {
     emergencyContact?: string;
     isVerified: boolean;
   };
-  appointments?: any[];
-  healthRecords?: any[];
+  appointments?: unknown[];
+  healthRecords?: unknown[];
 }
 
 /**

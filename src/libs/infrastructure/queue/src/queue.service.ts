@@ -52,7 +52,7 @@ export enum DomainType {
 }
 
 export interface JobData {
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface QueueFilters {
@@ -152,17 +152,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     // Safe initialization with error handling
     try {
       this.initializeQueues();
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to initialize queues: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to initialize queues: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
     }
 
     try {
       this.initializeWorkers();
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to initialize workers: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to initialize workers: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
     }
 
@@ -280,9 +280,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           `✅ Initialized queue: ${queue.name} for domain: ${this.getCurrentDomain()}`,
         );
         initializedCount++;
-      } catch (error) {
+      } catch (_error) {
         this.logger.error(
-          `❌ Failed to initialize queue at index ${index}: ${error instanceof Error ? error.message : "Unknown error"}`,
+          `❌ Failed to initialize queue at index ${index}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         );
       }
     });
@@ -316,9 +316,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           `✅ Initialized worker: ${worker.name} for domain: ${this.getCurrentDomain()}`,
         );
         initializedCount++;
-      } catch (error) {
+      } catch (_error) {
         this.logger.error(
-          `❌ Failed to initialize worker at index ${index}: ${error instanceof Error ? error.message : "Unknown error"}`,
+          `❌ Failed to initialize worker at index ${index}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         );
       }
     });
@@ -388,17 +388,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       );
 
       return job;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to add job to queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to add job to queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
         {
           queueName,
           domain: this.getCurrentDomain(),
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
           responseTime: Date.now() - startTime,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -464,17 +464,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       );
 
       return addedJobs;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to add bulk jobs to queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to add bulk jobs to queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
         {
           queueName,
           domain: this.getCurrentDomain(),
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
           responseTime: Date.now() - startTime,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -520,16 +520,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
 
       return filteredJobs;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get jobs from queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get jobs from queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
         {
           queueName,
           domain: this.getCurrentDomain(),
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -568,16 +568,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       this.queueMetrics.set(queueName, metrics);
       return metrics;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get metrics for queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get metrics for queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
         {
           queueName,
           domain: this.getCurrentDomain(),
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -615,15 +615,15 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         errorRate,
         averageResponseTime,
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get health status: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get health status: ${_error instanceof Error ? _error.message : String(_error)}`,
         {
           domain: this.getCurrentDomain(),
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -633,7 +633,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async updateJob(
     queueName: string,
     jobId: string,
-    data: any,
+    data: unknown,
   ): Promise<boolean> {
     try {
       const queue = this.queues.get(queueName);
@@ -649,7 +649,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Update job data
-      job.data = { ...job.data, ...data };
+      job.data = {
+        ...(job.data as Record<string, unknown>),
+        ...(data as Record<string, unknown>),
+      };
 
       // Remove old job and add updated one
       await queue.remove(jobId);
@@ -657,11 +660,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log(`Job ${jobId} updated in queue ${queueName}`);
       return true;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to update job ${jobId} in queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to update job ${jobId} in queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -677,7 +680,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     doctorId: string,
     date: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, { domain: domain as any });
@@ -708,11 +711,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         estimatedNextWaitTime:
           queue.length > 0 ? this.calculateEstimatedWaitTime(1, domain) : 0,
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get doctor queue: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get doctor queue: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -722,7 +725,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async getPatientQueuePosition(
     appointmentId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, { domain: domain as any });
@@ -746,11 +749,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         domain,
         doctorId: job.data.doctorId,
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get patient queue position: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get patient queue position: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -760,7 +763,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async confirmAppointment(
     appointmentId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, { domain: domain as any });
@@ -778,11 +781,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       await this.updateJob(queueName, job.id as string, job.data);
 
       return { success: true, message: "Appointment confirmed" };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to confirm appointment: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to confirm appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -793,7 +796,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     appointmentId: string,
     doctorId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, { domain: domain as any });
@@ -814,11 +817,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       await this.updateJob(queueName, job.id as string, job.data);
 
       return { success: true, message: "Consultation started" };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to start consultation: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to start consultation: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -829,7 +832,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     appointmentId: string,
     priority: number,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, { domain: domain as any });
@@ -848,11 +851,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       await this.updateJob(queueName, job.id as string, job.data);
 
       return { success: true, message: "Emergency appointment prioritized" };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to handle emergency appointment: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to handle emergency appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -862,7 +865,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async getLocationQueueStats(
     locationId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, { domain: domain as any });
@@ -902,11 +905,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           completedCount,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get location queue stats: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get location queue stats: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -922,10 +925,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     return position * baseWaitTime;
   }
 
-  private calculateAverageWaitTime(queue: any[]): number {
+  private calculateAverageWaitTime(queue: unknown[]): number {
     if (queue.length === 0) return 0;
     const totalWaitTime = queue.reduce(
-      (sum, entry) => sum + (entry.estimatedWaitTime || 0),
+      (sum: number, entry) =>
+        sum +
+        (((entry as Record<string, unknown>).estimatedWaitTime as number) || 0),
       0,
     );
     return totalWaitTime / queue.length;
@@ -952,7 +957,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       const failed = await queue.getFailed();
       const delayed = await queue.getDelayed();
       // Note: getPaused() method may not be available in all BullMQ versions
-      const paused: any[] = []; // Placeholder for paused jobs
+      const paused: unknown[] = []; // Placeholder for paused jobs
 
       const metrics = {
         totalJobs:
@@ -982,10 +987,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.getCurrentDomain(),
         metrics,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to update monitoring metrics for queue ${queueName}:`,
-        error,
+        _error,
       );
     }
   }
@@ -1033,12 +1038,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private async updateHealthStatus(): Promise<void> {
     try {
       await this.getHealthStatus();
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to update health status: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to update health status: ${_error instanceof Error ? _error.message : String(_error)}`,
         {
           domain: this.getCurrentDomain(),
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
         },
       );
     }
@@ -1049,15 +1054,15 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   private async updateQueueMetrics(): Promise<void> {
     try {
-      for (const queueName of this.queues.keys()) {
+      for (const queueName of Array.from(this.queues.keys())) {
         await this.getQueueMetrics(queueName);
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to update queue metrics: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to update queue metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
         {
           domain: this.getCurrentDomain(),
-          error: error instanceof Error ? error.stack : String(error),
+          _error: _error instanceof Error ? _error.stack : String(_error),
         },
       );
     }
@@ -1066,7 +1071,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get queue status for gateway compatibility
    */
-  async getQueueStatus(queueName: string): Promise<any> {
+  async getQueueStatus(queueName: string): Promise<unknown> {
     try {
       const metrics = await this.getQueueMetrics(queueName);
       return {
@@ -1075,23 +1080,23 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         isHealthy: metrics.errorRate < 0.05,
         lastUpdated: new Date().toISOString(),
       };
-    } catch (error) {
-      this.logger.error(`Failed to get queue status for ${queueName}:`, error);
-      throw error;
+    } catch (_error) {
+      this.logger.error(`Failed to get queue status for ${queueName}:`, _error);
+      throw _error;
     }
   }
 
   /**
    * Get enterprise queue metrics for gateway compatibility
    */
-  async getEnterpriseQueueMetrics(queueName: string): Promise<any> {
+  async getEnterpriseQueueMetrics(queueName: string): Promise<unknown> {
     return this.getQueueMetrics(queueName);
   }
 
   /**
    * Get queue health for gateway compatibility
    */
-  async getQueueHealth(queueName: string): Promise<any> {
+  async getQueueHealth(queueName: string): Promise<unknown> {
     try {
       const metrics = await this.getQueueMetrics(queueName);
       return {
@@ -1100,20 +1105,20 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         averageProcessingTime: metrics.averageProcessingTime,
         throughput: metrics.throughputPerMinute,
       };
-    } catch (error) {
-      this.logger.error(`Failed to get queue health for ${queueName}:`, error);
-      throw error;
+    } catch (_error) {
+      this.logger.error(`Failed to get queue health for ${queueName}:`, _error);
+      throw _error;
     }
   }
 
   /**
    * Get all queue statuses for gateway compatibility
    */
-  async getAllQueueStatuses(): Promise<Record<string, any>> {
+  async getAllQueueStatuses(): Promise<Record<string, unknown>> {
     try {
-      const statuses: Record<string, any> = {};
+      const statuses: Record<string, unknown> = {};
 
-      for (const queueName of this.queues.keys()) {
+      for (const queueName of Array.from(this.queues.keys())) {
         try {
           const metrics = await this.getQueueMetrics(queueName);
           statuses[queueName] = {
@@ -1122,16 +1127,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
             isHealthy: metrics.errorRate < 0.05,
             lastUpdated: new Date().toISOString(),
           };
-        } catch (error) {
+        } catch (_error) {
           this.logger.error(
             `Failed to get status for queue ${queueName}:`,
-            error,
+            _error,
           );
           statuses[queueName] = {
             queueName,
             metrics: null,
             isHealthy: false,
-            error: error instanceof Error ? error.message : "Unknown error",
+            _error: _error instanceof Error ? _error.message : "Unknown _error",
             lastUpdated: new Date().toISOString(),
           };
         }
@@ -1149,7 +1154,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   private async autoScaleWorkers(): Promise<void> {
     try {
-      for (const [queueName, queue] of this.queues) {
+      for (const [queueName, queue] of Array.from(this.queues.entries())) {
         const metrics = await this.getQueueMetrics(queueName);
         const currentWorkers = this.workers.get(queueName)?.length || 0;
 
@@ -1205,8 +1210,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logger.log(`Scaled up ${count} workers for queue: ${queueName}`);
-    } catch (error) {
-      this.logger.error(`Failed to scale up workers for ${queueName}:`, error);
+    } catch (_error) {
+      this.logger.error(`Failed to scale up workers for ${queueName}:`, _error);
     }
   }
 
@@ -1226,10 +1231,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logger.log(`Scaled down ${count} workers for queue: ${queueName}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to scale down workers for ${queueName}:`,
-        error,
+        _error,
       );
     }
   }
@@ -1280,7 +1285,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     let totalErrors = 0;
     let totalCompleted = 0;
 
-    for (const [queueName] of this.queues) {
+    for (const [queueName] of Array.from(this.queues.entries())) {
       const metrics = await this.getQueueMetrics(queueName);
       totalJobs +=
         metrics.waiting + metrics.active + metrics.completed + metrics.failed;
@@ -1323,10 +1328,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Close all queues and workers
-    for (const queue of this.queues.values()) {
+    for (const queue of Array.from(this.queues.values())) {
       await queue.close();
     }
-    for (const workers of this.workers.values()) {
+    for (const workers of Array.from(this.workers.values())) {
       for (const worker of workers) {
         await worker.close();
       }

@@ -17,6 +17,26 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly STATS_KEY = "cache:stats";
   private readonly isDevelopment!: boolean;
 
+  // Production scaling configurations
+  private readonly PRODUCTION_CONFIG = {
+    maxMemoryPolicy: "allkeys-lru",
+    maxConnections: parseInt(process.env.REDIS_MAX_CONNECTIONS || "100", 10),
+    connectionTimeout: 5000,
+    commandTimeout: 3000,
+    retryOnFailover: true,
+    enableAutoPipelining: true,
+    maxRetriesPerRequest: 3,
+    keyPrefix: process.env.REDIS_KEY_PREFIX || "healthcare:",
+  };
+
+  // Cache strategies for different data types
+  private readonly CACHE_STRATEGIES = {
+    CRITICAL: { ttl: 300, compression: true }, // 5 minutes, compressed
+    STANDARD: { ttl: 1800, compression: false }, // 30 minutes
+    EXTENDED: { ttl: 3600, compression: true }, // 1 hour, compressed
+    PERSISTENT: { ttl: 86400, compression: true }, // 24 hours, compressed
+  };
+
   // Rate limiting configuration interface
   private readonly defaultRateLimits = {
     api: { limit: 100, window: 60 }, // 100 requests per minute
@@ -103,6 +123,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.client = new Redis({
         host: redisHost,
         port: redisPort,
+        keyPrefix: this.PRODUCTION_CONFIG.keyPrefix,
         retryStrategy: (times) => {
           if (times > this.maxRetries) {
             this.logger.error(
@@ -110,13 +131,23 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             );
             return null; // stop retrying
           }
-          return this.retryDelay;
+          return Math.min(this.retryDelay * times, 30000); // Exponential backoff, max 30s
         },
-        maxRetriesPerRequest: 3,
+        maxRetriesPerRequest: this.PRODUCTION_CONFIG.maxRetriesPerRequest,
+        enableAutoPipelining: this.PRODUCTION_CONFIG.enableAutoPipelining,
+        connectTimeout: this.PRODUCTION_CONFIG.connectionTimeout,
+        commandTimeout: this.PRODUCTION_CONFIG.commandTimeout,
         enableReadyCheck: true,
         autoResubscribe: true,
         autoResendUnfulfilledCommands: true,
         lazyConnect: true, // Don't connect immediately
+        // Production optimizations
+        keepAlive: 30000,
+        family: 4, // IPv4
+        // Connection pool settings for high concurrency
+        ...(process.env.NODE_ENV === "production" && {
+          enableOfflineQueue: false, // Fail fast in production
+        }),
       });
 
       this.client.on("error", (err) => {
@@ -152,9 +183,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.client.on("end", () => {
         this.logger.warn("Redis connection ended");
       });
-    } catch (error) {
-      this.logger.error("Failed to initialize Redis client:", error);
-      throw error;
+    } catch (_error) {
+      this.logger.error("Failed to initialize Redis client:", _error);
+      throw _error;
     }
   }
 
@@ -168,15 +199,32 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       await this.checkAndResetReadOnlyMode();
 
       this.logger.log("Redis connection initialized");
-    } catch (error) {
-      this.logger.error("Failed to initialize Redis connection:", error);
-      throw error; // Fail fast if Redis is not available
+    } catch (_error) {
+      this.logger.error("Failed to initialize Redis connection:", _error);
+      throw _error; // Fail fast if Redis is not available
     }
   }
 
   async onModuleDestroy() {
     if (this.client) {
       await this.client.quit();
+    }
+  }
+
+  /**
+   * Advanced caching methods for 1M+ users
+   */
+
+  // Auto-scaling cache management
+  async optimizeMemoryUsage(): Promise<void> {
+    if (process.env.NODE_ENV === "production") {
+      await this.client.config(
+        "SET",
+        "maxmemory-policy",
+        this.PRODUCTION_CONFIG.maxMemoryPolicy,
+      );
+      await this.client.config("SET", "maxmemory", "2gb"); // Adjust based on available memory
+      this.logger.log("Applied production memory optimizations");
     }
   }
 
@@ -193,8 +241,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       }
 
       return true;
-    } catch (error) {
-      this.logger.error("Failed to check Redis read-only status:", error);
+    } catch (_error) {
+      this.logger.error("Failed to check Redis read-only status:", _error);
       return false;
     }
   }
@@ -209,8 +257,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log("Successfully reset Redis read-only mode");
       return true;
-    } catch (error) {
-      this.logger.error("Failed to reset Redis read-only mode:", error);
+    } catch (_error) {
+      this.logger.error("Failed to reset Redis read-only mode:", _error);
       return false;
     }
   }
@@ -221,16 +269,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     for (let i = 0; i < this.maxRetries; i++) {
       try {
         return await operation();
-      } catch (error) {
-        lastError = error;
+      } catch (_error) {
+        lastError = _error;
         this.logger.warn(
           `Redis operation failed, attempt ${i + 1}/${this.maxRetries}`,
         );
 
         // Check if it's a read-only error and try to fix it
         if (
-          (error as Error).message &&
-          (error as Error).message.includes("READONLY")
+          (_error as Error).message &&
+          (_error as Error).message.includes("READONLY")
         ) {
           try {
             await this.resetReadOnlyMode();
@@ -263,9 +311,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           await this.client.set(key, serializedValue);
         }
       });
-    } catch (error) {
-      this.logger.error(`Failed to set key ${key}:`, (error as Error).stack);
-      throw error;
+    } catch (_error) {
+      this.logger.error(`Failed to set key ${key}:`, (_error as Error).stack);
+      throw _error;
     }
   }
 
@@ -283,8 +331,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         // If parsing fails, return as string
         return result as any;
       }
-    } catch (error) {
-      this.logger.error(`Failed to get key ${key}:`, (error as Error).stack);
+    } catch (_error) {
+      this.logger.error(`Failed to get key ${key}:`, (_error as Error).stack);
       return null;
     }
   }
@@ -312,13 +360,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     try {
       const pingResult = await this.ping();
       return pingResult === "PONG";
-    } catch (error) {
-      this.logger.error("Redis health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Redis health check failed:", _error);
       return false;
     }
   }
 
-  async getCacheDebug(): Promise<Record<string, any>> {
+  async getCacheDebug(): Promise<Record<string, unknown>> {
     try {
       const [info, dbSize, memoryInfo] = await Promise.all([
         this.client.info(),
@@ -344,9 +392,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           serverInfo: info,
         },
       };
-    } catch (error) {
-      this.logger.error("Failed to get Redis debug info:", error);
-      throw error;
+    } catch (_error) {
+      this.logger.error("Failed to get Redis debug info:", _error);
+      throw _error;
     }
   }
 
@@ -432,7 +480,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async trackSecurityEvent(
     identifier: string,
     eventType: string,
-    details: any,
+    details: unknown,
   ): Promise<void> {
     const event = {
       timestamp: new Date(),
@@ -530,9 +578,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.debug(`Cleared ${deletedCount} keys from cache`);
       return deletedCount;
-    } catch (error) {
-      this.logger.error("Error clearing all cache:", error);
-      throw error;
+    } catch (_error) {
+      this.logger.error("Error clearing all cache:", _error);
+      throw _error;
     }
   }
 
@@ -540,7 +588,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.retryOperation(() => this.client.del(this.STATS_KEY));
   }
 
-  async getCacheMetrics(): Promise<Record<string, any>> {
+  async getCacheMetrics(): Promise<Record<string, unknown>> {
     const [stats, info, dbSize] = await Promise.all([
       this.getCacheStats(),
       this.client.info("memory"),
@@ -586,10 +634,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     // Get default limits if not specified
     const type = key.split(":")[0];
     const defaultLimit =
-      (this.defaultRateLimits as Record<string, any>)[type] ||
+      (this.defaultRateLimits as Record<string, unknown>)[type] ||
       this.defaultRateLimits.api;
-    limit = limit || (defaultLimit.limit as number);
-    windowSeconds = windowSeconds || (defaultLimit.window as number);
+    const limitConfig = defaultLimit as Record<string, unknown>;
+    limit = limit || (limitConfig.limit as number);
+    windowSeconds = windowSeconds || (limitConfig.window as number);
 
     try {
       const multi = this.client.multi();
@@ -615,8 +664,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       // Check against burst limit if specified, otherwise normal limit
       return current * cost > (options.burst ? burstLimit : limit);
-    } catch (error) {
-      this.logger.error(`Rate limiting error for key ${key}:`, error);
+    } catch (_error) {
+      this.logger.error(`Rate limiting _error for key ${key}:`, _error);
       return false; // Fail open in case of errors
     }
   }
@@ -644,14 +693,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     // Get default limits if not specified
     const type = key.split(":")[0];
     const defaultLimit =
-      (this.defaultRateLimits as Record<string, any>)[type] ||
+      (this.defaultRateLimits as Record<string, unknown>)[type] ||
       this.defaultRateLimits.api;
-    limit = limit || defaultLimit.limit;
-    windowSeconds = windowSeconds || defaultLimit.window;
+    const limitConfig = defaultLimit as Record<string, unknown>;
+    limit = limit || (limitConfig.limit as number);
+    windowSeconds = windowSeconds || (limitConfig.window as number);
 
     try {
       const now = Date.now();
-      const windowMs = windowSeconds! * 1000;
+      const windowMs = windowSeconds * 1000;
 
       // Clean up old entries first
       await this.client.zremrangebyscore(key, 0, now - windowMs);
@@ -662,13 +712,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       ]);
 
       return {
-        remaining: Math.max(0, limit! - count),
+        remaining: Math.max(0, limit - count),
         reset: Math.max(0, ttl),
-        total: limit!,
+        total: limit,
         used: count,
       };
-    } catch (error) {
-      this.logger.error(`Error getting rate limit for key ${key}:`, error);
+    } catch (_error) {
+      this.logger.error(`Error getting rate limit for key ${key}:`, _error);
       return {
         remaining: 0,
         reset: 0,
@@ -682,8 +732,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.client.del(key);
       this.logger.debug(`Rate limit cleared for key: ${key}`);
-    } catch (error) {
-      this.logger.error(`Error clearing rate limit for key ${key}:`, error);
+    } catch (_error) {
+      this.logger.error(`Error clearing rate limit for key ${key}:`, _error);
     }
   }
 
@@ -692,16 +742,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     type: string,
     config: { limit: number; window: number },
   ): Promise<void> {
-    (this.defaultRateLimits as Record<string, any>)[type] = config;
+    (this.defaultRateLimits as Record<string, unknown>)[type] = config;
     this.logger.log(
       `Updated rate limits for ${type}: ${JSON.stringify(config)}`,
     );
   }
 
   // Method to get current rate limit configuration
-  getRateLimitConfig(type?: string): any {
+  getRateLimitConfig(type?: string): unknown {
     return type
-      ? (this.defaultRateLimits as Record<string, any>)[type]
+      ? (this.defaultRateLimits as Record<string, unknown>)[type]
       : this.defaultRateLimits;
   }
 
@@ -741,10 +791,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(() => this.client.zrangebyscore(key, min, max));
   }
 
-  async multi(commands: any[]): Promise<any> {
+  async multi(commands: unknown[]): Promise<unknown> {
     return this.retryOperation(async () => {
       const pipeline = this.client.pipeline();
-      commands.forEach((cmd) => (pipeline as any)[cmd.command](...cmd.args));
+      commands.forEach((cmd) => {
+        const command = cmd as Record<string, unknown>;
+        (pipeline as any)[command.command as string](
+          ...(command.args as unknown[]),
+        );
+      });
       return pipeline.exec();
     });
   }
@@ -775,8 +830,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const pingTime = Date.now() - startTime;
 
       return [pingResult === "PONG", pingTime];
-    } catch (error) {
-      this.logger.error("Redis health check failed:", error);
+    } catch (_error) {
+      this.logger.error("Redis health check failed:", _error);
       return [false, 0];
     }
   }
@@ -822,9 +877,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         `Cleared ${deletedCount} keys matching pattern: ${pattern}`,
       );
       return deletedCount;
-    } catch (error) {
-      this.logger.error(`Error clearing cache with pattern ${pattern}:`, error);
-      throw error;
+    } catch (_error) {
+      this.logger.error(
+        `Error clearing cache with pattern ${pattern}:`,
+        _error,
+      );
+      throw _error;
     }
   }
 
@@ -925,10 +983,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           await this.del(revalidationKey);
 
           return freshData;
-        } catch (error) {
-          // Clear revalidation flag on error
+        } catch (_error) {
+          // Clear revalidation flag on _error
           await this.del(revalidationKey);
-          throw error;
+          throw _error;
         }
       }
 
@@ -974,8 +1032,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       return compress
         ? await this.getDecompressed<T>(cachedData as string)
         : JSON.parse(cachedData as string);
-    } catch (error) {
-      this.logger.error(`Cache error for ${key}:`, error);
+    } catch (_error) {
+      this.logger.error(`Cache _error for ${key}:`, _error);
 
       // If anything fails, fall back to direct fetch
       try {
@@ -998,8 +1056,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       await this.del(key);
       this.logger.debug(`Invalidated cache for key: ${key}`);
       return true;
-    } catch (error) {
-      this.logger.error(`Failed to invalidate cache for key: ${key}`, error);
+    } catch (_error) {
+      this.logger.error(`Failed to invalidate cache for key: ${key}`, _error);
       return false;
     }
   }
@@ -1035,10 +1093,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         `Invalidated ${invalidatedCount} keys matching pattern: ${pattern}`,
       );
       return invalidatedCount;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to invalidate cache by pattern: ${pattern}`,
-        error,
+        _error,
       );
       return 0;
     }
@@ -1081,8 +1139,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         `Invalidated ${invalidatedCount} keys with tag: ${tag}`,
       );
       return invalidatedCount;
-    } catch (error) {
-      this.logger.error(`Failed to invalidate cache by tag: ${tag}`, error);
+    } catch (_error) {
+      this.logger.error(`Failed to invalidate cache by tag: ${tag}`, _error);
       return 0;
     }
   }
@@ -1111,10 +1169,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           }
         }
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to add key ${key} to tags: ${tags.join(", ")}`,
-        error,
+        _error,
       );
     }
   }
@@ -1163,8 +1221,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logger.debug(`Background revalidation completed for: ${key}`);
-    } catch (error) {
-      this.logger.error(`Background revalidation failed for ${key}:`, error);
+    } catch (_error) {
+      this.logger.error(`Background revalidation failed for ${key}:`, _error);
 
       // On error, keep the current cache valid longer to prevent stampedes
       await this.client.expire(key, cacheTtl);
@@ -1216,8 +1274,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       }
 
       return false;
-    } catch (error) {
-      this.logger.error("Error checking Redis load:", error);
+    } catch (_error) {
+      this.logger.error("Error checking Redis load:", _error);
       return false;
     }
   }
@@ -1246,8 +1304,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       );
 
       await this.set(key, compressed, ttl);
-    } catch (error) {
-      this.logger.error(`Error compressing data for key ${key}:`, error);
+    } catch (_error) {
+      this.logger.error(`Error compressing data for key ${key}:`, _error);
       // Fall back to uncompressed storage
       await this.set(key, stringValue, ttl);
     }
@@ -1268,8 +1326,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const jsonString = decompressed.substring("compressed:".length);
 
       return JSON.parse(jsonString);
-    } catch (error) {
-      this.logger.error(`Error decompressing data:`, error);
+    } catch (_error) {
+      this.logger.error(`Error decompressing data:`, _error);
       // Attempt to parse as if it wasn't compressed
       return JSON.parse(data);
     }
@@ -1305,10 +1363,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
               `Skipping cache storage for key ${key}: data could not be serialized properly`,
             );
           }
-        } catch (error) {
+        } catch (_error) {
           this.logger.warn(
             `Failed to serialize data for caching key ${key}:`,
-            error,
+            _error,
           );
         }
       }
@@ -1321,8 +1379,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       await this.incrementCacheStats("hits");
       try {
         return JSON.parse(cachedData);
-      } catch (error) {
-        this.logger.warn(`Failed to parse cached data for key ${key}:`, error);
+      } catch (_error) {
+        this.logger.warn(`Failed to parse cached data for key ${key}:`, _error);
         // Remove corrupted cache entry
         await this.del(key);
         // Fall through to fetch fresh data
@@ -1344,10 +1402,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             `Skipping cache storage for key ${key}: data could not be serialized properly`,
           );
         }
-      } catch (error) {
+      } catch (_error) {
         this.logger.warn(
           `Failed to serialize data for caching key ${key}:`,
-          error,
+          _error,
         );
       }
     }

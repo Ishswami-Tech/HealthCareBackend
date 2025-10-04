@@ -19,10 +19,11 @@ export class QrService {
       // Generate QR code as data URL
       const qrCodeDataUrl = await QRCode.toDataURL(token);
       return qrCodeDataUrl;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Failed to generate QR code: ${message}`, stack);
+    } catch (_error) {
+      const _message =
+        _error instanceof Error ? _error.message : "Unknown _error";
+      const _stack = _error instanceof Error ? _error.stack : undefined;
+      this.logger.error(`Failed to generate QR code: ${_message}`, _stack);
       throw new Error("Failed to generate QR code");
     }
   }
@@ -43,10 +44,11 @@ export class QrService {
       // Extract appointment ID
       const appointmentId = parts[1];
       return appointmentId;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Failed to verify QR code: ${message}`, stack);
+    } catch (_error) {
+      const _message =
+        _error instanceof Error ? _error.message : "Unknown _error";
+      const _stack = _error instanceof Error ? _error.stack : undefined;
+      this.logger.error(`Failed to verify QR code: ${_message}`, _stack);
       throw new Error("Failed to verify QR code");
     }
   }
@@ -59,9 +61,10 @@ export class QrService {
   async generateQR(data: string): Promise<string> {
     try {
       return await QRCode.toDataURL(data);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      throw new Error(`Failed to generate QR code: ${message}`);
+    } catch (_error) {
+      const _message =
+        _error instanceof Error ? _error.message : "Unknown _error";
+      throw new Error(`Failed to generate QR code: ${_message}`);
     }
   }
 
@@ -70,12 +73,13 @@ export class QrService {
    * @param qrData - Data from scanned QR code
    * @returns Decoded data object
    */
-  verifyQR(qrData: string): any {
+  verifyQR(qrData: string): unknown {
     try {
       return JSON.parse(qrData);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      throw new Error(`Invalid QR code data: ${message}`);
+    } catch (_error) {
+      const _message =
+        _error instanceof Error ? _error.message : "Unknown _error";
+      throw new Error(`Invalid QR code data: ${_message}`);
     }
   }
 }

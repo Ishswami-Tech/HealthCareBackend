@@ -47,7 +47,7 @@ interface FirebaseMessageData {
   timestamp: number;
   type: "text" | "image" | "file" | "audio" | "video";
   messageHash?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   conversationId?: string;
 }
 
@@ -139,7 +139,7 @@ export class ChatBackupService implements OnModuleInit {
       };
 
       // Store message in multiple paths for different query patterns
-      const updates: Record<string, any> = {};
+      const updates: Record<string, unknown> = {};
 
       // Main message storage
       updates[`messages/${messageData.id}`] = messageToStore;
@@ -225,7 +225,7 @@ export class ChatBackupService implements OnModuleInit {
         string,
         any
       > | null;
-      const conversationMessages: Record<string, any> =
+      const conversationMessages: Record<string, unknown> =
         rawConversationMessages || {};
 
       // Get full message details
@@ -301,8 +301,8 @@ export class ChatBackupService implements OnModuleInit {
       }
 
       const snapshot = await query.limitToLast(1000).once("value");
-      const rawUserMessages = snapshot.val() as Record<string, any> | null;
-      const userMessages: Record<string, any> = rawUserMessages || {};
+      const rawUserMessages = snapshot.val() as Record<string, unknown> | null;
+      const userMessages: Record<string, unknown> = rawUserMessages || {};
 
       const messages: Record<string, ChatMessage> = {};
       const messageIds = Object.keys(userMessages);
@@ -384,7 +384,7 @@ export class ChatBackupService implements OnModuleInit {
       const conversationId = messageData.conversationId;
 
       // Remove message from all storage paths
-      const updates: Record<string, any> = {};
+      const updates: Record<string, unknown> = {};
       updates[`messages/${messageId}`] = null;
       updates[`conversations/${conversationId}/${messageId}`] = null;
       updates[`user_messages/${messageData.senderId}/${messageId}`] = null;
@@ -510,9 +510,9 @@ export class ChatBackupService implements OnModuleInit {
         string,
         any
       > | null;
-      const oldMessages: Record<string, any> | null = rawOldMessages;
+      const oldMessages: Record<string, unknown> | null = rawOldMessages;
       if (oldMessages) {
-        const deleteUpdates: Record<string, any> = {};
+        const deleteUpdates: Record<string, unknown> = {};
 
         Object.keys(oldMessages).forEach((messageId) => {
           deleteUpdates[`messages/${messageId}`] = null;

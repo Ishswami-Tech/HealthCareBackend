@@ -43,6 +43,7 @@ import {
   DataResponseDto,
   SuccessResponseDto,
 } from "../../libs/dtos/common-response.dto";
+import { AuthTokens } from "../../libs/core/types";
 import {
   Cache,
   InvalidateCache,
@@ -186,12 +187,12 @@ export class AuthController {
     try {
       const result = await this.authService.register(registerDto);
       return new DataResponseDto(result, "User registered successfully");
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Registration failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -304,12 +305,12 @@ export class AuthController {
     try {
       const result = await this.authService.login(loginDto);
       return new DataResponseDto(result, "Login successful");
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Login failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -362,7 +363,7 @@ export class AuthController {
   @ApiResponse({
     status: 200,
     description: "Token refreshed successfully",
-    type: DataResponseDto<any>,
+    type: DataResponseDto<AuthTokens>,
     schema: {
       example: {
         status: "success",
@@ -391,16 +392,16 @@ export class AuthController {
   })
   async refreshToken(
     @Body() refreshTokenDto: RefreshTokenDto,
-  ): Promise<DataResponseDto<any>> {
+  ): Promise<DataResponseDto<AuthTokens>> {
     try {
       const tokens = await this.authService.refreshToken(refreshTokenDto);
       return new DataResponseDto(tokens, "Token refreshed successfully");
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Token refresh failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -486,7 +487,8 @@ export class AuthController {
   })
   async logout(
     @Body() logoutDto: LogoutDto,
-    @Request() req: any,
+    @Request()
+    req: Express.Request & { user?: { id: string; sessionId?: string } },
   ): Promise<SuccessResponseDto> {
     try {
       const sessionId = logoutDto.sessionId || req.user?.sessionId;
@@ -496,12 +498,12 @@ export class AuthController {
 
       const result = await this.authService.logout(sessionId);
       return new SuccessResponseDto(result.message);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Logout failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -578,12 +580,12 @@ export class AuthController {
     try {
       const result = await this.authService.requestPasswordReset(requestDto);
       return new SuccessResponseDto(result.message);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Password reset request failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -666,12 +668,12 @@ export class AuthController {
     try {
       const result = await this.authService.resetPassword(resetDto);
       return new SuccessResponseDto(result.message);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Password reset failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -758,20 +760,20 @@ export class AuthController {
   })
   async changePassword(
     @Body() changePasswordDto: ChangePasswordDto,
-    @Request() req: any,
+    @Request() req: Express.Request & { user?: { id: string } },
   ): Promise<SuccessResponseDto> {
     try {
       const result = await this.authService.changePassword(
-        req.user.id,
+        req.user!.id,
         changePasswordDto,
       );
       return new SuccessResponseDto(result.message);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Password change failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -843,12 +845,12 @@ export class AuthController {
     try {
       const result = await this.authService.requestOtp(requestDto);
       return new SuccessResponseDto(result.message);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "OTP request failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -956,12 +958,12 @@ export class AuthController {
     try {
       const result = await this.authService.verifyOtp(verifyDto);
       return new DataResponseDto(result, "OTP verified successfully");
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "OTP verification failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -985,7 +987,13 @@ export class AuthController {
   @ApiResponse({
     status: 200,
     description: "User profile retrieved successfully",
-    type: DataResponseDto<any>,
+    type: DataResponseDto<{
+      id: string;
+      email: string;
+      role: string;
+      clinicId?: string;
+      domain: string;
+    }>,
     schema: {
       example: {
         status: "success",
@@ -1013,24 +1021,43 @@ export class AuthController {
       },
     },
   })
-  async getProfile(@Request() req: any): Promise<DataResponseDto<any>> {
+  async getProfile(
+    @Request()
+    req: Express.Request & {
+      user?: {
+        id: string;
+        email: string;
+        role: string;
+        clinicId?: string;
+        domain: string;
+      };
+    },
+  ): Promise<
+    DataResponseDto<{
+      id: string;
+      email: string;
+      role: string;
+      clinicId?: string;
+      domain: string;
+    }>
+  > {
     try {
       // Return user profile from request (already populated by AuthGuard)
       const profile = {
-        id: req.user.id,
-        email: req.user.email,
-        role: req.user.role,
-        clinicId: req.user.clinicId,
-        domain: req.user.domain,
+        id: req.user!.id,
+        email: req.user!.email,
+        role: req.user!.role,
+        clinicId: req.user!.clinicId,
+        domain: req.user!.domain,
       };
 
       return new DataResponseDto(profile, "Profile retrieved successfully");
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Profile retrieval failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1054,7 +1081,7 @@ export class AuthController {
   @ApiResponse({
     status: 200,
     description: "Sessions retrieved successfully",
-    type: DataResponseDto<any>,
+    type: DataResponseDto<never[]>,
     schema: {
       example: {
         status: "success",
@@ -1076,19 +1103,21 @@ export class AuthController {
       },
     },
   })
-  async getUserSessions(@Request() req: any): Promise<DataResponseDto<any>> {
+  async getUserSessions(
+    @Request() req: Express.Request,
+  ): Promise<DataResponseDto<never[]>> {
     try {
       // This would typically get user sessions from the session service
       // For now, return a placeholder response
-      const sessions: any[] = [];
+      const sessions: never[] = [];
 
       return new DataResponseDto(sessions, "Sessions retrieved successfully");
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Session retrieval failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 }

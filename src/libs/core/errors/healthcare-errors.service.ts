@@ -475,7 +475,7 @@ export class HealthcareErrorsService {
     code: ErrorCode,
     statusCode: HttpStatus,
     context?: string,
-    metadata?: Record<string, any>,
+    metadata?: Record<string, unknown>,
     customMessage?: string,
   ): HealthcareError {
     return new HealthcareError(

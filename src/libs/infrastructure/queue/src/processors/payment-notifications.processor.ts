@@ -1,6 +1,7 @@
 import { Processor, Process } from "@nestjs/bull";
 import { Logger } from "@nestjs/common";
 import { Job } from "bull";
+import { PaymentData } from "../types/queue-job.types";
 
 @Processor("payment-notifications")
 export class PaymentNotificationsProcessor {
@@ -9,7 +10,7 @@ export class PaymentNotificationsProcessor {
   @Process("payment-notification")
   async handlePaymentNotification(
     job: Job<{
-      payment: any;
+      payment: PaymentData;
       status: string;
       timestamp: Date;
     }>,
@@ -25,18 +26,18 @@ export class PaymentNotificationsProcessor {
       await this.processPaymentNotification(payment, status);
 
       this.logger.log(`Payment notification sent successfully: ${payment.id}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Payment notification failed for ${payment.id}: ${(error as Error).message}`,
+        `Payment notification failed for ${payment.id}: ${(_error as Error).message}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
   @Process("webhook-notification")
   async handleWebhookNotification(
     job: Job<{
-      payment: any;
+      payment: PaymentData;
       status: string;
       webhookUrl: string;
       attempts: number;
@@ -52,15 +53,15 @@ export class PaymentNotificationsProcessor {
       await this.sendWebhookNotification(payment, status, webhookUrl);
 
       this.logger.log(`Webhook notification sent successfully: ${payment.id}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Webhook notification failed for ${payment.id}: ${(error as Error).message}`,
+        `Webhook notification failed for ${payment.id}: ${(_error as Error).message}`,
       );
 
       if (attempts < 3) {
         const delay = Math.pow(2, attempts) * 1000;
         await new Promise((resolve) => setTimeout(resolve, delay));
-        throw error;
+        throw _error;
       } else {
         this.logger.error(
           `Webhook notification failed permanently for ${payment.id} after ${attempts + 1} attempts`,
@@ -75,7 +76,7 @@ export class PaymentNotificationsProcessor {
       alertType: "security" | "performance" | "system" | "compliance";
       severity: "low" | "medium" | "high" | "critical";
       message: string;
-      details: any;
+      details: unknown;
     }>,
   ) {
     const { alertType, severity, message, details } = job.data;
@@ -87,16 +88,16 @@ export class PaymentNotificationsProcessor {
       await this.processAlert(alertType, severity, message, details);
 
       this.logger.log(`Alert notification sent successfully: ${alertType}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Alert notification failed: ${(error as Error).message}`,
+        `Alert notification failed: ${(_error as Error).message}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
   private async processPaymentNotification(
-    payment: any,
+    payment: PaymentData,
     status: string,
   ): Promise<void> {
     // Integrate with existing communication service
@@ -106,7 +107,7 @@ export class PaymentNotificationsProcessor {
   }
 
   private async sendWebhookNotification(
-    payment: any,
+    payment: PaymentData,
     status: string,
     webhookUrl: string,
   ): Promise<void> {
@@ -118,8 +119,7 @@ export class PaymentNotificationsProcessor {
         amount: payment.amount,
         currency: payment.currency,
         gateway: payment.gateway,
-        method: payment.method,
-        orderId: payment.orderId,
+        transactionId: payment.transactionId,
         userId: payment.userId,
         updatedAt: new Date(),
       },
@@ -146,7 +146,7 @@ export class PaymentNotificationsProcessor {
     alertType: string,
     severity: string,
     message: string,
-    details: any,
+    details: unknown,
   ): Promise<void> {
     // Integrate with existing alerting infrastructure
     this.logger.debug(

@@ -15,7 +15,7 @@ export interface AppointmentSocketMessage extends SocketEventData {
   appointmentId: string;
   clinicId: string;
   userId: string;
-  data: any;
+  data: unknown;
   timestamp: string;
 }
 
@@ -93,20 +93,20 @@ export class AppointmentCommunicationsService {
           responseTime: Date.now() - startTime,
         },
       );
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send queue update: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send queue update: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentCommunicationsService",
         {
           clinicId,
           doctorId,
           queueData,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -164,21 +164,21 @@ export class AppointmentCommunicationsService {
           responseTime: Date.now() - startTime,
         },
       );
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send appointment status update: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send appointment status update: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentCommunicationsService",
         {
           appointmentId,
           clinicId,
           userId,
           statusData,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -190,7 +190,7 @@ export class AppointmentCommunicationsService {
     clinicId: string,
     patientId: string,
     doctorId: string,
-    callData: any,
+    callData: unknown,
   ): Promise<void> {
     const startTime = Date.now();
 
@@ -201,7 +201,7 @@ export class AppointmentCommunicationsService {
         clinicId,
         userId: patientId,
         data: {
-          ...callData,
+          ...(callData as Record<string, unknown> || {}),
           doctorId,
           patientId,
         },
@@ -244,11 +244,11 @@ export class AppointmentCommunicationsService {
           responseTime: Date.now() - startTime,
         },
       );
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send video call notification: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send video call notification: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentCommunicationsService",
         {
           appointmentId,
@@ -256,10 +256,10 @@ export class AppointmentCommunicationsService {
           patientId,
           doctorId,
           callData,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -312,27 +312,27 @@ export class AppointmentCommunicationsService {
           responseTime: Date.now() - startTime,
         },
       );
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send notification: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send notification: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentCommunicationsService",
         {
           userId,
           clinicId,
           notificationData,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   /**
    * Get active connections for a clinic
    */
-  async getActiveConnections(clinicId: string): Promise<any> {
+  async getActiveConnections(clinicId: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `connections:clinic:${clinicId}`;
 
@@ -372,18 +372,18 @@ export class AppointmentCommunicationsService {
       );
 
       return connections;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get active connections: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get active connections: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentCommunicationsService",
         {
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -431,20 +431,20 @@ export class AppointmentCommunicationsService {
           responseTime: Date.now() - startTime,
         },
       );
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to join appointment room: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to join appointment room: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentCommunicationsService",
         {
           userId,
           appointmentId,
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -484,19 +484,19 @@ export class AppointmentCommunicationsService {
         "AppointmentCommunicationsService",
         { userId, appointmentId, roomId, responseTime: Date.now() - startTime },
       );
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to leave appointment room: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to leave appointment room: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentCommunicationsService",
         {
           userId,
           appointmentId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 }

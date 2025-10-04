@@ -24,8 +24,8 @@ import {
   RequestOtpDto,
   VerifyOtpRequestDto,
 } from "../../libs/dtos/auth.dto";
-import { CreateUserDto, Role } from "../../libs/dtos/user.dto";
-import { AuthTokens, TokenPayload } from "../../libs/core/types";
+import { CreateUserDto, Role, UserResponseDto } from "../../libs/dtos/user.dto";
+import { AuthTokens, TokenPayload, UserProfile } from "../../libs/core/types";
 import { EmailTemplate } from "../../libs/core/types/email.types";
 import * as bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
@@ -50,7 +50,10 @@ export class AuthService {
   /**
    * Get user profile with enterprise healthcare caching
    */
-  async getUserProfile(userId: string, clinicId?: string): Promise<any> {
+  async getUserProfile(
+    userId: string,
+    clinicId?: string,
+  ): Promise<UserProfile> {
     const cacheKey = `user:${userId}:profile:${clinicId || "default"}`;
 
     return this.cacheService.cache(
@@ -95,7 +98,10 @@ export class AuthService {
   /**
    * Get user permissions with enterprise RBAC caching
    */
-  async getUserPermissions(userId: string, clinicId: string): Promise<any> {
+  async getUserPermissions(
+    userId: string,
+    clinicId: string,
+  ): Promise<string[]> {
     const cacheKey = `user:${userId}:clinic:${clinicId}:permissions`;
 
     return this.cacheService.cache(
@@ -140,10 +146,10 @@ export class AuthService {
       this.logger.debug(
         `Invalidated cache for user: ${userId}, clinic: ${clinicId || "all"}`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to invalidate user cache for ${userId}:`,
-        error,
+        _error,
       );
     }
   }
@@ -166,7 +172,11 @@ export class AuthService {
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
 
       // Create user
-      const userData: any = {
+      const userData: Partial<CreateUserDto> & {
+        userid: string;
+        name: string;
+        age: number;
+      } = {
         userid: uuidv4(), // Generate unique userid
         email: registerDto.email,
         password: hashedPassword,
@@ -175,14 +185,13 @@ export class AuthService {
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
         phone: registerDto.phone,
-        isVerified: false,
       };
 
       // Add optional fields only if they exist
       if (registerDto.role) userData.role = registerDto.role as Role;
-      if (registerDto.gender) userData.gender = registerDto.gender;
+      if (registerDto.gender) userData.gender = registerDto.gender as any;
       if (registerDto.dateOfBirth)
-        userData.dateOfBirth = new Date(registerDto.dateOfBirth);
+        userData.dateOfBirth = new Date(registerDto.dateOfBirth).toISOString();
       if (registerDto.address) userData.address = registerDto.address;
       if (registerDto.clinicId) userData.primaryClinicId = registerDto.clinicId;
       if (registerDto.googleId) userData.googleId = registerDto.googleId;
@@ -233,12 +242,12 @@ export class AuthService {
           isVerified: user.isVerified,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Registration failed for ${registerDto.email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -322,12 +331,12 @@ export class AuthService {
           clinicId: user.primaryClinicId,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Login failed for ${loginDto.email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -343,10 +352,10 @@ export class AuthService {
         refreshTokenDto.userAgent,
         refreshTokenDto.ipAddress,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Enhanced token refresh failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       throw new UnauthorizedException("Invalid refresh token");
     }
@@ -367,12 +376,12 @@ export class AuthService {
         success: true,
         message: "Logout successful",
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Logout failed for session ${sessionId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -423,12 +432,12 @@ export class AuthService {
         success: true,
         message: "If the email exists, a password reset link has been sent",
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Password reset request failed for ${requestDto.email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -484,12 +493,12 @@ export class AuthService {
         success: true,
         message: "Password reset successful",
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Password reset failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -539,12 +548,12 @@ export class AuthService {
         success: true,
         message: "Password changed successfully",
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Password change failed for user ${userId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -591,12 +600,12 @@ export class AuthService {
         success: true,
         message: "OTP sent successfully",
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `OTP request failed for ${requestDto.identifier}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -656,12 +665,12 @@ export class AuthService {
           clinicId: user.primaryClinicId,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `OTP verification failed for ${verifyDto.email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -669,7 +678,14 @@ export class AuthService {
    * Generate JWT tokens with enhanced security features
    */
   private async generateTokens(
-    user: any,
+    user:
+      | UserProfile
+      | {
+          id: string;
+          email: string;
+          role?: string;
+          primaryClinicId?: string | null;
+        },
     sessionId: string,
     deviceFingerprint?: string,
     userAgent?: string,
@@ -679,7 +695,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
-      clinicId: user.primaryClinicId,
+      clinicId: (user as any).primaryClinicId,
       domain: "healthcare",
       sessionId: sessionId,
     };

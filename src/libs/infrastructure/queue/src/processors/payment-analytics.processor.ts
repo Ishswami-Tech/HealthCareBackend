@@ -1,6 +1,12 @@
 import { Processor, Process } from "@nestjs/bull";
 import { Logger } from "@nestjs/common";
 import { Job } from "bull";
+import {
+  PaymentData,
+  PaymentDto,
+  PerformanceMetrics,
+  FraudData,
+} from "../types/queue-job.types";
 
 @Processor("payment-analytics")
 export class PaymentAnalyticsProcessor {
@@ -9,8 +15,8 @@ export class PaymentAnalyticsProcessor {
   @Process("payment-analytics")
   async handlePaymentAnalytics(
     job: Job<{
-      payment: any;
-      paymentDto: any;
+      payment: PaymentData;
+      paymentDto: PaymentDto;
       timestamp: Date;
     }>,
   ) {
@@ -25,23 +31,23 @@ export class PaymentAnalyticsProcessor {
       this.logger.log(
         `Analytics processing completed for payment: ${payment.id}`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Analytics processing failed for payment ${payment.id}: ${(error as Error).message}`,
+        `Analytics processing failed for payment ${payment.id}: ${(_error as Error).message}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
   @Process("error-analysis")
   async handleErrorAnalysis(
     job: Job<{
-      error: any;
-      paymentDto: any;
+      _error: Error;
+      paymentDto: PaymentDto;
       timestamp: Date;
     }>,
   ) {
-    const { error, paymentDto, timestamp } = job.data;
+    const { _error, paymentDto, timestamp } = job.data;
 
     try {
       this.logger.log(
@@ -49,7 +55,7 @@ export class PaymentAnalyticsProcessor {
       );
 
       // Error analysis logic
-      await this.processErrorAnalysis(error, paymentDto, timestamp);
+      await this.processErrorAnalysis(_error, paymentDto, timestamp);
 
       this.logger.log(
         `Error analysis completed for user: ${paymentDto.userId}`,
@@ -65,7 +71,7 @@ export class PaymentAnalyticsProcessor {
   @Process("performance-metrics")
   async handlePerformanceMetrics(
     job: Job<{
-      metrics: any;
+      metrics: PerformanceMetrics;
       timestamp: Date;
       domain: string;
     }>,
@@ -79,9 +85,9 @@ export class PaymentAnalyticsProcessor {
       await this.processPerformanceMetrics(metrics, timestamp, domain);
 
       this.logger.log(`Performance metrics processed for domain: ${domain}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Performance metrics processing failed: ${(error as Error).message}`,
+        `Performance metrics processing failed: ${(_error as Error).message}`,
       );
     }
   }
@@ -89,7 +95,7 @@ export class PaymentAnalyticsProcessor {
   @Process("fraud-analytics")
   async handleFraudAnalytics(
     job: Job<{
-      fraudData: any;
+      fraudData: FraudData;
       timestamp: Date;
       riskScore: number;
     }>,
@@ -105,16 +111,16 @@ export class PaymentAnalyticsProcessor {
       await this.processFraudAnalytics(fraudData, timestamp, riskScore);
 
       this.logger.log(`Fraud analytics processed successfully`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Fraud analytics processing failed: ${(error as Error).message}`,
+        `Fraud analytics processing failed: ${(_error as Error).message}`,
       );
     }
   }
 
   private async processPaymentAnalytics(
-    payment: any,
-    paymentDto: any,
+    payment: PaymentData,
+    paymentDto: PaymentDto,
     timestamp: Date,
   ): Promise<void> {
     // Record payment event for analytics
@@ -124,8 +130,6 @@ export class PaymentAnalyticsProcessor {
       amount: payment.amount,
       currency: payment.currency,
       gateway: payment.gateway,
-      method: payment.method,
-      domain: payment.domain,
       status: payment.status,
       timestamp,
       processingTime: payment.metadata?.processingTime,
@@ -140,19 +144,17 @@ export class PaymentAnalyticsProcessor {
   }
 
   private async processErrorAnalysis(
-    error: any,
-    paymentDto: any,
+    _error: Error,
+    paymentDto: PaymentDto,
     timestamp: Date,
   ): Promise<void> {
     // Analyze error patterns and trends
     const errorData = {
-      errorType: error.name || "UnknownError",
-      errorMessage: (error as Error).message,
+      errorType: _error.name || "UnknownError",
+      errorMessage: _error.message,
       userId: paymentDto.userId,
       amount: paymentDto.amount,
       gateway: paymentDto.gateway,
-      method: paymentDto.method,
-      domain: paymentDto.domain,
       timestamp,
     };
 
@@ -161,7 +163,7 @@ export class PaymentAnalyticsProcessor {
   }
 
   private async processPerformanceMetrics(
-    metrics: any,
+    metrics: PerformanceMetrics,
     timestamp: Date,
     domain: string,
   ): Promise<void> {
@@ -184,7 +186,7 @@ export class PaymentAnalyticsProcessor {
   }
 
   private async processFraudAnalytics(
-    fraudData: any,
+    fraudData: FraudData,
     timestamp: Date,
     riskScore: number,
   ): Promise<void> {

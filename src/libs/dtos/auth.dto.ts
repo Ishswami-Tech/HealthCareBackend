@@ -8,8 +8,6 @@ import {
   IsUUID,
   IsEnum,
   IsObject,
-  ValidateNested,
-  IsArray,
   IsDateString,
 } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
@@ -505,7 +503,7 @@ export class AuthResponse {
     example: { id: "user-123", email: "user@example.com" },
   })
   @IsObject({ message: "User must be an object" })
-  user!: any;
+  user!: unknown;
 }
 
 /**

@@ -40,7 +40,7 @@ export class AppointmentQueueService {
     doctorId: string,
     date: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:doctor:${doctorId}:${date}:${domain}`;
 
@@ -109,27 +109,27 @@ export class AppointmentQueueService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get doctor queue: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get doctor queue: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           doctorId,
           date,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async getPatientQueuePosition(
     appointmentId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:position:${appointmentId}:${domain}`;
 
@@ -199,26 +199,26 @@ export class AppointmentQueueService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get patient queue position: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get patient queue position: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           appointmentId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async confirmAppointment(
     appointmentId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -258,19 +258,19 @@ export class AppointmentQueueService {
       }
 
       throw new Error("Appointment not found in queue");
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to confirm appointment: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to confirm appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           appointmentId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -278,7 +278,7 @@ export class AppointmentQueueService {
     appointmentId: string,
     doctorId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -327,28 +327,28 @@ export class AppointmentQueueService {
       );
 
       return { success: true, message: "Consultation started" };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to start consultation: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to start consultation: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           appointmentId,
           doctorId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async reorderQueue(reorderData: any, domain: string): Promise<any> {
+  async reorderQueue(reorderData: unknown, domain: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
-      const { doctorId, date, newOrder } = reorderData;
+      const { doctorId, date, newOrder } = reorderData as any;
       const queueKey = `queue:${domain}:${doctorId}:${date}`;
 
       // Get current queue
@@ -388,26 +388,26 @@ export class AppointmentQueueService {
       );
 
       return { success: true, message: "Queue reordered successfully" };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to reorder queue: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to reorder queue: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           reorderData,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async getLocationQueueStats(
     locationId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:stats:location:${locationId}:${domain}`;
 
@@ -484,19 +484,19 @@ export class AppointmentQueueService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get location queue stats: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get location queue stats: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           locationId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -504,7 +504,7 @@ export class AppointmentQueueService {
     locationId: string,
     domain: string,
     period: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:metrics:${locationId}:${domain}:${period}`;
 
@@ -516,7 +516,7 @@ export class AppointmentQueueService {
       }
 
       // Calculate metrics based on period
-      const stats = await this.getLocationQueueStats(locationId, domain);
+      const stats = await this.getLocationQueueStats(locationId, domain) as any;
 
       // Add period-specific calculations
       const metrics = {
@@ -546,20 +546,20 @@ export class AppointmentQueueService {
       );
 
       return metrics;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get queue metrics: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get queue metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           locationId,
           domain,
           period,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -567,7 +567,7 @@ export class AppointmentQueueService {
     appointmentId: string,
     priority: number,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -619,20 +619,20 @@ export class AppointmentQueueService {
       }
 
       throw new Error("Appointment not found in queue");
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to handle emergency appointment: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to handle emergency appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentQueueService",
         {
           appointmentId,
           priority,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -642,10 +642,10 @@ export class AppointmentQueueService {
     return position * baseWaitTime;
   }
 
-  private calculateAverageWaitTime(queue: any[]): number {
+  private calculateAverageWaitTime(queue: unknown[]): number {
     if (queue.length === 0) return 0;
     const totalWaitTime = queue.reduce(
-      (sum, entry) => sum + (entry.estimatedWaitTime || 0),
+      (sum: number, entry: any) => sum + (entry.estimatedWaitTime || 0),
       0,
     );
     return totalWaitTime / queue.length;

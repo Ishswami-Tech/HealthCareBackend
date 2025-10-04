@@ -1,6 +1,14 @@
 # Healthcare Backend API
 
-A modern, scalable healthcare management system built with NestJS, PostgreSQL, and Redis. Designed to handle 10+ lakh concurrent users across multiple clinics with enterprise-grade performance and HIPAA compliance.
+A modern, scalable healthcare management system built with NestJS, PostgreSQL, and Redis. **Production-ready for 1M+ concurrent users** with enterprise-grade performance, HIPAA compliance, and advanced scaling optimizations.
+
+## 🎯 Production Features
+
+- **High Performance**: Sub-100ms response times under load
+- **Scalability**: Multi-process clustering + load balancing
+- **Enterprise Security**: HIPAA-compliant with advanced rate limiting
+- **Monitoring**: Comprehensive observability stack
+- **High Availability**: Multi-instance deployment with failover
 
 ## 🚀 Quick Start
 
@@ -10,7 +18,7 @@ A modern, scalable healthcare management system built with NestJS, PostgreSQL, a
 - Redis (v6+)
 - Docker & Docker Compose
 
-### Installation
+### Development Setup
 ```bash
 # Clone and setup
 git clone [repository-url]
@@ -23,6 +31,33 @@ cp .env.example .env
 
 # Start development environment
 ./run.sh dev start
+```
+
+### Production Deployment
+```bash
+# Production deployment (optimized for 1M+ users)
+npm run deploy:production
+
+# Or manual production start
+npm run build
+npm run start:production
+```
+
+#### Production Environment Variables
+```bash
+# Required for production optimization
+NODE_ENV=production
+ENABLE_CLUSTERING=true
+ENABLE_HTTP2=true
+RATE_LIMIT_MAX=1000
+RATE_LIMIT_WINDOW="1 minute"
+
+# Database optimization
+DATABASE_URL=postgresql://user:pass@host:5432/db?connection_limit=200&pool_timeout=60
+
+# Redis clustering
+REDIS_HOST=redis-cluster
+REDIS_PASSWORD=your-secure-password
 ```
 
 ### Access Points

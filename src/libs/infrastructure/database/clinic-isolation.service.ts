@@ -10,7 +10,7 @@ export interface ClinicContext {
   locations: string[];
   isActive: boolean;
   features: string[];
-  settings: Record<string, any>;
+  settings: Record<string, unknown>;
 }
 
 export interface ClinicIsolationResult<T> {
@@ -88,7 +88,9 @@ export class ClinicIsolationService implements OnModuleInit {
           clinicName: clinic.name,
           subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
-          locations: clinic.locations.map((loc) => loc.id),
+          locations: clinic.locations.map(
+            (loc: unknown) => (loc as Record<string, unknown>).id as string,
+          ),
           isActive: clinic.isActive,
           features: this.getClinicFeatures(clinic),
           settings: this.getClinicSettings(clinic),
@@ -150,7 +152,9 @@ export class ClinicIsolationService implements OnModuleInit {
           clinicName: clinic.name,
           subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
-          locations: clinic.locations.map((loc) => loc.id),
+          locations: clinic.locations.map(
+            (loc: unknown) => (loc as Record<string, unknown>).id as string,
+          ),
           isActive: clinic.isActive,
           features: this.getClinicFeatures(clinic),
           settings: this.getClinicSettings(clinic),
@@ -348,7 +352,14 @@ export class ClinicIsolationService implements OnModuleInit {
         }
 
         clinicId = location.clinic.id;
-        this.locationClinicCache.set(locationId, clinicId);
+        this.locationClinicCache.set(locationId, clinicId!);
+      }
+
+      if (!clinicId) {
+        return {
+          success: false,
+          error: "Clinic ID not found",
+        };
       }
 
       return this.getClinicContext(clinicId);
@@ -433,7 +444,7 @@ export class ClinicIsolationService implements OnModuleInit {
     }
   }
 
-  private getClinicFeatures(clinic: any): string[] {
+  private getClinicFeatures(clinic: unknown): string[] {
     // Extract clinic-specific features based on clinic configuration
     const features = [
       "appointment_scheduling",
@@ -443,23 +454,25 @@ export class ClinicIsolationService implements OnModuleInit {
     ];
 
     // Add conditional features based on clinic settings
-    if (clinic.telemedicineEnabled) features.push("telemedicine");
-    if (clinic.labIntegrationEnabled) features.push("lab_integration");
-    if (clinic.pharmacyIntegrationEnabled)
+    const clinicData = clinic as Record<string, unknown>;
+    if (clinicData.telemedicineEnabled) features.push("telemedicine");
+    if (clinicData.labIntegrationEnabled) features.push("lab_integration");
+    if (clinicData.pharmacyIntegrationEnabled)
       features.push("pharmacy_integration");
 
     return features;
   }
 
-  private getClinicSettings(clinic: any): Record<string, any> {
+  private getClinicSettings(clinic: unknown): Record<string, unknown> {
+    const clinicData = clinic as Record<string, unknown>;
     return {
-      timezone: clinic.timezone || "UTC",
-      workingHours: clinic.workingHours || "09:00-17:00",
-      appointmentDuration: clinic.appointmentDuration || 30,
-      maxAdvanceBooking: clinic.maxAdvanceBooking || 30,
-      emergencyContact: clinic.emergencyContact,
+      timezone: clinicData.timezone || "UTC",
+      workingHours: clinicData.workingHours || "09:00-17:00",
+      appointmentDuration: clinicData.appointmentDuration || 30,
+      maxAdvanceBooking: clinicData.maxAdvanceBooking || 30,
+      emergencyContact: clinicData.emergencyContact,
       hipaaCompliance: true,
-      dataRetention: clinic.dataRetention || "7_years",
+      dataRetention: clinicData.dataRetention || "7_years",
     };
   }
 
@@ -591,7 +604,11 @@ export class ClinicIsolationService implements OnModuleInit {
           select: { id: true },
         });
 
-        const validUserIds = new Set(users.map((u) => u.id));
+        const validUserIds = new Set(
+          users.map(
+            (u: unknown) => (u as Record<string, unknown>).id as string,
+          ),
+        );
 
         for (const userId of uncachedUserIds) {
           const hasAccess = validUserIds.has(userId);
@@ -614,7 +631,7 @@ export class ClinicIsolationService implements OnModuleInit {
    */
   async getHealthStatus(): Promise<{
     status: "healthy" | "warning" | "critical";
-    cacheMetrics: any;
+    cacheMetrics: unknown;
     lastCacheRefresh: Date;
     totalClinics: number;
     totalUsers: number;

@@ -446,28 +446,29 @@ export const getEnvironmentConfig = () => {
 /**
  * Validation functions
  */
-export const validateHealthcareConfig = (config: any) => {
+export const validateHealthcareConfig = (config: unknown) => {
   const errors: string[] = [];
+  const cfg = config as Record<string, any>;
 
   // Validate required environment variables
-  if (!config.database.url || config.database.url.includes("localhost")) {
+  if (!cfg.database?.url || cfg.database?.url.includes("localhost")) {
     errors.push("DATABASE_URL must be set to a valid production database URL");
   }
 
   // Validate security settings
   if (
-    config.security.authentication.jwtSecret === "your-healthcare-jwt-secret"
+    cfg.security?.authentication?.jwtSecret === "your-healthcare-jwt-secret"
   ) {
     errors.push("JWT_SECRET must be changed from default value");
   }
 
   // Validate HIPAA compliance
-  if (!config.hipaa.enabled) {
+  if (!cfg.hipaa?.enabled) {
     errors.push("HIPAA compliance must be enabled for healthcare applications");
   }
 
   // Validate performance settings for scale
-  if (config.database.connectionPool.max < 50) {
+  if (cfg.database?.connectionPool?.max < 50) {
     errors.push("DB_POOL_MAX should be at least 50 for handling 10 lakh users");
   }
 

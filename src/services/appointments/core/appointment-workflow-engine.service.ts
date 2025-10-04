@@ -4,13 +4,13 @@ export interface WorkflowContext {
   appointmentId: string;
   userId: string;
   clinicId?: string;
-  data: any;
+  data: unknown;
 }
 
 export interface WorkflowResult {
   success: boolean;
   message?: string;
-  data?: any;
+  data?: unknown;
 }
 
 @Injectable()
@@ -32,11 +32,11 @@ export class AppointmentWorkflowEngine {
         message: "Workflow step executed successfully",
         data: { processedAt: new Date() },
       };
-    } catch (error) {
-      this.logger.error(`Workflow execution failed:`, (error as Error).stack);
+    } catch (_error) {
+      this.logger.error(`Workflow execution failed:`, (_error as Error).stack);
       return {
         success: false,
-        message: (error as Error).message,
+        message: (_error as Error).message,
       };
     }
   }
@@ -87,14 +87,14 @@ export class AppointmentWorkflowEngine {
       };
 
       return this.executeWorkflowStep(context);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to initialize workflow:`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return {
         success: false,
-        message: (error as Error).message,
+        message: (_error as Error).message,
       };
     }
   }
@@ -148,11 +148,14 @@ export class AppointmentWorkflowEngine {
       };
 
       return this.executeWorkflowStep(context);
-    } catch (error) {
-      this.logger.error(`Failed to transition status:`, (error as Error).stack);
+    } catch (_error) {
+      this.logger.error(
+        `Failed to transition status:`,
+        (_error as Error).stack,
+      );
       return {
         success: false,
-        message: (error as Error).message,
+        message: (_error as Error).message,
       };
     }
   }

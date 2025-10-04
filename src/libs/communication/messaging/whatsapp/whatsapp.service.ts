@@ -253,7 +253,7 @@ export class WhatsAppService {
    * @param to - The recipient's phone number
    * @param templateName - The template name
    * @param components - Template components
-   * @returns Promise<any> - API response
+   * @returns Promise<unknown> - API response
    */
   private async sendTemplateMessage(
     to: string,
@@ -262,7 +262,7 @@ export class WhatsAppService {
       type: string;
       parameters: Array<{ type: string; text: string }>;
     }>,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const response = await axios.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
@@ -302,13 +302,13 @@ export class WhatsAppService {
    * @param to - The recipient's phone number
    * @param documentUrl - URL of the document
    * @param caption - Caption for the document
-   * @returns Promise<any> - API response
+   * @returns Promise<unknown> - API response
    */
   private async sendDocumentMessage(
     to: string,
     documentUrl: string,
     caption: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     try {
       const response = await axios.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,

@@ -102,11 +102,11 @@ export class LoggingInterceptor implements NestInterceptor {
     );
   }
 
-  private sanitizeBody(body: any): any {
+  private sanitizeBody(body: unknown): unknown {
     if (!body) return undefined;
 
     // Create a copy to avoid modifying the original
-    const sanitized = { ...body };
+    const sanitized = { ...(body as Record<string, unknown>) };
 
     // Remove sensitive fields
     const sensitiveFields = [

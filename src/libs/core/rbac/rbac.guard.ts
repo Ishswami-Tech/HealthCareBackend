@@ -18,6 +18,35 @@ export interface RbacRequirement {
   allowSuperAdmin?: boolean;
 }
 
+interface RequestWithAuth {
+  url: string;
+  method: string;
+  user?: {
+    id?: string;
+    clinicId?: string;
+    [key: string]: unknown;
+  };
+  params?: {
+    [key: string]: unknown;
+  };
+  body?: {
+    [key: string]: unknown;
+  };
+  query?: {
+    [key: string]: unknown;
+  };
+  headers: {
+    [key: string]: string | undefined;
+  };
+  ip?: string;
+  connection?: {
+    remoteAddress?: string;
+  };
+  socket?: {
+    remoteAddress?: string;
+  };
+}
+
 @Injectable()
 export class RbacGuard implements CanActivate {
   private readonly logger = new Logger(RbacGuard.name);
@@ -45,7 +74,7 @@ export class RbacGuard implements CanActivate {
         return true;
       }
 
-      const request = context.switchToHttp().getRequest();
+      const request = context.switchToHttp().getRequest<RequestWithAuth>();
       const user = request.user;
 
       if (!user || !user.id) {
@@ -116,14 +145,14 @@ export class RbacGuard implements CanActivate {
       }
 
       return true;
-    } catch (error) {
-      if (error instanceof ForbiddenException) {
-        throw error;
+    } catch (_error) {
+      if (_error instanceof ForbiddenException) {
+        throw _error;
       }
 
       this.logger.error(
         "RBAC guard validation failed",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       throw new ForbiddenException("Permission validation failed");
     }
@@ -133,14 +162,14 @@ export class RbacGuard implements CanActivate {
    * Extract clinic ID from request
    */
   private extractClinicId(
-    request: any,
+    request: RequestWithAuth,
     requirements: RbacRequirement[],
   ): string | undefined {
     // Try to get clinic ID from various sources
     const sources = [
-      request.params?.clinicId,
-      request.body?.clinicId,
-      request.query?.clinicId,
+      request.params?.clinicId as string | undefined,
+      request.body?.clinicId as string | undefined,
+      request.query?.clinicId as string | undefined,
       request.headers["x-clinic-id"],
       request.user?.clinicId,
     ];
@@ -159,7 +188,7 @@ export class RbacGuard implements CanActivate {
   /**
    * Extract client IP address
    */
-  private extractClientIp(request: any): string {
+  private extractClientIp(request: RequestWithAuth): string {
     return (
       request.headers["x-forwarded-for"] ||
       request.headers["x-real-ip"] ||
@@ -186,7 +215,7 @@ export class RbacGuard implements CanActivate {
    * Check resource ownership
    */
   private async checkOwnership(
-    request: any,
+    request: RequestWithAuth,
     userId: string,
     requirement: RbacRequirement,
   ): Promise<boolean> {
@@ -217,10 +246,10 @@ export class RbacGuard implements CanActivate {
           // Default ownership check - assume resource belongs to user if IDs match
           return resourceId === userId;
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Ownership check failed for ${requirement.resource}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return false;
     }
@@ -230,7 +259,7 @@ export class RbacGuard implements CanActivate {
    * Extract resource ID from request
    */
   private extractResourceId(
-    request: any,
+    request: RequestWithAuth,
     resource: string,
   ): string | undefined {
     const paramKeys = [
@@ -240,70 +269,53 @@ export class RbacGuard implements CanActivate {
     ];
 
     for (const key of paramKeys) {
-      if (request.params?.[key]) {
-        return request.params[key];
+      const paramValue = request.params?.[key];
+      if (paramValue && typeof paramValue === "string") {
+        return paramValue;
       }
     }
 
-    return request.body?.id || request.query?.id;
+    const bodyId = request.body?.id;
+    const queryId = request.query?.id;
+
+    if (bodyId && typeof bodyId === "string") return bodyId;
+    if (queryId && typeof queryId === "string") return queryId;
+
+    return undefined;
   }
 
   /**
    * Check appointment ownership
    */
-  private async checkAppointmentOwnership(
-    appointmentId: string,
-    userId: string,
+  private checkAppointmentOwnership(
+    _appointmentId: string,
+    _userId: string,
   ): Promise<boolean> {
-    try {
-      // This would typically query the database to check if the user owns the appointment
-      // For now, we'll implement a basic check
-      // In a real implementation, you would inject the appointment service
-      return true; // Placeholder implementation
-    } catch (error) {
-      this.logger.error(
-        `Failed to check appointment ownership`,
-        error instanceof Error ? error.stack : "No stack trace available",
-      );
-      return false;
-    }
+    // This would typically query the database to check if the user owns the appointment
+    // For now, we'll implement a basic check
+    // In a real implementation, you would inject the appointment service
+    return Promise.resolve(true); // Placeholder implementation
   }
 
   /**
    * Check medical record ownership
    */
-  private async checkMedicalRecordOwnership(
-    recordId: string,
-    userId: string,
+  private checkMedicalRecordOwnership(
+    _recordId: string,
+    _userId: string,
   ): Promise<boolean> {
-    try {
-      // This would typically query the database to check if the user owns the medical record
-      return true; // Placeholder implementation
-    } catch (error) {
-      this.logger.error(
-        `Failed to check medical record ownership`,
-        error instanceof Error ? error.stack : "No stack trace available",
-      );
-      return false;
-    }
+    // This would typically query the database to check if the user owns the medical record
+    return Promise.resolve(true); // Placeholder implementation
   }
 
   /**
    * Check patient ownership
    */
-  private async checkPatientOwnership(
+  private checkPatientOwnership(
     patientId: string,
     userId: string,
   ): Promise<boolean> {
-    try {
-      // Check if the user is the patient or has access to the patient
-      return patientId === userId; // Simplified check
-    } catch (error) {
-      this.logger.error(
-        `Failed to check patient ownership`,
-        error instanceof Error ? error.stack : "No stack trace available",
-      );
-      return false;
-    }
+    // Check if the user is the patient or has access to the patient
+    return Promise.resolve(patientId === userId); // Simplified check
   }
 }

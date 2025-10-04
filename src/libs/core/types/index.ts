@@ -1,7 +1,7 @@
 // Core types for the healthcare application
 export interface AuthResponse {
   success: boolean;
-  user?: any;
+  user?: unknown;
   tokens?: AuthTokens;
   session_id?: string;
   sessionId?: string;
@@ -61,7 +61,7 @@ export interface SessionData {
   lastActivity: Date;
   userAgent?: string;
   ipAddress?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TokenPayload {
@@ -86,17 +86,17 @@ export interface AuthenticatedRequest {
   sessionId?: string;
   clinicId?: string;
   // Basic Express Request properties needed
-  params?: any;
-  query?: any;
-  body?: any;
-  headers?: any;
+  params?: unknown;
+  query?: unknown;
+  body?: unknown;
+  headers?: unknown;
 }
 
 export interface DomainValidationResult {
   isValid: boolean;
   message?: string;
   errors?: string[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 // Health Check Types
@@ -121,7 +121,7 @@ export interface ServiceHealth {
   error?: string;
   responseTime: number;
   lastChecked: string;
-  metrics?: Record<string, any>;
+  metrics?: Record<string, unknown>;
 }
 
 export interface SystemMetrics {

@@ -18,13 +18,15 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
     // Default implementation - can be overridden
   }
 
-  async validate(data: any): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
+    const pluginData = data as any;
     this.logger.log(`✅ Validating data for plugin: ${this.name}`);
     // Default implementation - can be overridden
     return true;
   }
 
-  async process(data: any): Promise<any> {
+  async process(data: unknown): Promise<unknown> {
+    const pluginData = data as any;
     this.logger.log(`🔧 Processing data for plugin: ${this.name}`);
     // Default implementation - can be overridden
     return data;
@@ -49,29 +51,29 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
   }
 
   protected createContext(
-    config: any,
-    metadata: Record<string, any> = {},
+    config: unknown,
+    metadata: Record<string, unknown> = {},
   ): PluginContext {
     return {
-      clinicId: metadata.clinicId,
-      userId: metadata.userId,
-      sessionId: metadata.sessionId,
+      clinicId: metadata.clinicId as string,
+      userId: metadata.userId as string,
+      sessionId: metadata.sessionId as string,
       metadata: {
         config: {
           enabled: true,
           priority: 1,
           settings: config || {},
         },
-        ...metadata,
+        ...(metadata || {}),
       },
     };
   }
 
-  protected logPluginAction(action: string, data?: any): void {
+  protected logPluginAction(action: string, data?: unknown): void {
     this.logger.log(`🔧 Plugin ${this.name} - ${action}`, data);
   }
 
-  protected logPluginError(error: string, data?: any): void {
+  protected logPluginError(error: string, data?: unknown): void {
     this.logger.error(`❌ Plugin ${this.name} - ${error}`, data);
   }
 }

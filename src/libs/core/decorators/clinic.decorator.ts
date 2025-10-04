@@ -14,7 +14,7 @@ interface NestJSRequest {
   };
   body?: {
     clinicId?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
   query?: {
     clinicId?: string;
@@ -24,7 +24,7 @@ interface NestJSRequest {
 
 interface JWTPayload {
   clinicId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export const CLINIC_KEY = "clinic";

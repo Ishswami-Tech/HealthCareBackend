@@ -12,66 +12,68 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     super();
   }
 
-  async process(data: any): Promise<any> {
+  async process(data: unknown): Promise<unknown> {
+    const pluginData = data as any;
     this.logPluginAction("Processing clinic check-in operation", {
-      operation: data.operation,
+      operation: pluginData.operation,
     });
 
     // Delegate to existing check-in service - no functionality change
-    switch (data.operation) {
+    switch (pluginData.operation) {
       case "checkIn":
         return await this.checkInService.checkIn(
-          data.appointmentId,
-          data.userId,
+          pluginData.appointmentId,
+          pluginData.userId,
         );
 
       case "getCheckedInAppointments":
         return await this.checkInService.getCheckedInAppointments(
-          data.clinicId,
+          pluginData.clinicId,
         );
 
       case "processCheckIn":
         return await this.checkInService.processCheckIn(
-          data.appointmentId,
-          data.clinicId,
+          pluginData.appointmentId,
+          pluginData.clinicId,
         );
 
       case "getPatientQueuePosition":
         return await this.checkInService.getPatientQueuePosition(
-          data.appointmentId,
-          data.clinicId,
+          pluginData.appointmentId,
+          pluginData.clinicId,
         );
 
       case "startConsultation":
         return await this.checkInService.startConsultation(
-          data.appointmentId,
-          data.clinicId,
+          pluginData.appointmentId,
+          pluginData.clinicId,
         );
 
       case "getDoctorActiveQueue":
         return await this.checkInService.getDoctorActiveQueue(
-          data.doctorId,
-          data.clinicId,
+          pluginData.doctorId,
+          pluginData.clinicId,
         );
 
       case "reorderQueue":
         return await this.checkInService.reorderQueue(
-          data.clinicId,
-          data.appointmentOrder,
+          pluginData.clinicId,
+          pluginData.appointmentOrder,
         );
 
       case "getLocationQueue":
-        return await this.checkInService.getLocationQueue(data.clinicId);
+        return await this.checkInService.getLocationQueue(pluginData.clinicId);
 
       default:
         this.logPluginError("Unknown check-in operation", {
-          operation: data.operation,
+          operation: pluginData.operation,
         });
-        throw new Error(`Unknown check-in operation: ${data.operation}`);
+        throw new Error(`Unknown check-in operation: ${pluginData.operation}`);
     }
   }
 
-  async validate(data: any): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
+    const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
       checkIn: ["appointmentId", "userId"],
@@ -84,7 +86,7 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       getLocationQueue: ["clinicId"],
     };
 
-    const operation = data.operation;
+    const operation = pluginData.operation;
     const fields = (requiredFields as any)[operation];
 
     if (!fields) {
@@ -92,7 +94,7 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       return false;
     }
 
-    const isValid = fields.every((field: any) => data[field] !== undefined);
+    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

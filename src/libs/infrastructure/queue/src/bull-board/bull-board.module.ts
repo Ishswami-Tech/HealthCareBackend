@@ -29,13 +29,13 @@ import { Queue } from "bullmq";
           password: config.get("QUEUE_DASHBOARD_PASSWORD", "admin"),
         },
         basePath: "/queue-dashboard",
-        middleware: (req: any, res: any, next: any) => {
+        middleware: (req: unknown, res: unknown, next: unknown) => {
           // Only handle queue-dashboard routes
-          if (req.url.startsWith("/queue-dashboard")) {
-            next();
+          if ((req as any).url.startsWith("/queue-dashboard")) {
+            (next as any)();
           } else {
             // Pass through for non-queue routes
-            next("route");
+            (next as any)("route");
           }
         },
       }),

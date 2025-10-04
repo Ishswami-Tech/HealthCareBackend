@@ -5,14 +5,11 @@ import {
   IsEnum,
   IsUUID,
   IsNotEmpty,
-  IsArray,
   ValidateNested,
   IsNumber,
   Min,
   Max,
-  IsBoolean,
   IsUrl,
-  IsPhoneNumber,
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 

@@ -64,7 +64,7 @@ export class QueueModule {
 
     // Select appropriate queues based on service
     let queueNames: string[];
-    let redisConfig: any;
+    let redisConfig: unknown;
 
     if (serviceName === "clinic") {
       queueNames = clinicQueues;
@@ -113,7 +113,7 @@ export class QueueModule {
           imports: [ConfigModule],
           useFactory: async (configService: ConfigService) => ({
             connection: {
-              ...redisConfig,
+              ...(redisConfig || {}),
               // Enterprise connection settings for 1M users
               maxRetriesPerRequest: 5,
               retryDelayOnFailover: 50,
@@ -262,18 +262,18 @@ export class QueueModule {
                                   `Unknown job type: ${job.name}`,
                                 );
                             }
-                          } catch (error) {
-                            // Enhanced error handling for 1M users
+                          } catch (_error) {
+                            // Enhanced _error handling for 1M users
                             console.error(
                               `Worker error for job ${job.id} in queue ${queueName}:`,
-                              error,
+                              _error,
                             );
-                            throw error;
+                            throw _error;
                           }
                         },
                         {
                           connection: {
-                            ...redisConfig,
+                            ...(redisConfig || {}),
                             // Enhanced worker connection settings
                             maxRetriesPerRequest: 3,
                             retryDelayOnFailover: 100,
@@ -308,7 +308,7 @@ export class QueueModule {
         // Always provide BULLMQ_QUEUES for QueueService - with error handling
         {
           provide: "BULLMQ_QUEUES",
-          useFactory: (...queues: any[]) => {
+          useFactory: (...queues: unknown[]) => {
             console.log(
               `🔄 BULLMQ_QUEUES factory called with ${queues.length} queues for ${serviceName} service`,
             );

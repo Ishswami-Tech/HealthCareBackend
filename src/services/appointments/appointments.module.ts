@@ -35,23 +35,52 @@ import { PluginHealthService } from "./plugins/health/plugin-health.service";
 
 // Clinic-Specific Plugins - Updated with new libs structure
 import { ClinicQueuePlugin } from "./plugins/queue/clinic-queue.plugin";
-// import { ClinicSocketPlugin } from './plugins/socket/clinic-socket.plugin';
-// Other plugins will be created as needed
-// import { ClinicLocationPlugin } from './plugins/location/clinic-location.plugin';
-// import { ClinicConfirmationPlugin } from './plugins/confirmation/clinic-confirmation.plugin';
-// import { ClinicCheckInPlugin } from './plugins/checkin/clinic-checkin.plugin';
-// import { ClinicPaymentPlugin } from './plugins/payment/clinic-payment.plugin';
-// import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
+import { ClinicNotificationPlugin } from "./plugins/notifications/clinic-notification.plugin";
+import { ClinicReminderPlugin } from "./plugins/reminders/clinic-reminder.plugin";
+import { ClinicAnalyticsPlugin } from "./plugins/analytics/clinic-analytics.plugin";
+import { ClinicFollowUpPlugin } from "./plugins/followup/clinic-followup.plugin";
+import { ClinicLocationPlugin } from "./plugins/location/clinic-location.plugin";
+import { ClinicConfirmationPlugin } from "./plugins/confirmation/clinic-confirmation.plugin";
+import { ClinicCheckInPlugin } from "./plugins/checkin/clinic-checkin.plugin";
+import { ClinicPaymentPlugin } from "./plugins/payment/clinic-payment.plugin";
+import { ClinicVideoPlugin } from "./plugins/video/clinic-video.plugin";
+import { AppointmentCommunicationsPlugin } from "./communications/appointment-communications.plugin";
+
+// New Plugin Imports
+import { ClinicTemplatePlugin } from "./plugins/templates/clinic-template.plugin";
+import { ClinicWaitlistPlugin } from "./plugins/waitlist/clinic-waitlist.plugin";
+import { ClinicResourcePlugin } from "./plugins/resources/clinic-resource.plugin";
+import { ClinicEligibilityPlugin } from "./plugins/eligibility/clinic-eligibility.plugin";
 
 // Service Dependencies - Updated with new libs structure
-// import { AppointmentSocketService } from './plugins/socket/appointment-socket.service';
 import { AppointmentQueueService } from "./plugins/queue/appointment-queue.service";
-// Other services will be created as needed
-// import { VideoService } from './plugins/video/video.service';
-// import { CheckInService } from './plugins/checkin/check-in.service';
-// import { AppointmentConfirmationService } from './plugins/confirmation/appointment-confirmation.service';
-// import { AppointmentLocationService } from './plugins/location/appointment-location.service';
+import { AppointmentNotificationService } from "./plugins/notifications/appointment-notification.service";
+import { AppointmentReminderService } from "./plugins/reminders/appointment-reminder.service";
+import { AppointmentAnalyticsService } from "./plugins/analytics/appointment-analytics.service";
+import { AppointmentFollowUpService } from "./plugins/followup/appointment-followup.service";
+import { AppointmentLocationService } from "./plugins/location/appointment-location.service";
+import { AppointmentConfirmationService } from "./plugins/confirmation/appointment-confirmation.service";
+import { CheckInService } from "./plugins/checkin/check-in.service";
+import { PaymentService } from "./plugins/payment/payment.service";
+import { VideoService } from "./plugins/video/video.service";
+import { JitsiVideoService } from "./plugins/video/jitsi-video.service";
+import { VideoConsultationTracker } from "./plugins/video/video-consultation-tracker.service";
+import { AppointmentCommunicationsService } from "./communications/appointment-communications.service";
+
+// New Service Imports
+import { AppointmentTemplateService } from "./plugins/templates/appointment-template.service";
+import { AppointmentWaitlistService } from "./plugins/waitlist/appointment-waitlist.service";
+import { AppointmentResourceService } from "./plugins/resources/appointment-resource.service";
+import { AppointmentEligibilityService } from "./plugins/eligibility/appointment-eligibility.service";
+import { BusinessRulesDatabaseService } from "./core/business-rules-database.service";
+
 import { QrService } from "../../libs/utils/QR";
+
+// Communication Modules
+import { EmailModule } from "../../libs/communication/messaging/email/email.module";
+import { WhatsAppModule } from "../../libs/communication/messaging/whatsapp/whatsapp.module";
+import { PushModule } from "../../libs/communication/messaging/push/push.module";
+import { SocketModule } from "../../libs/communication/socket/socket.module";
 
 /**
  * Enhanced Appointments Module
@@ -77,7 +106,11 @@ import { QrService } from "../../libs/utils/QR";
     JwtModule.register({}),
     RateLimitModule,
     GuardsModule,
-    // CommunicationModule,
+    // Communication Modules
+    EmailModule,
+    WhatsAppModule,
+    PushModule,
+    SocketModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -128,24 +161,42 @@ import { QrService } from "../../libs/utils/QR";
     PluginConfigService,
     PluginHealthService,
 
-    // Clinic-Specific Plugins - Only implemented plugins
+    // Clinic-Specific Plugins - All implemented plugins
     ClinicQueuePlugin,
-    // ClinicSocketPlugin,
-    // Other plugins commented out until implemented
-    // ClinicLocationPlugin,
-    // ClinicConfirmationPlugin,
-    // ClinicCheckInPlugin,
-    // ClinicPaymentPlugin,
-    // ClinicVideoPlugin,
+    ClinicNotificationPlugin,
+    ClinicReminderPlugin,
+    ClinicAnalyticsPlugin,
+    ClinicFollowUpPlugin,
+    ClinicLocationPlugin,
+    ClinicConfirmationPlugin,
+    ClinicCheckInPlugin,
+    ClinicPaymentPlugin,
+    ClinicVideoPlugin,
+    AppointmentCommunicationsPlugin,
+    ClinicTemplatePlugin,
+    ClinicWaitlistPlugin,
+    ClinicResourcePlugin,
+    ClinicEligibilityPlugin,
 
-    // Service Dependencies - Only implemented services
-    // AppointmentSocketService,
+    // Service Dependencies - All implemented services
     AppointmentQueueService,
-    // Other services commented out until implemented
-    // VideoService,
-    // CheckInService,
-    // AppointmentConfirmationService,
-    // AppointmentLocationService,
+    AppointmentNotificationService,
+    AppointmentReminderService,
+    AppointmentAnalyticsService,
+    AppointmentFollowUpService,
+    AppointmentLocationService,
+    AppointmentConfirmationService,
+    CheckInService,
+    PaymentService,
+    VideoService,
+    JitsiVideoService,
+    VideoConsultationTracker,
+    AppointmentCommunicationsService,
+    AppointmentTemplateService,
+    AppointmentWaitlistService,
+    AppointmentResourceService,
+    AppointmentEligibilityService,
+    BusinessRulesDatabaseService,
     QrService,
   ],
   exports: [
@@ -163,15 +214,22 @@ import { QrService } from "../../libs/utils/QR";
     PluginConfigService,
     PluginHealthService,
 
-    // Clinic Plugins - Only implemented plugins
+    // Clinic Plugins - All implemented plugins
     ClinicQueuePlugin,
-    // ClinicSocketPlugin,
-    // Other plugins commented out until implemented
-    // ClinicLocationPlugin,
-    // ClinicConfirmationPlugin,
-    // ClinicCheckInPlugin,
-    // ClinicPaymentPlugin,
-    // ClinicVideoPlugin,
+    ClinicNotificationPlugin,
+    ClinicReminderPlugin,
+    ClinicAnalyticsPlugin,
+    ClinicFollowUpPlugin,
+    ClinicLocationPlugin,
+    ClinicConfirmationPlugin,
+    ClinicCheckInPlugin,
+    ClinicPaymentPlugin,
+    ClinicVideoPlugin,
+    AppointmentCommunicationsPlugin,
+    ClinicTemplatePlugin,
+    ClinicWaitlistPlugin,
+    ClinicResourcePlugin,
+    ClinicEligibilityPlugin,
   ],
 })
 export class AppointmentsModule {}

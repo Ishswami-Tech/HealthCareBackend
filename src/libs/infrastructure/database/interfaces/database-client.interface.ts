@@ -12,7 +12,7 @@ export interface IDatabaseClient {
   /**
    * Execute a raw query
    */
-  executeRawQuery<T = any>(query: string, params?: any[]): Promise<T>;
+  executeRawQuery<T = any>(query: string, params?: unknown[]): Promise<T>;
 
   /**
    * Execute query within a transaction
@@ -110,17 +110,17 @@ export interface IHealthcareDatabaseClient extends IDatabaseClient {
   /**
    * Get clinic dashboard statistics
    */
-  getClinicDashboardStats(clinicId: string): Promise<any>;
+  getClinicDashboardStats(clinicId: string): Promise<unknown>;
 
   /**
    * Get clinic patients with pagination and filtering
    */
-  getClinicPatients(clinicId: string, options?: any): Promise<any>;
+  getClinicPatients(clinicId: string, options?: unknown): Promise<unknown>;
 
   /**
    * Get clinic appointments with advanced filtering
    */
-  getClinicAppointments(clinicId: string, options?: any): Promise<any>;
+  getClinicAppointments(clinicId: string, options?: unknown): Promise<unknown>;
 }
 
 /**

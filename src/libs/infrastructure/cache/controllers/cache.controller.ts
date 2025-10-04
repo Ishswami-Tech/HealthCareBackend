@@ -3,7 +3,6 @@ import {
   Get,
   Delete,
   Query,
-  Param,
   HttpStatus,
   Body,
   Post,
@@ -14,7 +13,6 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
-  ApiParam,
   ApiQuery,
   ApiBody,
 } from "@nestjs/swagger";
@@ -261,10 +259,12 @@ export class CacheController {
       },
     },
   })
-  async updateCacheConfig(@Body() config: any) {
+  async updateCacheConfig(@Body() config: unknown) {
     // Update rate limits if provided
-    if (config.rateLimits) {
-      for (const [type, limits] of Object.entries(config.rateLimits)) {
+    if ((config as Record<string, unknown>).rateLimits) {
+      const rateLimits = (config as Record<string, unknown>)
+        .rateLimits as Record<string, unknown>;
+      for (const [type, limits] of Object.entries(rateLimits)) {
         await this.redis.updateRateLimits(type, limits as any);
       }
     }

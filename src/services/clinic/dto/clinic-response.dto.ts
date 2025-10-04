@@ -44,7 +44,7 @@ export class ClinicResponseDto {
   isActive!: boolean;
 
   @ApiProperty({ description: "Clinic admins", type: [Object] })
-  admins!: any[];
+  admins!: unknown[];
 
   @ApiProperty({ description: "Created at timestamp" })
   createdAt!: Date;

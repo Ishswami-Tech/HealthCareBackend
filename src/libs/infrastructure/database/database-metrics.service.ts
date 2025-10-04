@@ -348,8 +348,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
       // Update clinic-specific metrics
       await this.updateClinicSpecificMetrics();
-    } catch (error) {
-      this.logger.error("Failed to record healthcare metrics:", error);
+    } catch (_error) {
+      this.logger.error("Failed to record healthcare metrics:", _error);
     }
   }
 
@@ -385,8 +385,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.collectMetrics();
         this.storeMetricsSnapshot();
-      } catch (error) {
-        this.logger.error("Failed to collect metrics:", error);
+      } catch (_error) {
+        this.logger.error("Failed to collect metrics:", _error);
       }
     }, 30000); // Every 30 seconds
   }
@@ -406,8 +406,9 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Get query optimizer stats
     const optimizerStats = this.queryOptimizer.getOptimizerStats();
-    this.currentMetrics.performance.cacheHitRate =
-      optimizerStats.cacheStats.hitRate;
+    this.currentMetrics.performance.cacheHitRate = (
+      optimizerStats.cacheStats as Record<string, unknown>
+    ).hitRate as number;
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -476,17 +477,20 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
       // Get patient counts separately (since patients are related through appointments)
       const patientCounts = await Promise.all(
-        clinics.map(async (clinic) => {
+        clinics.map(async (clinic: unknown) => {
           const patientCount = await this.prismaService.patient.count({
             where: {
               appointments: {
                 some: {
-                  clinicId: clinic.id,
+                  clinicId: (clinic as Record<string, unknown>).id as string,
                 },
               },
             },
           });
-          return { clinicId: clinic.id, patientCount };
+          return {
+            clinicId: (clinic as Record<string, unknown>).id as string,
+            patientCount,
+          };
         }),
       );
 
@@ -513,8 +517,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
         this.currentMetrics.clinicMetrics.set(clinic.id, current);
       }
-    } catch (error) {
-      this.logger.error("Failed to update clinic-specific metrics:", error);
+    } catch (_error) {
+      this.logger.error("Failed to update clinic-specific metrics:", _error);
     }
   }
 

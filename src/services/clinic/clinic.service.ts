@@ -132,7 +132,7 @@ export class ClinicService {
               where: { id: data.clinicAdminIdentifier },
               include: { clinicAdmins: true },
             });
-          } catch (error) {
+          } catch (_error) {
             await this.errorService.logError(
               { message: "Invalid clinic admin identifier format" },
               "ClinicService",
@@ -283,14 +283,14 @@ export class ClinicService {
         mainLocation: location,
         clinicAdminId,
       };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "create clinic",
         { ...data },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -402,8 +402,8 @@ export class ClinicService {
                 },
               })),
           }));
-        } catch (error) {
-          this.logger.error("Error fetching clinics:", error);
+        } catch (_error) {
+          this.logger.error("Error fetching clinics:", _error);
           // Return empty array to avoid application errors
           clinics = [];
         }
@@ -451,8 +451,8 @@ export class ClinicService {
                 },
               })),
           }));
-        } catch (error) {
-          this.logger.error("Error fetching clinics for clinic admin:", error);
+        } catch (_error) {
+          this.logger.error("Error fetching clinics for clinic admin:", _error);
           // Return empty array to avoid application errors
           clinics = [];
         }
@@ -479,14 +479,14 @@ export class ClinicService {
       await this.cacheService.set(cacheKey, clinics, 1800);
 
       return clinics;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "fetch clinics",
         { userId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -580,12 +580,17 @@ export class ClinicService {
       await this.cacheService.set(cacheKey, clinic, 1800);
 
       return clinic;
-    } catch (error) {
-      await this.errorService.logError(error, "ClinicService", "fetch clinic", {
-        clinicId: id,
-        userId,
-      });
-      throw error;
+    } catch (_error) {
+      await this.errorService.logError(
+        _error,
+        "ClinicService",
+        "fetch clinic",
+        {
+          clinicId: id,
+          userId,
+        },
+      );
+      throw _error;
     }
   }
 
@@ -635,14 +640,14 @@ export class ClinicService {
       await this.cacheService.set(cacheKey, clinic, 3600);
 
       return clinic;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "fetch clinic by app name",
         { appName },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -719,7 +724,8 @@ export class ClinicService {
 
       // Check if already assigned
       const isAlreadyAssigned = clinic.admins.some(
-        (admin) => admin.userId === data.userId,
+        (admin: unknown) =>
+          (admin as Record<string, unknown>).userId === data.userId,
       );
 
       if (isAlreadyAssigned) {
@@ -741,7 +747,8 @@ export class ClinicService {
       ) {
         // Check if the assigner is an owner of this clinic
         const isOwner = clinic.admins.some(
-          (admin) => admin.userId === data.assignedBy,
+          (admin: unknown) =>
+            (admin as Record<string, unknown>).userId === data.assignedBy,
         );
 
         if (!isOwner) {
@@ -805,14 +812,14 @@ export class ClinicService {
       await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
 
       return assignment;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "assign clinic admin",
         { ...data },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -946,8 +953,8 @@ export class ClinicService {
           });
 
           return doctors;
-        } catch (error) {
-          throw error;
+        } catch (_error) {
+          throw _error;
         }
       },
       {
@@ -1023,11 +1030,11 @@ export class ClinicService {
           // Connect to the clinic's database to get patients
           // This is a placeholder - in a real implementation, you would query the clinic's database
           // For now, we'll just return an empty array
-          const patients: any[] = [];
+          const patients: unknown[] = [];
 
           return patients;
-        } catch (error) {
-          throw error;
+        } catch (_error) {
+          throw _error;
         }
       },
       {
@@ -1141,7 +1148,8 @@ export class ClinicService {
       if (user.role !== Role.SUPER_ADMIN) {
         if (user.role === Role.CLINIC_ADMIN) {
           const isAdmin = clinic.admins.some(
-            (admin) => admin.userId === userId,
+            (admin: unknown) =>
+              (admin as Record<string, unknown>).userId === userId,
           );
           if (!isAdmin) {
             await this.errorService.logError(
@@ -1196,14 +1204,14 @@ export class ClinicService {
       ]);
 
       return updatedClinic;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "update clinic",
         { clinicId: id, ...data },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1281,14 +1289,14 @@ export class ClinicService {
       ]);
 
       return { success: true, message: "Clinic deleted successfully" };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "delete clinic",
         { clinicId: id, userId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1320,14 +1328,14 @@ export class ClinicService {
       });
 
       return locations;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get active locations",
         { clinicId: clinicUUID },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1374,14 +1382,14 @@ export class ClinicService {
       });
 
       return true;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "associate user with clinic",
         { userId, clinicId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1418,14 +1426,14 @@ export class ClinicService {
       });
 
       return token;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "generate clinic token",
         { userId, clinicId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1472,14 +1480,14 @@ export class ClinicService {
       }
 
       return this.getClinicById(clinicId, userId);
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get current user clinic",
         { userId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1500,7 +1508,7 @@ export class ClinicService {
       const dashboardResult =
         await this.healthcareDatabaseClient.getClinicDashboardStats(clinicUUID);
 
-      if (dashboardResult.isSuccess) {
+      if ((dashboardResult as Record<string, unknown>).isSuccess) {
         // Get additional metrics
         const metricsResult =
           await this.healthcareDatabaseClient.getClinicMetrics(clinicUUID);
@@ -1508,23 +1516,28 @@ export class ClinicService {
         return {
           success: true,
           data: {
-            dashboard: dashboardResult.data,
+            dashboard: (dashboardResult as Record<string, unknown>).data,
             metrics: metricsResult,
             clinicId: clinicUUID,
-            executionTime: dashboardResult.metadata?.executionTime,
+            executionTime: (
+              (dashboardResult as { meta?: unknown }).meta as Record<
+                string,
+                unknown
+              >
+            )?.executionTime,
           },
         };
       } else {
-        throw dashboardResult.error;
+        throw (dashboardResult as Record<string, unknown>).error;
       }
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get clinic dashboard enterprise",
         { clinicId, userId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1553,26 +1566,31 @@ export class ClinicService {
           includeInactive: false,
         });
 
-      if (patientsResult.isSuccess) {
+      if ((patientsResult as Record<string, unknown>).isSuccess) {
         return {
           success: true,
-          data: patientsResult.data,
+          data: (patientsResult as Record<string, unknown>).data,
           metadata: {
-            executionTime: patientsResult.metadata?.executionTime,
+            executionTime: (
+              (patientsResult as { meta?: unknown }).meta as Record<
+                string,
+                unknown
+              >
+            )?.executionTime,
             clinicId: clinicUUID,
           },
         };
       } else {
-        throw patientsResult.error;
+        throw (patientsResult as Record<string, unknown>).error;
       }
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get clinic patients enterprise",
         { clinicId, userId, options },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1606,27 +1624,32 @@ export class ClinicService {
           doctorId: filters.doctorId,
         });
 
-      if (appointmentsResult.isSuccess) {
+      if ((appointmentsResult as Record<string, unknown>).isSuccess) {
         return {
           success: true,
-          data: appointmentsResult.data,
+          data: (appointmentsResult as Record<string, unknown>).data,
           filters,
           metadata: {
-            executionTime: appointmentsResult.metadata?.executionTime,
+            executionTime: (
+              (appointmentsResult as { meta?: unknown }).meta as Record<
+                string,
+                unknown
+              >
+            )?.executionTime,
             clinicId: clinicUUID,
           },
         };
       } else {
-        throw appointmentsResult.error;
+        throw (appointmentsResult as Record<string, unknown>).error;
       }
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get clinic appointments enterprise",
         { clinicId, userId, filters },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1636,7 +1659,7 @@ export class ClinicService {
   async createPatientEnterprise(
     clinicId: string,
     userId: string,
-    patientData: any,
+    patientData: unknown,
   ): Promise<RepositoryResult<any>> {
     const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
 
@@ -1644,7 +1667,7 @@ export class ClinicService {
       // Execute patient creation with clinic context and audit trail
       const patient = await this.prisma.patient.create({
         data: {
-          ...patientData,
+          ...(patientData as Record<string, unknown>),
           // Ensure clinic association through appointments or other relations
         },
         include: {
@@ -1660,15 +1683,15 @@ export class ClinicService {
       });
 
       return RepositoryResult.success(patient);
-    } catch (error) {
-      return RepositoryResult.failure(error as Error);
+    } catch (_error) {
+      return RepositoryResult.failure(_error as Error);
     }
   }
 
   /**
    * Get enterprise database health status for clinic
    */
-  async getClinicDatabaseHealth(clinicId: string): Promise<any> {
+  async getClinicDatabaseHealth(clinicId: string): Promise<unknown> {
     try {
       const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
 
@@ -1686,14 +1709,14 @@ export class ClinicService {
           timestamp: new Date(),
         },
       };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get clinic database health",
         { clinicId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1717,25 +1740,34 @@ export class ClinicService {
 
           return {
             clinicId,
-            dashboard: dashboardResult.isSuccess ? dashboardResult.data : null,
+            dashboard: (dashboardResult as Record<string, unknown>).isSuccess
+              ? (dashboardResult as Record<string, unknown>).data
+              : null,
             metrics: metricsResult,
-            error: dashboardResult.isFailure
-              ? dashboardResult.error?.message
+            _error: (dashboardResult as Record<string, unknown>).isFailure
+              ? (
+                  (dashboardResult as Record<string, unknown>).error as Record<
+                    string,
+                    unknown
+                  >
+                )?.message
               : null,
           };
-        } catch (error) {
+        } catch (_error) {
           return {
             clinicId,
             dashboard: null,
             metrics: null,
-            error: error instanceof Error ? error.message : "Unknown error",
+            _error: _error instanceof Error ? _error.message : "Unknown _error",
           };
         }
       });
 
       const results = await Promise.all(summaryPromises);
 
-      const successful = results.filter((r) => !r.error).length;
+      const successful = results.filter(
+        (r) => !(r as Record<string, unknown>)._error,
+      ).length;
       const failed = results.length - successful;
 
       return {
@@ -1747,14 +1779,14 @@ export class ClinicService {
           failed,
         },
       };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get multi clinic summary enterprise",
         { clinicIds, userId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -1779,14 +1811,14 @@ export class ClinicService {
           timestamp: new Date(),
         },
       };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicService",
         "get database factory stats",
         {},
       );
-      throw error;
+      throw _error;
     }
   }
 }

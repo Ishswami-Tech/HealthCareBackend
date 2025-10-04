@@ -17,7 +17,7 @@ export interface EmailQueueData {
   }>;
   priority?: "low" | "normal" | "high" | "critical";
   delay?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface BulkEmailData {
@@ -125,7 +125,7 @@ export class EmailQueueService {
             {
               ...emailData,
               metadata: {
-                ...emailData.metadata,
+                ...(emailData.metadata || {}),
                 batchNumber,
                 totalBatches: Math.ceil(emails.length / batchSize),
               },

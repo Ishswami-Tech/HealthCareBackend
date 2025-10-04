@@ -9,10 +9,14 @@ import {
   Logger,
   LogLevel,
   INestApplication,
+  VersioningType,
 } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./libs/core/filters/http-exception.filter";
 import fastifyHelmet from "@fastify/helmet";
+import fastifyRateLimit from "@fastify/rate-limit";
+import fastifyCompress from "@fastify/compress";
+import fastifyMultipart from "@fastify/multipart";
 import { ConfigService } from "@nestjs/config";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { swaggerConfig, swaggerCustomOptions } from "./config/swagger.config";
@@ -30,6 +34,17 @@ import { Server } from "socket.io";
 import { createClient } from "redis";
 import { LoggingInterceptor } from "./libs/infrastructure/logging/logging.interceptor";
 import { FastifyRequest, FastifyReply } from "fastify";
+import cluster from "cluster";
+import * as os from "os";
+import {
+  AuthenticatedRequest,
+  RateLimitContext,
+  WorkerProcess,
+  SerializedRequest,
+  RedisClient,
+  SocketConnection,
+  FastifyLoggerConfig,
+} from "./libs/core/types/request.types";
 
 // Store original console methods
 const originalConsole = {
@@ -60,13 +75,224 @@ function setupConsoleRedirect(loggingService: LoggingService) {
 const validEnvironments = ["development", "production"] as const;
 type Environment = (typeof validEnvironments)[number];
 
+/**
+ * Configure production middleware for high performance and security
+ */
+async function configureProductionMiddleware(
+  app: NestFastifyApplication,
+  configService: ConfigService,
+  logger: Logger,
+): Promise<void> {
+  logger.log("🔧 Configuring production middleware...");
+
+  // Compression middleware
+  await app.register(fastifyCompress as any, {
+    global: true,
+    threshold: 1024,
+    encodings: ["gzip", "deflate", "br"],
+    brotliOptions: {
+      quality: 4,
+      windowBits: 22,
+      mode: "text",
+    },
+    gzipOptions: {
+      level: 6,
+      windowBits: 15,
+      memLevel: 8,
+    },
+  });
+
+  // Rate limiting middleware
+  await app.register(fastifyRateLimit as any, {
+    max: parseInt(process.env.RATE_LIMIT_MAX || "1000", 10),
+    timeWindow: process.env.RATE_LIMIT_WINDOW || "1 minute",
+    redis: configService.get("REDIS_URL")
+      ? {
+          host: configService.get("REDIS_HOST"),
+          port: configService.get("REDIS_PORT"),
+          password: configService.get("REDIS_PASSWORD"),
+        }
+      : undefined,
+    keyGenerator: (request: Partial<AuthenticatedRequest>) => {
+      return `${request.ip}:${request.headers?.["user-agent"] || "unknown"}`;
+    },
+    errorResponseBuilder: (request: Partial<AuthenticatedRequest>, context: RateLimitContext) => {
+      return {
+        statusCode: 429,
+        error: "Too Many Requests",
+        message: `Rate limit exceeded. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
+        retryAfter: Math.round(context.ttl / 1000),
+      };
+    },
+    addHeaders: {
+      "x-ratelimit-limit": true,
+      "x-ratelimit-remaining": true,
+      "x-ratelimit-reset": true,
+      "retry-after": true,
+    },
+  });
+
+  // Multipart form data handling
+  await app.register(fastifyMultipart as any, {
+    limits: {
+      fieldNameSize: 100,
+      fieldSize: 1000000, // 1MB
+      fields: 10,
+      fileSize: 50 * 1024 * 1024, // 50MB
+      files: 5,
+      headerPairs: 2000,
+    },
+    attachFieldsToBody: true,
+  });
+
+  // Enable API versioning
+  app.enableVersioning({
+    type: VersioningType.HEADER,
+    header: "X-API-Version",
+    defaultVersion: "1",
+  });
+
+  // Enable shutdown hooks for graceful shutdown
+  app.enableShutdownHooks();
+
+  // Set global prefix
+  app.setGlobalPrefix("api/v1", {
+    exclude: [
+      "health",
+      "metrics",
+      "docs",
+      { path: "docs/(.*)", method: "GET" as any },
+    ],
+  });
+
+  logger.log("✅ Production middleware configured");
+}
+
+/**
+ * Production clustering setup for high concurrency
+ */
+function setupProductionClustering(): boolean {
+  const isProduction = process.env.NODE_ENV === "production";
+  const enableClustering = process.env.ENABLE_CLUSTERING === "true";
+
+  if (!isProduction || !enableClustering) {
+    return false;
+  }
+
+  const numCPUs = os.cpus().length;
+  const workerCount = Math.max(1, numCPUs - 1);
+
+  if (cluster.isPrimary) {
+    console.log(
+      `🎯 Primary process ${process.pid} starting with ${workerCount} workers`,
+    );
+
+    // Fork workers
+    for (let i = 0; i < workerCount; i++) {
+      const worker = cluster.fork();
+      console.log(`👷 Worker ${worker.process.pid} started`);
+    }
+
+    // Handle worker deaths and respawn
+    cluster.on("exit", (worker: WorkerProcess, code: number | null, signal: string | null) => {
+      const pid = worker.process.pid;
+
+      if (signal) {
+        console.log(`⚠️ Worker ${pid} killed by signal: ${signal}`);
+      } else if (code !== 0 && code !== null) {
+        console.error(`❌ Worker ${pid} exited with error code: ${code}`);
+      } else {
+        console.log(`✅ Worker ${pid} exited successfully`);
+      }
+
+      // Respawn worker if not in shutdown mode
+      if (!worker.exitedAfterDisconnect) {
+        console.log("🔄 Respawning worker...");
+        const newWorker = cluster.fork();
+        console.log(`🆕 New worker ${newWorker.process.pid} started`);
+      }
+    });
+
+    // Graceful shutdown for cluster
+    const shutdownCluster = async (signal: string) => {
+      console.log(`${signal} received, shutting down cluster gracefully...`);
+
+      const workers = Object.values(cluster.workers || {});
+
+      // Disconnect all workers
+      for (const worker of workers) {
+        if (worker && !worker.isDead()) {
+          worker.disconnect();
+        }
+      }
+
+      // Wait for workers to finish
+      const shutdownTimeout = setTimeout(() => {
+        console.error("🕐 Force killing workers after timeout");
+        workers.forEach((worker) => {
+          if (worker && !worker.isDead()) {
+            worker.kill("SIGKILL");
+          }
+        });
+        process.exit(1);
+      }, 30000);
+
+      // Wait for all workers to exit
+      const exitPromises = workers.map((worker) => {
+        if (!worker || worker.isDead()) return Promise.resolve();
+        return new Promise<void>((resolve) => {
+          worker.on("disconnect", resolve);
+          worker.on("exit", resolve);
+        });
+      });
+
+      await Promise.all(exitPromises);
+      clearTimeout(shutdownTimeout);
+      console.log("✅ All workers shutdown successfully");
+      process.exit(0);
+    };
+
+    process.on("SIGTERM", () => shutdownCluster("SIGTERM"));
+    process.on("SIGINT", () => shutdownCluster("SIGINT"));
+
+    return true; // This is the master process
+  } else {
+    // Worker process
+    process.title = `healthcare-worker-${cluster.worker?.id}`;
+    process.env.WORKER_ID = cluster.worker?.id?.toString() || "0";
+    console.log(
+      `🔧 Worker ${process.pid} (ID: ${cluster.worker?.id}) initialized`,
+    );
+    return false; // Continue with normal bootstrap
+  }
+}
+
 async function bootstrap() {
-  const logger = new Logger("Bootstrap");
+  // Setup clustering for production
+  if (setupProductionClustering()) {
+    return; // This is the master process, workers will handle requests
+  }
+
+  // Detect horizontal scaling mode (Docker containers)
+  const isHorizontalScaling = process.env.CLUSTER_MODE === "horizontal";
+  const instanceId = process.env.INSTANCE_ID || process.env.WORKER_ID || "1";
+  const workerId = process.env.WORKER_ID || cluster.worker?.id || instanceId;
+
+  const logger = new Logger(`Bootstrap-${instanceId}`);
   let app: (NestFastifyApplication & INestApplication) | undefined;
   let loggingService: LoggingService | undefined;
 
   try {
-    logger.log("Starting application bootstrap...");
+    logger.log(
+      `🚀 Starting Healthcare API bootstrap (Instance: ${instanceId}, Worker: ${workerId})...`,
+    );
+
+    if (isHorizontalScaling) {
+      logger.log(
+        `📊 Horizontal scaling mode detected - Instance ${instanceId}`,
+      );
+      process.title = `healthcare-api-${instanceId}`;
+    }
 
     const environment = process.env.NODE_ENV as Environment;
     if (!validEnvironments.includes(environment)) {
@@ -79,30 +305,30 @@ async function bootstrap() {
       environment === "production" ? productionConfig() : developmentConfig();
 
     // Configure Fastify logger based on environment
-    const loggerConfig: any = {
+    const loggerConfig: FastifyLoggerConfig = {
       level: process.env.NODE_ENV === "production" ? "warn" : "info",
       serializers: {
-        req: (req: any) => {
+        req: (req: Partial<AuthenticatedRequest>): SerializedRequest => {
           // Skip detailed logging for health check and common endpoints
           if (
             req.url === "/health" ||
             req.url === "/api-health" ||
-            req.url.includes("socket.io") ||
-            req.url.includes("/logs/")
+            req.url?.includes("socket.io") ||
+            req.url?.includes("/logs/")
           ) {
-            return { method: req.method, url: req.url, skip: true }; // Return minimal info but mark for skipping
+            return { method: req.method || "GET", url: req.url || "", skip: true };
           }
           return {
-            method: req.method,
-            url: req.url,
-            headers: req.headers,
+            method: req.method || "GET",
+            url: req.url || "",
+            headers: req.headers as Record<string, unknown>,
           };
         },
-        res: (res: any) => ({ statusCode: res.statusCode }),
-        err: (err: any) => ({
+        res: (res: { statusCode?: number }) => ({ statusCode: res.statusCode }),
+        err: (err: unknown) => ({
           type: "ERROR",
-          message: err.message,
-          stack: err.stack || "No stack trace",
+          message: (err as any).message,
+          stack: (err as any).stack || "No stack trace",
         }),
       },
     };
@@ -120,14 +346,43 @@ async function bootstrap() {
       };
     }
 
+    // Production optimized Fastify adapter with horizontal scaling support
     app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
       new FastifyAdapter({
-        logger: loggerConfig,
+        logger: loggerConfig as any,
         disableRequestLogging: true,
         requestIdLogLabel: "requestId",
         requestIdHeader: "x-request-id",
         trustProxy: envConfig.security.trustProxy === 1,
+
+        // Production performance optimizations
+        bodyLimit:
+          environment === "production" ? 50 * 1024 * 1024 : 10 * 1024 * 1024, // 50MB in prod
+        keepAliveTimeout: environment === "production" ? 65000 : 5000,
+        maxParamLength: 500,
+        connectionTimeout: environment === "production" ? 60000 : 30000,
+        requestTimeout: environment === "production" ? 30000 : 10000,
+
+        // Horizontal scaling optimizations
+        ...(isHorizontalScaling && {
+          serverFactory: (handler: unknown, opts: Record<string, unknown>) => {
+            // Enhanced server configuration for load balanced instances
+            const server = require("fastify")({
+              ...(opts || {}),
+              ignoreTrailingSlash: true,
+              caseSensitive: false,
+              // Optimize for high concurrency across instances
+              pluginTimeout: 30000,
+              requestIdHeader: `x-request-id-${instanceId}`,
+            });
+            return server;
+          },
+        }),
+
+        // HTTP/2 support for production
+        http2: (environment === "production" &&
+          process.env.ENABLE_HTTP2 === "true") as true,
       }),
       {
         logger:
@@ -135,6 +390,7 @@ async function bootstrap() {
             ? ["error", "warn"]
             : (["error", "warn", "log"] as LogLevel[]),
         bufferLogs: true,
+        cors: false, // Will be configured separately
       },
     );
 
@@ -149,6 +405,11 @@ async function bootstrap() {
       setupConsoleRedirect(loggingService);
     }
 
+    // Configure production middleware
+    if (environment === "production") {
+      await configureProductionMiddleware(app, configService, logger);
+    }
+
     // Apply global interceptor for logging
     if (loggingService) {
       app.useGlobalInterceptors(new LoggingInterceptor(loggingService));
@@ -160,9 +421,9 @@ async function bootstrap() {
         transform: true,
         whitelist: true,
         exceptionFactory: (errors) => {
-          const formattedErrors = errors.map((error) => ({
-            field: error.property,
-            constraints: error.constraints,
+          const formattedErrors = errors.map((_error) => ({
+            field: _error.property,
+            constraints: _error.constraints,
           }));
 
           if (loggingService) {
@@ -232,7 +493,7 @@ async function bootstrap() {
               AppLogLevel.ERROR,
               `Redis ${client} Client Error: ${err.message}`,
               "Redis",
-              { client, error: err.message, stack: err.stack },
+              { client, _error: err.message, stack: err.stack },
             );
           } catch (logError) {
             // If logging service fails, use original console
@@ -255,8 +516,8 @@ async function bootstrap() {
         };
 
         // Set up event handlers
-        pubClient.on("error", (err: any) => handleRedisError("Pub", err));
-        subClient.on("error", (err: any) => handleRedisError("Sub", err));
+        pubClient.on("error", (err: unknown) => handleRedisError("Pub", err as Error));
+        subClient.on("error", (err: unknown) => handleRedisError("Sub", err as Error));
         pubClient.on("connect", () => handleRedisConnect("Pub"));
         subClient.on("connect", () => handleRedisConnect("Sub"));
 
@@ -286,9 +547,9 @@ async function bootstrap() {
             this.adapterConstructor = createAdapter(pubClient, subClient);
           }
 
-          createIOServer(port: number, options?: any) {
+          createIOServer(port: number, options?: Record<string, unknown>) {
             const server = super.createIOServer(port, {
-              ...options,
+              ...(options || {}),
               cors: {
                 origin:
                   process.env.NODE_ENV === "production"
@@ -319,7 +580,7 @@ async function bootstrap() {
             server.adapter(this.adapterConstructor);
 
             // Health check endpoint
-            server.of("/health").on("connection", (socket: any) => {
+            server.of("/health").on("connection", (socket: SocketConnection) => {
               socket.emit("health", {
                 status: "healthy",
                 timestamp: new Date(),
@@ -328,7 +589,7 @@ async function bootstrap() {
             });
 
             // Test namespace with improved error handling
-            server.of("/test").on("connection", (socket: any) => {
+            server.of("/test").on("connection", (socket: SocketConnection) => {
               logger.log("Client connected to test namespace");
 
               let heartbeat: NodeJS.Timeout;
@@ -357,16 +618,16 @@ async function bootstrap() {
               });
 
               // Echo messages with error handling
-              socket.on("message", (data: any) => {
+              socket.on("message", (data: unknown) => {
                 try {
                   socket.emit("echo", {
                     original: data,
                     timestamp: new Date().toISOString(),
                     processed: true,
                   });
-                } catch (error) {
-                  logger.error("Error processing socket message:", error);
-                  socket.emit("error", {
+                } catch (_error) {
+                  logger.error("Error processing socket message:", _error);
+                  socket.emit("_error", {
                     message: "Failed to process message",
                     timestamp: new Date().toISOString(),
                   });
@@ -374,8 +635,8 @@ async function bootstrap() {
               });
 
               // Handle errors
-              socket.on("error", (error: any) => {
-                logger.error("Socket error:", error);
+              socket.on("error", (_error: unknown) => {
+                logger.error("Socket _error:", _error);
                 clearInterval(heartbeat);
               });
             });
@@ -404,15 +665,15 @@ async function bootstrap() {
           "WebSocket",
         );
       }
-    } catch (error) {
+    } catch (_error) {
       await loggingService?.log(
         LogType.ERROR,
         AppLogLevel.ERROR,
-        `WebSocket adapter initialization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `WebSocket adapter initialization failed: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         "WebSocket",
         {
-          error:
-            error instanceof Error ? error.stack : "No stack trace available",
+          _error:
+            _error instanceof Error ? _error.stack : "No stack trace available",
         },
       );
       // Don't throw, continue without WebSocket
@@ -524,7 +785,7 @@ async function bootstrap() {
 
       if (isBotScan) {
         // For bot scans, return 404 immediately without further processing
-        reply.status(404).send({ error: "Not Found" });
+        reply.status(404).send({ _error: "Not Found" });
         return;
       }
 
@@ -733,9 +994,9 @@ async function bootstrap() {
             clearTimeout(shutdownTimeout);
             logger.log("Application shut down successfully");
             process.exit(0);
-          } catch (error) {
+          } catch (_error) {
             clearTimeout(shutdownTimeout);
-            logger.error("Error during shutdown:", error);
+            logger.error("Error during shutdown:", _error);
             process.exit(1);
           }
         });
@@ -746,7 +1007,7 @@ async function bootstrap() {
         AppLogLevel.ERROR,
         `Failed to start server: ${listenError instanceof Error ? listenError.message : "Unknown error"}`,
         "Bootstrap",
-        { error: listenError instanceof Error ? listenError.stack : "" },
+        { _error: listenError instanceof Error ? listenError.stack : "" },
       );
       throw new Error(
         `Server startup failed: ${listenError instanceof Error ? listenError.message : "Unknown error"}`,
@@ -754,18 +1015,18 @@ async function bootstrap() {
     }
 
     // Enhanced error handling for uncaught exceptions
-    process.on("uncaughtException", async (error) => {
+    process.on("uncaughtException", async (_error) => {
       try {
         await loggingService?.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
-          `Uncaught Exception: ${error.message}`,
+          `Uncaught Exception: ${_error.message}`,
           "Process",
-          { error: error.stack },
+          { _error: _error.stack },
         );
       } catch (logError) {
         console.error("Failed to log uncaught exception:", logError);
-        console.error("Original error:", error);
+        console.error("Original _error:", _error);
       }
       process.exit(1);
     });
@@ -788,19 +1049,21 @@ async function bootstrap() {
         console.error("Original rejection:", reason);
       }
     });
-  } catch (error) {
+  } catch (_error) {
     if (loggingService) {
       try {
         await loggingService.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
-          `Failed to start application: ${error instanceof Error ? error.message : "Unknown error"}`,
+          `Failed to start application: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
           "Bootstrap",
           {
-            error: error instanceof Error ? error.message : "Unknown error",
+            _error: _error instanceof Error ? _error.message : "Unknown _error",
             stack:
-              error instanceof Error ? error.stack : "No stack trace available",
-            details: error,
+              _error instanceof Error
+                ? _error.stack
+                : "No stack trace available",
+            details: _error,
           },
         );
       } catch (logError) {
@@ -810,7 +1073,7 @@ async function bootstrap() {
         );
       }
     } else {
-      console.error("CRITICAL: Failed to start application:", error);
+      console.error("CRITICAL: Failed to start application:", _error);
     }
 
     try {
@@ -825,7 +1088,7 @@ async function bootstrap() {
   }
 }
 
-bootstrap().catch((error) => {
-  console.error("CRITICAL: Fatal error during bootstrap:", error);
+bootstrap().catch((_error) => {
+  console.error("CRITICAL: Fatal error during bootstrap:", _error);
   process.exit(1);
 });

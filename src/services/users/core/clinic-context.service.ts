@@ -298,8 +298,8 @@ export class ClinicContextService {
         try {
           const result = await fn();
           resolve(result);
-        } catch (error) {
-          reject(error);
+        } catch (_error) {
+          reject(_error);
         }
       });
     });
@@ -510,14 +510,14 @@ export class ClinicContextService {
 
   // Data Isolation Helpers
 
-  addClinicFilter<T extends Record<string, any>>(
+  addClinicFilter<T extends Record<string, unknown>>(
     filter: T,
   ): T & { clinicId: string } {
     const clinicId = this.getCurrentClinicId();
     return { ...filter, clinicId };
   }
 
-  addLocationFilter<T extends Record<string, any>>(
+  addLocationFilter<T extends Record<string, unknown>>(
     filter: T,
   ): T & { clinicId: string; locationId?: string } {
     const context = this.getContext();
@@ -593,7 +593,7 @@ export class ClinicContextService {
       ...clinic,
       settings: updatedSettings,
       metadata: {
-        ...clinic.metadata,
+        ...((clinic as any).metadata || {}),
         updatedAt: new Date(),
       },
     };

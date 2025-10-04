@@ -46,7 +46,7 @@ export interface LogContext {
 export class LoggingService {
   private logger!: Logger;
   private contextStorage = new AsyncLocalStorage<LogContext>();
-  private metricsBuffer: any[] = [];
+  private metricsBuffer: unknown[] = [];
   private performanceMetrics = new Map<string, number>();
   private serviceName: string;
   private readonly maxBufferSize = 10000; // Increased for 1M users
@@ -141,7 +141,7 @@ export class LoggingService {
     level: LogLevel,
     message: string,
     context: string,
-    metadata: Record<string, any> = {},
+    metadata: Record<string, unknown> = {},
   ) {
     this.ensureLogger();
 
@@ -156,7 +156,7 @@ export class LoggingService {
       message,
       context,
       metadata: {
-        ...metadata,
+        ...(metadata || {}),
         timestamp: timestamp.toISOString(),
         environment: process.env.NODE_ENV || "development",
         service: this.serviceName,
@@ -279,18 +279,20 @@ export class LoggingService {
     );
   }
 
-  private addToMetricsBuffer(logEntry: any) {
+  private addToMetricsBuffer(logEntry: unknown) {
     if (!this.metricsBuffer) {
       this.metricsBuffer = [];
     }
+    const logEntryData = logEntry as Record<string, unknown>;
+    const metadata = (logEntryData.metadata as Record<string, unknown>) || {};
     this.metricsBuffer.push({
       timestamp: Date.now(),
-      level: logEntry.level,
-      type: logEntry.type,
-      context: logEntry.context,
-      userId: logEntry.metadata.userId,
-      clinicId: logEntry.metadata.clinicId,
-      responseTime: logEntry.metadata.responseTime,
+      level: logEntryData.level,
+      type: logEntryData.type,
+      context: logEntryData.context,
+      userId: metadata.userId,
+      clinicId: metadata.clinicId,
+      responseTime: metadata.responseTime,
     });
 
     // Emergency flush if buffer is getting too large
@@ -340,7 +342,7 @@ export class LoggingService {
       }
 
       // Optimized database query for 1M users
-      const whereClause: any = {
+      const whereClause: unknown = {
         timestamp: {
           gte: finalStartTime,
           lte: finalEndTime,
@@ -348,7 +350,7 @@ export class LoggingService {
       };
 
       if (type) {
-        whereClause.action = type;
+        (whereClause as Record<string, unknown>).action = type;
       }
 
       // Enhanced database query with better indexing
@@ -387,28 +389,31 @@ export class LoggingService {
           },
         });
 
-        const result = dbLogs.map((log) => ({
-          id: log.id,
-          type: log.action,
-          level: "INFO", // Default level
-          message: `${log.action} on ${log.description}`,
-          context: log.description,
-          metadata: {},
+        const result = dbLogs.map((log: unknown) => {
+          const logData = log as Record<string, unknown>;
+          return {
+            id: logData.id,
+            type: logData.action,
+            level: "INFO", // Default level
+            message: `${logData.action} on ${logData.description}`,
+            context: logData.description,
+            metadata: {},
 
-          timestamp: log.timestamp.toISOString(),
-          userId: log.userId,
-          ipAddress: log.ipAddress,
-          userAgent: log.device,
-        }));
+            timestamp: (logData.timestamp as Date).toISOString(),
+            userId: logData.userId,
+            ipAddress: logData.ipAddress,
+            userAgent: logData.device,
+          };
+        });
 
         // Enhanced caching with longer TTL for 1M users
         await this.redisService?.set(cacheKey, JSON.stringify(result), 900); // 15 minutes
 
         return result;
-      } catch (error) {
+      } catch (_error) {
         this.logger.error(
           "Database query failed, falling back to Redis",
-          (error as Error).message,
+          (_error as Error).message,
         );
 
         // Fallback to Redis-only logs
@@ -518,11 +523,11 @@ export class LoggingService {
     level: LogLevel,
     message: string,
     context: string,
-    metadata: Record<string, any> = {},
+    metadata: Record<string, unknown> = {},
   ) {
     const currentContext = this.getContext();
     const enhancedMetadata = {
-      ...metadata,
+      ...(metadata || {}),
       ...currentContext,
     };
 
@@ -538,13 +543,13 @@ export class LoggingService {
     level: LogLevel,
     message: string,
     context: string,
-    metadata: Record<string, any> = {},
+    metadata: Record<string, unknown> = {},
   ) {
     // Set the clinic context for multi-tenant logging
     const clinicContext = `clinic_${clinicId}_${context}`;
 
     return this.log(type, level, message, clinicContext, {
-      ...metadata,
+      ...(metadata || {}),
       clinicId,
       serviceName: this.serviceName,
       tenantType: "healthcare",
@@ -557,7 +562,7 @@ export class LoggingService {
   logPerformance(
     operation: string,
     duration: number,
-    metadata: Record<string, any> = {},
+    metadata: Record<string, unknown> = {},
   ) {
     this.performanceMetrics.set(operation, duration);
 
@@ -565,7 +570,7 @@ export class LoggingService {
       operation,
       duration,
       timestamp: new Date().toISOString(),
-      ...metadata,
+      ...(metadata || {}),
     };
 
     this.metricsBuffer.push(performanceData);
@@ -596,7 +601,7 @@ export class LoggingService {
   /**
    * Log security events with enhanced tracking
    */
-  logSecurity(event: string, details: Record<string, any>) {
+  logSecurity(event: string, details: Record<string, unknown>) {
     return this.logWithContext(
       LogType.SECURITY,
       LogLevel.WARN,
@@ -614,7 +619,7 @@ export class LoggingService {
   /**
    * Log business events for analytics
    */
-  logBusiness(event: string, details: Record<string, any>) {
+  logBusiness(event: string, details: Record<string, unknown>) {
     return this.logWithContext(
       LogType.AUDIT,
       LogLevel.INFO,
@@ -742,7 +747,7 @@ export class LoggingService {
     clinicId: string,
     operation: string,
     userId: string,
-    details: Record<string, any>,
+    details: Record<string, unknown>,
   ) {
     await this.logWithClinic(
       clinicId,
@@ -765,7 +770,7 @@ export class LoggingService {
   async logUserActivity(
     userId: string,
     action: string,
-    metadata: Record<string, any> = {},
+    metadata: Record<string, unknown> = {},
   ) {
     // Use async context to avoid blocking
     setImmediate(async () => {
@@ -778,13 +783,13 @@ export class LoggingService {
           {
             userId,
             action,
-            ...metadata,
+            ...(metadata || {}),
             highVolume: true,
           },
         );
-      } catch (error) {
+      } catch (_error) {
         // Silent fail for high-volume operations
-        console.debug("User activity logging failed:", error);
+        console.debug("User activity logging failed:", _error);
       }
     });
   }
@@ -798,7 +803,7 @@ export class LoggingService {
       level: LogLevel;
       message: string;
       context: string;
-      metadata?: Record<string, any>;
+      metadata?: Record<string, unknown>;
     }>,
   ) {
     const batchId = this.generateCorrelationId();
@@ -806,7 +811,10 @@ export class LoggingService {
     try {
       const batchPromises = events.map((event, index) =>
         this.log(event.type, event.level, event.message, event.context, {
-          ...event.metadata,
+          ...(((event as { metadata?: unknown }).metadata as Record<
+            string,
+            unknown
+          >) || {}),
           batchId,
           batchIndex: index,
           batchSize: events.length,
@@ -839,14 +847,15 @@ export class LoggingService {
     return logs.filter(
       (log) =>
         log.context?.includes(`clinic_${clinicId}_`) ||
-        log.metadata?.clinicId === clinicId,
+        ((log as { metadata?: unknown }).metadata as Record<string, unknown>)
+          ?.clinicId === clinicId,
     );
   }
 
   /**
    * Emergency logging for critical system events
    */
-  async logEmergency(message: string, details: Record<string, any>) {
+  async logEmergency(message: string, details: Record<string, unknown>) {
     // Emergency logs bypass normal processing for immediate visibility
     console.error(`🚨 EMERGENCY: ${message}`, details);
 

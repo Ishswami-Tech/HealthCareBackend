@@ -160,12 +160,12 @@ export class DatabaseModule implements OnModuleInit {
 
       // Initialize enhanced database components
       await this.initializeEnhancedComponents();
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to initialize database module: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to initialize database module: ${_error instanceof Error ? _error.message : String(_error)}`,
+        _error instanceof Error ? _error.stack : undefined,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -201,11 +201,11 @@ export class DatabaseModule implements OnModuleInit {
       this.logger.log(
         `Maximum locations per clinic: ${healthcareConf?.multiClinic?.maxLocationsPerClinic}`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to initialize enhanced database components: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to initialize enhanced database components: ${_error instanceof Error ? _error.message : String(_error)}`,
       );
-      throw error;
+      throw _error;
     }
   }
 }

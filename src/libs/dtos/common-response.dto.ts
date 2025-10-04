@@ -148,7 +148,7 @@ export class ErrorResponseDto extends BaseResponseDto {
     example: {},
     required: false,
   })
-  details?: any;
+  details?: unknown;
 
   @ApiProperty({
     description: "HTTP status code",
@@ -160,7 +160,7 @@ export class ErrorResponseDto extends BaseResponseDto {
   constructor(
     message: string,
     errorCode?: string,
-    details?: any,
+    details?: unknown,
     statusCode?: number,
   ) {
     super(message, "error");

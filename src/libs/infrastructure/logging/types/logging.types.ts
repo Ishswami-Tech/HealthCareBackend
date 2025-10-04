@@ -78,7 +78,7 @@ export interface LogEntry {
   level: LogLevel;
   message: string;
   context: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   timestamp: Date;
   correlationId?: string;
   traceId?: string;
@@ -348,7 +348,7 @@ export function createLogData(
   level: LogLevel,
   message: string,
   context: string,
-  metadata: Record<string, any> = {},
+  metadata: Record<string, unknown> = {},
 ): LogEntry {
   return {
     id: `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
@@ -357,7 +357,7 @@ export function createLogData(
     message,
     context,
     metadata: {
-      ...metadata,
+      ...(metadata || {}),
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || "development",
       service: process.env.SERVICE_NAME || "healthcare-backend",

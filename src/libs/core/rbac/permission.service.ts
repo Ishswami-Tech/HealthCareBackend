@@ -79,12 +79,12 @@ export class PermissionService {
       );
 
       return this.mapToPermission(permission);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to create permission: ${createPermissionDto.name}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -113,10 +113,10 @@ export class PermissionService {
       await this.redis.set(cacheKey, mappedPermission, this.CACHE_TTL);
 
       return mappedPermission;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get permission by ID: ${permissionId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return null;
     }
@@ -155,10 +155,10 @@ export class PermissionService {
       await this.redis.set(cacheKey, mappedPermission, this.CACHE_TTL);
 
       return mappedPermission;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get permission: ${resource}:${action}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return null;
     }
@@ -188,15 +188,15 @@ export class PermissionService {
         orderBy: [{ resource: "asc" }, { action: "asc" }],
       });
 
-      const mappedPermissions = permissions.map((permission) =>
+      const mappedPermissions = permissions.map((permission: unknown) =>
         this.mapToPermission(permission),
       );
 
       await this.redis.set(cacheKey, mappedPermissions, this.CACHE_TTL);
 
       return mappedPermissions;
-    } catch (error) {
-      this.logger.error("Failed to get permissions", (error as Error).stack);
+    } catch (_error) {
+      this.logger.error("Failed to get permissions", (_error as Error).stack);
       return [];
     }
   }
@@ -240,12 +240,12 @@ export class PermissionService {
       );
 
       return this.mapToPermission(permission);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to update permission: ${permissionId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -294,12 +294,12 @@ export class PermissionService {
       this.logger.log(
         `Permission deleted: ${permission.name} (${permission.id})`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to delete permission: ${permissionId}`,
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -326,11 +326,13 @@ export class PermissionService {
         orderBy: [{ resource: "asc" }, { action: "asc" }],
       });
 
-      return permissions.map((permission) => this.mapToPermission(permission));
-    } catch (error) {
+      return permissions.map((permission: unknown) =>
+        this.mapToPermission(permission),
+      );
+    } catch (_error) {
       this.logger.error(
         "Failed to get system permissions",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
       return [];
     }
@@ -659,12 +661,12 @@ export class PermissionService {
       }
 
       await this.clearPermissionCache();
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to initialize system permissions",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -681,21 +683,21 @@ export class PermissionService {
         try {
           const permission = await this.createPermission(permissionData);
           results.push(permission);
-        } catch (error) {
+        } catch (_error) {
           this.logger.warn(
             `Failed to create permission: ${permissionData.name}`,
-            (error as Error).message,
+            (_error as Error).message,
           );
         }
       }
 
       return results;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Bulk permission creation failed",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -733,30 +735,31 @@ export class PermissionService {
       });
 
       return summary;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to get permissions summary",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
   /**
    * Map database permission to Permission interface
    */
-  private mapToPermission(permission: any): Permission {
+  private mapToPermission(permission: unknown): Permission {
+    const perm = permission as Record<string, unknown>;
     return {
-      id: permission.id,
-      name: permission.name,
-      resource: permission.resource,
-      action: permission.action,
-      description: permission.description,
-      domain: permission.domain,
-      isSystemPermission: permission.isSystemPermission,
-      isActive: permission.isActive,
-      createdAt: permission.createdAt,
-      updatedAt: permission.updatedAt,
+      id: perm.id as string,
+      name: perm.name as string,
+      resource: perm.resource as string,
+      action: perm.action as string,
+      description: perm.description as string | undefined,
+      domain: perm.domain as string,
+      isSystemPermission: perm.isSystemPermission as boolean,
+      isActive: perm.isActive as boolean,
+      createdAt: perm.createdAt as Date,
+      updatedAt: perm.updatedAt as Date,
     };
   }
 
@@ -769,10 +772,10 @@ export class PermissionService {
       if (keys.length > 0) {
         await this.redis.del(...keys);
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to clear permission cache",
-        (error as Error).stack,
+        (_error as Error).stack,
       );
     }
   }

@@ -75,8 +75,8 @@ async function bootstrap() {
         .then(() => {
           process.exit(0);
         })
-        .catch((error) => {
-          console.error("❌ Error during SIGTERM shutdown:", error);
+        .catch((_error) => {
+          console.error("❌ Error during SIGTERM shutdown:", _error);
           process.exit(1);
         });
     });
@@ -88,8 +88,8 @@ async function bootstrap() {
         .then(() => {
           process.exit(0);
         })
-        .catch((error) => {
-          console.error("❌ Error during SIGINT shutdown:", error);
+        .catch((_error) => {
+          console.error("❌ Error during SIGINT shutdown:", _error);
           process.exit(1);
         });
     });
@@ -102,8 +102,8 @@ async function bootstrap() {
 
     // Keep the process alive
     console.log("🔄 Worker is running and processing queues...");
-  } catch (error) {
-    console.error("❌ Worker failed to start:", error);
+  } catch (_error) {
+    console.error("❌ Worker failed to start:", _error);
     process.exit(1);
   }
 }
@@ -113,12 +113,12 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("🚨 Unhandled Rejection at:", promise, "reason:", reason);
 });
 
-process.on("uncaughtException", (error) => {
-  console.error("🚨 Uncaught Exception:", error);
+process.on("uncaughtException", (_error) => {
+  console.error("🚨 Uncaught Exception:", _error);
   process.exit(1);
 });
 
-bootstrap().catch((error) => {
-  console.error("🚨 Bootstrap failed:", error);
+bootstrap().catch((_error) => {
+  console.error("🚨 Bootstrap failed:", _error);
   process.exit(1);
 });

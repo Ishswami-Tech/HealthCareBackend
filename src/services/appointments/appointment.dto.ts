@@ -274,12 +274,12 @@ export class CreateAppointmentDto {
   @ApiProperty({ description: "Pre-screening data", required: false })
   @IsOptional()
   @IsObject()
-  preScreeningData?: any;
+  preScreeningData?: unknown;
 
   @ApiProperty({ description: "Insurance information", required: false })
   @IsOptional()
   @IsObject()
-  insuranceInfo?: any;
+  insuranceInfo?: unknown;
 
   @ApiProperty({ description: "Therapy ID", required: false })
   @IsOptional()
@@ -529,7 +529,7 @@ export class DoctorAvailabilityResponseDto {
   bookedSlots!: string[];
 
   @ApiProperty({ description: "Working hours for the day" })
-  workingHours: any;
+  workingHours: unknown;
 
   @ApiProperty({ description: "Next available slot" })
   nextAvailableSlot?: string;
@@ -724,7 +724,7 @@ export interface Doctor {
   rating?: number;
   isAvailable: boolean;
   nextAvailableSlot?: string;
-  workingHours?: any;
+  workingHours?: unknown;
 }
 
 export interface Patient {
@@ -735,7 +735,7 @@ export interface Patient {
   insuranceProvider?: string;
   insuranceNumber?: string;
   patientNumber?: string;
-  medicalHistory?: any;
+  medicalHistory?: unknown;
   allergies?: string[];
   medications?: string[];
 }
@@ -790,21 +790,21 @@ export interface Appointment {
   recurringPattern?: string;
   recurringEndDate?: Date;
   language: Language;
-  preScreeningData?: any;
-  insuranceInfo?: any;
+  preScreeningData?: unknown;
+  insuranceInfo?: unknown;
   metadata: {
     createdAt: Date;
     updatedAt: Date;
     createdBy: string;
     updatedBy?: string;
     version: number;
-    auditTrail: any[];
+    auditTrail: unknown[];
   };
 }
 
 export type AppointmentWithRelations = Appointment & {
   doctor: DoctorWithUser;
   patient: PatientWithUser;
-  location: any;
-  clinic: any;
+  location: unknown;
+  clinic: unknown;
 };

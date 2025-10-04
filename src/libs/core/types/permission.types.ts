@@ -38,7 +38,7 @@ export interface PermissionCheckParams {
   action: Permission;
   resourceType?: ResourceType;
   resourceId?: string;
-  context?: any; // for extensibility (e.g., ownership, tenant, etc.)
+  context?: unknown; // for extensibility (e.g., ownership, tenant, etc.)
 }
 
 export interface UserPermissions {

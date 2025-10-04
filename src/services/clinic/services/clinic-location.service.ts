@@ -17,7 +17,35 @@ import {
 } from "../../../libs/infrastructure/logging/types/logging.types";
 import { RbacService } from "../../../libs/core/rbac/rbac.service";
 import { resolveClinicUUID } from "../../../libs/utils/clinic.utils";
-import { ClinicLocation, QRCodeData } from "src/libs/core/types/clinic.types";
+// import { ClinicLocation, QRCodeData } from "src/libs/core/types/clinic.types";
+
+// Define types locally since the import path is not working
+export interface ClinicLocation {
+  id: string;
+  locationId: string;
+  name: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  zipCode?: string;
+  phone?: string;
+  email?: string;
+  timezone: string;
+  workingHours: Record<string, { start: string; end: string } | null>;
+  isActive: boolean;
+  doctors: Array<{
+    id: string;
+    name: string;
+    profilePicture?: string;
+  }>;
+}
+
+export interface QRCodeData {
+  locationId: string;
+  clinicId: string;
+  timestamp: string;
+}
 
 @Injectable()
 export class ClinicLocationService {
@@ -131,12 +159,24 @@ export class ClinicLocationService {
         phone: location.phone || undefined,
         email: location.email || undefined,
         timezone: location.timezone || "UTC",
-        workingHours: location.workingHours as any,
+        workingHours: location.workingHours,
         isActive: location.isActive,
-        doctors: location.doctorClinic.map((dc) => ({
-          id: dc.doctor.id,
-          name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined,
+        doctors: (
+          (location as Record<string, unknown>).doctorClinic as unknown[]
+        ).map((dc: unknown) => ({
+          id: (
+            (dc as Record<string, unknown>).doctor as Record<string, unknown>
+          ).id as string,
+          name: `${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).firstName as string} ${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).lastName as string}`,
+          profilePicture:
+            ((
+              (
+                (dc as Record<string, unknown>).doctor as Record<
+                  string,
+                  unknown
+                >
+              ).user as Record<string, unknown>
+            ).profilePicture as string) || undefined,
         })),
       };
 
@@ -148,14 +188,14 @@ export class ClinicLocationService {
       });
 
       return formattedLocation;
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicLocationService",
         "create clinic location",
         { clinicId, ...createLocationDto },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -206,34 +246,55 @@ export class ClinicLocationService {
         },
       });
 
-      return locations.map((location) => ({
-        id: location.id,
-        locationId: location.locationId,
-        name: location.name,
-        address: location.address,
-        city: location.city,
-        state: location.state,
-        country: location.country,
-        zipCode: location.zipCode || undefined,
-        phone: location.phone || undefined,
-        email: location.email || undefined,
-        timezone: location.timezone || "UTC",
-        workingHours: location.workingHours as any,
-        isActive: location.isActive,
-        doctors: location.doctorClinic.map((dc) => ({
-          id: dc.doctor.id,
-          name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined,
+      return locations.map((location: unknown) => ({
+        id: (location as Record<string, unknown>).id as string,
+        locationId: (location as Record<string, unknown>).locationId as string,
+        name: (location as Record<string, unknown>).name as string,
+        address: (location as Record<string, unknown>).address as string,
+        city: (location as Record<string, unknown>).city as string,
+        state: (location as Record<string, unknown>).state as string,
+        country: (location as Record<string, unknown>).country as string,
+        zipCode:
+          ((location as Record<string, unknown>).zipCode as string) ||
+          undefined,
+        phone:
+          ((location as Record<string, unknown>).phone as string) || undefined,
+        email:
+          ((location as Record<string, unknown>).email as string) || undefined,
+        timezone:
+          ((location as Record<string, unknown>).timezone as string) || "UTC",
+        workingHours: (location as Record<string, unknown>)
+          .workingHours as Record<
+          string,
+          { start: string; end: string } | null
+        >,
+        isActive: (location as Record<string, unknown>).isActive as boolean,
+        doctors: (
+          (location as Record<string, unknown>).doctorClinic as unknown[]
+        ).map((dc: unknown) => ({
+          id: (
+            (dc as Record<string, unknown>).doctor as Record<string, unknown>
+          ).id as string,
+          name: `${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).firstName as string} ${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).lastName as string}`,
+          profilePicture:
+            ((
+              (
+                (dc as Record<string, unknown>).doctor as Record<
+                  string,
+                  unknown
+                >
+              ).user as Record<string, unknown>
+            ).profilePicture as string) || undefined,
         })),
       }));
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicLocationService",
         "retrieve clinic locations",
         { clinicId },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -299,22 +360,34 @@ export class ClinicLocationService {
         phone: location.phone || undefined,
         email: location.email || undefined,
         timezone: location.timezone || "UTC",
-        workingHours: location.workingHours as any,
+        workingHours: location.workingHours,
         isActive: location.isActive,
-        doctors: location.doctorClinic.map((dc) => ({
-          id: dc.doctor.id,
-          name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined,
+        doctors: (
+          (location as Record<string, unknown>).doctorClinic as unknown[]
+        ).map((dc: unknown) => ({
+          id: (
+            (dc as Record<string, unknown>).doctor as Record<string, unknown>
+          ).id as string,
+          name: `${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).firstName as string} ${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).lastName as string}`,
+          profilePicture:
+            ((
+              (
+                (dc as Record<string, unknown>).doctor as Record<
+                  string,
+                  unknown
+                >
+              ).user as Record<string, unknown>
+            ).profilePicture as string) || undefined,
         })),
       };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicLocationService",
         "retrieve clinic location",
         { clinicId, locationId: id },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -343,18 +416,18 @@ export class ClinicLocationService {
       );
 
       return qrCode;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to generate location QR: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to generate location QR: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         "ClinicLocationService",
         {
           locationId,
-          error: error instanceof Error ? error.stack : "",
+          _error: _error instanceof Error ? _error.stack : "",
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -401,15 +474,15 @@ export class ClinicLocationService {
       }
 
       return this.getLocationById(location.id, location.clinicId, userId);
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to verify location QR: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to verify location QR: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         "ClinicLocationService",
-        { error: error instanceof Error ? error.stack : "" },
+        { _error: _error instanceof Error ? _error.stack : "" },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -510,22 +583,32 @@ export class ClinicLocationService {
         phone: updatedLocation.phone || undefined,
         email: updatedLocation.email || undefined,
         timezone: updatedLocation.timezone || "UTC",
-        workingHours: updatedLocation.workingHours as any,
+        workingHours: updatedLocation.workingHours,
         isActive: updatedLocation.isActive,
-        doctors: updatedLocation.doctorClinic.map((dc) => ({
-          id: dc.doctor.id,
-          name: `${dc.doctor.user.firstName} ${dc.doctor.user.lastName}`,
-          profilePicture: dc.doctor.user.profilePicture || undefined,
+        doctors: updatedLocation.doctorClinic.map((dc: unknown) => ({
+          id: (
+            (dc as Record<string, unknown>).doctor as Record<string, unknown>
+          ).id as string,
+          name: `${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).firstName as string} ${(((dc as Record<string, unknown>).doctor as Record<string, unknown>).user as Record<string, unknown>).lastName as string}`,
+          profilePicture:
+            ((
+              (
+                (dc as Record<string, unknown>).doctor as Record<
+                  string,
+                  unknown
+                >
+              ).user as Record<string, unknown>
+            ).profilePicture as string) || undefined,
         })),
       };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicLocationService",
         "update clinic location",
         { clinicId, locationId: id, ...updateLocationDto },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -591,14 +674,14 @@ export class ClinicLocationService {
       });
 
       return { message: "Location deleted successfully" };
-    } catch (error) {
+    } catch (_error) {
       await this.errorService.logError(
-        error,
+        _error,
         "ClinicLocationService",
         "delete clinic location",
         { clinicId, locationId: id },
       );
-      throw error;
+      throw _error;
     }
   }
 }

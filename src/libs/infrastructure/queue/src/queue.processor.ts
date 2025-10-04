@@ -21,20 +21,20 @@ export class QueueProcessor {
       // ... job logic ...
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
-    } catch (error) {
-      if (error instanceof Error) {
+    } catch (_error) {
+      if (_error instanceof Error) {
         this.logger.error(
-          `Error processing create job: ${error.message}`,
-          error.stack,
+          `Error processing create job: ${_error.message}`,
+          _error.stack,
         );
       } else {
-        this.logger.error(`Error processing create job: ${String(error)}`);
+        this.logger.error(`Error processing create job: ${String(_error)}`);
       }
       // Optionally move to DLQ if available
       // if (job.attemptsMade >= (job.opts.attempts || 3) && this.queueService?.moveToDLQ) {
       //   await this.queueService.moveToDLQ(job, 'service-queue');
       // }
-      throw error;
+      throw _error;
     }
   }
 
@@ -50,16 +50,16 @@ export class QueueProcessor {
 
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
-    } catch (error) {
-      if (error instanceof Error) {
+    } catch (_error) {
+      if (_error instanceof Error) {
         this.logger.error(
-          `Error processing update job: ${error.message}`,
-          error.stack,
+          `Error processing update job: ${_error.message}`,
+          _error.stack,
         );
       } else {
-        this.logger.error(`Error processing update job: ${String(error)}`);
+        this.logger.error(`Error processing update job: ${String(_error)}`);
       }
-      throw error; // Rethrow to trigger job retry
+      throw _error; // Rethrow to trigger job retry
     }
   }
 
@@ -74,16 +74,16 @@ export class QueueProcessor {
 
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
-    } catch (error) {
-      if (error instanceof Error) {
+    } catch (_error) {
+      if (_error instanceof Error) {
         this.logger.error(
-          `Error processing confirm job: ${error.message}`,
-          error.stack,
+          `Error processing confirm job: ${_error.message}`,
+          _error.stack,
         );
       } else {
-        this.logger.error(`Error processing confirm job: ${String(error)}`);
+        this.logger.error(`Error processing confirm job: ${String(_error)}`);
       }
-      throw error; // Rethrow to trigger job retry
+      throw _error; // Rethrow to trigger job retry
     }
   }
 
@@ -98,16 +98,16 @@ export class QueueProcessor {
 
       this.logger.log(`Job ${job.id} processed successfully`);
       return { success: true };
-    } catch (error) {
-      if (error instanceof Error) {
+    } catch (_error) {
+      if (_error instanceof Error) {
         this.logger.error(
-          `Error processing complete job: ${error.message}`,
-          error.stack,
+          `Error processing complete job: ${_error.message}`,
+          _error.stack,
         );
       } else {
-        this.logger.error(`Error processing complete job: ${String(error)}`);
+        this.logger.error(`Error processing complete job: ${String(_error)}`);
       }
-      throw error; // Rethrow to trigger job retry
+      throw _error; // Rethrow to trigger job retry
     }
   }
 
@@ -126,24 +126,24 @@ export class QueueProcessor {
       // await this.fcmService.sendNotification({
       //   userId: job.data.userId,
       //   title: 'Resource Update',
-      //   body: job.data.metadata?.message || 'Your resource status has been updated',
+      //   body: job.(data as { meta?: unknown }).metadata?.message || 'Your resource status has been updated',
       //   data: { resourceId: job.data.id, resourceType: job.data.resourceType },
       // });
 
       this.logger.log(`Notification sent for resource ${job.data.id}`);
       return { success: true };
-    } catch (error) {
-      if (error instanceof Error) {
+    } catch (_error) {
+      if (_error instanceof Error) {
         this.logger.error(
-          `Error processing notification job: ${error.message}`,
-          error.stack,
+          `Error processing notification job: ${_error.message}`,
+          _error.stack,
         );
       } else {
         this.logger.error(
-          `Error processing notification job: ${String(error)}`,
+          `Error processing notification job: ${String(_error)}`,
         );
       }
-      throw error; // Rethrow to trigger job retry
+      throw _error; // Rethrow to trigger job retry
     }
   }
 }

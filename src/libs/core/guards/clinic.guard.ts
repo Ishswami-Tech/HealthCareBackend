@@ -11,7 +11,7 @@ import {
   LogType,
   LogLevel,
 } from "../../infrastructure/logging/types/logging.types";
-import { ClinicIsolationService } from "../../infrastructure/database/clinic-isolation.service";
+import { ClinicIsolationService, ClinicContext } from "../../infrastructure/database/clinic-isolation.service";
 
 // Type definitions for request objects
 interface AuthenticatedUser {
@@ -19,7 +19,7 @@ interface AuthenticatedUser {
   sub?: string;
   role?: string;
   clinicId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 interface ClinicRequest {
@@ -34,28 +34,28 @@ interface ClinicRequest {
   query?: {
     clinicId?: string;
     clinic_id?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
   params?: {
     clinicId?: string;
     clinic_id?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
   body?: {
     clinicId?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
   clinicId?: string;
-  clinicContext?: any;
+  clinicContext?: {
+    clinicName?: string;
+    [key: string]: unknown;
+  };
 }
 
 interface ClinicValidationResult {
   success: boolean;
   error?: string;
-  clinicContext?: {
-    clinicName?: string;
-    [key: string]: any;
-  };
+  clinicContext?: ClinicContext;
 }
 
 @Injectable()
@@ -142,7 +142,7 @@ export class ClinicGuard implements CanActivate {
 
     // Set clinic context in request for downstream use
     request.clinicId = clinicId;
-    request.clinicContext = clinicResult.clinicContext;
+    request.clinicContext = clinicResult.clinicContext as unknown as { [key: string]: unknown; clinicName?: string };
 
     void this.loggingService.log(
       LogType.AUTH,

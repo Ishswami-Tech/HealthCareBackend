@@ -49,8 +49,8 @@ export class RepositoryResult<TData, TError = Error> {
     try {
       const data = await promise;
       return RepositoryResult.success(data, metadata);
-    } catch (error) {
-      return RepositoryResult.failure(error as Error, metadata);
+    } catch (_error) {
+      return RepositoryResult.failure(_error as Error, metadata);
     }
   }
 
@@ -64,8 +64,8 @@ export class RepositoryResult<TData, TError = Error> {
     try {
       const data = callback();
       return RepositoryResult.success(data, metadata);
-    } catch (error) {
-      return RepositoryResult.failure(error as Error, metadata);
+    } catch (_error) {
+      return RepositoryResult.failure(_error as Error, metadata);
     }
   }
 
@@ -79,8 +79,8 @@ export class RepositoryResult<TData, TError = Error> {
     try {
       const data = await callback();
       return RepositoryResult.success(data, metadata);
-    } catch (error) {
-      return RepositoryResult.failure(error as Error, metadata);
+    } catch (_error) {
+      return RepositoryResult.failure(_error as Error, metadata);
     }
   }
 
@@ -168,11 +168,11 @@ export class RepositoryResult<TData, TError = Error> {
         undefined,
         this._metadata,
       );
-    } catch (error) {
+    } catch (_error) {
       return new RepositoryResult<U, TError>(
         false,
         undefined,
-        error as TError,
+        _error as TError,
         this._metadata,
       );
     }
@@ -201,11 +201,11 @@ export class RepositoryResult<TData, TError = Error> {
         undefined,
         this._metadata,
       );
-    } catch (error) {
+    } catch (_error) {
       return new RepositoryResult<U, TError>(
         false,
         undefined,
-        error as TError,
+        _error as TError,
         this._metadata,
       );
     }
@@ -228,11 +228,11 @@ export class RepositoryResult<TData, TError = Error> {
 
     try {
       return transform(this._data!);
-    } catch (error) {
+    } catch (_error) {
       return new RepositoryResult<U, TError>(
         false,
         undefined,
-        error as TError,
+        _error as TError,
         this._metadata,
       );
     }
@@ -255,11 +255,11 @@ export class RepositoryResult<TData, TError = Error> {
 
     try {
       return await transform(this._data!);
-    } catch (error) {
+    } catch (_error) {
       return new RepositoryResult<U, TError>(
         false,
         undefined,
-        error as TError,
+        _error as TError,
         this._metadata,
       );
     }
@@ -268,7 +268,7 @@ export class RepositoryResult<TData, TError = Error> {
   /**
    * Transform error if failed
    */
-  mapError<U>(transform: (error: TError) => U): RepositoryResult<TData, U> {
+  mapError<U>(transform: (_error: TError) => U): RepositoryResult<TData, U> {
     if (this._success) {
       return new RepositoryResult<TData, U>(
         true,
@@ -286,11 +286,11 @@ export class RepositoryResult<TData, TError = Error> {
         transformedError,
         this._metadata,
       );
-    } catch (error) {
+    } catch (_error) {
       return new RepositoryResult<TData, U>(
         false,
         undefined,
-        error as U,
+        _error as U,
         this._metadata,
       );
     }
@@ -330,7 +330,7 @@ export class RepositoryResult<TData, TError = Error> {
    * Execute side effect if failed
    */
   tapError(
-    sideEffect: (error: TError) => void,
+    sideEffect: (_error: TError) => void,
   ): RepositoryResult<TData, TError> {
     if (!this._success && this._error !== undefined) {
       try {
@@ -345,7 +345,7 @@ export class RepositoryResult<TData, TError = Error> {
   /**
    * Match on success/failure with handlers
    */
-  match<U>(onSuccess: (data: TData) => U, onFailure: (error: TError) => U): U {
+  match<U>(onSuccess: (data: TData) => U, onFailure: (_error: TError) => U): U {
     if (this._success && this._data !== undefined) {
       return onSuccess(this._data);
     } else if (!this._success && this._error !== undefined) {
@@ -360,7 +360,7 @@ export class RepositoryResult<TData, TError = Error> {
    */
   async matchAsync<U>(
     onSuccess: (data: TData) => Promise<U>,
-    onFailure: (error: TError) => Promise<U>,
+    onFailure: (_error: TError) => Promise<U>,
   ): Promise<U> {
     if (this._success && this._data !== undefined) {
       return await onSuccess(this._data);
@@ -385,7 +385,7 @@ export class RepositoryResult<TData, TError = Error> {
    * Provide fallback result on failure
    */
   orElseGet(
-    fallbackProvider: (error: TError) => RepositoryResult<TData, TError>,
+    fallbackProvider: (_error: TError) => RepositoryResult<TData, TError>,
   ): RepositoryResult<TData, TError> {
     if (this._success) {
       return this;
@@ -415,11 +415,11 @@ export class RepositoryResult<TData, TError = Error> {
           this._metadata,
         );
       }
-    } catch (error) {
+    } catch (_error) {
       return new RepositoryResult<TData, TError>(
         false,
         undefined,
-        error as TError,
+        _error as TError,
         this._metadata,
       );
     }
@@ -454,12 +454,18 @@ export class RepositoryResult<TData, TError = Error> {
    */
   static fromJSON<T, E>(json: ResultJSON<T, E>): RepositoryResult<T, E> {
     if (json.success) {
-      return RepositoryResult.success(json.data!, json.metadata);
+      return RepositoryResult.success(
+        json.data!,
+        (json as { metadata?: ResultMetadata }).metadata,
+      );
     } else {
       const error = json.error
         ? (this.deserializeError(json.error) as E)
         : undefined;
-      return RepositoryResult.failure(error!, json.metadata);
+      return RepositoryResult.failure(
+        error!,
+        (json as { metadata?: ResultMetadata }).metadata,
+      );
     }
   }
 
@@ -490,8 +496,8 @@ export class RepositoryResult<TData, TError = Error> {
       try {
         const combined = combiner(result1.data, result2.data);
         return RepositoryResult.success(combined);
-      } catch (error) {
-        return RepositoryResult.failure(error as E);
+      } catch (_error) {
+        return RepositoryResult.failure(_error as E);
       }
     }
 
@@ -514,27 +520,28 @@ export class RepositoryResult<TData, TError = Error> {
     return RepositoryResult.success(data);
   }
 
-  private serializeError(error: TError): any {
+  private serializeError(error: TError): unknown {
     if (error instanceof Error) {
       return {
         name: error.name,
-        message: (error as Error).message,
-        stack: (error as Error).stack,
+        message: error.message,
+        stack: error.stack,
       };
     }
     return error;
   }
 
-  private static deserializeError(serialized: any): Error {
+  private static deserializeError(serialized: unknown): Error {
     if (
       serialized &&
       typeof serialized === "object" &&
-      serialized.name &&
-      serialized.message
+      (serialized as Record<string, unknown>).name &&
+      (serialized as Record<string, unknown>).message
     ) {
-      const error = new Error(serialized.message);
-      error.name = serialized.name;
-      error.stack = serialized.stack;
+      const serializedError = serialized as Record<string, unknown>;
+      const error = new Error(serializedError.message as string);
+      error.name = serializedError.name as string;
+      error.stack = serializedError.stack as string;
       return error;
     }
     return new Error(String(serialized));
@@ -553,7 +560,7 @@ export interface ResultMetadata {
   operation?: string;
   timestamp?: Date;
   traceId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -562,7 +569,7 @@ export interface ResultMetadata {
 export interface ResultJSON<TData, TError> {
   success: boolean;
   data?: TData;
-  error?: any;
+  error?: unknown;
   metadata?: ResultMetadata;
   timestamp: string;
 }
@@ -581,7 +588,7 @@ export class HealthcareError extends Error {
   constructor(
     message: string,
     public readonly code: string,
-    public readonly details?: any,
+    public readonly details?: unknown,
     public readonly isRetryable: boolean = false,
   ) {
     super(message);
@@ -594,7 +601,7 @@ export class ClinicError extends HealthcareError {
     message: string,
     code: string,
     public readonly clinicId?: string,
-    details?: any,
+    details?: unknown,
     isRetryable: boolean = false,
   ) {
     super(message, code, details, isRetryable);
@@ -608,7 +615,7 @@ export class PatientError extends HealthcareError {
     code: string,
     public readonly patientId?: string,
     public readonly clinicId?: string,
-    details?: any,
+    details?: unknown,
     isRetryable: boolean = false,
   ) {
     super(message, code, details, isRetryable);

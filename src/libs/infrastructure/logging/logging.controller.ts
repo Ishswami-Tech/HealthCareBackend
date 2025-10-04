@@ -297,7 +297,7 @@ export class LoggingController {
             }
 
             container.innerHTML = data.map(log => {
-              const metadata = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
+              const metadata = typeof (log as { metadata?: unknown }).metadata === 'string' ? JSON.parse((log as { metadata?: unknown }).metadata) : (log as { metadata?: unknown }).metadata;
               return '<div class="entry">' +
                 '<span class="timestamp">' + new Date(log.timestamp).toLocaleString() + '</span>' +
                 '<span class="level ' + log.level + '">' + log.level + '</span>' +

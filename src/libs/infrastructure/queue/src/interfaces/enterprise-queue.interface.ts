@@ -175,7 +175,7 @@ export interface SagaExecution<T = any> {
   currentStep: number;
   totalSteps: number;
   data: T;
-  compensationData: any[];
+  compensationData: unknown[];
   startedAt: Date;
   updatedAt: Date;
   completedAt?: Date;
@@ -272,7 +272,7 @@ export interface AuditEvent {
   action: AuditAction;
   resource: string;
   resourceId: string;
-  details: Record<string, any>;
+  details: Record<string, unknown>;
   ipAddress?: string;
   userAgent?: string;
   signature: string;
@@ -432,7 +432,7 @@ export interface QueueHealthStatus {
   status: "healthy" | "degraded" | "unhealthy" | "critical";
   lastChecked: Date;
   issues: HealthIssue[];
-  metrics: Record<string, any>;
+  metrics: Record<string, unknown>;
   recommendations: string[];
 }
 
@@ -462,7 +462,7 @@ export interface RetentionPolicy {
 export interface RetentionAction {
   action: "archive" | "delete" | "anonymize" | "encrypt";
   delay?: string;
-  configuration?: Record<string, any>;
+  configuration?: Record<string, unknown>;
 }
 
 export interface AutoScalingPolicy {
@@ -525,7 +525,7 @@ export interface RetryPolicy {
 
 export interface DependencyCondition {
   type: "status" | "data" | "time" | "custom";
-  value: any;
+  value: unknown;
   operator?: "equals" | "not-equals" | "greater" | "less";
 }
 
@@ -548,7 +548,7 @@ export interface EncryptionMetadata {
   createdAt: Date;
   createdBy: string;
   version: number;
-  additionalData?: Record<string, any>;
+  additionalData?: Record<string, unknown>;
 }
 
 export interface JobMetrics {

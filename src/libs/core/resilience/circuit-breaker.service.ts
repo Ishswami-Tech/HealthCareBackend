@@ -39,7 +39,7 @@ export class CircuitBreakerService {
       }
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       state.failures++;
       state.lastFailureTime = Date.now();
 
@@ -49,7 +49,7 @@ export class CircuitBreakerService {
       }
 
       this.circuitStates.set(options.name, state);
-      throw error;
+      throw _error;
     }
   }
 }

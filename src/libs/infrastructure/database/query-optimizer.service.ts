@@ -25,8 +25,8 @@ export class HealthcareQueryOptimizerService {
       }
 
       return optimizedQuery;
-    } catch (error) {
-      this.logger.error(`Query optimization failed: ${error}`);
+    } catch (_error) {
+      this.logger.error(`Query optimization failed: ${_error}`);
       return query; // Return original query if optimization fails
     }
   }
@@ -34,7 +34,7 @@ export class HealthcareQueryOptimizerService {
   /**
    * Get query performance metrics
    */
-  getQueryMetrics(): Record<string, any> {
+  getQueryMetrics(): Record<string, unknown> {
     return {
       optimizedQueries: 0,
       averageOptimizationTime: 0,
@@ -45,7 +45,7 @@ export class HealthcareQueryOptimizerService {
   /**
    * Get optimizer statistics
    */
-  getOptimizerStats(): Record<string, any> {
+  getOptimizerStats(): Record<string, unknown> {
     return {
       totalQueries: 0,
       optimizedQueries: 0,

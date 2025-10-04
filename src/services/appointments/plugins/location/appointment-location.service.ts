@@ -62,7 +62,7 @@ export class AppointmentLocationService {
     private readonly loggingService: LoggingService,
   ) {}
 
-  async getAllLocations(domain: string): Promise<any> {
+  async getAllLocations(domain: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `locations:${domain}`;
 
@@ -110,22 +110,22 @@ export class AppointmentLocationService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get locations: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get locations: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentLocationService",
         {
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getLocationById(locationId: string, domain: string): Promise<any> {
+  async getLocationById(locationId: string, domain: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `location:${locationId}:${domain}`;
 
@@ -165,23 +165,26 @@ export class AppointmentLocationService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get location: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get location: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentLocationService",
         {
           locationId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getDoctorsByLocation(locationId: string, domain: string): Promise<any> {
+  async getDoctorsByLocation(
+    locationId: string,
+    domain: string,
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `doctors:location:${locationId}:${domain}`;
 
@@ -224,23 +227,23 @@ export class AppointmentLocationService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get doctors: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get doctors: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentLocationService",
         {
           locationId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getLocationStats(locationId: string, domain: string): Promise<any> {
+  async getLocationStats(locationId: string, domain: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `stats:location:${locationId}:${domain}`;
 
@@ -277,23 +280,23 @@ export class AppointmentLocationService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get location stats: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get location stats: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentLocationService",
         {
           locationId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async invalidateLocationsCache(domain: string): Promise<any> {
+  async invalidateLocationsCache(domain: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -320,25 +323,25 @@ export class AppointmentLocationService {
       );
 
       return { success: true, message: "Location cache invalidated" };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to invalidate location cache: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to invalidate location cache: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentLocationService",
         {
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async invalidateDoctorsCache(
     locationId: string,
     domain: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -363,19 +366,19 @@ export class AppointmentLocationService {
       );
 
       return { success: true, message: "Doctors cache invalidated" };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to invalidate doctors cache: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to invalidate doctors cache: ${_error instanceof Error ? _error.message : String(_error)}`,
         "AppointmentLocationService",
         {
           locationId,
           domain,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 

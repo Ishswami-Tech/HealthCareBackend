@@ -59,7 +59,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
    */
   async executeRawQuery<T = any>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
   ): Promise<T> {
     const startTime = Date.now();
 
@@ -502,7 +502,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   /**
    * Get clinic dashboard statistics
    */
-  async getClinicDashboardStats(clinicId: string): Promise<any> {
+  async getClinicDashboardStats(clinicId: string): Promise<unknown> {
     return this.executeWithResult(
       async () => {
         return this.executeWithClinicContext(clinicId, async (client) => {
@@ -629,7 +629,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       searchTerm?: string;
       includeInactive?: boolean;
     } = {},
-  ): Promise<any> {
+  ): Promise<unknown> {
     const {
       page = 1,
       limit = 20,
@@ -641,7 +641,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return this.executeWithResult(
       async () => {
         return this.executeWithClinicContext(clinicId, async (client) => {
-          const whereClause: any = {
+          const whereClause: unknown = {
             appointments: {
               some: {
                 clinicId,
@@ -652,7 +652,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
           // Add search filter
           if (searchTerm) {
-            whereClause.user = {
+            (whereClause as Record<string, unknown>).user = {
               OR: [
                 { name: { contains: searchTerm, mode: "insensitive" } },
                 { firstName: { contains: searchTerm, mode: "insensitive" } },
@@ -730,7 +730,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       status?: string;
       doctorId?: string;
     } = {},
-  ): Promise<any> {
+  ): Promise<unknown> {
     const {
       page = 1,
       limit = 50,
@@ -744,7 +744,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return this.executeWithResult(
       async () => {
         return this.executeWithClinicContext(clinicId, async (client) => {
-          const whereClause: any = {
+          const whereClause: unknown = {
             clinicId,
             ...(locationId ? { locationId } : {}),
             ...(doctorId ? { doctorId } : {}),

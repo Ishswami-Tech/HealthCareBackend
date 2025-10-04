@@ -5,8 +5,8 @@ export interface BusinessRule {
   name: string;
   description: string;
   priority: number;
-  conditions: any[];
-  actions: any[];
+  conditions: unknown[];
+  actions: unknown[];
   isActive: boolean;
 }
 
@@ -14,14 +14,14 @@ export interface RuleContext {
   appointmentId?: string;
   userId: string;
   clinicId?: string;
-  data: any;
+  data: unknown;
 }
 
 export interface RuleResult {
   valid: boolean;
   violations: string[];
   warnings: string[];
-  actions: any[];
+  actions: unknown[];
 }
 
 @Injectable()

@@ -17,12 +17,19 @@ export class PrismaService
   private readonly logger = new Logger(PrismaService.name);
   private currentTenantId: string | null = null;
   private static connectionCount = 0;
-  private static readonly MAX_CONNECTIONS = 50; // Optimized for 10 lakh+ users
-  private static readonly CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connections
-  private static readonly QUERY_TIMEOUT = 10000; // 10 seconds query timeout
+  private static readonly MAX_CONNECTIONS = 200; // Optimized for 1M+ users
+  private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
+  private static readonly QUERY_TIMEOUT = 30000; // 30 seconds query timeout
+  private static readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Failures before circuit opens
+  private static readonly CIRCUIT_BREAKER_TIMEOUT = 60000; // 1 minute circuit timeout
   private static instance: PrismaService | null = null;
+  private static circuitBreakerFailures = 0;
+  private static circuitBreakerLastFailure = 0;
+  private static isCircuitOpen = false;
   private readonly maxRetries = 3;
   private readonly retryDelay = 1000; // 1 second
+  private connectionPool: Map<string, unknown> = new Map();
+  private poolSize = parseInt(process.env.DB_POOL_SIZE || "20", 10);
 
   constructor() {
     // If we already have a Prisma instance, return it
@@ -31,10 +38,18 @@ export class PrismaService
     }
 
     super({
-      log: [
-        { emit: "stdout", level: "error" },
-        { emit: "stdout", level: "warn" },
-      ],
+      log:
+        process.env.NODE_ENV === "production"
+          ? [
+              { emit: "stdout", level: "error" },
+              { emit: "stdout", level: "warn" },
+            ]
+          : [
+              { emit: "stdout", level: "error" },
+              { emit: "stdout", level: "warn" },
+              { emit: "stdout", level: "info" },
+              { emit: "stdout", level: "query" },
+            ],
       errorFormat: "minimal",
       datasources: {
         db: {
@@ -43,10 +58,47 @@ export class PrismaService
       },
     });
 
-    // Apply connection management middleware
-    // Note: $use is deprecated, using $extends instead
+    // Apply production optimizations
+    this.$extends({
+      query: {
+        $allOperations({
+          args,
+          query,
+        }: {
+          args: unknown;
+          query: (args: unknown) => Promise<unknown>;
+        }) {
+          // Circuit breaker pattern
+          if (PrismaService.isCircuitOpen) {
+            const now = Date.now();
+            if (
+              now - PrismaService.circuitBreakerLastFailure >
+              PrismaService.CIRCUIT_BREAKER_TIMEOUT
+            ) {
+              PrismaService.isCircuitOpen = false;
+              PrismaService.circuitBreakerFailures = 0;
+            } else {
+              throw new Error("Database circuit breaker is open");
+            }
+          }
 
-    // Database events monitoring removed as $on is deprecated
+          // Add query timeout in production
+          if (process.env.NODE_ENV === "production") {
+            return Promise.race([
+              query(args),
+              new Promise((_, reject) =>
+                setTimeout(
+                  () => reject(new Error("Query timeout")),
+                  PrismaService.QUERY_TIMEOUT,
+                ),
+              ),
+            ]);
+          }
+
+          return query(args);
+        },
+      },
+    });
 
     // Monitor queries only in development
     if (process.env.NODE_ENV !== "production") {
@@ -74,22 +126,53 @@ export class PrismaService
           `Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`,
         );
       }
-    } catch (error) {
-      this.logger.error("Error disconnecting from database:", error);
+    } catch (_error) {
+      this.logger.error("Error disconnecting from database:", _error);
     }
   }
 
   private async connectWithRetry(retryCount = 0): Promise<void> {
     try {
+      // Check circuit breaker
+      if (PrismaService.isCircuitOpen) {
+        const now = Date.now();
+        if (
+          now - PrismaService.circuitBreakerLastFailure >
+          PrismaService.CIRCUIT_BREAKER_TIMEOUT
+        ) {
+          PrismaService.isCircuitOpen = false;
+          PrismaService.circuitBreakerFailures = 0;
+        } else {
+          throw new Error("Database circuit breaker is open");
+        }
+      }
+
       await this.$connect();
       PrismaService.connectionCount++;
+      // Reset circuit breaker on successful connection
+      PrismaService.circuitBreakerFailures = 0;
       this.logger.log(
-        `Successfully connected to database. Active connections: ${PrismaService.connectionCount}`,
+        `Successfully connected to database. Active connections: ${PrismaService.connectionCount}/${PrismaService.MAX_CONNECTIONS}`,
       );
-    } catch (error) {
+    } catch (_error) {
+      // Increment circuit breaker failures
+      PrismaService.circuitBreakerFailures++;
+      PrismaService.circuitBreakerLastFailure = Date.now();
+
+      // Open circuit breaker if threshold reached
+      if (
+        PrismaService.circuitBreakerFailures >=
+        PrismaService.CIRCUIT_BREAKER_THRESHOLD
+      ) {
+        PrismaService.isCircuitOpen = true;
+        this.logger.error(
+          "Database circuit breaker opened due to repeated failures",
+        );
+      }
+
       if (retryCount < this.maxRetries) {
         this.logger.warn(
-          `Failed to connect to database. Retrying in ${this.retryDelay}ms... (Attempt ${retryCount + 1}/${this.maxRetries})`,
+          `Failed to connect to database. Retrying in ${this.retryDelay * (retryCount + 1)}ms... (Attempt ${retryCount + 1}/${this.maxRetries})`,
         );
         await new Promise((resolve) =>
           setTimeout(resolve, this.retryDelay * (retryCount + 1)),
@@ -99,7 +182,7 @@ export class PrismaService
         this.logger.error(
           "Failed to connect to database after maximum retries",
         );
-        throw error;
+        throw _error;
       }
     }
   }
@@ -118,6 +201,74 @@ export class PrismaService
    */
   static canCreateNewConnection(): boolean {
     return PrismaService.connectionCount < PrismaService.MAX_CONNECTIONS;
+  }
+
+  /**
+   * Get connection pool health status
+   * @returns Object with pool health metrics
+   */
+  static getPoolHealth() {
+    return {
+      activeConnections: PrismaService.connectionCount,
+      maxConnections: PrismaService.MAX_CONNECTIONS,
+      utilizationPercentage:
+        (PrismaService.connectionCount / PrismaService.MAX_CONNECTIONS) * 100,
+      circuitBreakerOpen: PrismaService.isCircuitOpen,
+      circuitBreakerFailures: PrismaService.circuitBreakerFailures,
+      isHealthy:
+        PrismaService.connectionCount < PrismaService.MAX_CONNECTIONS * 0.9 &&
+        !PrismaService.isCircuitOpen,
+    };
+  }
+
+  /**
+   * Reset circuit breaker manually (admin operation)
+   */
+  static resetCircuitBreaker() {
+    PrismaService.isCircuitOpen = false;
+    PrismaService.circuitBreakerFailures = 0;
+    PrismaService.circuitBreakerLastFailure = 0;
+  }
+
+  /**
+   * Execute database operation with connection pool management
+   */
+  async executePooledOperation<T>(operation: () => Promise<T>): Promise<T> {
+    if (
+      !PrismaService.canCreateNewConnection() &&
+      PrismaService.connectionCount > 0
+    ) {
+      // Connection pool full, wait and retry
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    if (PrismaService.isCircuitOpen) {
+      throw new Error("Database service unavailable (circuit breaker open)");
+    }
+
+    try {
+      const result = await operation();
+      // Reset circuit breaker on successful operation
+      if (PrismaService.circuitBreakerFailures > 0) {
+        PrismaService.circuitBreakerFailures = Math.max(
+          0,
+          PrismaService.circuitBreakerFailures - 1,
+        );
+      }
+      return result;
+    } catch (_error) {
+      PrismaService.circuitBreakerFailures++;
+      PrismaService.circuitBreakerLastFailure = Date.now();
+
+      if (
+        PrismaService.circuitBreakerFailures >=
+        PrismaService.CIRCUIT_BREAKER_THRESHOLD
+      ) {
+        PrismaService.isCircuitOpen = true;
+        this.logger.error("Circuit breaker opened due to failures");
+      }
+      throw _error;
+    }
   }
 
   /**
@@ -171,25 +322,25 @@ export class PrismaService
   ): Promise<T> {
     try {
       return await operation();
-    } catch (error) {
-      if (retryCount < this.maxRetries && this.isRetryableError(error)) {
+    } catch (_error) {
+      if (retryCount < this.maxRetries && this.isRetryableError(_error)) {
         console.warn(`Operation failed. Retrying in ${this.retryDelay}ms...`);
         await new Promise((resolve) => setTimeout(resolve, this.retryDelay));
         return this.executeWithRetry(operation, retryCount + 1);
       }
-      throw error;
+      throw _error;
     }
   }
 
   // Helper method to determine if an error is retryable
-  private isRetryableError(error: any): boolean {
+  private isRetryableError(_error: unknown): boolean {
     return (
-      error instanceof Error &&
-      error.name === "PrismaClientKnownRequestError" &&
-      ((error as any).code === "P2024" || // Connection pool timeout
-        (error as any).code === "P2028" || // Transaction timeout
-        (error as any).code === "P2025" || // Record not found
-        (error as any).code === "P2034") // Transaction failed
+      _error instanceof Error &&
+      _error.name === "PrismaClientKnownRequestError" &&
+      ((_error as { code?: string }).code === "P2024" || // Connection pool timeout
+        (_error as { code?: string }).code === "P2028" || // Transaction timeout
+        (_error as { code?: string }).code === "P2025" || // Record not found
+        (_error as { code?: string }).code === "P2034") // Transaction failed
     );
   }
 
@@ -197,7 +348,7 @@ export class PrismaService
   async withTenant(tenantId: string) {
     return this.$extends({
       query: {
-        $allOperations({ args, query }) {
+        $allOperations({ args, query }: unknown) {
           // Add tenant context to all queries
           args.where = { ...args.where, tenantId };
           return query(args);
@@ -273,7 +424,7 @@ export class PrismaService
         maxConnections: PrismaService.MAX_CONNECTIONS,
         health,
       };
-    } catch (error) {
+    } catch (_error) {
       return {
         connected: false,
         connectionCount: PrismaService.connectionCount,

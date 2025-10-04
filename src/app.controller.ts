@@ -35,7 +35,7 @@ interface LogEntry {
   message: string;
   type?: string;
   source?: string;
-  metadata?: any;
+  metadata?: unknown;
   data?: string;
 }
 
@@ -45,7 +45,7 @@ interface LoggingServiceLogEntry {
   level?: string;
   message?: string;
   context?: string;
-  metadata?: any;
+  metadata?: unknown;
   timestamp?: string;
   userId?: string;
   ipAddress?: string;
@@ -304,8 +304,8 @@ export class AppController {
 
       res.header("Content-Type", "text/html");
       return res.send(html);
-    } catch (error) {
-      this.logger.error("Error serving dashboard:", error);
+    } catch (_error) {
+      this.logger.error("Error serving dashboard:", _error);
       return res.send("Error loading dashboard. Please check server logs.");
     }
   }
@@ -505,7 +505,7 @@ export class AppController {
                 
                 socket.on('connect_error', (err) => {
                     updateStatus('disconnected', 'Connection Error');
-                    addMessage('Connection error: ' + err.message, 'received');
+                    addMessage('Connection _error: ' + err.message, 'received');
                 });
                 
                 socket.on('message', (data) => {
@@ -515,7 +515,7 @@ export class AppController {
                 socket.on('echo', (data) => {
                     addMessage('Echo: ' + JSON.stringify(data.original), 'received');
                 });
-            } catch (e) {
+            } catch (_e) {
                 updateStatus('disconnected', 'Error');
                 addMessage('Error: ' + e.message, 'received');
             }
@@ -563,12 +563,14 @@ export class AppController {
           level: log.level || "info",
           message: log.message || "No message",
           source: log.type || "Unknown",
-          data: log.metadata ? JSON.stringify(log.metadata) : "{}",
+          data: (log as { metadata?: unknown }).metadata
+            ? JSON.stringify((log as { metadata?: unknown }).metadata)
+            : "{}",
         }),
       );
-    } catch (error) {
-      this.logger.error("Error fetching logs:", error);
-      // Return placeholder data if there's an error
+    } catch (_error) {
+      this.logger.error("Error fetching logs:", _error);
+      // Return placeholder data if there's an _error
       return Array(limit)
         .fill(null)
         .map(
@@ -586,7 +588,7 @@ export class AppController {
   private generateDashboardHtml(
     title: string,
     services: ServiceInfo[],
-    recentLogs: any[],
+    recentLogs: LogEntry[],
     isProduction: boolean,
     healthData: DashboardData,
   ): string {

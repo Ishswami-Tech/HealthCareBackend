@@ -7,6 +7,11 @@ import {
 import { CacheService } from "../../../../libs/infrastructure/cache";
 import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
 import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
+import {
+  JitsiVideoService,
+  JitsiMeetingToken,
+  VideoConsultationSession,
+} from "./jitsi-video.service";
 
 export interface VideoCall {
   id: string;
@@ -44,6 +49,7 @@ export class VideoService {
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
+    private readonly jitsiVideoService: JitsiVideoService,
   ) {}
 
   async createVideoCall(
@@ -51,7 +57,7 @@ export class VideoService {
     patientId: string,
     doctorId: string,
     clinicId: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -112,25 +118,25 @@ export class VideoService {
       );
 
       return videoCall;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to create video call: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to create video call: ${_error instanceof Error ? _error.message : String(_error)}`,
         "VideoService",
         {
           appointmentId,
           patientId,
           doctorId,
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async joinVideoCall(callId: string, userId: string): Promise<any> {
+  async joinVideoCall(callId: string, userId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -169,23 +175,23 @@ export class VideoService {
         joinToken,
         settings: videoCall.settings,
       };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to join video call: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to join video call: ${_error instanceof Error ? _error.message : String(_error)}`,
         "VideoService",
         {
           callId,
           userId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async startRecording(callId: string, userId: string): Promise<any> {
+  async startRecording(callId: string, userId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -221,23 +227,23 @@ export class VideoService {
         recordingUrl: videoCall.recordingUrl,
         message: "Recording started",
       };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to start recording: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to start recording: ${_error instanceof Error ? _error.message : String(_error)}`,
         "VideoService",
         {
           callId,
           userId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async stopRecording(callId: string, userId: string): Promise<any> {
+  async stopRecording(callId: string, userId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -266,26 +272,26 @@ export class VideoService {
       return {
         success: true,
         recordingUrl: videoCall.recordingUrl,
-        duration: recordingResult.duration,
+        duration: (recordingResult as any).duration,
         message: "Recording stopped",
       };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to stop recording: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to stop recording: ${_error instanceof Error ? _error.message : String(_error)}`,
         "VideoService",
         {
           callId,
           userId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async endVideoCall(callId: string, userId: string): Promise<any> {
+  async endVideoCall(callId: string, userId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -337,27 +343,27 @@ export class VideoService {
         duration: videoCall.duration,
         message: "Video call ended",
       };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to end video call: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to end video call: ${_error instanceof Error ? _error.message : String(_error)}`,
         "VideoService",
         {
           callId,
           userId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async shareMedicalImage(
     callId: string,
     userId: string,
-    imageData: any,
-  ): Promise<any> {
+    imageData: unknown,
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -388,25 +394,28 @@ export class VideoService {
         imageUrl,
         message: "Medical image shared",
       };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to share medical image: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to share medical image: ${_error instanceof Error ? _error.message : String(_error)}`,
         "VideoService",
         {
           callId,
           userId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   // startVirtualFitting method removed - healthcare application only
 
-  async getVideoCallHistory(userId: string, clinicId?: string): Promise<any> {
+  async getVideoCallHistory(
+    userId: string,
+    clinicId?: string,
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `videocalls:history:${userId}:${clinicId || "all"}`;
 
@@ -449,19 +458,19 @@ export class VideoService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get video call history: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get video call history: ${_error instanceof Error ? _error.message : String(_error)}`,
         "VideoService",
         {
           userId,
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -473,7 +482,7 @@ export class VideoService {
     patientId: string,
     doctorId: string,
     clinicId: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return mock data
     return {
@@ -558,7 +567,7 @@ export class VideoService {
     return `rec-${callId}-${Date.now()}`;
   }
 
-  private async finalizeRecording(callId: string): Promise<any> {
+  private async finalizeRecording(callId: string): Promise<unknown> {
     // This would integrate with actual video service
     // For now, return mock result
     return {
@@ -568,7 +577,7 @@ export class VideoService {
   }
 
   private async uploadMedicalImage(
-    imageData: any,
+    imageData: unknown,
     callId: string,
     userId: string,
   ): Promise<string> {

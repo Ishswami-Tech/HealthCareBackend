@@ -1,6 +1,11 @@
 import { Processor, Process } from "@nestjs/bull";
 import { Logger } from "@nestjs/common";
 import { Job } from "bull";
+import {
+  PaymentData,
+  PaymentDto,
+  PaymentJobData,
+} from "../types/queue-job.types";
 
 @Processor("payment-processing")
 export class PaymentProcessingProcessor {
@@ -9,8 +14,8 @@ export class PaymentProcessingProcessor {
   @Process("domain-processing")
   async handleDomainProcessing(
     job: Job<{
-      payment: any;
-      paymentDto: any;
+      payment: PaymentData;
+      paymentDto: PaymentDto;
       domain: string;
     }>,
   ) {
@@ -25,18 +30,18 @@ export class PaymentProcessingProcessor {
       // This processor just ensures the job is properly queued and tracked
 
       this.logger.log(`Domain processing completed for payment: ${payment.id}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Domain processing failed for payment ${payment.id}: ${(error as Error).message}`,
+        `Domain processing failed for payment ${payment.id}: ${(_error as Error).message}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
   @Process("subscription-processing")
   async handleSubscriptionProcessing(
     job: Job<{
-      payment: any;
+      payment: PaymentData;
       timestamp: Date;
     }>,
   ) {
@@ -50,18 +55,18 @@ export class PaymentProcessingProcessor {
       this.logger.log(
         `Subscription processing completed for payment: ${payment.id}`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Subscription processing failed for payment ${payment.id}: ${(error as Error).message}`,
+        `Subscription processing failed for payment ${payment.id}: ${(_error as Error).message}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
   @Process("manual-review")
   async handleManualReview(
     job: Job<{
-      paymentDto: any;
+      paymentDto: PaymentDto;
       fraudScore: number;
       timestamp: Date;
     }>,
@@ -78,11 +83,11 @@ export class PaymentProcessingProcessor {
       this.logger.log(
         `Manual review queued successfully for user: ${paymentDto.userId}`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to queue manual review: ${(error as Error).message}`,
+        `Failed to queue manual review: ${(_error as Error).message}`,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -105,11 +110,11 @@ export class PaymentProcessingProcessor {
       this.logger.log(
         `Payment reconciliation completed: ${reconciliationType}`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Payment reconciliation failed: ${(error as Error).message}`,
+        `Payment reconciliation failed: ${(_error as Error).message}`,
       );
-      throw error;
+      throw _error;
     }
   }
 }
