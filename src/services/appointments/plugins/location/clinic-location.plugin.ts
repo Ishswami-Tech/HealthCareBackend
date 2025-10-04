@@ -12,31 +12,32 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
     super();
   }
 
-  async process(data: any): Promise<any> {
+  async process(data: unknown): Promise<unknown> {
+    const pluginData = data as any;
     this.logPluginAction("Processing clinic location operation", {
-      operation: data.operation,
+      operation: pluginData.operation,
     });
 
     // Delegate to existing location service - no functionality change
-    switch (data.operation) {
+    switch (pluginData.operation) {
       case "getAllLocations":
         return await this.locationService.getAllLocations("clinic");
 
       case "getLocationById":
         return await this.locationService.getLocationById(
-          data.locationId,
+          pluginData.locationId,
           "clinic",
         );
 
       case "getDoctorsByLocation":
         return await this.locationService.getDoctorsByLocation(
-          data.locationId,
+          pluginData.locationId,
           "clinic",
         );
 
       case "getLocationStats":
         return await this.locationService.getLocationStats(
-          data.locationId,
+          pluginData.locationId,
           "clinic",
         );
 
@@ -45,19 +46,20 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
 
       case "invalidateDoctorsCache":
         return await this.locationService.invalidateDoctorsCache(
-          data.locationId,
+          pluginData.locationId,
           "clinic",
         );
 
       default:
         this.logPluginError("Unknown location operation", {
-          operation: data.operation,
+          operation: pluginData.operation,
         });
-        throw new Error(`Unknown location operation: ${data.operation}`);
+        throw new Error(`Unknown location operation: ${pluginData.operation}`);
     }
   }
 
-  async validate(data: any): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
+    const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
       getLocationById: ["locationId"],
@@ -66,7 +68,7 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
       invalidateDoctorsCache: ["locationId"],
     };
 
-    const operation = data.operation;
+    const operation = pluginData.operation;
     const fields = (requiredFields as any)[operation];
 
     if (!fields) {
@@ -74,7 +76,7 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
       return true;
     }
 
-    const isValid = fields.every((field: any) => data[field] !== undefined);
+    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

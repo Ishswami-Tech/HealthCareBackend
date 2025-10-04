@@ -27,8 +27,8 @@ let prisma: PrismaClient;
 try {
   prisma = getPrismaClient();
   console.log("Prisma client initialized successfully");
-} catch (error) {
-  console.error("Failed to initialize Prisma client:", error);
+} catch (_error) {
+  console.error("Failed to initialize Prisma client:", _error);
   process.exit(1);
 }
 
@@ -442,10 +442,10 @@ async function main() {
         await prisma.doctorClinic.create({
           data,
         });
-      } catch (error) {
+      } catch (_error) {
         // Skip if relationship already exists
-        if ((error as any).code !== "P2002") {
-          throw error;
+        if ((_error as { code?: string }).code !== "P2002") {
+          throw _error;
         }
       }
     }
@@ -776,9 +776,9 @@ async function main() {
     console.log("Doctor: doctor1@example.com / test1234");
     console.log("Patient: patient1@example.com / test1234");
     console.log("Receptionist: receptionist1@example.com / test1234");
-  } catch (error) {
-    console.error("Error during seeding:", error);
-    throw error;
+  } catch (_error) {
+    console.error("Error during seeding:", _error);
+    throw _error;
   } finally {
     await prisma.$disconnect();
   }
@@ -792,7 +792,7 @@ async function waitForDatabase() {
       await prisma.$connect();
       console.log("Database connection established.");
       return;
-    } catch (error) {
+    } catch (_error) {
       console.log(
         `Database not ready yet, retrying... (${retries} attempts left)`,
       );
@@ -833,16 +833,16 @@ async function cleanDatabase() {
 
     for (const table of tables) {
       try {
-        await (prisma as any)[table].deleteMany({});
+        await prisma[table].deleteMany({});
         console.log(`Cleaned ${table} table`);
-      } catch (error) {
+      } catch (_error) {
         // Skip if table doesn't exist
         console.log(`Skipping ${table} table (may not exist yet)`);
       }
     }
-  } catch (error) {
-    console.error("Error cleaning database:", error);
-    throw error;
+  } catch (_error) {
+    console.error("Error cleaning database:", _error);
+    throw _error;
   }
 }
 

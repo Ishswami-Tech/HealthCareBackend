@@ -15,7 +15,7 @@ import { createHash, randomBytes } from "crypto";
 export class CrossRegionReplicatorImpl {
   private regionEndpoints: Map<string, string> = new Map();
 
-  async replicate(event: any, targetRegions: string[]): Promise<any[]> {
+  async replicate(event: unknown, targetRegions: string[]): Promise<any[]> {
     const results = [];
 
     for (const region of targetRegions) {
@@ -41,10 +41,14 @@ export class CrossRegionReplicatorImpl {
     return results;
   }
 
-  private async replicateToRegion(event: any, endpoint: string): Promise<any> {
+  private async replicateToRegion(
+    event: unknown,
+    endpoint: string,
+  ): Promise<unknown> {
     // Simplified replication - in production this would use HTTP/gRPC
+    const eventData = event as Record<string, unknown>;
     return {
-      eventId: event.id,
+      eventId: eventData.id,
       replicatedAt: new Date().toISOString(),
       endpoint,
     };
@@ -236,9 +240,9 @@ export class AdaptiveCircuitBreakerImpl {
       const result = await operation();
       this.onSuccess();
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.onFailure();
-      throw error;
+      throw _error;
     }
   }
 
@@ -289,13 +293,13 @@ export class FieldLevelEncryptionImpl {
     return key.toString("hex");
   }
 
-  encrypt(data: any, keyId: string, fieldsToEncrypt: string[]): any {
+  encrypt(data: unknown, keyId: string, fieldsToEncrypt: string[]): unknown {
     const key = this.encryptionKeys.get(keyId);
     if (!key) {
       throw new Error(`Encryption key ${keyId} not found`);
     }
 
-    const result = { ...data };
+    const result = { ...(data as Record<string, unknown>) };
 
     for (const field of fieldsToEncrypt) {
       if (result[field] !== undefined) {
@@ -306,17 +310,21 @@ export class FieldLevelEncryptionImpl {
     return result;
   }
 
-  decrypt(encryptedData: any, keyId: string, fieldsToDecrypt: string[]): any {
+  decrypt(
+    encryptedData: unknown,
+    keyId: string,
+    fieldsToDecrypt: string[],
+  ): unknown {
     const key = this.encryptionKeys.get(keyId);
     if (!key) {
       throw new Error(`Decryption key ${keyId} not found`);
     }
 
-    const result = { ...encryptedData };
+    const result = { ...(encryptedData as Record<string, unknown>) };
 
     for (const field of fieldsToDecrypt) {
-      if (result[field] !== undefined) {
-        result[field] = this.decryptField(result[field], key);
+      if (result[field] !== undefined && result[field] !== null) {
+        result[field] = this.decryptField(result[field] as string, key);
       }
     }
 
@@ -351,7 +359,7 @@ export class AuditTrailImpl {
     action: string;
     userId: string;
     resource: string;
-    details: any;
+    details: unknown;
     hash: string;
   }> = [];
 
@@ -359,7 +367,7 @@ export class AuditTrailImpl {
     action: string,
     userId: string,
     resource: string,
-    details: any,
+    details: unknown,
   ): string {
     const event = {
       id: this.generateId(),
@@ -399,7 +407,7 @@ export class AuditTrailImpl {
     action?: string;
     fromTime?: number;
     toTime?: number;
-  }): any[] {
+  }): unknown[] {
     let filtered = this.auditLog;
 
     if (filters) {
@@ -427,14 +435,14 @@ export class AuditTrailImpl {
     return randomBytes(16).toString("hex");
   }
 
-  private createEventHash(event: any): string {
+  private createEventHash(event: unknown): string {
     const dataToHash = JSON.stringify({
-      id: event.id,
-      timestamp: event.timestamp,
-      action: event.action,
-      userId: event.userId,
-      resource: event.resource,
-      details: event.details,
+      id: (event as any).id,
+      timestamp: (event as any).timestamp,
+      action: (event as any).action,
+      userId: (event as any).userId,
+      resource: (event as any).resource,
+      details: (event as any).details,
     });
 
     return createHash("sha256").update(dataToHash).digest("hex");
@@ -489,7 +497,7 @@ export class RealTimeMonitoringImpl {
     return [...data];
   }
 
-  getAlerts(severity?: string): any[] {
+  getAlerts(severity?: string): unknown[] {
     let filtered = this.alerts;
 
     if (severity) {
@@ -549,7 +557,7 @@ export class IntelligentCacheImpl {
   private cache: Map<
     string,
     {
-      value: any;
+      value: unknown;
       timestamp: number;
       accessCount: number;
       lastAccess: number;
@@ -559,7 +567,7 @@ export class IntelligentCacheImpl {
   private maxSize = 10000;
   private defaultTTL = 300000; // 5 minutes
 
-  set(key: string, value: any, ttl?: number): void {
+  set(key: string, value: unknown, ttl?: number): void {
     // Evict if cache is full
     if (this.cache.size >= this.maxSize) {
       this.evictLeastUsed();
@@ -573,7 +581,7 @@ export class IntelligentCacheImpl {
     });
   }
 
-  get(key: string): any {
+  get(key: string): unknown {
     const entry = this.cache.get(key);
     if (!entry) return null;
 

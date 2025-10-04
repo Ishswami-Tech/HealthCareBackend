@@ -54,10 +54,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private circuitBreaker!: CircuitBreakerState;
   private queryQueue: Array<{
     query: string;
-    params: any[];
+    params: unknown[];
     options: QueryOptions;
-    resolve: (result: any) => void;
-    reject: (error: any) => void;
+    resolve: (result: unknown) => void;
+    reject: (error: unknown) => void;
     timestamp: Date;
   }> = [];
   private isProcessingQueue = false;
@@ -139,7 +139,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
    */
   async executeQuery<T>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions = {},
   ): Promise<T> {
     // Check circuit breaker
@@ -181,7 +181,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   private async executeQueryInternal<T>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions = {},
   ): Promise<T> {
     const priority = options.priority || "normal";
@@ -192,13 +192,13 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     }
 
     // For normal/low priority, add to queue
-    return new Promise((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       this.queryQueue.push({
         query,
         params,
         options,
-        resolve,
-        reject,
+        resolve: resolve as (result: unknown) => void,
+        reject: reject as (error: unknown) => void,
         timestamp: new Date(),
       });
 
@@ -215,7 +215,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   private async directExecute<T>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions = {},
   ): Promise<T> {
     try {
@@ -420,7 +420,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
    */
   async executeHealthcareRead<T>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions = {},
   ): Promise<T> {
     return this.executeQuery<T>(query, params, {
@@ -433,7 +433,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   async executeHealthcareWrite<T>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions = {},
   ): Promise<T> {
     return this.executeQuery<T>(query, params, {
@@ -446,7 +446,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   async executeCriticalQuery<T>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions = {},
   ): Promise<T> {
     return this.executeQuery<T>(query, params, {
@@ -515,7 +515,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
    */
   async executeQueryWithReadReplica<T = any>(
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions & { clinicId?: string; userId?: string } = {},
   ): Promise<T> {
     const healthcareConfig = this.configService.get("healthcare");
@@ -617,7 +617,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   async executeClinicOptimizedQuery<T = any>(
     clinicId: string,
     query: string,
-    params: any[] = [],
+    params: unknown[] = [],
     options: QueryOptions = {},
   ): Promise<T> {
     // Add clinic-specific optimizations

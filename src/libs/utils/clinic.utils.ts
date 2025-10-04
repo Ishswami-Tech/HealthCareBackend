@@ -43,15 +43,15 @@ export async function resolveClinicUUID(
     throw new Error(
       `Clinic not found with identifier: ${clinicIdOrUUID}. Please check if the clinic exists and is active.`,
     );
-  } catch (error) {
+  } catch (_error) {
     if (
-      (error as Error).message.includes("Clinic not found") ||
-      (error as Error).message.includes("is inactive")
+      (_error as Error).message.includes("Clinic not found") ||
+      (_error as Error).message.includes("is inactive")
     ) {
-      throw error;
+      throw _error;
     }
     throw new Error(
-      `Failed to resolve clinic UUID: ${(error as Error).message}`,
+      `Failed to resolve clinic UUID: ${(_error as Error).message}`,
     );
   }
 }

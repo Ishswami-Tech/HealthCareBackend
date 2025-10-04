@@ -43,7 +43,7 @@ export class PaymentService {
     private readonly loggingService: LoggingService,
   ) {}
 
-  async processPayment(paymentId: string): Promise<any> {
+  async processPayment(paymentId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -65,22 +65,22 @@ export class PaymentService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to process payment: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to process payment: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           paymentId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async refundPayment(refundData: RefundData): Promise<any> {
+  async refundPayment(refundData: RefundData): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -106,22 +106,22 @@ export class PaymentService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to refund payment: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to refund payment: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           paymentId: refundData.paymentId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getPaymentStatus(paymentId: string): Promise<any> {
+  async getPaymentStatus(paymentId: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `payment:status:${paymentId}`;
 
@@ -159,22 +159,22 @@ export class PaymentService {
       );
 
       return status;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get payment status: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get payment status: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           paymentId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async processSubscriptionPayment(subscriptionId: string): Promise<any> {
+  async processSubscriptionPayment(subscriptionId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -196,22 +196,22 @@ export class PaymentService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to process subscription payment: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to process subscription payment: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           subscriptionId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async cancelSubscription(subscriptionId: string): Promise<any> {
+  async cancelSubscription(subscriptionId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -232,22 +232,22 @@ export class PaymentService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to cancel subscription: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to cancel subscription: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           subscriptionId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async processInsuranceClaim(claimData: any): Promise<any> {
+  async processInsuranceClaim(claimData: unknown): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -268,22 +268,22 @@ export class PaymentService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to process insurance claim: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to process insurance claim: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           claimData,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async processDesignerPayout(payoutData: PayoutData): Promise<any> {
+  async processDesignerPayout(payoutData: PayoutData): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -309,22 +309,22 @@ export class PaymentService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to process designer payout: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to process designer payout: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           providerId: payoutData.providerId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async generateReceipt(paymentId: string): Promise<any> {
+  async generateReceipt(paymentId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -348,22 +348,23 @@ export class PaymentService {
       );
 
       return receipt;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to generate receipt: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to generate receipt: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           paymentId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getPaymentAnalytics(analyticsParams: any): Promise<any> {
+  async getPaymentAnalytics(analyticsParams: unknown): Promise<unknown> {
+    const params = analyticsParams as any;
     const startTime = Date.now();
 
     try {
@@ -374,7 +375,7 @@ export class PaymentService {
         totalAmount: 50000.0,
         averageAmount: 50.0,
         currency: "USD",
-        period: analyticsParams.period || "month",
+        period: params.period || "month",
         generatedAt: new Date().toISOString(),
       };
 
@@ -387,18 +388,18 @@ export class PaymentService {
       );
 
       return analytics;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get payment analytics: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get payment analytics: ${_error instanceof Error ? _error.message : String(_error)}`,
         "PaymentService",
         {
           analyticsParams,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 }

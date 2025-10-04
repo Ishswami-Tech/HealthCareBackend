@@ -96,15 +96,15 @@ export async function initDatabase() {
         logger.log("Prisma client generation output: " + stdout);
         if (stderr) logger.warn("Prisma client generation warnings: " + stderr);
       }
-    } catch (error) {
+    } catch (_error) {
       logger.error(
-        `Failed to generate Prisma client: ${(error as Error).message}`,
+        `Failed to generate Prisma client: ${(_error as Error).message}`,
       );
-      logger.error(`Command output: ${(error as any).stdout || "No output"}`);
+      logger.error(`Command output: ${(_error as any).stdout || "No output"}`);
       logger.error(
-        `Command error: ${(error as any).stderr || "No error details"}`,
+        `Command _error: ${(_error as any).stderr || "No _error details"}`,
       );
-      throw error;
+      throw _error;
     }
 
     // Check if DATABASE_URL is set
@@ -123,9 +123,9 @@ export async function initDatabase() {
       );
       logger.log("Migration output: " + stdout);
       if (stderr) logger.warn("Migration warnings: " + stderr);
-    } catch (error) {
+    } catch (_error) {
       logger.warn(
-        `Migration failed, falling back to prisma db push: ${(error as Error).message}`,
+        `Migration failed, falling back to prisma db push: ${(_error as Error).message}`,
       );
       // If migration fails, try db push as a fallback (useful for development)
       try {
@@ -140,7 +140,7 @@ export async function initDatabase() {
           `Command output: ${(pushError as any).stdout || "No output"}`,
         );
         logger.error(
-          `Command error: ${(pushError as any).stderr || "No error details"}`,
+          `Command _error: ${(pushError as any).stderr || "No _error details"}`,
         );
         throw pushError;
       }
@@ -149,12 +149,12 @@ export async function initDatabase() {
     logger.log("Database initialization complete!");
 
     return true;
-  } catch (error) {
+  } catch (_error) {
     logger.error(
-      `Database initialization failed: ${(error as Error).message}`,
-      (error as Error).stack,
+      `Database initialization failed: ${(_error as Error).message}`,
+      (_error as Error).stack,
     );
-    throw error;
+    throw _error;
   }
 }
 

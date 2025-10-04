@@ -141,12 +141,12 @@ export class ClinicController {
 
       this.logger.log(`Clinic created successfully: ${result.id}`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to create clinic: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to create clinic: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -214,12 +214,12 @@ export class ClinicController {
         `Retrieved ${(result as any)?.length || 0} clinics for user ${userId}`,
       );
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get clinics: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to get clinics: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -276,12 +276,12 @@ export class ClinicController {
 
       this.logger.log(`Retrieved clinic ${id} successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get clinic ${id}: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to get clinic ${id}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -345,12 +345,12 @@ export class ClinicController {
 
       this.logger.log(`Clinic ${id} updated successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to update clinic ${id}: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to update clinic ${id}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -398,12 +398,12 @@ export class ClinicController {
 
       this.logger.log(`Clinic ${id} deleted successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to delete clinic ${id}: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to delete clinic ${id}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -466,12 +466,12 @@ export class ClinicController {
 
       this.logger.log(`Clinic admin assigned successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to assign clinic admin: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to assign clinic admin: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -508,12 +508,12 @@ export class ClinicController {
 
       this.logger.log(`Retrieved clinic by app name ${appName} successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get clinic by app name ${appName}: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to get clinic by app name ${appName}: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -561,15 +561,15 @@ export class ClinicController {
       const result = await this.clinicService.getClinicDoctors(id, userId);
 
       this.logger.log(
-        `Retrieved ${(result as any)?.length || 0} doctors for clinic ${id}`,
+        `Retrieved ${result?.length || 0} doctors for clinic ${id}`,
       );
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get clinic doctors for clinic ${id}: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to get clinic doctors for clinic ${id}: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -620,12 +620,12 @@ export class ClinicController {
         `Retrieved ${(result as any)?.length || 0} patients for clinic ${id}`,
       );
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get clinic patients for clinic ${id}: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to get clinic patients for clinic ${id}: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -679,19 +679,19 @@ export class ClinicController {
 
       const result = await this.clinicService.registerPatientToClinic({
         userId,
-        clinicId: (clinic as any).clinicId,
+        clinicId: clinic.clinicId,
       });
 
       this.logger.log(
-        `Patient ${userId} registered to clinic ${(clinic as any).clinicId} successfully`,
+        `Patient ${userId} registered to clinic ${clinic.clinicId} successfully`,
       );
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to register patient to clinic: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to register patient to clinic: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -733,22 +733,20 @@ export class ClinicController {
 
       // Return only necessary information
       const result = {
-        clinicId: (clinic as any).clinicId,
-        name: (clinic as any).name,
-        locations: await this.clinicService.getActiveLocations(
-          (clinic as any).id,
-        ),
-        settings: (clinic as any).settings,
+        clinicId: clinic.clinicId,
+        name: clinic.name,
+        locations: await this.clinicService.getActiveLocations(clinic.id),
+        settings: clinic.settings,
       };
 
       this.logger.log(`App name ${data.appName} validated successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to validate app name ${data.appName}: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to validate app name ${data.appName}: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -815,12 +813,12 @@ export class ClinicController {
         `User ${userId} associated with clinic ${data.appName} successfully`,
       );
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to associate user with clinic: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to associate user with clinic: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -864,12 +862,12 @@ export class ClinicController {
 
       this.logger.log(`Retrieved clinic for user ${userId} successfully`);
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to get user clinic: ${(error as Error).message}`,
-        (error as Error).stack,
+        `Failed to get user clinic: ${(_error as Error).message}`,
+        (_error as Error).stack,
       );
-      throw error;
+      throw _error;
     }
   }
 

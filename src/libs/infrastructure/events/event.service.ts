@@ -14,8 +14,8 @@ export class EventService implements OnModuleInit {
 
   onModuleInit() {
     // Subscribe to all events for logging
-    //@ts-ignore
-    this.eventEmitter.onAny((event: string, ...args: any[]) => {
+    //@ts-ignore - EventEmitter2 onAny method typing issue
+    this.eventEmitter.onAny((event: string, ...args: unknown[]) => {
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -26,7 +26,7 @@ export class EventService implements OnModuleInit {
     });
   }
 
-  async emit(event: string, payload: any): Promise<void> {
+  async emit(event: string, payload: unknown): Promise<void> {
     const eventData = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: event,
@@ -43,7 +43,7 @@ export class EventService implements OnModuleInit {
     this.eventEmitter.emit(event, payload);
   }
 
-  async emitAsync(event: string, payload: any): Promise<void> {
+  async emitAsync(event: string, payload: unknown): Promise<void> {
     const eventData = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: event,
@@ -99,15 +99,15 @@ export class EventService implements OnModuleInit {
     }
   }
 
-  on(event: string, listener: (...args: any[]) => void): void {
+  on(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.on(event, listener);
   }
 
-  once(event: string, listener: (...args: any[]) => void): void {
+  once(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.once(event, listener);
   }
 
-  off(event: string, listener: (...args: any[]) => void): void {
+  off(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.off(event, listener);
   }
 

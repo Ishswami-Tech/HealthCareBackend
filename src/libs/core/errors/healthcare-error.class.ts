@@ -10,7 +10,7 @@ export class HealthcareError extends Error {
   public readonly code: ErrorCode;
   public readonly statusCode: HttpStatus;
   public readonly timestamp: string;
-  public readonly metadata?: Record<string, any>;
+  public readonly metadata?: Record<string, unknown>;
   public readonly isOperational: boolean;
   public readonly context?: string;
 
@@ -18,7 +18,7 @@ export class HealthcareError extends Error {
     code: ErrorCode,
     message?: string,
     statusCode: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR,
-    metadata?: Record<string, any>,
+    metadata?: Record<string, unknown>,
     context?: string,
   ) {
     const errorMessage = message || ErrorMessages[code];
@@ -39,7 +39,7 @@ export class HealthcareError extends Error {
   /**
    * Convert error to JSON format for logging and API responses
    */
-  toJSON(): Record<string, any> {
+  toJSON(): Record<string, unknown> {
     return {
       name: this.name,
       code: this.code,
@@ -55,17 +55,8 @@ export class HealthcareError extends Error {
   /**
    * Convert error to API response format (without sensitive information)
    */
-  toApiResponse(): Record<string, any> {
-    interface ErrorResponse {
-      error: {
-        code: ErrorCode;
-        message: string;
-        timestamp: string;
-        metadata?: Record<string, any>;
-      };
-    }
-
-    const response: ErrorResponse = {
+  toApiResponse(): Record<string, unknown> {
+    const response: Record<string, unknown> = {
       error: {
         code: this.code,
         message: this.message,
@@ -75,7 +66,7 @@ export class HealthcareError extends Error {
 
     // Add metadata if it's safe to expose
     if (this.metadata && this.isMetadataSafe()) {
-      response.error.metadata = this.metadata;
+      (response.error as Record<string, unknown>).metadata = this.metadata;
     }
 
     return response;
@@ -120,12 +111,12 @@ export class HealthcareError extends Error {
   /**
    * Create a new HealthcareError with additional metadata
    */
-  withMetadata(metadata: Record<string, any>): HealthcareError {
+  withMetadata(metadata: Record<string, unknown>): HealthcareError {
     return new HealthcareError(
       this.code,
       this.message,
       this.statusCode,
-      { ...this.metadata, ...metadata },
+      { ...this.metadata, ...(metadata || {}) },
       this.context,
     );
   }

@@ -132,5 +132,5 @@ export class CreateClinicLocationDto {
   })
   @IsOptional()
   @IsObject()
-  settings?: Record<string, any>;
+  settings?: Record<string, unknown>;
 }

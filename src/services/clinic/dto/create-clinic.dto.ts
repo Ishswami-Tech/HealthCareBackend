@@ -190,5 +190,5 @@ export class CreateClinicDto {
   })
   @IsOptional()
   @IsObject()
-  settings?: Record<string, any>;
+  settings?: Record<string, unknown>;
 }

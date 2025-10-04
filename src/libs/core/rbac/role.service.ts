@@ -102,12 +102,12 @@ export class RoleService {
       this.logger.log(`Role created: ${role.name} (${role.id})`);
 
       return this.mapToRole(role);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to create role: ${createRoleDto.name}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -144,10 +144,10 @@ export class RoleService {
       await this.redis.set(cacheKey, mappedRole, this.CACHE_TTL);
 
       return mappedRole;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get role by ID: ${roleId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return null;
     }
@@ -194,10 +194,10 @@ export class RoleService {
       await this.redis.set(cacheKey, mappedRole, this.CACHE_TTL);
 
       return mappedRole;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to get role by name: ${name}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return null;
     }
@@ -231,16 +231,16 @@ export class RoleService {
         orderBy: [{ isSystemRole: "desc" }, { name: "asc" }],
       });
 
-      const mappedRoles = roles.map((role: any) => this.mapToRole(role));
+      const mappedRoles = roles.map((role: unknown) => this.mapToRole(role));
 
       // Cache the result
       await this.redis.set(cacheKey, mappedRoles, this.CACHE_TTL);
 
       return mappedRoles;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to get roles",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return [];
     }
@@ -295,12 +295,12 @@ export class RoleService {
       this.logger.log(`Role updated: ${role.name} (${role.id})`);
 
       return this.mapToRole(role);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to update role: ${roleId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -346,12 +346,12 @@ export class RoleService {
       await this.clearRoleCache();
 
       this.logger.log(`Role deleted: ${role.name} (${role.id})`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to delete role: ${roleId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -386,12 +386,12 @@ export class RoleService {
       this.logger.log(
         `Permissions assigned to role ${roleId}: ${permissionIds.length} permissions`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to assign permissions to role: ${roleId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -416,12 +416,12 @@ export class RoleService {
       this.logger.log(
         `Permissions removed from role ${roleId}: ${permissionIds.length} permissions`,
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to remove permissions from role: ${roleId}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -442,10 +442,10 @@ export class RoleService {
     try {
       const roles = await this.getRoles();
       return roles.filter((role) => role.isSystemRole);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to get system roles",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return [];
     }
@@ -515,38 +515,43 @@ export class RoleService {
       }
 
       await this.clearRoleCache();
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to initialize system roles",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
-      throw error;
+      throw _error;
     }
   }
 
   /**
    * Map database role to Role interface
    */
-  private mapToRole(role: any): Role {
+  private mapToRole(role: unknown): Role {
+    const roleData = role as Record<string, unknown>;
     return {
-      id: role.id,
-      name: role.name,
-      displayName: role.displayName,
-      description: role.description || undefined,
-      domain: role.domain,
-      clinicId: role.clinicId,
-      isSystemRole: role.isSystemRole,
-      isActive: role.isActive,
-      createdAt: role.createdAt,
-      updatedAt: role.updatedAt,
-      permissions: role.permissions?.map((rp: any) => ({
-        id: rp.permission.id,
-        name: rp.permission.name,
-        resource: rp.permission.resource,
-        action: rp.permission.action,
-        description: rp.permission.description || undefined,
-        isActive: rp.permission.isActive,
-      })),
+      id: roleData.id as string,
+      name: roleData.name as string,
+      displayName: roleData.displayName as string,
+      description: (roleData.description as string) || undefined,
+      domain: roleData.domain as string,
+      clinicId: roleData.clinicId as string | undefined,
+      isSystemRole: roleData.isSystemRole as boolean,
+      isActive: roleData.isActive as boolean,
+      createdAt: roleData.createdAt as Date,
+      updatedAt: roleData.updatedAt as Date,
+      permissions: (roleData.permissions as unknown[])?.map((rp: unknown) => {
+        const rpData = rp as Record<string, unknown>;
+        const permission = rpData.permission as Record<string, unknown>;
+        return {
+          id: permission.id as string,
+          name: permission.name as string,
+          resource: permission.resource as string,
+          action: permission.action as string,
+          description: (permission.description as string) || undefined,
+          isActive: permission.isActive as boolean,
+        };
+      }),
     };
   }
 
@@ -559,10 +564,10 @@ export class RoleService {
       if (keys.length > 0) {
         await this.redis.del(...keys);
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         "Failed to clear role cache",
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
     }
   }

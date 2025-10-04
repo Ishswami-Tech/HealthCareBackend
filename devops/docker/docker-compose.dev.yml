@@ -2,14 +2,14 @@
 services:
   api:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ../..
+      dockerfile: devops/docker/Dockerfile.dev
     container_name: healthcarebackend-api-dev
     ports:
       - "8088:8088"
       - "5555:5555"
     env_file:
-      - .env.development
+      - ../../.env.development
     environment:
       NODE_ENV: development
       APP_ENV: development

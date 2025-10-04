@@ -60,19 +60,19 @@ export class ClinicUserService {
         receptionists,
         patients,
       };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to get clinic users: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         "ClinicUserService",
         {
           clinicId,
-          error:
-            error instanceof Error ? error.stack : "No stack trace available",
+          _error:
+            _error instanceof Error ? _error.stack : "No stack trace available",
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -117,20 +117,20 @@ export class ClinicUserService {
         default:
           return [];
       }
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users by role: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to get clinic users by role: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
         "ClinicUserService",
         {
           clinicId,
           role,
-          error:
-            error instanceof Error ? error.stack : "No stack trace available",
+          _error:
+            _error instanceof Error ? _error.stack : "No stack trace available",
         },
       );
-      throw error;
+      throw _error;
     }
   }
 }

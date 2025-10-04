@@ -5,7 +5,6 @@ import {
   IsEnum,
   IsNotEmpty,
   IsObject,
-  ValidateNested,
   IsNumber,
   IsBoolean,
   IsDateString,

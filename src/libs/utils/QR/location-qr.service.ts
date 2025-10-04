@@ -22,10 +22,11 @@ export class LocationQrService {
       // Generate QR code
       // Note: This would integrate with QrService in a real implementation
       return JSON.stringify(qrData);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    } catch (_error) {
+      const _message =
+        _error instanceof Error ? _error.message : String(_error);
       throw new BadRequestException(
-        `Failed to generate location QR: ${message}`,
+        `Failed to generate location QR: ${_message}`,
       );
     }
   }
@@ -54,9 +55,10 @@ export class LocationQrService {
       }
 
       return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new BadRequestException(`Invalid QR code: ${message}`);
+    } catch (_error) {
+      const _message =
+        _error instanceof Error ? _error.message : String(_error);
+      throw new BadRequestException(`Invalid QR code: ${_message}`);
     }
   }
 }

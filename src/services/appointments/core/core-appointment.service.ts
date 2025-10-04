@@ -46,21 +46,21 @@ export interface AppointmentContext {
   patientId?: string;
 }
 
-export interface AppointmentResult {
+export interface AppointmentResult<T = unknown> {
   success: boolean;
-  data?: any;
+  data?: T;
   error?: string;
   message: string;
   metadata?: {
     processingTime: number;
-    conflicts?: any[];
+    conflicts?: unknown[];
     warnings?: string[];
-    auditTrail?: any[];
-    alternatives?: any[];
+    auditTrail?: unknown[];
+    alternatives?: unknown[];
   };
 }
 
-export interface AppointmentMetrics {
+export interface CoreAppointmentMetrics {
   totalAppointments: number;
   appointmentsByStatus: Record<string, number>;
   appointmentsByPriority: Record<string, number>;
@@ -244,17 +244,17 @@ export class CoreAppointmentService {
           warnings: conflictResult.warnings || [],
         },
       };
-    } catch (error) {
+    } catch (_error) {
       const processingTime = Date.now() - startTime;
       this.logger.error(
-        `Failed to create appointment: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to create appointment: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
 
       // HIPAA audit log for failure
       await this.hipaaAuditLog("CREATE_APPOINTMENT", context, {
         outcome: "FAILURE",
-        error: error instanceof Error ? error.message : "Unknown error",
+        _error: _error instanceof Error ? _error.message : "Unknown _error",
       });
 
       return {
@@ -342,11 +342,11 @@ export class CoreAppointmentService {
         message: "Appointments retrieved successfully",
         metadata: { processingTime },
       };
-    } catch (error) {
+    } catch (_error) {
       const processingTime = Date.now() - startTime;
       this.logger.error(
-        `Failed to get appointments: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to get appointments: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
 
       return {
@@ -414,7 +414,7 @@ export class CoreAppointmentService {
               clinicId: existingAppointment.clinicId,
               requestedTime: new Date(`${newDate}T${newTime}`),
               duration: updateDto.duration || existingAppointment.duration,
-              priority: this.mapPriority(existingAppointment.priority as any),
+              priority: this.mapPriority(existingAppointment.priority),
               serviceType: existingAppointment.type,
               notes: updateDto.notes,
             },
@@ -501,11 +501,11 @@ export class CoreAppointmentService {
         message: "Appointment updated successfully",
         metadata: { processingTime },
       };
-    } catch (error) {
+    } catch (_error) {
       const processingTime = Date.now() - startTime;
       this.logger.error(
-        `Failed to update appointment: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to update appointment: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
 
       return {
@@ -617,11 +617,11 @@ export class CoreAppointmentService {
         message: "Appointment cancelled successfully",
         metadata: { processingTime },
       };
-    } catch (error) {
+    } catch (_error) {
       const processingTime = Date.now() - startTime;
       this.logger.error(
-        `Failed to cancel appointment: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to cancel appointment: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
 
       return {
@@ -691,11 +691,11 @@ export class CoreAppointmentService {
         message: "Appointment metrics retrieved successfully",
         metadata: { processingTime },
       };
-    } catch (error) {
+    } catch (_error) {
       const processingTime = Date.now() - startTime;
       this.logger.error(
-        `Failed to get appointment metrics: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : "",
+        `Failed to get appointment metrics: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        _error instanceof Error ? _error.stack : "",
       );
 
       return {
@@ -746,16 +746,16 @@ export class CoreAppointmentService {
   private buildAppointmentWhereClause(
     filters: AppointmentFilterDto,
     context: AppointmentContext,
-  ): any {
-    const where: any = { clinicId: context.clinicId };
+  ): unknown {
+    const where: unknown = { clinicId: context.clinicId };
 
     // Apply role-based filtering
     switch (context.role) {
       case "DOCTOR":
-        where.doctorId = context.userId;
+        (where as Record<string, unknown>).doctorId = context.userId;
         break;
       case "PATIENT":
-        where.patientId = context.userId;
+        (where as Record<string, unknown>).patientId = context.userId;
         break;
       case "NURSE":
       case "RECEPTIONIST":
@@ -763,7 +763,7 @@ export class CoreAppointmentService {
         break;
       default:
         // For unknown roles, restrict to user's own appointments
-        where.OR = [
+        (where as Record<string, unknown>).OR = [
           { doctorId: context.userId },
           { patientId: context.userId },
         ];
@@ -771,24 +771,34 @@ export class CoreAppointmentService {
     }
 
     // Apply filters
-    if (filters.status) where.status = filters.status;
-    if (filters.type) where.type = filters.type;
-    if (filters.priority) where.priority = filters.priority;
+    if (filters.status)
+      (where as Record<string, unknown>).status = filters.status;
+    if (filters.type) (where as Record<string, unknown>).type = filters.type;
+    if (filters.priority)
+      (where as Record<string, unknown>).priority = filters.priority;
     // Note: doctorId filter removed as it's not in the AppointmentFilterDto interface
-    if (filters.patientId) where.patientId = filters.patientId;
-    if (filters.locationId) where.locationId = filters.locationId;
+    if (filters.patientId)
+      (where as Record<string, unknown>).patientId = filters.patientId;
+    if (filters.locationId)
+      (where as Record<string, unknown>).locationId = filters.locationId;
 
     if (filters.startDate || filters.endDate) {
-      where.date = {};
-      if (filters.startDate) where.date.gte = new Date(filters.startDate);
-      if (filters.endDate) where.date.lte = new Date(filters.endDate);
+      (where as Record<string, unknown>).date = {};
+      if (filters.startDate)
+        (
+          (where as Record<string, unknown>).date as Record<string, unknown>
+        ).gte = new Date(filters.startDate);
+      if (filters.endDate)
+        (
+          (where as Record<string, unknown>).date as Record<string, unknown>
+        ).lte = new Date(filters.endDate);
     }
 
     return where;
   }
 
   private async queueBackgroundOperations(
-    appointment: any,
+    appointment: unknown,
     context: AppointmentContext,
     operation: string = "CREATE",
   ): Promise<void> {
@@ -797,12 +807,15 @@ export class CoreAppointmentService {
       await this.notificationQueue.add(
         "APPOINTMENT_NOTIFICATION",
         {
-          appointmentId: appointment.id,
+          appointmentId: (appointment as Record<string, unknown>).id as string,
           operation,
           context,
         },
         {
-          priority: appointment.priority === "EMERGENCY" ? 1 : 3,
+          priority:
+            (appointment as Record<string, unknown>).priority === "EMERGENCY"
+              ? 1
+              : 3,
           delay: 0,
           attempts: 3,
         },
@@ -812,7 +825,7 @@ export class CoreAppointmentService {
       await this.analyticsQueue.add(
         "APPOINTMENT_ANALYTICS",
         {
-          appointmentId: appointment.id,
+          appointmentId: (appointment as Record<string, unknown>).id as string,
           operation,
           context,
         },
@@ -827,21 +840,24 @@ export class CoreAppointmentService {
       await this.appointmentQueue.add(
         "APPOINTMENT_PROCESSING",
         {
-          appointmentId: appointment.id,
+          appointmentId: (appointment as Record<string, unknown>).id as string,
           operation,
           context,
         },
         {
-          priority: appointment.priority === "EMERGENCY" ? 1 : 2,
+          priority:
+            (appointment as Record<string, unknown>).priority === "EMERGENCY"
+              ? 1
+              : 2,
           delay: 0,
           attempts: 3,
         },
       );
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to queue background operations: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to queue background operations: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
-      // Don't throw error as background operations shouldn't break main flow
+      // Don't throw _error as background operations shouldn't break main flow
     }
   }
 
@@ -856,17 +872,17 @@ export class CoreAppointmentService {
       for (const pattern of patterns) {
         await this.cacheService.delPattern(pattern);
       }
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
-        `Failed to invalidate cache: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to invalidate cache: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
       );
     }
   }
 
   private calculateAppointmentMetrics(
-    appointments: any[],
+    appointments: unknown[],
     dateRange: { from: Date; to: Date },
-  ): AppointmentMetrics {
+  ): CoreAppointmentMetrics {
     const totalAppointments = appointments.length;
     const statusCounts: Record<string, number> = {};
     const priorityCounts: Record<string, number> = {};
@@ -877,24 +893,34 @@ export class CoreAppointmentService {
 
     appointments.forEach((appointment) => {
       // Count by status
-      statusCounts[appointment.status] =
-        (statusCounts[appointment.status] || 0) + 1;
+      statusCounts[(appointment as Record<string, unknown>).status as string] =
+        (statusCounts[
+          (appointment as Record<string, unknown>).status as string
+        ] || 0) + 1;
 
       // Count by priority
-      if (appointment.priority) {
-        priorityCounts[appointment.priority] =
-          (priorityCounts[appointment.priority] || 0) + 1;
+      if ((appointment as Record<string, unknown>).priority) {
+        priorityCounts[
+          (appointment as Record<string, unknown>).priority as string
+        ] =
+          (priorityCounts[
+            (appointment as Record<string, unknown>).priority as string
+          ] || 0) + 1;
       }
 
       // Calculate duration
-      if (appointment.duration) {
-        totalDuration += appointment.duration;
+      if ((appointment as Record<string, unknown>).duration) {
+        totalDuration += (appointment as Record<string, unknown>)
+          .duration as number;
       }
 
       // Count specific statuses
-      if (appointment.status === "COMPLETED") completedCount++;
-      if (appointment.status === "CANCELLED") cancelledCount++;
-      if (appointment.status === "NO_SHOW") noShowCount++;
+      if ((appointment as Record<string, unknown>).status === "COMPLETED")
+        completedCount++;
+      if ((appointment as Record<string, unknown>).status === "CANCELLED")
+        cancelledCount++;
+      if ((appointment as Record<string, unknown>).status === "NO_SHOW")
+        noShowCount++;
     });
 
     const averageDuration =
@@ -920,7 +946,7 @@ export class CoreAppointmentService {
   private async hipaaAuditLog(
     action: string,
     context: AppointmentContext,
-    details: any,
+    details: unknown,
   ): Promise<void> {
     try {
       await this.loggingService.log(
@@ -934,7 +960,7 @@ export class CoreAppointmentService {
           role: context.role,
           clinicId: context.clinicId,
           timestamp: new Date().toISOString(),
-          ...details,
+          ...(details as Record<string, unknown>),
           compliance: {
             hipaa: true,
             phiAccessed: true,
@@ -942,9 +968,83 @@ export class CoreAppointmentService {
           },
         },
       );
-    } catch (error) {
-      this.logger.error("Failed to log HIPAA audit:", error);
-      // Don't throw error as audit logging failure shouldn't break the main operation
+    } catch (_error) {
+      this.logger.error("Failed to log HIPAA audit:", _error);
+      // Don't throw _error as audit logging failure shouldn't break the main operation
+    }
+  }
+
+  /**
+   * Get doctor availability for a specific date
+   */
+  async getDoctorAvailability(
+    doctorId: string,
+    date: string,
+  ): Promise<unknown> {
+    try {
+      const startDate = new Date(date);
+      const endDate = new Date(date);
+      endDate.setDate(endDate.getDate() + 1);
+
+      const appointments = await this.prisma.appointment.findMany({
+        where: {
+          doctorId,
+          date: {
+            gte: startDate,
+            lt: endDate,
+          },
+          status: {
+            in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_PROGRESS"],
+          },
+        },
+        orderBy: { time: "asc" },
+      });
+
+      // Generate time slots (9 AM to 6 PM)
+      const timeSlots = [];
+      for (let hour = 9; hour < 18; hour++) {
+        for (let minute = 0; minute < 60; minute += 30) {
+          const time = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+          const isBooked = appointments.some(
+            (apt: unknown) => (apt as Record<string, unknown>).time === time,
+          );
+
+          timeSlots.push({
+            time,
+            available: !isBooked,
+            appointmentId: isBooked
+              ? appointments.find(
+                  (apt: unknown) =>
+                    (apt as Record<string, unknown>).time === time,
+                )?.id
+              : null,
+          });
+        }
+      }
+
+      return {
+        doctorId,
+        date,
+        available: timeSlots.some((slot) => slot.available),
+        availableSlots: timeSlots
+          .filter((slot) => slot.available)
+          .map((slot) => slot.time),
+        bookedSlots: timeSlots
+          .filter((slot) => !slot.available)
+          .map((slot) => slot.time),
+        workingHours: {
+          start: "09:00",
+          end: "18:00",
+        },
+        message: timeSlots.some((slot) => slot.available)
+          ? "Doctor has available slots"
+          : "Doctor is fully booked for this date",
+      };
+    } catch (_error) {
+      this.logger.error(
+        `Failed to get doctor availability: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+      );
+      throw _error;
     }
   }
 

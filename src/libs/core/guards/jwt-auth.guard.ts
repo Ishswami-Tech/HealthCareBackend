@@ -134,7 +134,7 @@ export class JwtAuthGuard implements CanActivate {
         if (rateLimitResult.limited) {
           throw new HttpException(
             {
-              error: 'Too Many Requests',
+              _error: 'Too Many Requests',
               message: 'Rate limit exceeded. Please try again later.',
               retryAfter: 60, // Standard retry after 60 seconds
               remaining: rateLimitResult.remaining
@@ -154,7 +154,7 @@ export class JwtAuthGuard implements CanActivate {
         if (lockoutStatus.isLocked) {
           throw new HttpException(
             {
-              error: 'Account Locked',
+              _error: 'Account Locked',
               message: `Account temporarily locked due to multiple failed attempts. Try again in ${lockoutStatus.remainingMinutes} minutes.`,
               lockoutMinutes: lockoutStatus.remainingMinutes,
               retryAfter: lockoutStatus.remainingMinutes * 60
@@ -198,13 +198,13 @@ export class JwtAuthGuard implements CanActivate {
       await this.resetFailedAttempts(clientIp);
 
       return true;
-    } catch (error) {
-      // Skip error handling in development mode
+    } catch (_error) {
+      // Skip _error handling in development mode
       if (this.redisService.isDevelopmentMode()) {
-        throw error;
+        throw _error;
       }
-      await this.handleAuthenticationError(error as Error, context);
-      throw error;
+      await this.handleAuthenticationError(_error as Error, context);
+      throw _error;
     }
   }
 
@@ -253,7 +253,8 @@ export class JwtAuthGuard implements CanActivate {
 
     // Try basic JWT service first
     try {
-      payload = this.jwtService.verify(token) as JwtPayload;
+      const verified = this.jwtService.verify(token);
+      payload = verified as JwtPayload;
       void logger.log(
         LogType.AUTH,
         LogLevel.DEBUG,
@@ -271,12 +272,14 @@ export class JwtAuthGuard implements CanActivate {
         LogLevel.DEBUG,
         "Basic JWT verification failed, trying enhanced service",
         "JwtAuthGuard",
-        { error: lastError.message },
+        { _error: lastError.message },
       );
 
       // Try enhanced JWT service as fallback
       try {
-        payload = (await this.jwtAuthService.verifyEnhancedToken(token)) as unknown as JwtPayload;
+        payload = (await this.jwtAuthService.verifyEnhancedToken(
+          token,
+        )) as unknown as JwtPayload;
         void logger.log(
           LogType.AUTH,
           LogLevel.DEBUG,
@@ -295,7 +298,7 @@ export class JwtAuthGuard implements CanActivate {
           LogLevel.ERROR,
           "Enhanced JWT verification also failed",
           "JwtAuthGuard",
-          { error: lastError.message },
+          { _error: lastError.message },
         );
       }
     }
@@ -307,7 +310,7 @@ export class JwtAuthGuard implements CanActivate {
         LogLevel.ERROR,
         `All token verification methods failed: ${lastError.name}`,
         "JwtAuthGuard",
-        { error: lastError.message },
+        { _error: lastError.message },
       );
 
       if (lastError.name === "TokenExpiredError") {
@@ -344,7 +347,7 @@ export class JwtAuthGuard implements CanActivate {
           "Failed to check token blacklist",
           "JwtAuthGuard",
           {
-            error:
+            _error:
               blacklistError instanceof Error
                 ? blacklistError.message
                 : "Unknown",
@@ -407,13 +410,13 @@ export class JwtAuthGuard implements CanActivate {
         if (decoded && typeof decoded === "object" && "sessionId" in decoded) {
           sessionId = decoded.sessionId;
         }
-      } catch (error) {
+      } catch (_error) {
         void logger.log(
           LogType.AUTH,
           LogLevel.ERROR,
           "Failed to decode token for sessionId",
           "JwtAuthGuard",
-          { error },
+          { _error },
         );
       }
     }
@@ -572,13 +575,13 @@ export class JwtAuthGuard implements CanActivate {
         JSON.stringify(updatedSession),
         3600, // Keep session alive for another hour
       );
-    } catch (error) {
+    } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to update session data",
         "JwtAuthGuard",
-        { error },
+        { _error },
       );
     }
   }
@@ -592,7 +595,7 @@ export class JwtAuthGuard implements CanActivate {
   private async trackSecurityEvent(
     identifier: string,
     eventType: string,
-    details: Record<string, any>,
+    details: Record<string, unknown>,
   ): Promise<void> {
     try {
       const timestamp = new Date().toISOString();
@@ -616,13 +619,13 @@ export class JwtAuthGuard implements CanActivate {
         `security:events:${identifier}`,
         this.SECURITY_EVENT_RETENTION,
       );
-    } catch (error) {
+    } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to track security event",
         "JwtAuthGuard",
-        { error },
+        { _error },
       );
     }
   }

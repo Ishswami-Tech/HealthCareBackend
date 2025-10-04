@@ -19,66 +19,68 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
     super();
   }
 
-  async process(data: any): Promise<any> {
+  async process(data: unknown): Promise<unknown> {
+    const pluginData = data as any;
     this.logPluginAction("Processing clinic confirmation operation", {
-      operation: data.operation,
+      operation: pluginData.operation,
     });
 
     // Delegate to existing confirmation service - no functionality change
-    switch (data.operation) {
+    switch (pluginData.operation) {
       case "generateCheckInQR":
         return await this.confirmationService.generateCheckInQR(
-          data.appointmentId,
+          pluginData.appointmentId,
           "clinic",
         );
 
       case "processCheckIn":
         return await this.confirmationService.processCheckIn(
-          data.qrData,
-          data.appointmentId,
+          pluginData.qrData,
+          pluginData.appointmentId,
           "clinic",
         );
 
       case "confirmAppointment":
         return await this.confirmationService.confirmAppointment(
-          data.appointmentId,
+          pluginData.appointmentId,
           "clinic",
         );
 
       case "markAppointmentCompleted":
         return await this.confirmationService.markAppointmentCompleted(
-          data.appointmentId,
-          data.doctorId,
+          pluginData.appointmentId,
+          pluginData.doctorId,
           "clinic",
         );
 
       case "generateConfirmationQR":
         return await this.confirmationService.generateConfirmationQR(
-          data.appointmentId,
+          pluginData.appointmentId,
           "clinic",
         );
 
       case "verifyAppointmentQR":
         return await this.confirmationService.verifyAppointmentQR(
-          data.qrData,
-          data.clinicId,
+          pluginData.qrData,
+          pluginData.clinicId,
           "clinic",
         );
 
       case "invalidateQRCache":
         return await this.confirmationService.invalidateQRCache(
-          data.appointmentId,
+          pluginData.appointmentId,
         );
 
       default:
         this.logPluginError("Unknown confirmation operation", {
-          operation: data.operation,
+          operation: pluginData.operation,
         });
-        throw new Error(`Unknown confirmation operation: ${data.operation}`);
+        throw new Error(`Unknown confirmation operation: ${pluginData.operation}`);
     }
   }
 
-  async validate(data: any): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
+    const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
       generateCheckInQR: ["appointmentId"],
@@ -90,7 +92,7 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
       invalidateQRCache: ["appointmentId"],
     };
 
-    const operation = data.operation;
+    const operation = pluginData.operation;
     const fields = (requiredFields as any)[operation];
 
     if (!fields) {
@@ -98,7 +100,7 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
       return false;
     }
 
-    const isValid = fields.every((field: any) => data[field] !== undefined);
+    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

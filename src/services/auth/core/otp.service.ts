@@ -106,10 +106,10 @@ export class OtpService {
         expiresIn: expirySeconds,
         attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to send OTP to ${email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return {
         success: false,
@@ -149,10 +149,10 @@ export class OtpService {
         success: true,
         message: "OTP verified successfully",
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to verify OTP for ${email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return {
         success: false,
@@ -193,10 +193,10 @@ export class OtpService {
         exists: otpExists,
         attemptsRemaining: cooldown ? 0 : attemptsRemaining,
       };
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to check OTP status for ${email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return {
         exists: false,
@@ -216,10 +216,10 @@ export class OtpService {
       this.logger.log(`OTP invalidated for ${email}`);
 
       return true;
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to invalidate OTP for ${email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
       return false;
     }
@@ -239,10 +239,10 @@ export class OtpService {
       ]);
 
       this.logger.log(`OTP attempts reset for ${email}`);
-    } catch (error) {
+    } catch (_error) {
       this.logger.error(
         `Failed to reset OTP attempts for ${email}`,
-        error instanceof Error ? error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : "No stack trace available",
       );
     }
   }

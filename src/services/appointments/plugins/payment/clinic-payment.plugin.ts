@@ -17,52 +17,54 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
     super();
   }
 
-  async process(data: any): Promise<any> {
+  async process(data: unknown): Promise<unknown> {
+    const pluginData = data as any;
     this.logPluginAction("Processing clinic payment operation", {
-      operation: data.operation,
+      operation: pluginData.operation,
     });
 
     // Delegate to existing payment service - no functionality change
-    switch (data.operation) {
+    switch (pluginData.operation) {
       case "processPayment":
-        return await this.paymentService.processPayment(data.paymentId);
+        return await this.paymentService.processPayment(pluginData.paymentId);
 
       case "refundPayment":
-        return await this.paymentService.refundPayment(data.refundData);
+        return await this.paymentService.refundPayment(pluginData.refundData);
 
       case "getPaymentStatus":
-        return await this.paymentService.getPaymentStatus(data.paymentId);
+        return await this.paymentService.getPaymentStatus(pluginData.paymentId);
 
       case "processSubscriptionPayment":
         return await this.paymentService.processSubscriptionPayment(
-          data.subscriptionId,
+          pluginData.subscriptionId,
         );
 
       case "cancelSubscription":
         return await this.paymentService.cancelSubscription(
-          data.subscriptionId,
+          pluginData.subscriptionId,
         );
 
       case "processInsuranceClaim":
-        return await this.paymentService.processInsuranceClaim(data.claimData);
+        return await this.paymentService.processInsuranceClaim(pluginData.claimData);
 
       case "generateReceipt":
-        return await this.paymentService.generateReceipt(data.paymentId);
+        return await this.paymentService.generateReceipt(pluginData.paymentId);
 
       case "getPaymentAnalytics":
         return await this.paymentService.getPaymentAnalytics(
-          data.analyticsParams,
+          pluginData.analyticsParams,
         );
 
       default:
         this.logPluginError("Unknown payment operation", {
-          operation: data.operation,
+          operation: pluginData.operation,
         });
-        throw new Error(`Unknown payment operation: ${data.operation}`);
+        throw new Error(`Unknown payment operation: ${pluginData.operation}`);
     }
   }
 
-  async validate(data: any): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
+    const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
       processPayment: ["paymentId"],
@@ -75,7 +77,7 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
       getPaymentAnalytics: ["analyticsParams"],
     };
 
-    const operation = data.operation;
+    const operation = pluginData.operation;
     const fields = (requiredFields as any)[operation];
 
     if (!fields) {
@@ -83,7 +85,7 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
       return false;
     }
 
-    const isValid = fields.every((field: any) => data[field] !== undefined);
+    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

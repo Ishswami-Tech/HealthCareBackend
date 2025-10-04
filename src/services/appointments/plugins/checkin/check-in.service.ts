@@ -49,12 +49,12 @@ export class CheckInService {
     private readonly loggingService: LoggingService,
   ) {}
 
-  async checkIn(appointmentId: string, userId: string): Promise<any> {
+  async checkIn(appointmentId: string, userId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
       // Validate appointment exists and belongs to user
-      const appointment = await this.validateAppointment(appointmentId, userId);
+      const appointment = await this.validateAppointment(appointmentId, userId) as any;
 
       // Check if already checked in
       const existingCheckIn = await this.getExistingCheckIn(appointmentId);
@@ -94,23 +94,23 @@ export class CheckInService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to check in: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to check in: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           appointmentId,
           userId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getCheckedInAppointments(clinicId: string): Promise<any> {
+  async getCheckedInAppointments(clinicId: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `checkins:clinic:${clinicId}`;
 
@@ -151,22 +151,25 @@ export class CheckInService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get checked-in appointments: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get checked-in appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async processCheckIn(appointmentId: string, clinicId: string): Promise<any> {
+  async processCheckIn(
+    appointmentId: string,
+    clinicId: string,
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -174,7 +177,7 @@ export class CheckInService {
       const appointment = await this.validateAppointmentForClinic(
         appointmentId,
         clinicId,
-      );
+      ) as any;
 
       // Process the check-in
       const result = await this.performCheckIn({
@@ -197,26 +200,26 @@ export class CheckInService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to process check-in: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           appointmentId,
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async getPatientQueuePosition(
     appointmentId: string,
     clinicId: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:position:${appointmentId}:${clinicId}`;
 
@@ -265,26 +268,26 @@ export class CheckInService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get patient queue position: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get patient queue position: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           appointmentId,
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async startConsultation(
     appointmentId: string,
     clinicId: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -314,23 +317,26 @@ export class CheckInService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to start consultation: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to start consultation: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           appointmentId,
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getDoctorActiveQueue(doctorId: string, clinicId: string): Promise<any> {
+  async getDoctorActiveQueue(
+    doctorId: string,
+    clinicId: string,
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:doctor:${doctorId}:${clinicId}`;
 
@@ -373,26 +379,26 @@ export class CheckInService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get doctor active queue: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get doctor active queue: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           doctorId,
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
   async reorderQueue(
     clinicId: string,
     appointmentOrder: string[],
-  ): Promise<any> {
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -418,23 +424,23 @@ export class CheckInService {
       );
 
       return { success: true, message: "Queue reordered successfully" };
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to reorder queue: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to reorder queue: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           clinicId,
           appointmentOrder,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
-  async getLocationQueue(clinicId: string): Promise<any> {
+  async getLocationQueue(clinicId: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:location:${clinicId}`;
 
@@ -475,18 +481,18 @@ export class CheckInService {
       );
 
       return result;
-    } catch (error) {
+    } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get location queue: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get location queue: ${_error instanceof Error ? _error.message : String(_error)}`,
         "CheckInService",
         {
           clinicId,
-          error: error instanceof Error ? error.stack : undefined,
+          _error: _error instanceof Error ? _error.stack : undefined,
         },
       );
-      throw error;
+      throw _error;
     }
   }
 
@@ -494,7 +500,7 @@ export class CheckInService {
   private async validateAppointment(
     appointmentId: string,
     userId: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return mock data
     return {
@@ -510,7 +516,7 @@ export class CheckInService {
   private async validateAppointmentForClinic(
     appointmentId: string,
     clinicId: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return mock data
     return {
@@ -523,7 +529,7 @@ export class CheckInService {
     };
   }
 
-  private async getExistingCheckIn(appointmentId: string): Promise<any> {
+  private async getExistingCheckIn(appointmentId: string): Promise<unknown> {
     // This would check if appointment is already checked in
     // For now, return null (not checked in)
     return null;
@@ -571,7 +577,7 @@ export class CheckInService {
   private async performConsultationStart(
     appointmentId: string,
     clinicId: string,
-  ): Promise<any> {
+  ): Promise<unknown> {
     // This would integrate with the actual consultation service
     // For now, return mock result
     return {

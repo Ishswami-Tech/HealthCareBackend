@@ -107,10 +107,10 @@ export class QueueStatusGateway
       );
 
       await this.sendInitialStatus(client, tenantId);
-    } catch (error) {
-      this.logger.error(`❌ Connection failed for ${client.id}:`, error);
+    } catch (_error) {
+      this.logger.error(`❌ Connection failed for ${client.id}:`, _error);
       client.emit("connection_error", {
-        error: error instanceof Error ? error.message : "Unknown error",
+        _error: _error instanceof Error ? _error.message : "Unknown _error",
       });
       client.disconnect(true);
     }
@@ -157,7 +157,7 @@ export class QueueStatusGateway
       const session = this.connectedClients.get(client.id);
       if (!session) throw new Error("Session not found");
 
-      const { queueName, filters } = data;
+      const { queueName, filters } = data as any;
 
       await this.validateQueueAccess(session.tenantId, queueName);
 
@@ -184,11 +184,11 @@ export class QueueStatusGateway
         filters,
         subscribedAt: new Date().toISOString(),
       });
-    } catch (error) {
-      this.logger.error(`❌ Queue subscription failed:`, error);
+    } catch (_error) {
+      this.logger.error(`❌ Queue subscription failed:`, _error);
       client.emit("subscription_error", {
         queueName: data.queueName,
-        error: error instanceof Error ? error.message : "Unknown error",
+        _error: _error instanceof Error ? _error.message : "Unknown _error",
       });
     }
   }
@@ -202,7 +202,7 @@ export class QueueStatusGateway
       const session = this.connectedClients.get(client.id);
       if (!session) throw new Error("Session not found");
 
-      const { queueNames, detailed = false } = data;
+      const { queueNames, detailed = false } = data as any;
       const accessibleQueues = await this.getAccessibleQueues(
         session.tenantId,
         queueNames,
@@ -226,16 +226,16 @@ export class QueueStatusGateway
         detailed,
         requestedAt: new Date().toISOString(),
       });
-    } catch (error) {
-      this.logger.error(`❌ Metrics request failed:`, error);
+    } catch (_error) {
+      this.logger.error(`❌ Metrics request failed:`, _error);
       client.emit("metrics_error", {
-        error: error instanceof Error ? error.message : "Unknown error",
+        _error: _error instanceof Error ? _error.message : "Unknown _error",
       });
     }
   }
 
   // Broadcast methods
-  async broadcastQueueMetrics(queueName: string, metrics: any) {
+  async broadcastQueueMetrics(queueName: string, metrics: unknown) {
     const updateData = {
       queueName,
       metrics,
@@ -264,7 +264,7 @@ export class QueueStatusGateway
         for (const [queueName, status] of Object.entries(allStatuses)) {
           const subscribers = this.queueSubscriptions.get(queueName);
           if (subscribers && subscribers.size > 0) {
-            await this.broadcastQueueMetrics(queueName, status.metrics);
+            await this.broadcastQueueMetrics(queueName, (status as any).metrics);
           }
         }
 
@@ -272,8 +272,8 @@ export class QueueStatusGateway
           ...this.connectionMetrics,
           timestamp: new Date().toISOString(),
         });
-      } catch (error) {
-        this.logger.error("Metrics streaming error:", error);
+      } catch (_error) {
+        this.logger.error("Metrics streaming _error:", _error);
       }
     }, 5000);
   }
@@ -365,8 +365,8 @@ export class QueueStatusGateway
           complianceMonitoring: true,
         },
       });
-    } catch (error) {
-      this.logger.error("Failed to send initial status:", error);
+    } catch (_error) {
+      this.logger.error("Failed to send initial status:", _error);
     }
   }
 

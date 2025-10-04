@@ -184,7 +184,7 @@ export const CanManageVitals = () => RequireResourcePermission("vitals", "*");
 /**
  * Role-based decorators
  */
-export const RequireRole = (role: string) =>
+export const RequireRole = (_role: string) =>
   RequireResourcePermission("roles", "check", { clinicId: undefined });
 
 export const RequireSuperAdmin = () =>

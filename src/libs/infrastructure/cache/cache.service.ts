@@ -123,7 +123,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   private cacheShards: CacheShard[] = [];
   private activeConnections = 0;
-  private requestQueue: Array<() => Promise<any>> = [];
+  private requestQueue: Array<() => Promise<unknown>> = [];
   private isProcessingQueue = false;
   private adaptiveTTLMap = new Map<string, number>();
   private predictiveCacheMap = new Map<
@@ -293,12 +293,12 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Initialize enterprise features
-      await this.initializeSharding();
-      await this.initializeConnectionPool();
-      await this.startPerformanceMonitoring();
-      await this.initializeCircuitBreaker();
-      await this.startAdaptiveCaching();
-      await this.startPredictiveCaching();
+      this.initializeSharding();
+      this.initializeConnectionPool();
+      this.startPerformanceMonitoring();
+      this.initializeCircuitBreaker();
+      this.startAdaptiveCaching();
+      this.startPredictiveCaching();
       await this.initializeCacheWarming();
 
       this.logger.log("✅ Enterprise Cache Service initialized successfully");
@@ -327,10 +327,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Graceful shutdown
-      await this.stopPerformanceMonitoring();
-      await this.stopAdaptiveCaching();
-      await this.stopPredictiveCaching();
-      await this.closeConnectionPool();
+      this.stopPerformanceMonitoring();
+      this.stopAdaptiveCaching();
+      this.stopPredictiveCaching();
+      this.closeConnectionPool();
 
       this.logger.log("✅ Enterprise Cache Service shutdown complete");
     } catch (error) {
@@ -340,28 +340,31 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   // ===== ENTERPRISE-GRADE INITIALIZATION METHODS =====
 
-  private async initializeSharding(): Promise<void> {
+  private initializeSharding(): void {
     if (!this.config.shardingEnabled) return;
 
     this.logger.log("🔧 Initializing cache sharding...");
 
     // Initialize shards based on configuration
     const shardConfigs = this.configService.get("CACHE_SHARDS", []);
-    this.cacheShards = shardConfigs.map((config: any, index: number) => ({
-      id: `shard-${index}`,
-      host: config.host || "localhost",
-      port: config.port || 6379,
-      weight: config.weight || 1,
-      isHealthy: true,
-      lastHealthCheck: new Date(),
-      connectionCount: 0,
-      loadFactor: 0,
-    }));
+    this.cacheShards = shardConfigs.map((config: unknown, index: number) => {
+      const shardConfig = config as Record<string, unknown>;
+      return {
+        id: `shard-${index}`,
+        host: (shardConfig.host as string) || "localhost",
+        port: (shardConfig.port as number) || 6379,
+        weight: (shardConfig.weight as number) || 1,
+        isHealthy: true,
+        lastHealthCheck: new Date(),
+        connectionCount: 0,
+        loadFactor: 0,
+      };
+    });
 
     this.logger.log(`✅ Initialized ${this.cacheShards.length} cache shards`);
   }
 
-  private async initializeConnectionPool(): Promise<void> {
+  private initializeConnectionPool(): void {
     this.logger.log("🔧 Initializing connection pool...");
 
     // Connection pool is managed by RedisService
@@ -373,7 +376,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async startPerformanceMonitoring(): Promise<void> {
+  private startPerformanceMonitoring(): void {
     if (!this.config.performanceMonitoringEnabled) return;
 
     this.logger.log("📊 Starting performance monitoring...");
@@ -386,7 +389,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     this.logger.log("✅ Performance monitoring started");
   }
 
-  private async initializeCircuitBreaker(): Promise<void> {
+  private initializeCircuitBreaker(): void {
     this.logger.log("⚡ Initializing circuit breaker...");
 
     this.circuitBreaker = {
@@ -399,7 +402,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     this.logger.log("✅ Circuit breaker initialized");
   }
 
-  private async startAdaptiveCaching(): Promise<void> {
+  private startAdaptiveCaching(): void {
     if (!this.config.adaptiveCachingEnabled) return;
 
     this.logger.log("🧠 Starting adaptive caching...");
@@ -412,7 +415,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     this.logger.log("✅ Adaptive caching started");
   }
 
-  private async startPredictiveCaching(): Promise<void> {
+  private startPredictiveCaching(): void {
     if (!this.config.predictiveCachingEnabled) return;
 
     this.logger.log("🔮 Starting predictive caching...");
@@ -436,22 +439,22 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     this.logger.log("✅ Cache warming initialized");
   }
 
-  private async stopPerformanceMonitoring(): Promise<void> {
+  private stopPerformanceMonitoring(): void {
     this.logger.log("📊 Stopping performance monitoring...");
     // Cleanup monitoring resources
   }
 
-  private async stopAdaptiveCaching(): Promise<void> {
+  private stopAdaptiveCaching(): void {
     this.logger.log("🧠 Stopping adaptive caching...");
     // Cleanup adaptive caching resources
   }
 
-  private async stopPredictiveCaching(): Promise<void> {
+  private stopPredictiveCaching(): void {
     this.logger.log("🔮 Stopping predictive caching...");
     // Cleanup predictive caching resources
   }
 
-  private async closeConnectionPool(): Promise<void> {
+  private closeConnectionPool(): void {
     this.logger.log("🔌 Closing connection pool...");
     this.activeConnections = 0;
   }
@@ -521,8 +524,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   private updatePerformanceMetrics(): void {
-    const now = Date.now();
-    const timeWindow = 60000; // 1 minute window
+    const _now = Date.now();
+    const _timeWindow = 60000; // 1 minute window
+    // Reserved for future time-based metric calculations
 
     // Update metrics based on recent activity
     this.performanceMetrics.timestamp = new Date();
@@ -550,7 +554,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   private adjustAdaptiveTTL(): void {
     // Adjust TTL based on access patterns and system load
-    for (const [key, currentTTL] of this.adaptiveTTLMap.entries()) {
+    for (const [key, currentTTL] of Array.from(this.adaptiveTTLMap.entries())) {
       const accessInfo = this.predictiveCacheMap.get(key);
       if (accessInfo) {
         // Increase TTL for frequently accessed items
@@ -574,11 +578,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   private async performPredictiveCaching(): Promise<void> {
     // Predict and pre-cache likely-to-be-accessed data
     const highPriorityKeys = Array.from(this.predictiveCacheMap.entries())
-      .filter(([_, info]) => info.priority > 0.8)
+      .filter(([_key, info]) => info.priority > 0.8)
       .sort((a, b) => b[1].priority - a[1].priority)
       .slice(0, 100); // Top 100 high-priority items
 
-    for (const [key, info] of highPriorityKeys) {
+    for (const [key, _info] of highPriorityKeys) {
       try {
         // Pre-warm cache for high-priority items
         await this.warmCacheForKey(key);
@@ -613,10 +617,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     this.logger.log("✅ Cache warming completed");
   }
 
-  private async warmCacheForKey(key: string): Promise<void> {
+  private warmCacheForKey(key: string): Promise<void> {
     // This would typically fetch and cache data for the key
     // Implementation depends on the specific data type
     this.logger.debug(`Warming cache for key: ${key}`);
+    return Promise.resolve();
   }
 
   private selectOptimalShard(key: string): CacheShard {
@@ -640,12 +645,12 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return Math.abs(hash);
   }
 
-  private async logAuditEvent(
+  private logAuditEvent(
     operation: string,
     key: string,
     userId?: string,
     result: "success" | "failure" = "success",
-  ): Promise<void> {
+  ): void {
     if (!this.config.auditLoggingEnabled) return;
 
     const auditEntry = {
@@ -674,7 +679,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     patientId: string,
     clinicId: string,
     fetchFn: () => Promise<T>,
-    options: {
+    _options: {
       includeHistory?: boolean;
       includePrescriptions?: boolean;
       includeVitals?: boolean;
@@ -738,7 +743,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     patientId: string,
     clinicId: string,
     fetchFn: () => Promise<T>,
-    options: {
+    _options: {
       timeRange?: { start: Date; end: Date };
       includeTests?: boolean;
       includeImages?: boolean;
@@ -789,7 +794,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     patientId: string,
     clinicId: string,
     fetchFn: () => Promise<T>,
-    options: {
+    _options: {
       includeHistory?: boolean;
       activeOnly?: boolean;
     } = {},
@@ -1062,7 +1067,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   /**
    * Warm cache with frequently accessed healthcare data
    */
-  async warmHealthcareCache(clinicId: string): Promise<void> {
+  warmHealthcareCache(clinicId: string): void {
     this.logger.log(`Warming healthcare cache for clinic: ${clinicId}`);
 
     try {
@@ -1367,7 +1372,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Cache debug info
-  async getCacheDebug(): Promise<any> {
+  async getCacheDebug(): Promise<unknown> {
     return this.redisService.getCacheDebug();
   }
 
@@ -1441,7 +1446,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.updateRateLimits(type, config);
   }
 
-  getRateLimitConfig(type?: string): any {
+  getRateLimitConfig(type?: string): unknown {
     return this.redisService.getRateLimitConfig(type);
   }
 
@@ -1458,7 +1463,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.getCacheStats();
   }
 
-  async getCacheMetrics(): Promise<Record<string, any>> {
+  async getCacheMetrics(): Promise<Record<string, unknown>> {
     return this.redisService.getCacheMetrics();
   }
 
@@ -1478,7 +1483,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   async trackSecurityEvent(
     identifier: string,
     eventType: string,
-    details: any,
+    details: unknown,
   ): Promise<void> {
     return this.redisService.trackSecurityEvent(identifier, eventType, details);
   }
@@ -1559,7 +1564,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.incr(key);
   }
 
-  async multi(commands: any[]): Promise<any> {
+  async multi(commands: unknown[]): Promise<unknown> {
     return this.redisService.multi(commands);
   }
 
