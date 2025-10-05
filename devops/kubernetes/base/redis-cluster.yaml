@@ -143,8 +143,8 @@ data:
     appendonly yes
     appendfsync everysec
 
-    # Memory Management
-    maxmemory 1536mb
+    # Memory Management (Optimized for 1M+ users)
+    maxmemory 3072mb
     maxmemory-policy allkeys-lru
 
     # Network
@@ -176,8 +176,8 @@ spec:
     apiVersion: apps/v1
     kind: StatefulSet
     name: redis
-  minReplicas: 3
-  maxReplicas: 9  # Scale up to 9 nodes for high traffic
+  minReplicas: 6
+  maxReplicas: 18  # Scale up to 18 nodes for 1M+ users
   metrics:
   - type: Resource
     resource:
