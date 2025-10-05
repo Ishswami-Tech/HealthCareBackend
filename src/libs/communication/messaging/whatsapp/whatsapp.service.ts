@@ -341,6 +341,117 @@ export class WhatsAppService {
   }
 
   /**
+   * Send invoice via WhatsApp
+   * @param phoneNumber - The recipient's phone number
+   * @param userName - User's name
+   * @param invoiceNumber - Invoice number
+   * @param amount - Invoice amount
+   * @param dueDate - Invoice due date
+   * @param invoiceUrl - URL to download invoice PDF
+   * @returns Promise<boolean> - Success status
+   */
+  async sendInvoice(
+    phoneNumber: string,
+    userName: string,
+    invoiceNumber: string,
+    amount: number,
+    dueDate: string,
+    invoiceUrl: string,
+  ): Promise<boolean> {
+    if (!this.whatsAppConfig.enabled) {
+      this.logger.log(
+        "WhatsApp service is disabled. Skipping invoice delivery.",
+      );
+      return false;
+    }
+
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+
+      // Send invoice notification message
+      await this.sendCustomMessage(
+        formattedPhone,
+        `Hello ${userName},\n\n` +
+        `Your invoice ${invoiceNumber} for ₹${amount} has been generated.\n` +
+        `Due Date: ${dueDate}\n\n` +
+        `Please find your invoice attached below. You can also download it from: ${invoiceUrl}\n\n` +
+        `Thank you for your business!`,
+      );
+
+      // Send invoice PDF as document
+      await this.sendDocumentMessage(
+        formattedPhone,
+        invoiceUrl,
+        `Invoice ${invoiceNumber}`,
+      );
+
+      this.logger.log(
+        `Invoice sent to ${phoneNumber} via WhatsApp`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Send subscription confirmation via WhatsApp
+   * @param phoneNumber - The recipient's phone number
+   * @param userName - User's name
+   * @param planName - Subscription plan name
+   * @param amount - Subscription amount
+   * @param startDate - Subscription start date
+   * @param endDate - Subscription end date
+   * @returns Promise<boolean> - Success status
+   */
+  async sendSubscriptionConfirmation(
+    phoneNumber: string,
+    userName: string,
+    planName: string,
+    amount: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<boolean> {
+    if (!this.whatsAppConfig.enabled) {
+      this.logger.log(
+        "WhatsApp service is disabled. Skipping subscription confirmation.",
+      );
+      return false;
+    }
+
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+
+      await this.sendCustomMessage(
+        formattedPhone,
+        `🎉 Subscription Confirmed!\n\n` +
+        `Hello ${userName},\n\n` +
+        `Thank you for subscribing to ${planName}!\n\n` +
+        `Amount: ₹${amount}\n` +
+        `Start Date: ${startDate}\n` +
+        `End Date: ${endDate}\n\n` +
+        `Your invoice will be sent shortly.\n\n` +
+        `Thank you for choosing us!`,
+      );
+
+      this.logger.log(
+        `Subscription confirmation sent to ${phoneNumber} via WhatsApp`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Failed to send subscription confirmation via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      return false;
+    }
+  }
+
+  /**
    * Format phone number to international format
    * @param phoneNumber - The phone number to format
    * @returns string - Formatted phone number

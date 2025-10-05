@@ -44,6 +44,9 @@ export class BaseSocket
     @Optional()
     protected readonly socketService: SocketService,
     protected readonly serviceName: string,
+    @Inject("SOCKET_AUTH_MIDDLEWARE")
+    @Optional()
+    protected readonly authMiddleware?: any,
   ) {
     this.logger = new Logger(serviceName || "BaseSocket");
   }
@@ -138,7 +141,7 @@ export class BaseSocket
     );
   }
 
-  handleConnection(client: Socket): WsResponse<any> {
+  async handleConnection(client: Socket): Promise<WsResponse<any>> {
     try {
       if (!this.server) {
         this.logger.error("WebSocket server not initialized");
@@ -146,21 +149,96 @@ export class BaseSocket
       }
 
       const clientId = client.id;
-      this.logger.log(`Client connected: ${clientId}`);
+
+      // Authenticate client if middleware is available
+      let user: any = null;
+      if (this.authMiddleware) {
+        try {
+          user = await this.authMiddleware.validateConnection(client);
+
+          // Store user metadata
+          this.clientMetadata.set(clientId, user);
+
+          // Auto-join user to appropriate rooms
+          await this.autoJoinRooms(client, user);
+
+          this.logger.log(
+            `Client ${clientId} authenticated and joined rooms (User: ${user.userId}, Role: ${user.role})`,
+          );
+        } catch (authError) {
+          this.logger.error(
+            `Authentication failed for ${clientId}: ${authError instanceof Error ? authError.message : 'Unknown error'}`,
+          );
+          client.disconnect();
+          return {
+            event: "error",
+            data: { message: "Authentication failed" },
+          };
+        }
+      } else {
+        this.logger.log(`Client connected (no auth): ${clientId}`);
+      }
 
       // Send connection confirmation
       if (this.socketService?.getInitializationState()) {
         this.socketService.sendToUser(clientId, "connection_confirmed", {
           status: "connected",
+          authenticated: !!user,
+          user: user ? { userId: user.userId, role: user.role } : null,
         });
       }
 
-      return { event: "connected", data: { clientId } };
+      return {
+        event: "connected",
+        data: {
+          clientId,
+          authenticated: !!user,
+          user: user ? { userId: user.userId, role: user.role } : null,
+        },
+      };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       this.logger.error(`Error handling connection: ${errorMessage}`);
       return { event: "error", data: { message: "Connection error" } };
+    }
+  }
+
+  /**
+   * Automatically join user to appropriate rooms based on their data
+   */
+  protected async autoJoinRooms(client: Socket, user: any): Promise<void> {
+    try {
+      const rooms: string[] = [];
+
+      // User-specific room
+      if (user.userId) {
+        await this.joinRoom(client, `user:${user.userId}`);
+        rooms.push(`user:${user.userId}`);
+      }
+
+      // Clinic room
+      if (user.clinicId) {
+        await this.joinRoom(client, `clinic:${user.clinicId}`);
+        rooms.push(`clinic:${user.clinicId}`);
+
+        // Role-based room within clinic
+        if (user.role) {
+          const roleRoom = `clinic:${user.clinicId}:role:${user.role}`;
+          await this.joinRoom(client, roleRoom);
+          rooms.push(roleRoom);
+        }
+      }
+
+      this.logger.log(
+        `Client ${client.id} auto-joined ${rooms.length} rooms: ${rooms.join(', ')}`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      this.logger.error(
+        `Error auto-joining rooms for ${client.id}: ${errorMessage}`,
+      );
     }
   }
 

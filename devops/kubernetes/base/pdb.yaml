@@ -1,0 +1,35 @@
+# PodDisruptionBudget for API - Ensures high availability during updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: healthcare-api-pdb
+  namespace: healthcare-backend
+spec:
+  minAvailable: 2  # Always keep at least 2 pods running
+  selector:
+    matchLabels:
+      app: healthcare-api
+---
+# PodDisruptionBudget for Redis - Protect cache during maintenance
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: healthcare-backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: redis
+---
+# PodDisruptionBudget for PostgreSQL - Critical data protection
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: healthcare-backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres

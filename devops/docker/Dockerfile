@@ -6,6 +6,9 @@ LABEL stage=builder
 LABEL app.component=backend
 LABEL app.stage=build
 
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -16,19 +19,19 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies
-RUN npm install --legacy-peer-deps --no-audit --no-progress
+RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY . .
 
 # Generate Prisma client
-RUN npx prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma
+RUN pnpm prisma:generate
 
 # Build the application
-RUN npm run build
+RUN pnpm build
 
 # Create prisma directory in dist
 RUN mkdir -p /app/dist/libs/infrastructure/database/prisma
@@ -42,6 +45,9 @@ LABEL app.component=backend
 LABEL app.stage=production
 LABEL com.docker.compose.service=api
 
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+
 # Install production dependencies
 RUN apt-get update && apt-get install -y \
     openssl \
@@ -52,12 +58,12 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml ./
 
-# Install production dependencies and @faker-js/faker
-RUN npm ci --omit=dev --legacy-peer-deps --no-audit --no-progress && \
-    npm install @faker-js/faker && \
-    npm cache clean --force
+# Install production dependencies only
+RUN pnpm install --prod --frozen-lockfile && \
+    pnpm add @faker-js/faker && \
+    pnpm store prune
 
 # Copy built files from builder
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
@@ -95,6 +101,9 @@ FROM node:20-alpine AS development
 LABEL app.component=backend
 LABEL app.stage=development
 
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+
 # Install development tools
 RUN apk add --no-cache \
     postgresql-client \
@@ -110,10 +119,8 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # Copy package files and install dependencies
-COPY package*.json ./
-RUN npm install --legacy-peer-deps --no-audit --no-progress && \
-    npm install -g nodemon && \
-    npm cache clean --force
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy application files
 COPY . .
@@ -123,7 +130,7 @@ ENV NODE_ENV=development
 ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
 
 # Generate Prisma client
-RUN npx prisma generate --schema="$PRISMA_SCHEMA_PATH"
+RUN pnpm prisma:generate
 
 # Create necessary directories
 RUN mkdir -p /app/dist/libs/infrastructure/database/prisma /app/logs && \
@@ -137,4 +144,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
 
 # Development startup command
-CMD ["npm", "run", "start:dev"] 
+CMD ["pnpm", "start:dev"]

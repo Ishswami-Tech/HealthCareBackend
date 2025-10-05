@@ -51,7 +51,15 @@
       "Bash(timeout 120 npm run build)",
       "Bash(grep:*)",
       "Bash(git restore:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(npx prisma:*)",
+      "Bash(for dir in src/services/*/)",
+      "Bash(ls:*)",
+      "Bash(done)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(yarn --version)",
+      "Bash(pnpm:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []

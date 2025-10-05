@@ -56,9 +56,35 @@ import { UserRepository } from './user.repository';
 ```typescript
 // ✅ DO - Use path aliases
 import { UserService } from '@services/users';
+import { AppointmentService } from '@services/appointments';
+import { BillingService } from '@services/billing';
+import { EhrService } from '@services/ehr';
+import { NotificationService } from '@services/notification';
+import { ClinicService } from '@services/clinic';
+
 import { PrismaService } from '@infrastructure/database';
-import { AuthDto } from '@dtos';
+import { RedisService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { QueueService } from '@infrastructure/queue';
+import { EventsService } from '@infrastructure/events';
+
+import { AuthDto, CreateUserDto } from '@dtos';
+
 import { QRUtils } from '@utils/QR';
+import { QueryHelper } from '@utils/query';
+
+import { JwtAuthGuard } from '@core/guards';
+import { ValidationPipe } from '@core/pipes';
+import { HttpExceptionFilter } from '@core/filters';
+import { RbacService } from '@core/rbac';
+import { SessionService } from '@core/session';
+
+import { WhatsAppService } from '@communication/messaging/whatsapp';
+import { EmailService } from '@communication/messaging/email';
+import { PushNotificationService } from '@communication/messaging/push';
+import { SocketGateway } from '@communication/socket';
+
+import { RateLimitService } from '@security/rate-limit';
 
 // ❌ DON'T - Use relative imports
 import { UserService } from '../../../services/users/user.service';
@@ -75,46 +101,83 @@ export class UserService {
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
-    private readonly eventEmitter: EventEmitter2
+    private readonly eventEmitter: EventEmitter2,
+    private readonly sessionService: SessionService,
+    private readonly rbacService: RbacService
   ) {}
 
-  async create(data: CreateUserDto): Promise<User> {
+  async create(data: CreateUserDto, requestContext?: RequestContext): Promise<User> {
     try {
-      const user = await this.prisma.healthcare.user.create({ data });
-      
+      // Validate permissions using RBAC
+      if (requestContext?.user) {
+        await this.rbacService.checkPermission(
+          requestContext.user.id,
+          'CREATE_USER'
+        );
+      }
+
+      // Create user
+      const user = await this.prisma.$client.user.create({
+        data: {
+          ...data,
+          createdBy: requestContext?.user?.id
+        }
+      });
+
       // Emit event for other services
-      this.eventEmitter.emit('user.created', { user });
-      
-      // Cache the result
-      await this.cache.set(`user:${user.id}`, JSON.stringify(user), 3600);
-      
-      this.logger.info('User created successfully', { userId: user.id });
+      this.eventEmitter.emit('user.created', {
+        user,
+        context: requestContext
+      });
+
+      // Cache the result (with clinic-specific key if applicable)
+      const cacheKey = this.buildCacheKey('user', user.id, requestContext?.clinicId);
+      await this.cache.set(cacheKey, JSON.stringify(user), 3600);
+
+      this.logger.info('User created successfully', {
+        userId: user.id,
+        clinicId: requestContext?.clinicId,
+        createdBy: requestContext?.user?.id
+      });
+
       return user;
     } catch (error) {
       this.logger.error('Failed to create user', {
         error: error.message,
         stack: error.stack,
-        data
+        data,
+        context: requestContext
       });
       throw error;
     }
   }
 
-  async findById(id: string): Promise<User | null> {
+  async findById(id: string, clinicId?: string): Promise<User | null> {
     try {
       // Check cache first
-      const cached = await this.cache.get(`user:${id}`);
+      const cacheKey = this.buildCacheKey('user', id, clinicId);
+      const cached = await this.cache.get(cacheKey);
       if (cached) {
+        this.logger.debug('Cache hit for user', { userId: id });
         return JSON.parse(cached);
       }
 
-      // Query database
-      const user = await this.prisma.healthcare.user.findUnique({
-        where: { id },
+      // Query database with clinic isolation
+      const where: any = { id };
+      if (clinicId) {
+        where.clinicId = clinicId;
+      }
+
+      const user = await this.prisma.$client.user.findUnique({
+        where,
         select: {
           id: true,
           name: true,
           email: true,
+          roleType: true,
+          clinicId: true,
+          isActive: true,
+          isVerified: true,
           createdAt: true,
           updatedAt: true
         }
@@ -122,15 +185,33 @@ export class UserService {
 
       // Cache result
       if (user) {
-        await this.cache.set(`user:${id}`, JSON.stringify(user), 3600);
+        await this.cache.set(cacheKey, JSON.stringify(user), 3600);
       }
 
       return user;
     } catch (error) {
-      this.logger.error('Failed to find user', { error: error.message, userId: id });
+      this.logger.error('Failed to find user', {
+        error: error.message,
+        userId: id,
+        clinicId
+      });
       throw error;
     }
   }
+
+  private buildCacheKey(prefix: string, id: string, clinicId?: string): string {
+    return clinicId ? `${prefix}:${clinicId}:${id}` : `${prefix}:${id}`;
+  }
+}
+
+// Request context type
+interface RequestContext {
+  user?: {
+    id: string;
+    roleType: string;
+  };
+  clinicId?: string;
+  requestId?: string;
 }
 ```
 

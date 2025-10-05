@@ -422,6 +422,10 @@ export const Public = () => SetMetadata('isPublic', true);
 // Roles decorator
 export const Roles = (...roles: string[]) => SetMetadata('roles', roles);
 
+// Permissions decorator
+export const RequirePermissions = (...permissions: string[]) =>
+  SetMetadata('permissions', permissions);
+
 // Current user decorator
 export const CurrentUser = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
@@ -435,19 +439,39 @@ export const ClinicContext = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
     return {
-      clinicId: request.clinicId,
-      userId: request.user?.id
+      clinicId: request.clinicId || request.user?.clinicId,
+      userId: request.user?.id,
+      requestId: request.id
     };
   },
 );
 
+// Request context decorator (comprehensive)
+export const RequestContext = createParamDecorator(
+  (data: unknown, ctx: ExecutionContext) => {
+    const request = ctx.switchToHttp().getRequest();
+    return {
+      user: request.user,
+      clinicId: request.clinicId || request.user?.clinicId,
+      requestId: request.id,
+      ip: request.ip,
+      userAgent: request.headers['user-agent']
+    };
+  },
+);
+
+// Audit decorator for tracking actions
+export const Audit = (action: string) => SetMetadata('audit', { action });
+
 // Usage in controllers
 @Controller('users')
 export class UserController {
+  constructor(private readonly userService: UserService) {}
+
   @Get('profile')
   @UseGuards(JwtAuthGuard)
   async getProfile(@CurrentUser() user: User) {
-    return user;
+    return this.userService.findById(user.id);
   }
 
   @Post('public')
@@ -457,11 +481,32 @@ export class UserController {
   }
 
   @Post('admin')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'SUPER_ADMIN')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  async adminEndpoint(@ClinicContext() context: { clinicId: string; userId: string }) {
-    // Admin only with clinic context
+  @Audit('CREATE_ADMIN_RESOURCE')
+  async adminEndpoint(
+    @ClinicContext() context: { clinicId: string; userId: string },
+    @Body() createDto: CreateDto
+  ) {
+    // Admin only with clinic context and audit logging
+    return this.userService.createAdminResource(createDto, context);
   }
+
+  @Get('patients')
+  @RequirePermissions('READ_PATIENT')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  async getPatients(@RequestContext() context: RequestContext) {
+    return this.userService.findPatients(context.clinicId);
+  }
+}
+
+// Type definitions
+interface RequestContext {
+  user?: User;
+  clinicId?: string;
+  requestId?: string;
+  ip?: string;
+  userAgent?: string;
 }
 ```
 

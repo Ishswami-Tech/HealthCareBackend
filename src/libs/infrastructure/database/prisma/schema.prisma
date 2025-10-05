@@ -85,7 +85,7 @@ model User {
 
   // RBAC Relations
   userRoles UserRole[]
-  
+
   // Video Consultation Relations
   videoParticipants VideoParticipant[]
 
@@ -151,15 +151,15 @@ model Clinic {
   userRoles UserRole[]
 
   // New Relations for Enhanced Features
-  businessRules           BusinessRule[]
-  eligibilityCriteria     EligibilityCriteria[]
-  eligibilityChecks       EligibilityCheck[]
-  appointmentTemplates    AppointmentTemplate[]
-  recurringSeries         RecurringAppointmentSeries[]
-  waitlistEntries         WaitlistEntry[]
-  resources               Resource[]
-  resourceBookings        ResourceBooking[]
-  videoConsultations      VideoConsultation[]
+  businessRules        BusinessRule[]
+  eligibilityCriteria  EligibilityCriteria[]
+  eligibilityChecks    EligibilityCheck[]
+  appointmentTemplates AppointmentTemplate[]
+  recurringSeries      RecurringAppointmentSeries[]
+  waitlistEntries      WaitlistEntry[]
+  resources            Resource[]
+  resourceBookings     ResourceBooking[]
+  videoConsultations   VideoConsultation[]
 
   @@index([app_name])
   @@index([isActive])
@@ -230,7 +230,7 @@ model Doctor {
   healthRecords   HealthRecord[]
   prescriptions   Prescription[]
   reviews         Review[]
-  
+
   // New Relations for Enhanced Features
   appointmentTemplates AppointmentTemplate[]
   waitlistEntries      WaitlistEntry[]
@@ -247,57 +247,62 @@ model Patient {
   healthRecords HealthRecord[]
   user          User           @relation(fields: [userId], references: [id])
   prescriptions Prescription[]
-  
+
   // New Relations for Enhanced Features
-  eligibilityChecks       EligibilityCheck[]
-  recurringSeries          RecurringAppointmentSeries[]
-  waitlistEntries          WaitlistEntry[]
-  insurance                Insurance[]
-  videoConsultations       VideoConsultation[]
-  reviews       Review[]
+  eligibilityChecks  EligibilityCheck[]
+  recurringSeries    RecurringAppointmentSeries[]
+  waitlistEntries    WaitlistEntry[]
+  insurance          Insurance[]
+  videoConsultations VideoConsultation[]
+  reviews            Review[]
 }
 
 model Appointment {
-  id                 String            @id @default(uuid())
-  type               AppointmentType
-  doctorId           String
-  patientId          String
-  locationId         String
-  clinicId           String
-  date               DateTime
-  time               String
-  duration           Int
-  status             AppointmentStatus
-  priority           String?           @default("NORMAL")
-  notes              String?
-  userId             String
-  updatedBy          String?
-  cancellationReason String?
-  metadata           Json?
-  cancelledBy        String?
-  cancelledAt        DateTime?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  therapyId          String?
-  startedAt          DateTime?
-  checkedInAt        DateTime?
-  completedAt        DateTime?
-  clinic             Clinic            @relation(fields: [clinicId], references: [id])
-  doctor             Doctor            @relation(fields: [doctorId], references: [id])
-  location           ClinicLocation    @relation(fields: [locationId], references: [id])
-  patient            Patient           @relation(fields: [patientId], references: [id])
-  therapy            Therapy?          @relation(fields: [therapyId], references: [id])
-  user               User              @relation(fields: [userId], references: [id])
-  payment            Payment?
-  queue              Queue?
-  
+  id                  String            @id @default(uuid())
+  type                AppointmentType
+  doctorId            String
+  patientId           String
+  locationId          String
+  clinicId            String
+  date                DateTime
+  time                String
+  duration            Int
+  status              AppointmentStatus
+  priority            String?           @default("NORMAL")
+  notes               String?
+  userId              String
+  updatedBy           String?
+  cancellationReason  String?
+  metadata            Json?
+  cancelledBy         String?
+  cancelledAt         DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  therapyId           String?
+  startedAt           DateTime?
+  checkedInAt         DateTime?
+  completedAt         DateTime?
+  clinic              Clinic            @relation(fields: [clinicId], references: [id])
+  doctor              Doctor            @relation(fields: [doctorId], references: [id])
+  location            ClinicLocation    @relation(fields: [locationId], references: [id])
+  patient             Patient           @relation(fields: [patientId], references: [id])
+  therapy             Therapy?          @relation(fields: [therapyId], references: [id])
+  user                User              @relation(fields: [userId], references: [id])
+  payment             Payment?
+  queue               Queue?
+  subscriptionId      String?
+  isSubscriptionBased Boolean           @default(false)
+  subscription        Subscription?     @relation(fields: [subscriptionId], references: [id])
+
   // New Relations for Enhanced Features
-  resourceBookings   ResourceBooking[]
+  resourceBookings  ResourceBooking[]
+  VideoConsultation VideoConsultation[]
 
   @@index([doctorId])
   @@index([patientId])
   @@index([locationId])
   @@index([clinicId])
+  @@index([subscriptionId])
 }
 
 model Therapy {
@@ -369,18 +374,116 @@ model DoctorClinic {
 }
 
 model Payment {
-  id            String         @id @default(uuid())
-  appointmentId String         @unique
-  amount        Float
-  status        PaymentStatus  @default(PENDING)
-  method        PaymentMethod?
-  transactionId String?
-  clinicId      String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  appointment   Appointment    @relation(fields: [appointmentId], references: [id])
+  id             String         @id @default(uuid())
+  appointmentId  String?        @unique
+  amount         Float
+  status         PaymentStatus  @default(PENDING)
+  method         PaymentMethod?
+  transactionId  String?
+  clinicId       String
+  userId         String?
+  invoiceId      String?
+  subscriptionId String?
+  description    String?
+  metadata       Json?
+  refundAmount   Float?         @default(0)
+  refundedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  appointment    Appointment?   @relation(fields: [appointmentId], references: [id])
+  invoice        Invoice?       @relation(fields: [invoiceId], references: [id])
+  subscription   Subscription?  @relation(fields: [subscriptionId], references: [id])
 
   @@index([clinicId])
+  @@index([userId])
+  @@index([status])
+  @@index([subscriptionId])
+}
+
+model Subscription {
+  id                    String             @id @default(uuid())
+  userId                String
+  planId                String
+  clinicId              String
+  status                SubscriptionStatus @default(ACTIVE)
+  startDate             DateTime           @default(now())
+  endDate               DateTime?
+  currentPeriodStart    DateTime           @default(now())
+  currentPeriodEnd      DateTime
+  cancelAtPeriodEnd     Boolean            @default(false)
+  cancelledAt           DateTime?
+  trialStart            DateTime?
+  trialEnd              DateTime?
+  metadata              Json?
+  appointmentsUsed      Int                @default(0)
+  appointmentsRemaining Int?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  plan                  BillingPlan        @relation(fields: [planId], references: [id])
+  payments              Payment[]
+  invoices              Invoice[]
+  appointments          Appointment[]
+
+  @@index([userId])
+  @@index([planId])
+  @@index([clinicId])
+  @@index([status])
+}
+
+model BillingPlan {
+  id                      String          @id @default(uuid())
+  name                    String
+  description             String?
+  amount                  Float
+  currency                String          @default("INR")
+  interval                BillingInterval @default(MONTHLY)
+  intervalCount           Int             @default(1)
+  trialPeriodDays         Int?
+  features                Json?
+  isActive                Boolean         @default(true)
+  clinicId                String?
+  metadata                Json?
+  appointmentsIncluded    Int?
+  isUnlimitedAppointments Boolean         @default(false)
+  appointmentTypes        Json?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  subscriptions           Subscription[]
+
+  @@index([clinicId])
+  @@index([isActive])
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  invoiceNumber  String        @unique
+  userId         String
+  subscriptionId String?
+  clinicId       String
+  amount         Float
+  tax            Float?        @default(0)
+  discount       Float?        @default(0)
+  totalAmount    Float
+  status         InvoiceStatus @default(DRAFT)
+  dueDate        DateTime
+  paidAt         DateTime?
+  description    String?
+  lineItems      Json?
+  metadata       Json?
+  pdfFilePath    String?       // Path to generated PDF invoice
+  pdfUrl         String?       // Public URL to access PDF
+  sentViaWhatsApp Boolean      @default(false)
+  whatsappSentAt DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+  payments       Payment[]
+
+  @@index([userId])
+  @@index([subscriptionId])
+  @@index([clinicId])
+  @@index([status])
+  @@index([dueDate])
 }
 
 model Queue {
@@ -534,6 +637,8 @@ enum PaymentMethod {
   CARD
   UPI
   NET_BANKING
+  WALLET
+  INSURANCE
 }
 
 enum QueueStatus {
@@ -603,6 +708,7 @@ model MedicalHistory {
   id        String   @id @default(uuid())
   user      User     @relation(fields: [userId], references: [id])
   userId    String
+  clinicId  String?
   condition String
   notes     String?
   date      DateTime
@@ -610,12 +716,14 @@ model MedicalHistory {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model LabReport {
   id          String   @id @default(uuid())
   user        User     @relation(fields: [userId], references: [id])
   userId      String
+  clinicId    String?
   testName    String
   result      String
   unit        String?
@@ -625,12 +733,14 @@ model LabReport {
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model RadiologyReport {
   id         String   @id @default(uuid())
   user       User     @relation(fields: [userId], references: [id])
   userId     String
+  clinicId   String?
   imageType  String
   findings   String
   conclusion String
@@ -639,12 +749,14 @@ model RadiologyReport {
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model SurgicalRecord {
   id          String   @id @default(uuid())
   user        User     @relation(fields: [userId], references: [id])
   userId      String
+  clinicId    String?
   surgeryName String
   surgeon     String
   notes       String?
@@ -653,12 +765,14 @@ model SurgicalRecord {
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model MentalHealthNote {
   id          String   @id @default(uuid())
   user        User     @relation(fields: [userId], references: [id])
   userId      String
+  clinicId    String?
   therapist   String
   sessionNote String
   date        DateTime
@@ -666,12 +780,14 @@ model MentalHealthNote {
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model Vital {
   id         String   @id @default(uuid())
   user       User     @relation(fields: [userId], references: [id])
   userId     String
+  clinicId   String?
   type       String
   value      String
   recordedAt DateTime
@@ -679,6 +795,7 @@ model Vital {
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model AyurvedicTherapy {
@@ -745,6 +862,7 @@ model Immunization {
   id               String    @id @default(uuid())
   user             User      @relation(fields: [userId], references: [id])
   userId           String
+  clinicId         String?
   vaccineName      String
   dateAdministered DateTime
   nextDueDate      DateTime?
@@ -756,12 +874,14 @@ model Immunization {
   updatedAt        DateTime  @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model Allergy {
   id            String   @id @default(uuid())
   user          User     @relation(fields: [userId], references: [id])
   userId        String
+  clinicId      String?
   allergen      String
   severity      String // Mild, Moderate, Severe
   reaction      String
@@ -771,6 +891,7 @@ model Allergy {
   updatedAt     DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model FamilyHistory {
@@ -833,6 +954,8 @@ model Insurance {
   coverageType      String
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  Patient           Patient?  @relation(fields: [patientId], references: [id])
+  patientId         String?
 
   @@index([userId])
 }
@@ -841,6 +964,7 @@ model Medication {
   id           String    @id @default(uuid())
   user         User      @relation(fields: [userId], references: [id])
   userId       String
+  clinicId     String?
   name         String
   dosage       String
   frequency    String
@@ -854,6 +978,7 @@ model Medication {
   updatedAt    DateTime  @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model DietaryRestriction {
@@ -996,14 +1121,14 @@ model EligibilityCriteria {
 }
 
 model EligibilityCheck {
-  id             String   @id @default(uuid())
-  patientId      String
+  id              String   @id @default(uuid())
+  patientId       String
   appointmentType String
-  clinicId       String
-  requestedDate  DateTime
-  criteria       Json
-  result         Json
-  checkedAt      DateTime @default(now())
+  clinicId        String
+  requestedDate   DateTime
+  criteria        Json
+  result          Json
+  checkedAt       DateTime @default(now())
 
   // Relations
   patient Patient @relation(fields: [patientId], references: [id])
@@ -1016,26 +1141,27 @@ model EligibilityCheck {
 
 // Appointment Templates Models
 model AppointmentTemplate {
-  id               String   @id @default(uuid())
-  name             String
-  description      String?
-  clinicId         String
-  doctorId         String
-  type             String
-  duration         Int      // in minutes
-  timeSlots        Json     // array of time slots
-  recurringPattern String   // daily, weekly, monthly, yearly
-  recurringDays    Json?    // array of days for weekly pattern
-  recurringInterval Int     @default(1)
-  startDate        DateTime
-  endDate          DateTime?
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String    @id @default(uuid())
+  name              String
+  description       String?
+  clinicId          String
+  doctorId          String
+  type              String
+  duration          Int // in minutes
+  timeSlots         Json // array of time slots
+  recurringPattern  String // daily, weekly, monthly, yearly
+  recurringDays     Json? // array of days for weekly pattern
+  recurringInterval Int       @default(1)
+  startDate         DateTime
+  endDate           DateTime?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   // Relations
-  clinic Clinic @relation(fields: [clinicId], references: [id])
-  doctor Doctor @relation(fields: [doctorId], references: [id])
+  clinic                     Clinic                       @relation(fields: [clinicId], references: [id])
+  doctor                     Doctor                       @relation(fields: [doctorId], references: [id])
+  RecurringAppointmentSeries RecurringAppointmentSeries[]
 
   @@index([clinicId])
   @@index([doctorId])
@@ -1065,22 +1191,23 @@ model RecurringAppointmentSeries {
 
 // Waitlist Models
 model WaitlistEntry {
-  id          String   @id @default(uuid())
-  patientId   String
-  doctorId    String
-  clinicId    String
-  priority    Int      @default(1)
-  status      String   @default("waiting") // waiting, notified, scheduled, cancelled
+  id            String   @id @default(uuid())
+  patientId     String
+  doctorId      String
+  clinicId      String
+  priority      Int      @default(1)
+  status        String   @default("waiting") // waiting, notified, scheduled, cancelled
   requestedDate DateTime
-  notes       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Relations
-  patient Patient @relation(fields: [patientId], references: [id])
-  doctor  Doctor  @relation(fields: [doctorId], references: [id])
-  clinic  Clinic  @relation(fields: [clinicId], references: [id])
-  videoConsultation VideoConsultation?
+  patient             Patient            @relation(fields: [patientId], references: [id])
+  doctor              Doctor             @relation(fields: [doctorId], references: [id])
+  clinic              Clinic             @relation(fields: [clinicId], references: [id])
+  videoConsultation   VideoConsultation? @relation(fields: [videoConsultationId], references: [id])
+  videoConsultationId String?
 
   @@index([patientId])
   @@index([doctorId])
@@ -1090,17 +1217,18 @@ model WaitlistEntry {
 
 // Resource Management Models
 model Resource {
-  id          String   @id @default(uuid())
-  name        String
-  type        String   // room, equipment, vehicle
-  clinicId    String
-  capacity    Int?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid())
+  name      String
+  type      String // room, equipment, vehicle
+  clinicId  String
+  capacity  Int?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  clinic Clinic @relation(fields: [clinicId], references: [id])
+  clinic          Clinic            @relation(fields: [clinicId], references: [id])
+  ResourceBooking ResourceBooking[]
 
   @@index([clinicId])
   @@index([type])
@@ -1108,86 +1236,70 @@ model Resource {
 }
 
 model ResourceBooking {
-  id          String   @id @default(uuid())
-  resourceId  String
+  id            String   @id @default(uuid())
+  resourceId    String
   appointmentId String?
-  startTime   DateTime
-  endTime     DateTime
-  status      String   @default("booked") // booked, cancelled, completed
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  startTime     DateTime
+  endTime       DateTime
+  status        String   @default("booked") // booked, cancelled, completed
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Relations
   resource    Resource     @relation(fields: [resourceId], references: [id])
   appointment Appointment? @relation(fields: [appointmentId], references: [id])
+  Clinic      Clinic?      @relation(fields: [clinicId], references: [id])
+  clinicId    String?
 
   @@index([resourceId])
   @@index([appointmentId])
   @@index([startTime, endTime])
 }
 
-// Insurance Models
-model Insurance {
-  id          String   @id @default(uuid())
-  patientId   String
-  provider    String
-  policyNumber String
-  groupNumber String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  patient Patient @relation(fields: [patientId], references: [id])
-
-  @@index([patientId])
-  @@index([provider])
-  @@index([isActive])
-}
-
 // Video Consultation Models
 model VideoConsultation {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   appointmentId String
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   patientId     String
-  patient       Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient       Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
   doctorId      String
-  doctor        Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctor        Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   clinicId      String
-  clinic        Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  
+  clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
   // Video call details
-  roomId        String   @unique
-  meetingUrl    String
-  status        VideoCallStatus @default(SCHEDULED)
-  startTime     DateTime?
-  endTime       DateTime?
-  duration      Int?     // in minutes
-  
+  roomId     String          @unique
+  meetingUrl String
+  status     VideoCallStatus @default(SCHEDULED)
+  startTime  DateTime?
+  endTime    DateTime?
+  duration   Int? // in minutes
+
   // Recording and media
-  recordingUrl  String?
-  recordingId   String?
-  isRecording   Boolean  @default(false)
-  
+  recordingUrl String?
+  recordingId  String?
+  isRecording  Boolean @default(false)
+
   // Settings
-  maxParticipants Int     @default(2)
-  recordingEnabled Boolean @default(true)
+  maxParticipants      Int     @default(2)
+  recordingEnabled     Boolean @default(true)
   screenSharingEnabled Boolean @default(true)
-  chatEnabled     Boolean @default(true)
-  waitingRoomEnabled Boolean @default(true)
-  autoRecord      Boolean @default(false)
-  
+  chatEnabled          Boolean @default(true)
+  waitingRoomEnabled   Boolean @default(true)
+  autoRecord           Boolean @default(false)
+
   // WebRTC details
-  iceServers     Json?
-  turnServers    Json?
-  
+  iceServers  Json?
+  turnServers Json?
+
   // Participants
-  participants   VideoParticipant[]
-  recordings     VideoRecording[]
-  
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  participants VideoParticipant[]
+  recordings   VideoRecording[]
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  WaitlistEntry WaitlistEntry[]
 
   @@index([appointmentId])
   @@index([patientId])
@@ -1198,33 +1310,33 @@ model VideoConsultation {
 }
 
 model VideoParticipant {
-  id                String   @id @default(uuid())
-  consultationId    String
-  consultation      VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
-  userId            String
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id             String            @id @default(uuid())
+  consultationId String
+  consultation   VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   // Participant details
-  role              VideoParticipantRole @default(PARTICIPANT)
-  status            VideoParticipantStatus @default(INVITED)
-  joinedAt          DateTime?
-  leftAt            DateTime?
-  duration          Int?     // in minutes
-  
+  role     VideoParticipantRole   @default(PARTICIPANT)
+  status   VideoParticipantStatus @default(INVITED)
+  joinedAt DateTime?
+  leftAt   DateTime?
+  duration Int? // in minutes
+
   // WebRTC details
-  peerId            String?
-  connectionId      String?
-  isAudioEnabled    Boolean  @default(true)
-  isVideoEnabled    Boolean  @default(true)
-  isScreenSharing   Boolean  @default(false)
-  
+  peerId          String?
+  connectionId    String?
+  isAudioEnabled  Boolean @default(true)
+  isVideoEnabled  Boolean @default(true)
+  isScreenSharing Boolean @default(false)
+
   // Quality metrics
   audioQuality      Float?
   videoQuality      Float?
   connectionQuality Float?
-  
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([consultationId])
   @@index([userId])
@@ -1233,30 +1345,30 @@ model VideoParticipant {
 }
 
 model VideoRecording {
-  id              String   @id @default(uuid())
-  consultationId  String
-  consultation    VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
-  
+  id             String            @id @default(uuid())
+  consultationId String
+  consultation   VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+
   // Recording details
-  fileName        String
-  filePath        String
-  fileSize        BigInt?
-  duration        Int?     // in seconds
-  format          String   @default("mp4")
-  quality         String   @default("720p")
-  
+  fileName String
+  filePath String
+  fileSize BigInt?
+  duration Int? // in seconds
+  format   String  @default("mp4")
+  quality  String  @default("720p")
+
   // Storage details
-  storageProvider String   @default("local")
+  storageProvider String  @default("local")
   storageUrl      String?
-  isProcessed     Boolean  @default(false)
-  
+  isProcessed     Boolean @default(false)
+
   // Access control
-  isPublic        Boolean  @default(false)
-  accessToken     String?
-  expiresAt       DateTime?
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  isPublic    Boolean   @default(false)
+  accessToken String?
+  expiresAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([consultationId])
   @@index([isProcessed])
@@ -1283,4 +1395,31 @@ enum VideoParticipantStatus {
   LEFT
   DISCONNECTED
   FAILED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  PAUSED
+}
+
+enum BillingInterval {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+  OVERDUE
 }

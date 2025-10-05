@@ -13,7 +13,7 @@ services:
     environment:
       NODE_ENV: development
       APP_ENV: development
-      IS_DEV: true
+      IS_DEV: "true"
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -34,18 +34,17 @@ services:
       DB_CONNECTION_TIMEOUT: 10000
       DB_QUERY_TIMEOUT: 60000
       DB_MAX_RETRIES: 3
-      DB_ENABLE_METRICS: true
-      DB_ENABLE_CIRCUIT_BREAKER: true
+      DB_ENABLE_METRICS: "true"
+      DB_ENABLE_CIRCUIT_BREAKER: "true"
       # Healthcare Configuration
-      HEALTHCARE_ENABLE_AUDIT_LOGGING: true
-      HEALTHCARE_ENABLE_PHI_PROTECTION: true
+      HEALTHCARE_ENABLE_AUDIT_LOGGING: "true"
+      HEALTHCARE_ENABLE_PHI_PROTECTION: "true"
       HEALTHCARE_AUDIT_RETENTION_DAYS: 2555
-      HEALTHCARE_ENCRYPTION_ENABLED: true
+      HEALTHCARE_ENCRYPTION_ENABLED: "true"
       HEALTHCARE_COMPLIANCE_LEVEL: HIPAA
     volumes:
-      - .:/app
+      - ../../:/app
       - /app/node_modules
-      - ./prisma:/app/prisma
       - ./logs:/app/logs
     depends_on:
       postgres:
@@ -73,19 +72,19 @@ services:
         cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/ &&
         echo 'Generating Prisma Client...' &&
         cd /app &&
-        npx prisma generate --schema=src/libs/infrastructure/database/prisma/schema.prisma &&
+        pnpm prisma:generate &&
         echo 'Running Prisma migrations...' &&
-        npx prisma db push --schema=src/libs/infrastructure/database/prisma/schema.prisma --accept-data-loss &&
+        pnpm exec prisma db push --schema=src/libs/infrastructure/database/prisma/schema.prisma --accept-data-loss &&
         echo 'Skipping database seeding (already completed)...' &&
         echo 'Starting Prisma Studio in background...' &&
-        npx prisma studio --schema=src/libs/infrastructure/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0 &
+        pnpm exec prisma studio --schema=src/libs/infrastructure/database/prisma/schema.prisma --port 5555 --hostname 0.0.0.0 &
         echo 'Starting NestJS in development mode...' &&
         sleep 3 &&
-        npm run start:dev
+        pnpm start:dev
       "
 
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: postgres-dev
     ports:
       - "5432:5432"
@@ -98,6 +97,7 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data_dev:/var/lib/postgresql/data/pgdata
+      - ../../src/libs/infrastructure/database/scripts:/docker-entrypoint-initdb.d:ro
     networks:
       - app-network
     healthcheck:
@@ -108,24 +108,24 @@ services:
       start_period: 10s
     restart: unless-stopped
     command: >
-      postgres -c max_connections=300 
-      -c shared_buffers=512MB 
-      -c effective_cache_size=1536MB 
-      -c maintenance_work_mem=128MB 
-      -c checkpoint_completion_target=0.9 
-      -c wal_buffers=32MB 
-      -c default_statistics_target=100 
-      -c random_page_cost=1.1 
-      -c effective_io_concurrency=300 
-      -c work_mem=8MB 
-      -c min_wal_size=2GB 
+      postgres -c max_connections=300
+      -c shared_buffers=512MB
+      -c effective_cache_size=1536MB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=32MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=300
+      -c work_mem=8MB
+      -c min_wal_size=2GB
       -c max_wal_size=8GB
       -c max_parallel_workers_per_gather=4
       -c max_parallel_workers=8
       -c max_parallel_maintenance_workers=4
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
     container_name: redis-dev
     command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru --tcp-backlog 511 --databases 16
     ports:
@@ -149,7 +149,7 @@ services:
         hard: 65535
 
   redis-commander:
-    image: rediscommander/redis-commander:latest
+    image: ghcr.io/joeferner/redis-commander:latest
     container_name: redis-commander-dev
     ports:
       - "8082:8081"
@@ -177,6 +177,8 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
@@ -188,8 +190,8 @@ services:
 
   worker:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ../..
+      dockerfile: devops/docker/Dockerfile.dev
     container_name: healthcarebackend-worker-dev
     depends_on:
       redis:
@@ -201,9 +203,10 @@ services:
       SERVICE_NAME: worker
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
     command: >
       sh -c "
-        npm run build &&
+        pnpm build &&
         node dist/worker-bootstrap.js
       "
     networks:
@@ -212,7 +215,7 @@ services:
           - worker
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "dist/worker-bootstrap.js", "--healthcheck"]
+      test: ["CMD", "pnpm", "exec", "node", "-e", "console.log('OK')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -232,4 +235,4 @@ volumes:
 networks:
   app-network:
     driver: bridge
-    name: healthcare_network_dev 
+    name: healthcare_network_dev

@@ -1,0 +1,82 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base configuration
+bases:
+  - ../../base
+
+namespace: healthcare-backend-staging
+
+# Staging-specific labels
+commonLabels:
+  environment: staging
+  tier: staging
+
+# Staging image tags
+images:
+  - name: your-registry/healthcare-api
+    newTag: staging-latest
+
+# Staging-specific patches
+patches:
+  # Moderate scaling for staging
+  - target:
+      kind: Deployment
+      name: healthcare-api
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+
+  # Staging HPA limits
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: healthcare-api-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 20
+
+  # Staging resource limits
+  - target:
+      kind: Deployment
+      name: healthcare-api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "2Gi"
+
+  # Staging PostgreSQL resources
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: "50Gi"
+
+  # Staging Redis - single node cluster
+  - target:
+      kind: StatefulSet
+      name: redis
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+
+# Staging config overrides
+configMapGenerator:
+  - name: api-config
+    behavior: merge
+    literals:
+      - NODE_ENV=staging
+      - LOG_LEVEL=debug
+      - MAX_CONNECTIONS=200
+      - POOL_SIZE=50
+      - ENABLE_DEBUG=true

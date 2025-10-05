@@ -21,6 +21,8 @@ import configuration from "./config/configuration";
 import { HealthController } from "./services/health/health.controller";
 import { SocketModule } from "./libs/communication/socket/socket.module";
 import { NotificationModule } from "./services/notification/notification.module";
+import { BillingModule } from "./services/billing/billing.module";
+import { EHRModule } from "./services/ehr/ehr.module";
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -92,6 +94,8 @@ import { NotificationModule } from "./services/notification/notification.module"
     // Business modules
     AppointmentsModule,
     ClinicModule,
+    BillingModule,
+    EHRModule,
     // Communication modules
     NotificationModule,
     // Support modules

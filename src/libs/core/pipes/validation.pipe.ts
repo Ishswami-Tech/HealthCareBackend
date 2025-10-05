@@ -7,9 +7,11 @@ import {
 import { validate } from "class-validator";
 import { plainToClass } from "class-transformer";
 
+type Constructor<T = unknown> = new (...args: unknown[]) => T;
+
 @Injectable()
-export class ValidationPipe implements PipeTransform<any> {
-  async transform(value: unknown, { metatype }: ArgumentMetadata) {
+export class ValidationPipe implements PipeTransform<unknown> {
+  async transform(value: unknown, { metatype }: ArgumentMetadata): Promise<unknown> {
     if (!metatype || !this.toValidate(metatype)) {
       return value;
     }
@@ -21,8 +23,8 @@ export class ValidationPipe implements PipeTransform<any> {
     return value;
   }
 
-  private toValidate(metatype: new (...args: unknown[]) => unknown): boolean {
-    const types: Array<new (...args: unknown[]) => unknown> = [
+  private toValidate(metatype: Constructor): boolean {
+    const types: Constructor[] = [
       String,
       Boolean,
       Number,

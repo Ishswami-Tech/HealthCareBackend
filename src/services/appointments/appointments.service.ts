@@ -163,6 +163,17 @@ export class AppointmentsService {
         createDto.doctorId,
         clinicId,
       );
+
+      // Emit event for real-time broadcasting
+      await this.eventEmitter.emit("appointment.created", {
+        appointmentId: (result.data as Record<string, unknown>)?.id as string,
+        userId: createDto.patientId,
+        doctorId: createDto.doctorId,
+        clinicId,
+        status: (result.data as Record<string, unknown>)?.status as string,
+        appointmentType: createDto.type,
+        createdBy: userId,
+      });
     }
 
     return result;
@@ -269,6 +280,16 @@ export class AppointmentsService {
         (result.data as Record<string, unknown>)?.doctorId as string,
         clinicId,
       );
+
+      // Emit event for real-time broadcasting
+      await this.eventEmitter.emit("appointment.updated", {
+        appointmentId,
+        userId: (result.data as Record<string, unknown>)?.patientId as string,
+        doctorId: (result.data as Record<string, unknown>)?.doctorId as string,
+        clinicId,
+        changes: updateDto,
+        updatedBy: userId,
+      });
     }
 
     return result;
@@ -318,6 +339,16 @@ export class AppointmentsService {
         (result.data as Record<string, unknown>)?.doctorId as string,
         clinicId,
       );
+
+      // Emit event for real-time broadcasting
+      await this.eventEmitter.emit("appointment.cancelled", {
+        appointmentId,
+        userId: (result.data as Record<string, unknown>)?.patientId as string,
+        doctorId: (result.data as Record<string, unknown>)?.doctorId as string,
+        clinicId,
+        reason,
+        cancelledBy: userId,
+      });
     }
 
     return result;
@@ -377,6 +408,14 @@ export class AppointmentsService {
           "AppointmentsService",
           { appointmentId: checkInDto.appointmentId, userId, clinicId },
         );
+
+        // Emit event for real-time broadcasting
+        await this.eventEmitter.emit("appointment.checked_in", {
+          appointmentId: checkInDto.appointmentId,
+          clinicId,
+          checkedInBy: userId,
+          checkInData: checkInDto,
+        });
       }
       return result;
     } catch (_error) {
@@ -416,6 +455,14 @@ export class AppointmentsService {
           "AppointmentsService",
           { appointmentId, userId, clinicId },
         );
+
+        // Emit event for real-time broadcasting
+        await this.eventEmitter.emit("appointment.completed", {
+          appointmentId,
+          clinicId,
+          completedBy: userId,
+          completionData: completeDto,
+        });
       }
       return result;
     } catch (_error) {
@@ -455,6 +502,14 @@ export class AppointmentsService {
           "AppointmentsService",
           { appointmentId, userId, clinicId },
         );
+
+        // Emit event for real-time broadcasting
+        await this.eventEmitter.emit("appointment.consultation_started", {
+          appointmentId,
+          clinicId,
+          startedBy: userId,
+          consultationData: startDto,
+        });
       }
       return result;
     } catch (_error) {

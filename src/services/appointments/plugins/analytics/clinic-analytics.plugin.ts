@@ -276,3 +276,4 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
     };
   }
 }
+
