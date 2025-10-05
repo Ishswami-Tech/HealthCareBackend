@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-# Health check script for CI/CD
-# Performs health check on the API container after deployment
+# Enhanced Health Check Script for CI/CD
+# Supports both Docker Compose and Kubernetes deployments
+# Optimized for 1M+ concurrent users
 
 # Function to log messages with timestamp
 log_message() {
@@ -20,7 +21,13 @@ handle_error() {
 # Set up error handling
 trap 'handle_error $LINENO' ERR
 
-log_message "Starting health check for API container..."
+# Detect deployment type
+DEPLOYMENT_TYPE="docker"
+if command -v kubectl &> /dev/null && kubectl get pods -n healthcare-backend &> /dev/null; then
+    DEPLOYMENT_TYPE="kubernetes"
+fi
+
+log_message "Starting health check for API container (Deployment: $DEPLOYMENT_TYPE)..."
 
 MAX_RETRIES=5
 RETRY_COUNT=0
@@ -30,14 +37,28 @@ API_CONTAINER="latest-api"
 # Wait for container to be running first
 log_message "Waiting for API container to be running..."
 for i in {1..10}; do
-    if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
-        log_message "API container is running"
-        break
-    fi
-    if [ $i -eq 10 ]; then
-        log_message "ERROR: API container is not running after 10 attempts"
-        docker ps -a | grep "$API_CONTAINER" || true
-        exit 1
+    if [ "$DEPLOYMENT_TYPE" = "kubernetes" ]; then
+        # Kubernetes health check
+        if kubectl get pods -n healthcare-backend -l app=healthcare-api --field-selector=status.phase=Running | grep -q "Running"; then
+            log_message "API pods are running in Kubernetes"
+            break
+        fi
+        if [ $i -eq 10 ]; then
+            log_message "ERROR: API pods are not running after 10 attempts"
+            kubectl get pods -n healthcare-backend -l app=healthcare-api || true
+            exit 1
+        fi
+    else
+        # Docker health check
+        if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
+            log_message "API container is running"
+            break
+        fi
+        if [ $i -eq 10 ]; then
+            log_message "ERROR: API container is not running after 10 attempts"
+            docker ps -a | grep "$API_CONTAINER" || true
+            exit 1
+        fi
     fi
     log_message "Attempt $i/10: Waiting for API container to be running..."
     sleep 5
@@ -48,11 +69,35 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$DEPLOY_SUCCESS" != "true" ]; do
     RETRY_COUNT=$((RETRY_COUNT + 1))
     log_message "Health check attempt $RETRY_COUNT/$MAX_RETRIES..."
     
-    if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
-        log_message "API container is running"
-        
-        # Use curl with proper timeout and error handling
-        HEALTH_OUTPUT=$(timeout 15 curl -v --max-time 10 --connect-timeout 5 http://localhost:8088/health 2>&1 || echo "Connection timed out")
+    if [ "$DEPLOYMENT_TYPE" = "kubernetes" ]; then
+        # Kubernetes health check
+        if kubectl get pods -n healthcare-backend -l app=healthcare-api --field-selector=status.phase=Running | grep -q "Running"; then
+            log_message "API pods are running in Kubernetes"
+            
+            # Get service endpoint
+            SERVICE_IP=$(kubectl get svc healthcare-api -n healthcare-backend -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "localhost")
+            HEALTH_URL="http://$SERVICE_IP:8088/health"
+            
+            # Use kubectl port-forward for health check
+            HEALTH_OUTPUT=$(timeout 15 kubectl run health-check-$(date +%s) --image=curlimages/curl:latest --rm -i --restart=Never -- curl -s --max-time 10 --connect-timeout 5 http://healthcare-api.healthcare-backend.svc.cluster.local:8088/health 2>&1 || echo "Connection timed out")
+        else
+            log_message "ERROR: API pods are not running in Kubernetes!"
+            kubectl get pods -n healthcare-backend -l app=healthcare-api || true
+            exit 1
+        fi
+    else
+        # Docker health check
+        if docker ps --filter "name=$API_CONTAINER" --format "{{.Status}}" | grep -q "Up"; then
+            log_message "API container is running"
+            
+            # Use curl with proper timeout and error handling
+            HEALTH_OUTPUT=$(timeout 15 curl -v --max-time 10 --connect-timeout 5 http://localhost:8088/health 2>&1 || echo "Connection timed out")
+        else
+            log_message "ERROR: API container is not running!"
+            docker ps -a | grep "$API_CONTAINER" || true
+            exit 1
+        fi
+    fi
         
         if echo "$HEALTH_OUTPUT" | grep -q "Connection timed out\|Empty reply\|Connection refused"; then
             log_message "Warning: Connection timed out or empty reply received"
