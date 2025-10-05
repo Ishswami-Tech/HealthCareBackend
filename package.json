@@ -71,6 +71,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/event-emitter": "^3.0.1",
     "@nestjs/jwt": "^11.0.0",
+    "@nestjs/mapped-types": "^2.1.0",
     "@nestjs/microservices": "^11.0.7",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
@@ -86,6 +87,7 @@
     "@types/bcrypt": "^5.0.2",
     "@types/ioredis": "^4.28.10",
     "@types/nodemailer": "^6.4.17",
+    "@types/pdfkit": "^0.17.3",
     "@types/pg": "^8.15.5",
     "are-we-there-yet": "^4.0.2",
     "axios": "^1.8.1",
@@ -101,11 +103,13 @@
     "google-auth-library": "^9.15.1",
     "googleapis": "^150.0.1",
     "ioredis": "^5.5.0",
+    "jsonwebtoken": "^9.0.2",
     "mailtrap": "^4.1.0",
     "nodemailer": "^6.10.0",
     "npmlog": "^7.0.1",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
+    "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
     "qrcode": "^1.5.4",
     "redis": "^4.7.0",
@@ -128,6 +132,7 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.0",
     "@types/jest": "^29.5.14",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.13.8",
     "@types/passport-local": "^1.0.38",
     "@types/qrcode": "^1.5.5",
@@ -184,5 +189,5 @@
     "npm": ">=11.3.0",
     "node": ">=20.0.0"
   },
-  "packageManager": "yarn@4.10.2+sha512.0b0e54ad5381f0a35184957bd3ea44e37f5a4fb1960b903b0fb9a3c7c2c009190455c41ef2a1977b1dbd3b72c5f152da696e9c52e2bc78a011b6adea8ee73ba3"
+  "packageManager": "pnpm@9.15.4"
 }

@@ -293,3 +293,4 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
     );
   }
 }
+

@@ -1,0 +1,177 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthcare-api
+  namespace: healthcare-backend
+  labels:
+    app: healthcare-api
+    component: backend
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: healthcare-api
+  template:
+    metadata:
+      labels:
+        app: healthcare-api
+        component: backend
+    spec:
+      serviceAccountName: healthcare-api-sa  # RBAC security
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: api
+        image: your-registry/healthcare-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8088
+          name: http
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "8088"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: database-url
+        - name: REDIS_URL
+          value: "redis://healthcare-redis:6379"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jwt-secret
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: logs
+        emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: healthcare-api
+  namespace: healthcare-backend
+  labels:
+    app: healthcare-api
+spec:
+  type: ClusterIP
+  selector:
+    app: healthcare-api
+  ports:
+  - port: 8088
+    targetPort: 8088
+    protocol: TCP
+    name: http
+  sessionAffinity: None
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: healthcare-api-hpa
+  namespace: healthcare-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: healthcare-api
+  minReplicas: 5  # Production baseline for 1M users
+  maxReplicas: 200  # Support for 1M+ concurrent users (5000 users per pod)
+  metrics:
+  # CPU-based scaling
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Memory-based scaling
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Custom metrics for healthcare-specific scaling
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "500"  # Scale when RPS > 500 per pod (conservative for 1M users)
+  - type: Pods
+    pods:
+      metric:
+        name: active_appointments_count
+      target:
+        type: AverageValue
+        averageValue: "500"  # Scale based on active appointments
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down
+      policies:
+      - type: Percent
+        value: 50  # Scale down max 50% at a time
+        periodSeconds: 60
+      - type: Pods
+        value: 2  # Or remove max 2 pods at a time
+        periodSeconds: 60
+      selectPolicy: Min  # Use the more conservative policy
+    scaleUp:
+      stabilizationWindowSeconds: 30  # Quick scale up for traffic spikes
+      policies:
+      - type: Percent
+        value: 100  # Double the pods
+        periodSeconds: 30
+      - type: Pods
+        value: 5  # Or add max 5 pods at a time
+        periodSeconds: 30
+      selectPolicy: Max  # Use the more aggressive policy
