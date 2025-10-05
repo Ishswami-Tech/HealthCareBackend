@@ -7,6 +7,7 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - secrets.yaml
+  - network-policies.yaml
   - postgres-config.yaml
   - api-deployment.yaml
   - postgres-statefulset.yaml
@@ -15,7 +16,6 @@ resources:
   - pdb.yaml
   - vpa.yaml
   - metrics-server.yaml
-  - network-policies.yaml
 
 # Common labels applied to all resources
 commonLabels:

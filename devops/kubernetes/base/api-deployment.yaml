@@ -122,8 +122,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: healthcare-api
-  minReplicas: 5  # Production baseline for 1M users
-  maxReplicas: 200  # Support for 1M+ concurrent users (5000 users per pod)
+  minReplicas: 10  # Production baseline for 1M users
+  maxReplicas: 500  # Support for 1M+ concurrent users (2000 users per pod)
   metrics:
   # CPU-based scaling
   - type: Resource
@@ -146,14 +146,14 @@ spec:
         name: http_requests_per_second
       target:
         type: AverageValue
-        averageValue: "500"  # Scale when RPS > 500 per pod (conservative for 1M users)
+        averageValue: "1000"  # Scale when RPS > 1000 per pod (optimized for 1M users)
   - type: Pods
     pods:
       metric:
         name: active_appointments_count
       target:
         type: AverageValue
-        averageValue: "500"  # Scale based on active appointments
+        averageValue: "1000"  # Scale based on active appointments (optimized for 1M users)
   behavior:
     scaleDown:
       stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down

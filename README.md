@@ -76,12 +76,22 @@ make k8s-local-access   # Access at localhost:8088
 
 ## 🏥 Key Features
 
+### Core Features
 - **Multi-Clinic Support**: Up to 200 clinics with complete data isolation
-- **Enterprise Performance**: 10+ lakh concurrent users support
+- **Enterprise Performance**: 1M+ concurrent users with auto-scaling
 - **HIPAA Compliant**: Full healthcare data protection and audit trails
 - **Advanced Authentication**: JWT with OTP, session management, and RBAC
 - **Real-time Features**: WebSocket support, live notifications, and queue management
 - **Plugin Architecture**: Extensible appointment system with domain-specific plugins
+
+### 🌿 Ayurvedic Healthcare Specialization
+- **13 Specialized Appointment Types**: Panchakarma, Agnikarma, Shirodhara, Nadi Pariksha, etc.
+- **Prakriti & Dosha Analysis**: Comprehensive constitutional assessment and tracking
+- **Therapy Management**: Multi-session therapy programs with automated scheduling
+- **Specialized Queues**: Separate queues for different therapy types (SHODHANA, SHAMANA, etc.)
+- **Location-Based Check-In**: QR code and geofencing-based patient verification
+- **Enhanced Ayurvedic Profiles**: Agni assessment, Vikriti tracking, seasonal patterns
+- **7 New Healthcare Roles**: Therapist, Pharmacist, Nurse, Lab Technician, etc.
 
 ## 🛠️ Tech Stack
 
