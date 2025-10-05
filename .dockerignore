@@ -1,0 +1,96 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+pnpm-debug.log*
+
+# Build outputs
+dist
+build
+.next
+out
+
+# Environment files
+.env
+.env.local
+.env*.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Testing
+coverage
+.nyc_output
+*.test.ts
+*.spec.ts
+test
+tests
+__tests__
+jest.config.js
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+circle.yml
+
+# Documentation
+*.md
+!README.md
+docs
+documentation
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# DevOps
+devops
+scripts
+backups
+
+# Temporary files
+*.tmp
+*.temp
+.cache
+.temp
+tmp
+
+# Package manager lock files (keep only pnpm)
+package-lock.json
+yarn.lock
+.yarnrc.yml
+.npmrc
+
+# Prisma
+prisma/migrations
+*.db
+*.db-journal
+
+# Other
+.claude
+.ai-rules

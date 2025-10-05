@@ -1,0 +1,120 @@
+# PostgreSQL ConfigMap - Optimized for 1M Concurrent Users
+# High-performance configuration for healthcare workloads
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: healthcare-backend
+data:
+  postgresql.conf: |
+    # Connection Settings - Optimized for 1M concurrent users
+    max_connections = 500
+    superuser_reserved_connections = 10
+
+    # Memory Settings - Assumes 16GB RAM dedicated to PostgreSQL
+    shared_buffers = 4GB
+    effective_cache_size = 12GB
+    maintenance_work_mem = 1GB
+    work_mem = 16MB
+    wal_buffers = 16MB
+
+    # Query Planning
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    default_statistics_target = 100
+
+    # Write Ahead Log (WAL)
+    wal_level = replica
+    max_wal_size = 4GB
+    min_wal_size = 1GB
+    checkpoint_completion_target = 0.9
+    checkpoint_timeout = 15min
+
+    # Replication & Archiving (for HA)
+    max_wal_senders = 10
+    wal_keep_size = 1GB
+    hot_standby = on
+    hot_standby_feedback = on
+
+    # Parallel Query Execution - Leverage multi-core CPUs
+    max_worker_processes = 8
+    max_parallel_workers_per_gather = 4
+    max_parallel_workers = 8
+    max_parallel_maintenance_workers = 4
+
+    # Vacuum & Autovacuum - Keep database healthy under heavy load
+    autovacuum = on
+    autovacuum_max_workers = 4
+    autovacuum_naptime = 10s
+    autovacuum_vacuum_threshold = 50
+    autovacuum_analyze_threshold = 50
+    autovacuum_vacuum_scale_factor = 0.05
+    autovacuum_analyze_scale_factor = 0.02
+    autovacuum_vacuum_cost_delay = 2ms
+    autovacuum_vacuum_cost_limit = 2000
+
+    # Logging - Leverage custom logging system, minimize PG logging
+    logging_collector = on
+    log_destination = 'stderr'
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d.log'
+    log_rotation_age = 1d
+    log_rotation_size = 100MB
+    log_min_duration_statement = 500ms
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_checkpoints = on
+    log_connections = off
+    log_disconnections = off
+    log_lock_waits = on
+    log_temp_files = 0
+    log_autovacuum_min_duration = 250ms
+
+    # Lock Management
+    deadlock_timeout = 1s
+    max_locks_per_transaction = 256
+
+    # Client Connection Defaults
+    statement_timeout = 60000
+    idle_in_transaction_session_timeout = 300000
+    tcp_keepalives_idle = 600
+    tcp_keepalives_interval = 10
+    tcp_keepalives_count = 5
+
+    # Performance Optimizations
+    synchronous_commit = off  # Async commit for better throughput
+    wal_writer_delay = 200ms
+    commit_delay = 100
+    commit_siblings = 5
+
+    # Statistics
+    track_activities = on
+    track_counts = on
+    track_io_timing = on
+    track_functions = pl
+
+    # Resource Limits
+    shared_preload_libraries = 'pg_stat_statements'
+    pg_stat_statements.max = 10000
+    pg_stat_statements.track = top
+
+---
+# pg_hba.conf - Client Authentication
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-hba
+  namespace: healthcare-backend
+data:
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+    # Local connections
+    local   all             all                                     trust
+
+    # IPv4 connections from pods
+    host    all             all             10.0.0.0/8              scram-sha-256
+    host    all             all             127.0.0.1/32            scram-sha-256
+
+    # Replication connections
+    host    replication     all             10.0.0.0/8              scram-sha-256

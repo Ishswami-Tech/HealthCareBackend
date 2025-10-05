@@ -1,0 +1,246 @@
+# Network Policies for Healthcare Backend
+# Provides network-level security and isolation between services
+
+---
+# Default deny all ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: healthcare-backend
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+# Allow API to receive traffic from Ingress and within namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-allow-ingress
+  namespace: healthcare-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: healthcare-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from Ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8088
+  # Allow from same namespace (API to API communication)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: healthcare-api
+    ports:
+    - protocol: TCP
+      port: 8088
+  # Allow health checks from kube-system
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8088
+  egress:
+  # Allow API to access PostgreSQL
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow API to access Redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow external API calls (AWS, Google, etc.)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# PostgreSQL - Only allow API pods to connect
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-api
+  namespace: healthcare-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Only allow API pods
+  - from:
+    - podSelector:
+        matchLabels:
+          app: healthcare-api
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow PostgreSQL replication (if using replicas)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  egress:
+  # Allow PostgreSQL to communicate with other PostgreSQL pods (replication)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Redis - Only allow API pods to connect
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-api
+  namespace: healthcare-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Only allow API pods
+  - from:
+    - podSelector:
+        matchLabels:
+          app: healthcare-api
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow Redis cluster communication
+  - from:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 16379  # Cluster bus port
+  egress:
+  # Allow Redis to communicate with other Redis pods (cluster)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 16379
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Allow Prometheus to scrape metrics from all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scraping
+  namespace: healthcare-backend
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow Prometheus from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 8088  # API metrics
+    - protocol: TCP
+      port: 9187  # PostgreSQL exporter
+    - protocol: TCP
+      port: 9121  # Redis exporter
+
+---
+# Allow health checks from all sources (needed for load balancers)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-health-checks
+  namespace: healthcare-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: healthcare-api
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow health checks from anywhere (load balancers, ingress, etc.)
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8088

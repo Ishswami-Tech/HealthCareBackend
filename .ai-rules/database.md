@@ -1,72 +1,149 @@
 # 🗄️ Database & Repository Patterns
 
-## 🎯 Multi-Database Architecture
+## 🎯 Database Architecture
 
 ### **Prisma Service Configuration**
 ```typescript
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
-  private healthcareClient: PrismaHealthcareClient;
-  private fashionClient: PrismaFashionClient;
+  private client: PrismaClient;
 
-  constructor(private configService: ConfigService) {
-    this.healthcareClient = new PrismaHealthcareClient({
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly logger: LoggingService
+  ) {
+    this.client = new PrismaClient({
       datasources: {
-        db: { url: this.configService.get('DATABASE_URL') }
+        db: {
+          url: this.configService.get<string>('DATABASE_URL')
+        }
       },
-      log: ['query', 'info', 'warn', 'error']
+      log: [
+        { emit: 'event', level: 'query' },
+        { emit: 'event', level: 'error' },
+        { emit: 'event', level: 'info' },
+        { emit: 'event', level: 'warn' }
+      ],
+      errorFormat: 'pretty'
     });
-    
-    this.fashionClient = new PrismaFashionClient({
-      datasources: {
-        db: { url: this.configService.get('FASHION_DATABASE_URL') }
-      },
-      log: ['query', 'info', 'warn', 'error']
+
+    // Set up logging handlers
+    this.client.$on('query', (e) => {
+      this.logger.debug('Query executed', {
+        query: e.query,
+        params: e.params,
+        duration: e.duration
+      });
+    });
+
+    this.client.$on('error', (e) => {
+      this.logger.error('Prisma error', { error: e.message });
     });
   }
 
-  get healthcare(): PrismaHealthcareClient {
-    return this.healthcareClient;
-  }
-
-  get fashion(): PrismaFashionClient {
-    return this.fashionClient;
+  get $client(): PrismaClient {
+    return this.client;
   }
 
   async onModuleInit() {
-    await this.healthcareClient.$connect();
-    await this.fashionClient.$connect();
+    await this.client.$connect();
+    this.logger.info('Database connected successfully');
   }
 
   async onModuleDestroy() {
-    await this.healthcareClient.$disconnect();
-    await this.fashionClient.$disconnect();
+    await this.client.$disconnect();
+    this.logger.info('Database disconnected');
+  }
+
+  // Health check for database connectivity
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.client.$queryRaw`SELECT 1`;
+      return true;
+    } catch (error) {
+      this.logger.error('Database health check failed', { error });
+      return false;
+    }
+  }
+
+  // Transaction support with timeout
+  async transaction<T>(
+    fn: (tx: PrismaClient) => Promise<T>,
+    options?: { timeout?: number; maxWait?: number; isolationLevel?: string }
+  ): Promise<T> {
+    return this.client.$transaction(fn, {
+      timeout: options?.timeout || 5000,
+      maxWait: options?.maxWait || 2000
+    });
   }
 }
 ```
 
 ### **Database Usage Patterns**
 ```typescript
-// Healthcare domain usage
+// Standard service usage
 @Injectable()
 export class UserService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findUser(id: string): Promise<User | null> {
-    return this.prisma.healthcare.user.findUnique({
-      where: { id }
+    return this.prisma.$client.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        roleType: true,
+        clinicId: true,
+        isActive: true,
+        isVerified: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+  }
+
+  async findUsersByClinic(clinicId: string): Promise<User[]> {
+    return this.prisma.$client.user.findMany({
+      where: { clinicId, isActive: true },
+      orderBy: { createdAt: 'desc' }
     });
   }
 }
 
-// Fashion domain usage
+// Multi-tenant pattern with clinic isolation
 @Injectable()
-export class StudioService {
+export class AppointmentService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findStudio(id: string): Promise<Studio | null> {
-    return this.prisma.fashion.studio.findUnique({
-      where: { id }
+  async findAppointments(clinicId: string): Promise<Appointment[]> {
+    return this.prisma.$client.appointment.findMany({
+      where: { clinicId },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                name: true,
+                email: true
+              }
+            }
+          }
+        },
+        doctor: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                name: true,
+                email: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { appointmentDateTime: 'asc' }
     });
   }
 }
@@ -98,16 +175,26 @@ export interface FindManyOptions<T> {
 ```typescript
 @Injectable()
 export class UserRepository implements IBaseRepository<User> {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logger: LoggingService
+  ) {}
 
-  async findById(id: string): Promise<User | null> {
-    return this.prisma.healthcare.user.findUnique({
-      where: { id },
+  async findById(id: string, clinicId?: string): Promise<User | null> {
+    const where: any = { id };
+    if (clinicId) {
+      where.clinicId = clinicId; // Clinic isolation
+    }
+
+    return this.prisma.$client.user.findUnique({
+      where,
       select: {
         id: true,
         name: true,
         email: true,
         roleType: true,
+        clinicId: true,
+        isActive: true,
         isVerified: true,
         createdAt: true,
         updatedAt: true
@@ -116,7 +203,7 @@ export class UserRepository implements IBaseRepository<User> {
   }
 
   async findMany(options: FindManyOptions<User> = {}): Promise<User[]> {
-    return this.prisma.healthcare.user.findMany({
+    return this.prisma.$client.user.findMany({
       where: options.where,
       orderBy: options.orderBy || { createdAt: 'desc' },
       skip: options.skip,
@@ -126,13 +213,17 @@ export class UserRepository implements IBaseRepository<User> {
   }
 
   async create(data: CreateUserData): Promise<User> {
-    return this.prisma.healthcare.user.create({
+    this.logger.info('Creating user', { email: data.email });
+
+    return this.prisma.$client.user.create({
       data,
       select: {
         id: true,
         name: true,
         email: true,
         roleType: true,
+        clinicId: true,
+        isActive: true,
         isVerified: true,
         createdAt: true,
         updatedAt: true
@@ -141,14 +232,21 @@ export class UserRepository implements IBaseRepository<User> {
   }
 
   async update(id: string, data: UpdateUserData): Promise<User> {
-    return this.prisma.healthcare.user.update({
+    this.logger.info('Updating user', { userId: id });
+
+    return this.prisma.$client.user.update({
       where: { id },
-      data,
+      data: {
+        ...data,
+        updatedAt: new Date()
+      },
       select: {
         id: true,
         name: true,
         email: true,
         roleType: true,
+        clinicId: true,
+        isActive: true,
         isVerified: true,
         createdAt: true,
         updatedAt: true
@@ -157,25 +255,58 @@ export class UserRepository implements IBaseRepository<User> {
   }
 
   async delete(id: string): Promise<void> {
-    await this.prisma.healthcare.user.delete({
+    this.logger.warn('Deleting user', { userId: id });
+
+    await this.prisma.$client.user.delete({
       where: { id }
     });
   }
 
-  async count(where?: any): Promise<number> {
-    return this.prisma.healthcare.user.count({ where });
-  }
-
-  // Domain-specific methods
-  async findByEmail(email: string): Promise<User | null> {
-    return this.prisma.healthcare.user.findUnique({
-      where: { email }
+  async softDelete(id: string): Promise<User> {
+    return this.prisma.$client.user.update({
+      where: { id },
+      data: {
+        isActive: false,
+        deletedAt: new Date()
+      }
     });
   }
 
-  async findByRole(roleType: string): Promise<User[]> {
-    return this.prisma.healthcare.user.findMany({
-      where: { roleType }
+  async count(where?: any): Promise<number> {
+    return this.prisma.$client.user.count({ where });
+  }
+
+  // Domain-specific methods
+  async findByEmail(email: string, clinicId?: string): Promise<User | null> {
+    const where: any = { email };
+    if (clinicId) {
+      where.clinicId = clinicId;
+    }
+
+    return this.prisma.$client.user.findUnique({ where });
+  }
+
+  async findByRole(roleType: string, clinicId?: string): Promise<User[]> {
+    const where: any = { roleType, isActive: true };
+    if (clinicId) {
+      where.clinicId = clinicId;
+    }
+
+    return this.prisma.$client.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  async findActiveUsers(clinicId?: string): Promise<User[]> {
+    const where: any = { isActive: true, isVerified: true };
+    if (clinicId) {
+      where.clinicId = clinicId;
+    }
+
+    return this.prisma.$client.user.findMany({
+      where,
+      orderBy: { name: 'asc' }
     });
   }
 }
@@ -186,48 +317,95 @@ export class UserRepository implements IBaseRepository<User> {
 ### **Efficient Query Patterns**
 ```typescript
 // ✅ DO - Use select to limit fields
-async findUsers(): Promise<User[]> {
-  return this.prisma.healthcare.user.findMany({
+async findUsers(clinicId?: string): Promise<User[]> {
+  const where: any = { isActive: true };
+  if (clinicId) {
+    where.clinicId = clinicId;
+  }
+
+  return this.prisma.$client.user.findMany({
+    where,
     select: {
       id: true,
       name: true,
       email: true,
+      roleType: true,
+      clinicId: true
       // Only select needed fields
-    }
+    },
+    orderBy: { name: 'asc' }
   });
 }
 
-// ✅ DO - Use include for relations
-async findUserWithAppointments(id: string): Promise<UserWithAppointments> {
-  return this.prisma.healthcare.user.findUnique({
-    where: { id },
+// ✅ DO - Use include for relations with proper filtering
+async findUserWithAppointments(
+  id: string,
+  clinicId?: string
+): Promise<UserWithAppointments> {
+  const where: any = { id };
+  if (clinicId) {
+    where.clinicId = clinicId;
+  }
+
+  return this.prisma.$client.user.findUnique({
+    where,
     include: {
-      appointments: {
-        select: {
-          id: true,
-          date: true,
-          status: true
-        },
-        where: {
-          date: { gte: new Date() }
-        },
-        orderBy: { date: 'asc' }
+      patient: {
+        include: {
+          appointments: {
+            where: {
+              appointmentDateTime: { gte: new Date() },
+              status: { in: ['SCHEDULED', 'CONFIRMED'] }
+            },
+            select: {
+              id: true,
+              appointmentDateTime: true,
+              status: true,
+              doctor: {
+                select: {
+                  id: true,
+                  user: {
+                    select: { name: true }
+                  }
+                }
+              }
+            },
+            orderBy: { appointmentDateTime: 'asc' },
+            take: 10 // Limit results
+          }
+        }
       }
     }
   });
 }
 
-// ✅ DO - Use pagination
-async findUsersWithPagination(page: number, limit: number): Promise<PaginatedUsers> {
+// ✅ DO - Use pagination with cursor-based or offset-based approach
+async findUsersWithPagination(
+  page: number,
+  limit: number,
+  clinicId?: string
+): Promise<PaginatedUsers> {
   const skip = (page - 1) * limit;
-  
+  const where: any = { isActive: true };
+  if (clinicId) {
+    where.clinicId = clinicId;
+  }
+
   const [users, total] = await Promise.all([
-    this.prisma.healthcare.user.findMany({
+    this.prisma.$client.user.findMany({
+      where,
       skip,
       take: limit,
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        roleType: true,
+        createdAt: true
+      }
     }),
-    this.prisma.healthcare.user.count()
+    this.prisma.$client.user.count({ where })
   ]);
 
   return {
@@ -235,13 +413,15 @@ async findUsersWithPagination(page: number, limit: number): Promise<PaginatedUse
     total,
     page,
     limit,
-    totalPages: Math.ceil(total / limit)
+    totalPages: Math.ceil(total / limit),
+    hasNext: page * limit < total,
+    hasPrevious: page > 1
   };
 }
 
 // ❌ DON'T - Fetch all fields and relations
 async findUsers(): Promise<User[]> {
-  return this.prisma.healthcare.user.findMany(); // Fetches everything
+  return this.prisma.$client.user.findMany(); // Fetches everything, no clinic isolation
 }
 ```
 
@@ -249,25 +429,32 @@ async findUsers(): Promise<User[]> {
 ```typescript
 @Injectable()
 export class UserService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logger: LoggingService
+  ) {}
 
   async createUserWithProfile(
     userData: CreateUserData,
     profileData: CreateProfileData
   ): Promise<{ user: User; profile: Profile }> {
-    return this.prisma.healthcare.$transaction(async (tx) => {
+    return this.prisma.transaction(async (tx) => {
       // Create user first
       const user = await tx.user.create({
         data: userData
       });
 
-      // Create profile with user reference
-      const profile = await tx.profile.create({
+      this.logger.info('User created in transaction', { userId: user.id });
+
+      // Create patient profile with user reference
+      const profile = await tx.patientProfile.create({
         data: {
           ...profileData,
           userId: user.id
         }
       });
+
+      this.logger.info('Patient profile created', { profileId: profile.id });
 
       return { user, profile };
     });
@@ -276,37 +463,80 @@ export class UserService {
   async transferAppointment(
     appointmentId: string,
     fromDoctorId: string,
-    toDoctorId: string
+    toDoctorId: string,
+    reason: string,
+    requestedBy: string
   ): Promise<void> {
-    await this.prisma.healthcare.$transaction(async (tx) => {
+    await this.prisma.transaction(async (tx) => {
+      // Verify appointment exists and is transferable
+      const appointment = await tx.appointment.findUnique({
+        where: { id: appointmentId },
+        include: { doctor: true }
+      });
+
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      if (appointment.status === 'COMPLETED' || appointment.status === 'CANCELLED') {
+        throw new BadRequestException('Cannot transfer completed or cancelled appointment');
+      }
+
       // Update appointment
       await tx.appointment.update({
         where: { id: appointmentId },
-        data: { doctorId: toDoctorId }
+        data: {
+          doctorId: toDoctorId,
+          updatedAt: new Date(),
+          updatedBy: requestedBy
+        }
       });
 
-      // Log the transfer
-      await tx.appointmentLog.create({
+      // Create audit log for the transfer
+      await tx.appointmentAuditLog.create({
         data: {
           appointmentId,
           action: 'TRANSFERRED',
-          fromDoctorId,
-          toDoctorId,
+          previousDoctorId: fromDoctorId,
+          newDoctorId: toDoctorId,
+          reason,
+          performedBy: requestedBy,
           timestamp: new Date()
         }
       });
 
-      // Update doctor schedules
-      await tx.doctorSchedule.updateMany({
-        where: { doctorId: fromDoctorId, appointmentId },
-        data: { status: 'AVAILABLE' }
+      // Update doctor availability slots
+      await tx.doctorAvailability.updateMany({
+        where: {
+          doctorId: fromDoctorId,
+          appointmentId,
+          status: 'BOOKED'
+        },
+        data: {
+          status: 'AVAILABLE',
+          appointmentId: null
+        }
       });
 
-      await tx.doctorSchedule.updateMany({
-        where: { doctorId: toDoctorId, appointmentId },
-        data: { status: 'BOOKED' }
+      await tx.doctorAvailability.updateMany({
+        where: {
+          doctorId: toDoctorId,
+          slotDateTime: appointment.appointmentDateTime,
+          status: 'AVAILABLE'
+        },
+        data: {
+          status: 'BOOKED',
+          appointmentId
+        }
       });
-    });
+
+      this.logger.info('Appointment transferred successfully', {
+        appointmentId,
+        fromDoctorId,
+        toDoctorId,
+        requestedBy
+      });
+    }, { timeout: 10000 }); // 10 second timeout for complex transaction
   }
 }
 ```

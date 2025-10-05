@@ -66,14 +66,20 @@ export class AuthService {
 
 ### **Role-Based Access Control (RBAC)**
 ```typescript
-// Role definitions
+// Role definitions (Healthcare-specific)
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
-  ADMIN = 'ADMIN',
+  CLINIC_ADMIN = 'CLINIC_ADMIN',
   DOCTOR = 'DOCTOR',
   NURSE = 'NURSE',
   PATIENT = 'PATIENT',
-  RECEPTIONIST = 'RECEPTIONIST'
+  RECEPTIONIST = 'RECEPTIONIST',
+  PHARMACIST = 'PHARMACIST',
+  LAB_TECHNICIAN = 'LAB_TECHNICIAN',
+  BILLING_STAFF = 'BILLING_STAFF',
+  ACCOUNTANT = 'ACCOUNTANT',
+  AYURVEDA_PRACTITIONER = 'AYURVEDA_PRACTITIONER',
+  THERAPIST = 'THERAPIST'
 }
 
 // Permission definitions
@@ -439,29 +445,192 @@ export class RateLimitGuard implements CanActivate {
 }
 ```
 
+## 🔐 Session Management
+
+### **Session Service Implementation**
+```typescript
+@Injectable()
+export class SessionService {
+  constructor(
+    private readonly redis: RedisService,
+    private readonly logger: LoggingService
+  ) {}
+
+  async createSession(userId: string, sessionData: SessionData): Promise<string> {
+    const sessionId = uuidv4();
+    const sessionKey = `session:${userId}:${sessionId}`;
+
+    await this.redis.set(
+      sessionKey,
+      JSON.stringify({
+        ...sessionData,
+        createdAt: new Date(),
+        lastActivity: new Date()
+      }),
+      7 * 24 * 60 * 60 // 7 days
+    );
+
+    this.logger.info('Session created', { userId, sessionId });
+    return sessionId;
+  }
+
+  async getSession(userId: string, sessionId: string): Promise<SessionData | null> {
+    const sessionKey = `session:${userId}:${sessionId}`;
+    const data = await this.redis.get(sessionKey);
+
+    if (!data) {
+      return null;
+    }
+
+    // Update last activity
+    const sessionData = JSON.parse(data);
+    sessionData.lastActivity = new Date();
+    await this.redis.set(sessionKey, JSON.stringify(sessionData), 7 * 24 * 60 * 60);
+
+    return sessionData;
+  }
+
+  async invalidateSession(userId: string, sessionId: string): Promise<void> {
+    const sessionKey = `session:${userId}:${sessionId}`;
+    await this.redis.del(sessionKey);
+    this.logger.info('Session invalidated', { userId, sessionId });
+  }
+
+  async invalidateAllUserSessions(userId: string): Promise<void> {
+    const pattern = `session:${userId}:*`;
+    const keys = await this.redis.keys(pattern);
+
+    if (keys.length > 0) {
+      await Promise.all(keys.map(key => this.redis.del(key)));
+      this.logger.warn('All sessions invalidated for user', { userId, count: keys.length });
+    }
+  }
+
+  async getUserActiveSessions(userId: string): Promise<SessionData[]> {
+    const pattern = `session:${userId}:*`;
+    const keys = await this.redis.keys(pattern);
+
+    const sessions = await Promise.all(
+      keys.map(async key => {
+        const data = await this.redis.get(key);
+        return data ? JSON.parse(data) : null;
+      })
+    );
+
+    return sessions.filter(s => s !== null);
+  }
+}
+
+interface SessionData {
+  userId: string;
+  deviceId?: string;
+  deviceType?: string;
+  ipAddress: string;
+  userAgent: string;
+  clinicId?: string;
+  createdAt: Date;
+  lastActivity: Date;
+}
+```
+
 ## 🔍 Audit Logging
 
 ### **Audit Trail Implementation**
 ```typescript
 @Injectable()
 export class AuditService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logger: LoggingService
+  ) {}
 
   async logAction(action: AuditAction): Promise<void> {
-    await this.prisma.healthcare.auditLog.create({
-      data: {
+    try {
+      await this.prisma.$client.auditLog.create({
+        data: {
+          userId: action.userId,
+          action: action.action,
+          resource: action.resource,
+          resourceId: action.resourceId,
+          details: action.details,
+          ipAddress: action.ipAddress,
+          userAgent: action.userAgent,
+          clinicId: action.clinicId,
+          timestamp: new Date()
+        }
+      });
+
+      this.logger.debug('Audit log created', {
         userId: action.userId,
         action: action.action,
-        resource: action.resource,
-        resourceId: action.resourceId,
-        details: action.details,
-        ipAddress: action.ipAddress,
-        userAgent: action.userAgent,
-        timestamp: new Date()
-      }
-    });
+        resource: action.resource
+      });
+    } catch (error) {
+      this.logger.error('Failed to create audit log', {
+        error: error.message,
+        action
+      });
+      // Don't throw - audit logging should not break the main flow
+    }
+  }
+
+  async getAuditLogs(
+    filters: AuditLogFilters,
+    pagination: { page: number; limit: number }
+  ): Promise<PaginatedAuditLogs> {
+    const where: any = {};
+
+    if (filters.userId) where.userId = filters.userId;
+    if (filters.action) where.action = filters.action;
+    if (filters.resource) where.resource = filters.resource;
+    if (filters.clinicId) where.clinicId = filters.clinicId;
+    if (filters.startDate || filters.endDate) {
+      where.timestamp = {};
+      if (filters.startDate) where.timestamp.gte = filters.startDate;
+      if (filters.endDate) where.timestamp.lte = filters.endDate;
+    }
+
+    const skip = (pagination.page - 1) * pagination.limit;
+
+    const [logs, total] = await Promise.all([
+      this.prisma.$client.auditLog.findMany({
+        where,
+        skip,
+        take: pagination.limit,
+        orderBy: { timestamp: 'desc' },
+        include: {
+          user: {
+            select: {
+              name: true,
+              email: true
+            }
+          }
+        }
+      }),
+      this.prisma.$client.auditLog.count({ where })
+    ]);
+
+    return {
+      logs,
+      total,
+      page: pagination.page,
+      limit: pagination.limit,
+      totalPages: Math.ceil(total / pagination.limit)
+    };
   }
 }
+
+interface AuditAction {
+  userId: string;
+  action: string;
+  resource: string;
+  resourceId?: string;
+  details?: any;
+  ipAddress?: string;
+  userAgent?: string;
+  clinicId?: string;
+}
+```
 
 // Audit decorator
 export function Audit(action: string, resource: string) {

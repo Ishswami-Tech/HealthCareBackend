@@ -17,59 +17,128 @@
 
 ## 📁 Project Structure
 
-### **Library Organization**
+### **Library Organization (`src/libs/`)**
 ```
 libs/
-├── communication/      # Messaging, events, socket
-│   ├── messaging/     # Email, SMS, notifications
-│   ├── events/        # Event emitters and handlers
-│   └── socket/        # WebSocket implementation
-├── core/              # Core utilities and filters
-│   ├── filters/       # Exception filters
-│   ├── guards/        # Authentication guards
-│   └── interceptors/  # Request/response interceptors
-├── dtos/              # Data transfer objects
-│   ├── auth/          # Authentication DTOs
-│   ├── users/         # User-related DTOs
-│   └── shared/        # Common DTOs
-├── infrastructure/    # Infrastructure services
-│   ├── database/      # Prisma service and config
-│   ├── cache/         # Redis service
-│   ├── logging/       # Logging service
-│   ├── queue/         # BullMQ service
-│   └── permissions/   # Permission management
-├── security/          # Security components
-│   ├── interceptors/  # Security interceptors
-│   ├── middleware/    # Security middleware
-│   └── rate-limiting/ # Rate limiting
-├── services/          # Business logic modules
-│   ├── auth/          # Authentication service
-│   ├── users/         # User management
-│   ├── appointments/  # Appointment management
-│   └── health/        # Health monitoring
-├── types/             # TypeScript type definitions
-├── utils/             # Utility functions
-│   ├── QR/            # QR code utilities
-│   ├── encryption/    # Encryption utilities
-│   └── validation/    # Custom validators
-└── validations/       # Validation pipes and rules
+├── communication/             # Communication layer
+│   ├── messaging/            # Multi-channel messaging
+│   │   ├── chat/            # Chat message backup
+│   │   ├── email/           # Email via AWS SES
+│   │   ├── push/            # Push notifications (Firebase, SNS)
+│   │   └── whatsapp/        # WhatsApp Business API
+│   └── socket/              # WebSocket implementation
+│       ├── base-socket.ts   # Base socket gateway
+│       ├── event-socket.broadcaster.ts  # Event broadcasting
+│       └── socket-auth.middleware.ts    # Socket authentication
+├── core/                     # Core framework components
+│   ├── business-rules/      # Business rule engine
+│   ├── decorators/          # Custom decorators
+│   ├── errors/              # Healthcare error system
+│   ├── filters/             # Exception filters
+│   ├── guards/              # Authentication & authorization guards
+│   ├── pipes/               # Validation pipes
+│   ├── plugin-interface/    # Plugin architecture
+│   ├── rbac/                # Role-based access control
+│   ├── resilience/          # Circuit breaker & retry patterns
+│   ├── session/             # Session management
+│   └── types/               # Core type definitions
+├── dtos/                     # Data transfer objects (shared DTOs)
+├── infrastructure/           # Infrastructure layer
+│   ├── cache/               # Redis caching with SWR
+│   │   ├── controllers/     # Cache management endpoints
+│   │   ├── decorators/      # Cache decorators
+│   │   ├── interceptors/    # Cache interceptors
+│   │   └── redis/           # Redis service
+│   ├── database/            # Database layer
+│   │   ├── clients/         # Database clients
+│   │   ├── config/          # Database configuration
+│   │   ├── interfaces/      # Repository interfaces
+│   │   ├── prisma/          # Prisma schema & client
+│   │   ├── repositories/    # Repository implementations
+│   │   ├── scripts/         # Database scripts
+│   │   └── types/           # Database types
+│   ├── events/              # Event-driven architecture
+│   │   └── types/           # Event type definitions
+│   ├── logging/             # Logging service
+│   │   └── types/           # Logging types
+│   └── queue/               # BullMQ queue system
+│       └── src/             # Queue implementations (19 specialized queues)
+├── security/                # Security layer
+│   └── rate-limit/          # Rate limiting & throttling
+└── utils/                   # Utility functions
+    ├── QR/                  # QR code generation
+    ├── query/               # Query helpers & pagination
+    └── rate-limit/          # Rate limit utilities
 ```
 
-### **Domain Organization**
+### **Service Organization (`src/services/`)**
+```
+services/
+├── appointments/            # Appointment management system
+│   ├── communications/      # Appointment communications
+│   ├── core/               # Core appointment logic
+│   └── plugins/            # Plugin architecture
+│       ├── analytics/      # Analytics plugin
+│       ├── base/           # Base plugin interface
+│       ├── checkin/        # Check-in plugin
+│       ├── config/         # Plugin configuration
+│       ├── confirmation/   # Confirmation plugin
+│       ├── eligibility/    # Eligibility verification
+│       ├── followup/       # Follow-up management
+│       ├── health/         # Health checks
+│       ├── location/       # Location-based features
+│       ├── notifications/  # Notification plugin
+│       ├── payment/        # Payment integration
+│       ├── queue/          # Queue management
+│       ├── reminders/      # Reminder system
+│       ├── resources/      # Resource management
+│       ├── templates/      # Appointment templates
+│       ├── utils/          # Plugin utilities
+│       ├── video/          # Video consultation
+│       └── waitlist/       # Waitlist management
+├── auth/                   # Authentication service
+│   └── core/               # Auth core logic
+├── billing/                # Billing & invoicing
+│   ├── controllers/        # Billing endpoints
+│   └── dto/                # Billing DTOs
+├── clinic/                 # Multi-clinic management
+│   ├── cliniclocation/     # Clinic location service
+│   ├── dto/                # Clinic DTOs
+│   ├── services/           # Clinic services
+│   └── shared/             # Shared clinic utilities
+├── ehr/                    # Electronic Health Records
+│   ├── controllers/        # EHR endpoints
+│   └── dto/                # EHR DTOs
+├── health/                 # Health monitoring service
+├── notification/           # Notification service
+└── users/                  # User management
+    ├── controllers/        # User endpoints
+    └── core/               # User core logic
+```
+
+### **Configuration & Documentation**
 ```
 src/
-├── domains/           # Domain-specific modules
-│   ├── clinic/        # Healthcare domain
-│   │   ├── controllers/
-│   │   ├── services/
-│   │   └── modules/
-│   └── fashion/       # Fashion domain
-│       ├── controllers/
-│       ├── services/
-│       └── modules/
-├── config/            # Configuration files
-├── shared/            # Shared modules
-└── main.ts           # Application bootstrap
+├── config/                 # Application configuration
+│   └── environment/        # Environment-specific configs
+├── libs/                   # Libraries (see above)
+├── services/               # Services (see above)
+└── main.ts                # Application bootstrap
+
+docs/
+├── api/                    # API documentation
+├── architecture/           # Architecture documentation
+│   ├── SYSTEM_ARCHITECTURE.md
+│   ├── COMPLETE_SYSTEM_SUMMARY.md
+│   └── INTEGRATION_VERIFICATION.md
+├── features/               # Feature-specific docs
+│   ├── SUBSCRIPTION_APPOINTMENTS.md
+│   ├── INVOICE_PDF_WHATSAPP_FEATURE.md
+│   └── NOTIFICATION_SYSTEM_IMPLEMENTATION.md
+└── guides/                 # Implementation guides
+    ├── NOTIFICATION_IMPLEMENTATION_GUIDE.md
+    ├── NOTIFICATION_STRATEGY.md
+    └── AI_IMPLEMENTATION_PROMPT.md
 ```
 
 ## 🔧 Design Patterns
@@ -256,45 +325,49 @@ export class NotificationService {
 }
 ```
 
-## 🗄️ Multi-Database Architecture
+## 🗄️ Database Architecture
 
-### **Database Context Pattern**
+### **Prisma Service Pattern**
 ```typescript
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
-  private healthcareClient: PrismaHealthcareClient;
-  private fashionClient: PrismaFashionClient;
+  private client: PrismaClient;
 
   constructor(private configService: ConfigService) {
-    this.healthcareClient = new PrismaHealthcareClient({
+    this.client = new PrismaClient({
       datasources: {
         db: { url: this.configService.get('DATABASE_URL') }
-      }
-    });
-    
-    this.fashionClient = new PrismaFashionClient({
-      datasources: {
-        db: { url: this.configService.get('FASHION_DATABASE_URL') }
-      }
+      },
+      log: ['query', 'info', 'warn', 'error'],
+      errorFormat: 'pretty'
     });
   }
 
-  get healthcare(): PrismaHealthcareClient {
-    return this.healthcareClient;
-  }
-
-  get fashion(): PrismaFashionClient {
-    return this.fashionClient;
+  get $client(): PrismaClient {
+    return this.client;
   }
 
   async onModuleInit() {
-    await this.healthcareClient.$connect();
-    await this.fashionClient.$connect();
+    await this.client.$connect();
   }
 
   async onModuleDestroy() {
-    await this.healthcareClient.$disconnect();
-    await this.fashionClient.$disconnect();
+    await this.client.$disconnect();
+  }
+
+  // Health check for database connectivity
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.client.$queryRaw`SELECT 1`;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Transaction support
+  async transaction<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
+    return this.client.$transaction(fn);
   }
 }
 ```
@@ -378,40 +451,149 @@ export class UserModule {}
     ConfigModule.forRoot(),
     DatabaseModule,
     LoggingModule,
-    CacheModule
+    CacheModule,
+    EventsModule
   ],
   exports: [
     DatabaseModule,
     LoggingModule,
-    CacheModule
+    CacheModule,
+    EventsModule
   ]
 })
 export class CoreModule {}
 
-// Feature module
+// Feature module with plugin support
 @Module({
   imports: [
-    CoreModule, // Import shared functionality
-    AuthModule  // Import related modules
+    CoreModule,
+    AuthModule,
+    NotificationModule
   ],
   providers: [
     UserService,
-    UserRepository
+    UserRepository,
+    // Session management
+    SessionService,
+    // RBAC integration
+    RbacService
   ],
   controllers: [UserController],
-  exports: [UserService] // Export for other modules
+  exports: [UserService, SessionService]
 })
 export class UserModule {}
 
-// Domain module
+// Service module with comprehensive integrations
 @Module({
   imports: [
     UserModule,
-    AppointmentModule,
-    ClinicModule
-  ]
+    ClinicModule,
+    NotificationModule,
+    BillingModule,
+    EhrModule,
+    QueueModule
+  ],
+  providers: [
+    AppointmentService,
+    AppointmentRepository,
+    // Plugin system
+    PluginRegistry,
+    // Appointment plugins
+    AnalyticsPlugin,
+    CheckinPlugin,
+    ConfirmationPlugin,
+    EligibilityPlugin,
+    FollowupPlugin,
+    NotificationPlugin,
+    PaymentPlugin,
+    QueuePlugin,
+    ReminderPlugin,
+    VideoPlugin,
+    WaitlistPlugin
+  ],
+  controllers: [AppointmentController],
+  exports: [AppointmentService]
 })
-export class HealthcareModule {}
+export class AppointmentModule {}
+```
+
+### **Plugin Architecture Pattern**
+```typescript
+// Base plugin interface
+export interface IAppointmentPlugin {
+  readonly name: string;
+  readonly priority: number;
+
+  beforeCreate?(data: CreateAppointmentDto): Promise<void>;
+  afterCreate?(appointment: Appointment): Promise<void>;
+  beforeUpdate?(id: string, data: UpdateAppointmentDto): Promise<void>;
+  afterUpdate?(appointment: Appointment): Promise<void>;
+  beforeCancel?(id: string): Promise<void>;
+  afterCancel?(appointment: Appointment): Promise<void>;
+}
+
+// Plugin implementation
+@Injectable()
+export class NotificationPlugin implements IAppointmentPlugin {
+  readonly name = 'NotificationPlugin';
+  readonly priority = 100;
+
+  constructor(
+    private readonly notificationService: NotificationService,
+    private readonly logger: LoggingService
+  ) {}
+
+  async afterCreate(appointment: Appointment): Promise<void> {
+    await this.notificationService.sendAppointmentConfirmation(
+      appointment.patientId,
+      appointment
+    );
+    this.logger.info('Notification sent for new appointment', {
+      appointmentId: appointment.id
+    });
+  }
+
+  async afterUpdate(appointment: Appointment): Promise<void> {
+    await this.notificationService.sendAppointmentUpdate(
+      appointment.patientId,
+      appointment
+    );
+  }
+
+  async afterCancel(appointment: Appointment): Promise<void> {
+    await this.notificationService.sendAppointmentCancellation(
+      appointment.patientId,
+      appointment
+    );
+  }
+}
+
+// Plugin registry
+@Injectable()
+export class PluginRegistry {
+  private plugins: IAppointmentPlugin[] = [];
+
+  registerPlugin(plugin: IAppointmentPlugin): void {
+    this.plugins.push(plugin);
+    this.plugins.sort((a, b) => a.priority - b.priority);
+  }
+
+  async executeBeforeCreate(data: CreateAppointmentDto): Promise<void> {
+    for (const plugin of this.plugins) {
+      if (plugin.beforeCreate) {
+        await plugin.beforeCreate(data);
+      }
+    }
+  }
+
+  async executeAfterCreate(appointment: Appointment): Promise<void> {
+    for (const plugin of this.plugins) {
+      if (plugin.afterCreate) {
+        await plugin.afterCreate(appointment);
+      }
+    }
+  }
+}
 ```
 
 ## 🚫 Anti-Patterns to Avoid
@@ -490,6 +672,200 @@ interface IUserAdmin {
   exportUserData(): Promise<Buffer>;
 }
 ```
+
+## 📝 Logging Architecture
+
+### **Enterprise LoggingService (HIPAA-Compliant)**
+
+**ALWAYS use the custom `LoggingService` from `@infrastructure/logging` for all logging needs.**
+
+```typescript
+// ✅ DO - Use custom LoggingService
+import { Injectable } from '@nestjs/common';
+import { LoggingService, LogType, LogLevel } from '@infrastructure/logging';
+
+@Injectable()
+export class UserService {
+  constructor(private readonly loggingService: LoggingService) {}
+
+  async createUser(data: CreateUserDto): Promise<User> {
+    // Log user creation with audit trail
+    await this.loggingService.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      'Creating new user',
+      'UserService',
+      { email: data.email, clinicId: data.clinicId }
+    );
+
+    try {
+      const user = await this.prisma.user.create({ data });
+
+      // Log success
+      await this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        'User created successfully',
+        'UserService',
+        { userId: user.id, email: user.email }
+      );
+
+      return user;
+    } catch (error) {
+      // Log error with full context
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to create user',
+        'UserService',
+        {
+          error: error.message,
+          stack: error.stack,
+          email: data.email
+        }
+      );
+      throw error;
+    }
+  }
+}
+
+// ❌ DON'T - Use NestJS built-in Logger
+import { Logger } from '@nestjs/common'; // Missing HIPAA compliance, audit trails, PHI tracking
+```
+
+### **Key LoggingService Features**
+
+1. **HIPAA-Compliant PHI Access Logging**
+```typescript
+// Log PHI access with complete audit trail
+await this.loggingService.logPhiAccess(
+  userId,
+  userRole,
+  patientId,
+  'VIEW',
+  {
+    resource: 'MedicalRecord',
+    resourceId: recordId,
+    clinicId: clinicId,
+    ipAddress: request.ip,
+    userAgent: request.headers['user-agent'],
+    sessionId: request.session.id,
+    dataFields: ['diagnosis', 'medications', 'allergies'],
+    purpose: 'treatment',
+    outcome: 'SUCCESS'
+  }
+);
+```
+
+2. **Multi-Tenant Clinic Logging**
+```typescript
+// Log operations with clinic isolation
+await this.loggingService.logClinicOperation(
+  clinicId,
+  'APPOINTMENT_CREATED',
+  userId,
+  {
+    appointmentId: appointment.id,
+    patientId: appointment.patientId,
+    doctorId: appointment.doctorId,
+    scheduledTime: appointment.scheduledTime
+  }
+);
+```
+
+3. **Performance Monitoring**
+```typescript
+// Track operation performance
+this.loggingService.logPerformance(
+  'database_query',
+  duration,
+  {
+    query: 'findPatientsByClinic',
+    recordCount: results.length,
+    clinicId: clinicId
+  }
+);
+```
+
+4. **Security Event Logging**
+```typescript
+// Log security events
+await this.loggingService.logSecurity(
+  'UNAUTHORIZED_ACCESS_ATTEMPT',
+  {
+    userId: userId,
+    resource: 'PatientRecord',
+    resourceId: patientId,
+    ipAddress: request.ip,
+    reason: 'User lacks READ_PATIENT permission'
+  }
+);
+```
+
+5. **Emergency Logging**
+```typescript
+// Critical system events
+await this.loggingService.logEmergency(
+  'Database connection pool exhausted',
+  {
+    activeConnections: 100,
+    queuedRequests: 50,
+    clinicsAffected: ['clinic-1', 'clinic-2']
+  }
+);
+```
+
+6. **Batch Logging for High Volume**
+```typescript
+// Log multiple events efficiently
+await this.loggingService.logBatch([
+  {
+    type: LogType.USER_ACTIVITY,
+    level: LogLevel.INFO,
+    message: 'User viewed dashboard',
+    context: 'DashboardController',
+    metadata: { userId, clinicId }
+  },
+  {
+    type: LogType.PERFORMANCE,
+    level: LogLevel.INFO,
+    message: 'Dashboard loaded',
+    context: 'DashboardController',
+    metadata: { duration: 150, widgets: 5 }
+  }
+]);
+```
+
+### **LogType Categories**
+
+- **System & Infrastructure**: `SYSTEM`, `ERROR`, `DATABASE`, `CACHE`, `QUEUE`, `PERFORMANCE`
+- **Authentication & Security**: `AUTH`, `SECURITY`, `ACCESS_CONTROL`, `LOGIN`, `LOGOUT`
+- **Communication**: `REQUEST`, `RESPONSE`, `WEBSOCKET`, `EMAIL`, `SMS`, `NOTIFICATION`
+- **Business Operations**: `AUDIT`, `APPOINTMENT`, `BUSINESS`, `PAYMENT`, `USER_ACTIVITY`
+- **HIPAA Compliance**: `PHI_ACCESS`, `MEDICAL_RECORD_ACCESS`, `PATIENT_DATA_EXPORT`, `CONSENT_MANAGEMENT`
+- **Emergency & Critical**: `EMERGENCY`, `CRITICAL_ALERT`, `INCIDENT`
+- **Multi-Tenant**: `CLINIC_OPERATIONS`, `TENANT_ISOLATION`, `MULTI_CLINIC`
+
+### **LogLevel Hierarchy**
+
+- `ERROR` - Critical errors requiring immediate attention
+- `WARN` - Warning conditions that should be reviewed
+- `INFO` - Informational messages about normal operations
+- `DEBUG` - Debug information for development
+- `VERBOSE` - Detailed trace information
+- `TRACE` - Very detailed diagnostic information
+
+### **Benefits of Custom LoggingService**
+
+✅ **HIPAA Compliance** - Automatic PHI access tracking and audit trails
+✅ **Distributed Tracing** - Correlation IDs and trace IDs for request tracking
+✅ **Multi-Tenant Support** - Clinic isolation and tenant-specific logging
+✅ **Performance Monitoring** - Built-in metrics collection and thresholds
+✅ **Security Events** - Comprehensive security event tracking
+✅ **Auto-Scaling** - Buffered metrics for 1M+ concurrent users
+✅ **Redis Caching** - Fast log retrieval with configurable retention
+✅ **Database Integration** - Automatic audit log creation
+✅ **Dashboard UI** - Web interface at `/logger` for viewing logs
 
 ---
 

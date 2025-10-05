@@ -1,0 +1,147 @@
+# Role-Based Access Control (RBAC) for Healthcare Backend
+# Provides security by limiting what pods and users can do in the cluster
+
+---
+# Service Account for API pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: healthcare-api-sa
+  namespace: healthcare-backend
+  labels:
+    app: healthcare-api
+    component: backend
+
+---
+# Role for API pods - minimal permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: healthcare-api-role
+  namespace: healthcare-backend
+spec:
+  rules:
+  # Allow reading own pod information
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Allow reading config maps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Allow reading secrets (only what's needed)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames: ["healthcare-secrets"]
+  # Allow reading services (for service discovery)
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+
+---
+# Bind the role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: healthcare-api-rolebinding
+  namespace: healthcare-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: healthcare-api-role
+subjects:
+- kind: ServiceAccount
+  name: healthcare-api-sa
+  namespace: healthcare-backend
+
+---
+# Service Account for PostgreSQL
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres-sa
+  namespace: healthcare-backend
+  labels:
+    app: postgres
+    component: database
+
+---
+# Service Account for Redis
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-sa
+  namespace: healthcare-backend
+  labels:
+    app: redis
+    component: cache
+
+---
+# ClusterRole for metrics collection (read-only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: healthcare-metrics-reader
+rules:
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# Bind metrics reader to API service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: healthcare-api-metrics-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: healthcare-metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: healthcare-api-sa
+  namespace: healthcare-backend
+
+---
+# ServiceAccount for HPA to access custom metrics
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: healthcare-hpa-sa
+  namespace: healthcare-backend
+
+---
+# Role for HPA to read metrics
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: healthcare-hpa-metrics-reader
+  namespace: healthcare-backend
+spec:
+  rules:
+  - apiGroups: ["custom.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+
+---
+# Bind HPA role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: healthcare-hpa-metrics-binding
+  namespace: healthcare-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: healthcare-hpa-metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: healthcare-hpa-sa
+  namespace: healthcare-backend
