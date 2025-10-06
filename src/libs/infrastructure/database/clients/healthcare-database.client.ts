@@ -912,6 +912,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         this.auditLog.shift();
       }
 
+      return Promise.resolve();
+
       // In production, create database record:
       // await this.prismaService.auditLog.create({ data: auditEntry });
     } catch (error) {

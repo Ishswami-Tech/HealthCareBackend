@@ -29,16 +29,8 @@ import { AppointmentEnterprisePluginManager } from "./plugins/enterprise-plugin-
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
-  AppointmentResponseDto,
-  AppointmentListResponseDto,
   AppointmentFilterDto,
-  Appointment,
-  AppointmentWithRelations,
   AppointmentStatus,
-  AppointmentPriority,
-  PaymentStatus,
-  PaymentMethod,
-  Language,
   ProcessCheckInDto,
   CompleteAppointmentDto,
   StartConsultationDto,
@@ -165,7 +157,7 @@ export class AppointmentsService {
       );
 
       // Emit event for real-time broadcasting
-      await this.eventEmitter.emit("appointment.created", {
+      this.eventEmitter.emit("appointment.created", {
         appointmentId: (result.data as Record<string, unknown>)?.id as string,
         userId: createDto.patientId,
         doctorId: createDto.doctorId,
@@ -282,7 +274,7 @@ export class AppointmentsService {
       );
 
       // Emit event for real-time broadcasting
-      await this.eventEmitter.emit("appointment.updated", {
+      this.eventEmitter.emit("appointment.updated", {
         appointmentId,
         userId: (result.data as Record<string, unknown>)?.patientId as string,
         doctorId: (result.data as Record<string, unknown>)?.doctorId as string,
@@ -341,7 +333,7 @@ export class AppointmentsService {
       );
 
       // Emit event for real-time broadcasting
-      await this.eventEmitter.emit("appointment.cancelled", {
+      this.eventEmitter.emit("appointment.cancelled", {
         appointmentId,
         userId: (result.data as Record<string, unknown>)?.patientId as string,
         doctorId: (result.data as Record<string, unknown>)?.doctorId as string,
@@ -410,7 +402,7 @@ export class AppointmentsService {
         );
 
         // Emit event for real-time broadcasting
-        await this.eventEmitter.emit("appointment.checked_in", {
+        this.eventEmitter.emit("appointment.checked_in", {
           appointmentId: checkInDto.appointmentId,
           clinicId,
           checkedInBy: userId,
@@ -457,7 +449,7 @@ export class AppointmentsService {
         );
 
         // Emit event for real-time broadcasting
-        await this.eventEmitter.emit("appointment.completed", {
+        this.eventEmitter.emit("appointment.completed", {
           appointmentId,
           clinicId,
           completedBy: userId,
@@ -504,7 +496,7 @@ export class AppointmentsService {
         );
 
         // Emit event for real-time broadcasting
-        await this.eventEmitter.emit("appointment.consultation_started", {
+        this.eventEmitter.emit("appointment.consultation_started", {
           appointmentId,
           clinicId,
           startedBy: userId,
@@ -690,14 +682,14 @@ export class AppointmentsService {
    * Get plugin information
    */
   async getPluginInfo(): Promise<unknown> {
-    return this.pluginManager.getPluginInfo();
+    return await this.pluginManager.getPluginInfo();
   }
 
   /**
    * Get domain features
    */
   async getDomainFeatures(domain: string): Promise<string[]> {
-    return this.pluginManager.getDomainFeatures(domain);
+    return await this.pluginManager.getDomainFeatures(domain);
   }
 
   /**

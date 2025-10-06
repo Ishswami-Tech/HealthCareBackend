@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CacheService } from "../../../../libs/infrastructure/cache";
@@ -251,6 +252,7 @@ export class AppointmentNotificationService {
     notificationData: NotificationData,
     notificationId: string,
   ): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { templateData, type } = notificationData;
 
     switch (channel) {
@@ -384,7 +386,7 @@ export class AppointmentNotificationService {
       notificationData;
 
     // Send to patient's personal room
-    this.socketService.sendToUser(patientId, "appointment_notification", {
+    await this.socketService.sendToUser(patientId, "appointment_notification", {
       appointmentId,
       type,
       data: templateData,

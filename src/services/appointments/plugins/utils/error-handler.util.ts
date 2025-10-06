@@ -16,8 +16,7 @@ export class PluginErrorHandler {
   private static readonly logger = new Logger("PluginErrorHandler");
 
   static handleError(error: unknown, context: ErrorContext): never {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : "";
 
     this.logger.error(
@@ -69,8 +68,7 @@ export class PluginErrorHandler {
   }
 
   static createErrorResponse(error: unknown, context: ErrorContext): unknown {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     return {
       success: false,

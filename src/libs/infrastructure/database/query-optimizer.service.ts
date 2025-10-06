@@ -9,7 +9,7 @@ export class HealthcareQueryOptimizerService {
   /**
    * Optimize database queries for healthcare operations
    */
-  async optimizeQuery(query: string): Promise<string> {
+  optimizeQuery(query: string): Promise<string> {
     try {
       // Basic query optimization logic
       this.logger.debug(`Optimizing query: ${query}`);
@@ -24,10 +24,10 @@ export class HealthcareQueryOptimizerService {
         );
       }
 
-      return optimizedQuery;
+      return Promise.resolve(optimizedQuery);
     } catch (_error) {
       this.logger.error(`Query optimization failed: ${_error}`);
-      return query; // Return original query if optimization fails
+      return Promise.resolve(query); // Return original query if optimization fails
     }
   }
 

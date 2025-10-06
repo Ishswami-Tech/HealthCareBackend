@@ -221,15 +221,30 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       // Implement proper clinic job processing based on action type
       switch (action) {
         case "appointment_created":
-          return await this.processAppointmentCreated(data as AppointmentJobData, metadata);
+          return await this.processAppointmentCreated(
+            data as AppointmentJobData,
+            metadata,
+          );
         case "appointment_updated":
-          return await this.processAppointmentUpdated(data as AppointmentJobData, metadata);
+          return await this.processAppointmentUpdated(
+            data as AppointmentJobData,
+            metadata,
+          );
         case "appointment_cancelled":
-          return await this.processAppointmentCancelled(data as AppointmentJobData, metadata);
+          return await this.processAppointmentCancelled(
+            data as AppointmentJobData,
+            metadata,
+          );
         case "patient_checkin":
-          return await this.processPatientCheckin(data as PatientCheckinData, metadata);
+          return await this.processPatientCheckin(
+            data as PatientCheckinData,
+            metadata,
+          );
         case "notification_send":
-          return await this.processNotificationSend(data as NotificationJobData, metadata);
+          return await this.processNotificationSend(
+            data as NotificationJobData,
+            metadata,
+          );
         default:
           this.logger.warn(`Unknown clinic job action: ${action}`);
           return {

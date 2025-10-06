@@ -5,9 +5,10 @@
  * Extracts user data for automatic room joining
  */
 
-import { Injectable, Logger } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { Socket } from 'socket.io';
+import { Injectable, Logger } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import type { IncomingMessage } from "http";
+import { Socket } from "socket.io";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -16,6 +17,41 @@ export interface AuthenticatedUser {
   email?: string;
   firstName?: string;
   lastName?: string;
+}
+
+interface SessionUserData {
+  id?: string;
+  userId?: string;
+  clinicId?: string;
+  role?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+interface SocketSession extends IncomingMessage {
+  session?: {
+    user?: SessionUserData;
+  };
+}
+
+interface JwtPayload extends AuthenticatedUser {
+  sub?: string;
+  id?: string;
+}
+
+type HandshakeQueryValue = string | string[] | null | undefined;
+
+interface SocketHandshakeHeaders {
+  authorization?: string | string[];
+}
+
+interface SocketHandshake {
+  auth?: {
+    token?: string | string[] | null;
+  };
+  query: Record<string, HandshakeQueryValue>;
+  headers: SocketHandshakeHeaders;
 }
 
 @Injectable()
@@ -44,16 +80,26 @@ export class SocketAuthMiddleware {
       const token = this.extractToken(client);
 
       if (!token) {
-        this.logger.warn(`Connection rejected: No token or session (${client.id})`);
-        throw new Error('Authentication required - no token or session');
+        this.logger.warn(
+          `Connection rejected: No token or session (${client.id})`,
+        );
+        throw new Error("Authentication required - no token or session");
       }
 
       // Verify JWT token
-      const payload = await this.jwtService.verifyAsync(token);
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(token);
 
       // Extract user data from token
+      const userId = payload.sub || payload.userId || payload.id;
+      if (!userId) {
+        this.logger.warn(
+          `Invalid token payload: Missing userId (${client.id})`,
+        );
+        throw new Error("Invalid token - missing user ID");
+      }
+
       const user: AuthenticatedUser = {
-        userId: payload.sub || payload.userId || payload.id,
+        userId,
         clinicId: payload.clinicId,
         role: payload.role,
         email: payload.email,
@@ -61,19 +107,17 @@ export class SocketAuthMiddleware {
         lastName: payload.lastName,
       };
 
-      if (!user.userId) {
-        this.logger.warn(`Invalid token payload: Missing userId (${client.id})`);
-        throw new Error('Invalid token - missing user ID');
-      }
-
       this.logger.log(
         `Client authenticated via JWT: ${client.id} (User: ${user.userId}, Role: ${user.role})`,
       );
 
       return user;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Authentication failed for ${client.id}: ${errorMessage}`);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      this.logger.error(
+        `Authentication failed for ${client.id}: ${errorMessage}`,
+      );
       throw new Error(`Authentication failed: ${errorMessage}`);
     }
   }
@@ -82,49 +126,100 @@ export class SocketAuthMiddleware {
    * Extract user data from session (if available)
    */
   private extractFromSession(client: Socket): AuthenticatedUser | null {
-    try {
-      // Access session from socket handshake (if session middleware is enabled)
-      const request = client.request as any;
-      const session = request?.session;
+    const request = client.request;
 
-      if (!session || !session.user) {
-        return null;
-      }
-
-      const user: AuthenticatedUser = {
-        userId: session.user.id || session.user.userId,
-        clinicId: session.user.clinicId,
-        role: session.user.role,
-        email: session.user.email,
-        firstName: session.user.firstName,
-        lastName: session.user.lastName,
-      };
-
-      return user.userId ? user : null;
-    } catch (error) {
+    if (!this.isSocketSession(request) || !request.session?.user) {
       return null;
     }
+
+    const { user } = request.session;
+    const userId = user.id ?? user.userId;
+
+    if (!userId) {
+      return null;
+    }
+
+    return {
+      userId,
+      clinicId: user.clinicId,
+      role: user.role,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    };
+  }
+
+  private isSocketSession(request: IncomingMessage): request is SocketSession {
+    const potentialSession = request as SocketSession;
+    return (
+      typeof potentialSession.session === "object" &&
+      potentialSession.session !== null
+    );
   }
 
   /**
    * Extract JWT token from socket connection
    */
   private extractToken(client: Socket): string | null {
-    // Try auth object first (socket.io v4 recommended way)
-    if (client.handshake.auth?.token) {
-      return client.handshake.auth.token;
+    const handshake = client.handshake as SocketHandshake;
+
+    const authToken = this.normalizeTokenValue(handshake.auth?.token ?? null);
+    if (authToken) {
+      return authToken;
     }
 
-    // Try query parameters (fallback)
-    if (client.handshake.query?.token) {
-      return client.handshake.query.token as string;
+    const queryToken = this.normalizeTokenValue(handshake.query?.token ?? null);
+    if (queryToken) {
+      return queryToken;
     }
 
-    // Try authorization header
-    const authHeader = client.handshake.headers.authorization;
-    if (authHeader) {
-      // Remove 'Bearer ' prefix if present
-      return authHeader.replace(/^Bearer\s+/i, '');
+    const headerToken = this.normalizeAuthorizationHeader(
+      handshake.headers?.authorization,
+    );
+    if (headerToken) {
+      return headerToken;
+    }
+
+    return null;
+  }
+
+  private normalizeTokenValue(
+    value: string | string[] | null | undefined,
+  ): string | null {
+    if (typeof value === "string") {
+      const trimmedValue = value.trim();
+      return trimmedValue.length > 0 ? trimmedValue : null;
+    }
+
+    if (Array.isArray(value)) {
+      const firstToken = value.find(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      );
+
+      return firstToken ? firstToken.trim() : null;
+    }
+
+    return null;
+  }
+
+  private normalizeAuthorizationHeader(
+    value: string | string[] | undefined,
+  ): string | null {
+    if (Array.isArray(value)) {
+      const headerToken = value.find(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      );
+
+      return headerToken ? headerToken.replace(/^Bearer\s+/i, "").trim() : null;
+    }
+
+    if (typeof value === "string") {
+      const trimmedValue = value.trim();
+      return trimmedValue.length > 0
+        ? trimmedValue.replace(/^Bearer\s+/i, "").trim()
+        : null;
     }
 
     return null;
@@ -137,7 +232,13 @@ export class SocketAuthMiddleware {
     try {
       return await this.validateConnection(client);
     } catch (error) {
-      this.logger.debug(`Optional auth failed for ${client.id}, allowing anonymous connection`);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+
+      this.logger.debug(
+        `Optional auth failed for ${client.id}, allowing anonymous connection`,
+        errorMessage,
+      );
       return null;
     }
   }

@@ -403,7 +403,10 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
     pluginName: string,
     config: unknown,
   ): Promise<void> {
-    await this.pluginConfigService.updatePluginConfig(pluginName, config as any);
+    await this.pluginConfigService.updatePluginConfig(
+      pluginName,
+      config as any,
+    );
     this.logger.log(`Configuration updated for plugin: ${pluginName}`);
   }
 

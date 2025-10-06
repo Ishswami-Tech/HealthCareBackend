@@ -11,7 +11,42 @@ import {
 } from "@nestjs/websockets";
 import { Logger, Injectable, Inject, Optional } from "@nestjs/common";
 import { Server, Socket } from "socket.io";
-import { SocketService, SocketEventData } from "./socket.service";
+import {
+  SocketService,
+  type SocketEventData,
+} from "@communication/socket/socket.service";
+import {
+  SocketAuthMiddleware,
+  type AuthenticatedUser,
+} from "@communication/socket/socket-auth.middleware";
+
+interface ConnectionSuccessData {
+  clientId: string;
+  authenticated: boolean;
+  user: { userId: string; role?: string } | null;
+}
+
+interface ErrorEventData {
+  message: string;
+}
+
+type ConnectionEventData = ConnectionSuccessData | ErrorEventData;
+
+interface RoomPayload {
+  room: string;
+}
+
+interface RoomSuccessData {
+  success: true;
+  room: string;
+}
+
+interface RoomErrorData {
+  success: false;
+  error: string;
+}
+
+type RoomEventData = RoomSuccessData | RoomErrorData;
 
 @Injectable()
 @WebSocketGateway({
@@ -29,13 +64,18 @@ export class BaseSocket
   protected server!: Server;
 
   protected logger: Logger;
-  protected readonly roomsByClient: Map<string, Set<string>> = new Map();
-  protected readonly clientsByRoom: Map<string, Set<string>> = new Map();
+  protected readonly roomsByClient: Map<string, Set<string>> = new Map<
+    string,
+    Set<string>
+  >();
+  protected readonly clientsByRoom: Map<string, Set<string>> = new Map<
+    string,
+    Set<string>
+  >();
   private readonly reconnectAttempts: Map<string, number> = new Map();
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly RECONNECT_INTERVAL = 5000; // 5 seconds
-  private readonly clientMetadata: Map<string, Record<string, unknown>> =
-    new Map();
+  private readonly clientMetadata: Map<string, AuthenticatedUser> = new Map();
   private initializationAttempts = 0;
   private readonly MAX_INITIALIZATION_ATTEMPTS = 3;
 
@@ -46,7 +86,7 @@ export class BaseSocket
     protected readonly serviceName: string,
     @Inject("SOCKET_AUTH_MIDDLEWARE")
     @Optional()
-    protected readonly authMiddleware?: any,
+    protected readonly authMiddleware?: SocketAuthMiddleware,
   ) {
     this.logger = new Logger(serviceName || "BaseSocket");
   }
@@ -141,7 +181,9 @@ export class BaseSocket
     );
   }
 
-  async handleConnection(client: Socket): Promise<WsResponse<any>> {
+  async handleConnection(
+    client: Socket,
+  ): Promise<WsResponse<ConnectionEventData>> {
     try {
       if (!this.server) {
         this.logger.error("WebSocket server not initialized");
@@ -151,7 +193,7 @@ export class BaseSocket
       const clientId = client.id;
 
       // Authenticate client if middleware is available
-      let user: any = null;
+      let user: AuthenticatedUser | null = null;
       if (this.authMiddleware) {
         try {
           user = await this.authMiddleware.validateConnection(client);
@@ -167,7 +209,7 @@ export class BaseSocket
           );
         } catch (authError) {
           this.logger.error(
-            `Authentication failed for ${clientId}: ${authError instanceof Error ? authError.message : 'Unknown error'}`,
+            `Authentication failed for ${clientId}: ${authError instanceof Error ? authError.message : "Unknown error"}`,
           );
           client.disconnect();
           return {
@@ -207,7 +249,10 @@ export class BaseSocket
   /**
    * Automatically join user to appropriate rooms based on their data
    */
-  protected async autoJoinRooms(client: Socket, user: any): Promise<void> {
+  protected async autoJoinRooms(
+    client: Socket,
+    user: AuthenticatedUser,
+  ): Promise<void> {
     try {
       const rooms: string[] = [];
 
@@ -231,7 +276,7 @@ export class BaseSocket
       }
 
       this.logger.log(
-        `Client ${client.id} auto-joined ${rooms.length} rooms: ${rooms.join(', ')}`,
+        `Client ${client.id} auto-joined ${rooms.length} rooms: ${rooms.join(", ")}`,
       );
     } catch (error) {
       const errorMessage =
@@ -319,10 +364,10 @@ export class BaseSocket
   @SubscribeMessage("joinRoom")
   async handleJoinRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { room: string },
-  ): Promise<WsResponse<any>> {
+    @MessageBody() data: RoomPayload,
+  ): Promise<WsResponse<RoomEventData>> {
     try {
-      const { room } = data as any;
+      const { room } = data;
       await this.joinRoom(client, room);
       return { event: "joinRoom", data: { success: true, room } };
     } catch (error) {
@@ -340,10 +385,10 @@ export class BaseSocket
   @SubscribeMessage("leaveRoom")
   async handleLeaveRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { room: string },
-  ): Promise<WsResponse<any>> {
+    @MessageBody() data: RoomPayload,
+  ): Promise<WsResponse<RoomEventData>> {
     try {
-      const { room } = data as any;
+      const { room } = data;
       await this.leaveRoom(client, room);
       return { event: "leaveRoom", data: { success: true, room } };
     } catch (error) {
@@ -367,13 +412,14 @@ export class BaseSocket
       await client.join(room);
 
       // Track room membership
-      const clientRooms = this.roomsByClient.get(client.id) || new Set();
+      const clientRooms =
+        this.roomsByClient.get(client.id) ?? new Set<string>();
       clientRooms.add(room);
       this.roomsByClient.set(client.id, clientRooms);
 
       // Track clients in room
       if (!this.clientsByRoom.has(room)) {
-        this.clientsByRoom.set(room, new Set());
+        this.clientsByRoom.set(room, new Set<string>());
       }
       this.clientsByRoom.get(room)?.add(client.id);
 
@@ -442,9 +488,7 @@ export class BaseSocket
     return this.clientsByRoom.get(room)?.size || 0;
   }
 
-  protected getClientMetadata(
-    clientId: string,
-  ): Record<string, unknown> | undefined {
+  protected getClientMetadata(clientId: string): AuthenticatedUser | undefined {
     return this.clientMetadata.get(clientId);
   }
 

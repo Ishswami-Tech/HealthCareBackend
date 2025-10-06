@@ -658,7 +658,7 @@ export class RbacService {
    * Check medical record ownership
    * MedicalRecord model integration - currently using placeholder implementation
    */
-  private async checkMedicalRecordOwnership(
+  private checkMedicalRecordOwnership(
     _recordId: string,
     _userId: string,
   ): Promise<boolean> {
@@ -676,7 +676,7 @@ export class RbacService {
     // }
 
     // For now, return false as medical records are not implemented
-    return false;
+    return Promise.resolve(false);
   }
 
   /**

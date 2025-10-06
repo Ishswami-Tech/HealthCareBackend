@@ -453,7 +453,7 @@ export class UserRepository extends BaseRepository<
     updateData: Partial<UpdateUserDto>,
   ): Promise<RepositoryResult<{ count: number }>> {
     return this.executeInTransaction(async (tx: any) => {
-      const result = await (tx as any).user.updateMany({
+      const result = await tx.user.updateMany({
         where: {
           id: { in: userIds },
         },
@@ -474,7 +474,7 @@ export class UserRepository extends BaseRepository<
   async softDeleteUser(id: string): Promise<RepositoryResult<User>> {
     return this.executeInTransaction(async (tx: any) => {
       // First, anonymize sensitive data
-      const user = await (tx as any).user.update({
+      const user = await tx.user.update({
         where: { id },
         data: {
           email: `deleted_${id}@deleted.local`,
@@ -486,7 +486,7 @@ export class UserRepository extends BaseRepository<
       });
 
       // Update related records if needed - cancel their appointments
-      await (tx as any).appointment.updateMany({
+      await tx.appointment.updateMany({
         where: { userId: id },
         data: { status: "CANCELLED" },
       });
