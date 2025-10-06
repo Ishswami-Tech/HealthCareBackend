@@ -70,7 +70,7 @@ export interface NotificationData {
   recipientId?: string;
   subject?: string;
   message: string;
-  channel: 'email' | 'sms' | 'push' | 'whatsapp';
+  channel: "email" | "sms" | "push" | "whatsapp";
   templateId?: string;
   metadata?: Record<string, unknown>;
 }
@@ -124,7 +124,7 @@ export interface AnalyticsJobData {
 // Reconciliation job data
 export interface ReconciliationJobData {
   paymentIds: string[];
-  reconciliationType: 'daily' | 'weekly' | 'monthly';
+  reconciliationType: "daily" | "weekly" | "monthly";
   startDate?: Date;
   endDate?: Date;
   metadata?: JobMetadata;
@@ -132,7 +132,7 @@ export interface ReconciliationJobData {
 
 // Generic queue job data with domain
 export interface QueueJobData<T = unknown> {
-  domain: 'clinic';
+  domain: "clinic";
   action: string;
   data: T;
   metadata?: JobMetadata;

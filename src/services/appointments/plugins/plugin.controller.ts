@@ -46,9 +46,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const pluginInfo = (this.enterprisePluginManager
-        .getEnterpriseRegistry() as any)
-        .getPluginInfo() as any[];
+      const pluginInfo = (
+        this.enterprisePluginManager.getEnterpriseRegistry() as any
+      ).getPluginInfo() as any[];
 
       const duration = Date.now() - startTime;
       this.logger.log(`Plugin info retrieved successfully in ${duration}ms`);
@@ -85,9 +85,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const plugins = (this.enterprisePluginManager
-        .getEnterpriseRegistry() as any)
-        .getPluginsByFeature(domain) as any[];
+      const plugins = (
+        this.enterprisePluginManager.getEnterpriseRegistry() as any
+      ).getPluginsByFeature(domain) as any[];
 
       const duration = Date.now() - startTime;
       this.logger.log(
@@ -132,9 +132,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const features = (this.enterprisePluginManager
-        .getEnterpriseRegistry() as any)
-        .getPluginsByFeature(domain) as any[];
+      const features = (
+        this.enterprisePluginManager.getEnterpriseRegistry() as any
+      ).getPluginsByFeature(domain) as any[];
 
       const duration = Date.now() - startTime;
       this.logger.log(
@@ -317,9 +317,9 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const pluginInfo = (this.enterprisePluginManager
-        .getEnterpriseRegistry() as any)
-        .getPluginInfo() as any[];
+      const pluginInfo = (
+        this.enterprisePluginManager.getEnterpriseRegistry() as any
+      ).getPluginInfo() as any[];
       const domains = [...new Set(pluginInfo.map((p: any) => p.domain))];
       const healthSummary =
         await this.pluginHealthService.getPluginHealthSummary();
@@ -329,11 +329,10 @@ export class AppointmentPluginController {
         totalPlugins: pluginInfo.length,
         domains: domains.map((domain) => ({
           domain,
-          plugins: pluginInfo.filter((p: any) => p.domain === domain)
-            .length,
-          features: (this.enterprisePluginManager
-            .getEnterpriseRegistry() as any)
-            .getPluginsByFeature(domain) as any,
+          plugins: pluginInfo.filter((p: any) => p.domain === domain).length,
+          features: (
+            this.enterprisePluginManager.getEnterpriseRegistry() as any
+          ).getPluginsByFeature(domain),
         })),
         healthSummary,
         uptime: process.uptime(),

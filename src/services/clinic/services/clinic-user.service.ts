@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "src/libs/infrastructure/database/prisma/prisma.service";
 import { LoggingService } from "src/libs/infrastructure/logging/logging.service";
 import {
@@ -7,6 +7,10 @@ import {
 } from "src/libs/infrastructure/logging/types/logging.types";
 import { Role } from "src/libs/infrastructure/database/prisma/prisma.types";
 import { resolveClinicUUID } from "src/libs/utils/clinic.utils";
+import type {
+  Doctor,
+  User,
+} from "src/libs/infrastructure/database/prisma/prisma.types";
 
 @Injectable()
 export class ClinicUserService {
@@ -15,8 +19,27 @@ export class ClinicUserService {
     private readonly loggingService: LoggingService,
   ) {}
 
-  async getClinicUsers(clinicId: string) {
-    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+  async getClinicUsers(clinicId: string): Promise<{
+    doctors: Array<{
+      id: string;
+      clinicId: string;
+      doctorId: string;
+      doctor: Doctor & { user: User };
+    }>;
+    receptionists: Array<{
+      id: string;
+      userId: string;
+      clinicId: string;
+      user: User;
+      clinic: { id: string; name: string };
+    }>;
+    patients: Array<{
+      id: string;
+      userId: string;
+      user: User;
+    }>;
+  }> {
+    await resolveClinicUUID(this.prisma, clinicId);
     try {
       // Get doctors
       const doctors = await this.prisma.doctorClinic.findMany({
@@ -60,24 +83,24 @@ export class ClinicUserService {
         receptionists,
         patients,
       };
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        `Failed to get clinic users: ${error instanceof Error ? error.message : "Unknown error"}`,
         "ClinicUserService",
         {
           clinicId,
-          _error:
-            _error instanceof Error ? _error.stack : "No stack trace available",
+          error:
+            error instanceof Error ? error.stack : "No stack trace available",
         },
       );
-      throw _error;
+      throw error;
     }
   }
 
-  async getClinicUsersByRole(clinicId: string, role: Role) {
-    const clinicUUID = await resolveClinicUUID(this.prisma, clinicId);
+  async getClinicUsersByRole(clinicId: string, role: Role): Promise<unknown[]> {
+    await resolveClinicUUID(this.prisma, clinicId);
     try {
       switch (role) {
         case Role.DOCTOR:
@@ -117,20 +140,20 @@ export class ClinicUserService {
         default:
           return [];
       }
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users by role: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        `Failed to get clinic users by role: ${error instanceof Error ? error.message : "Unknown error"}`,
         "ClinicUserService",
         {
           clinicId,
           role,
-          _error:
-            _error instanceof Error ? _error.stack : "No stack trace available",
+          error:
+            error instanceof Error ? error.stack : "No stack trace available",
         },
       );
-      throw _error;
+      throw error;
     }
   }
 }

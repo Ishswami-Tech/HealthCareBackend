@@ -2,6 +2,21 @@ import { Injectable } from "@nestjs/common";
 import { BaseAppointmentPlugin } from "../base/base-plugin.service";
 import { AppointmentQueueService } from "./appointment-queue.service";
 
+interface PluginData {
+  operation: string;
+  doctorId?: string;
+  date?: string;
+  appointmentId?: string;
+  locationId?: string;
+  period?: string;
+  priority?: number;
+  reorderData?: {
+    doctorId: string;
+    date: string;
+    newOrder: string[];
+  };
+}
+
 @Injectable()
 export class ClinicQueuePlugin extends BaseAppointmentPlugin {
   readonly name = "clinic-queue-plugin";
@@ -17,7 +32,7 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = data as PluginData;
     this.logPluginAction("Processing clinic queue operation", {
       operation: pluginData.operation,
     });
@@ -26,50 +41,53 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
     switch (pluginData.operation) {
       case "getDoctorQueue":
         return await this.queueService.getDoctorQueue(
-          pluginData.doctorId,
-          pluginData.date,
+          pluginData.doctorId!,
+          pluginData.date!,
           "clinic",
         );
 
       case "getPatientQueuePosition":
         return await this.queueService.getPatientQueuePosition(
-          pluginData.appointmentId,
+          pluginData.appointmentId!,
           "clinic",
         );
 
       case "confirmAppointment":
         return await this.queueService.confirmAppointment(
-          pluginData.appointmentId,
+          pluginData.appointmentId!,
           "clinic",
         );
 
       case "startConsultation":
         return await this.queueService.startConsultation(
-          pluginData.appointmentId,
-          pluginData.doctorId,
+          pluginData.appointmentId!,
+          pluginData.doctorId!,
           "clinic",
         );
 
       case "reorderQueue":
-        return await this.queueService.reorderQueue(pluginData.reorderData, "clinic");
+        return await this.queueService.reorderQueue(
+          pluginData.reorderData!,
+          "clinic",
+        );
 
       case "getLocationQueueStats":
         return await this.queueService.getLocationQueueStats(
-          pluginData.locationId,
+          pluginData.locationId!,
           "clinic",
         );
 
       case "getQueueMetrics":
         return await this.queueService.getQueueMetrics(
-          pluginData.locationId,
+          pluginData.locationId!,
           "clinic",
-          pluginData.period,
+          pluginData.period!,
         );
 
       case "handleEmergencyAppointment":
         return await this.queueService.handleEmergencyAppointment(
-          pluginData.appointmentId,
-          pluginData.priority,
+          pluginData.appointmentId!,
+          pluginData.priority!,
           "clinic",
         );
 
@@ -81,10 +99,10 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
+  validate(data: unknown): Promise<boolean> {
+    const pluginData = data as PluginData;
     // Validate that required fields are present for each operation
-    const requiredFields = {
+    const requiredFields: Record<string, string[]> = {
       getDoctorQueue: ["doctorId", "date"],
       getPatientQueuePosition: ["appointmentId"],
       confirmAppointment: ["appointmentId"],
@@ -96,14 +114,16 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
     };
 
     const operation = pluginData.operation;
-    const fields = (requiredFields as any)[operation];
+    const fields = requiredFields[operation];
 
     if (!fields) {
       this.logPluginError("Invalid operation", { operation });
-      return false;
+      return Promise.resolve(false);
     }
 
-    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
+    const isValid = fields.every(
+      (field: string) => pluginData[field as keyof PluginData] !== undefined,
+    );
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,
@@ -111,6 +131,6 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
       });
     }
 
-    return isValid;
+    return Promise.resolve(isValid);
   }
 }

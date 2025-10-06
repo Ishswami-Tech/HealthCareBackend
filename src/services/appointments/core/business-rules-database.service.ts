@@ -58,13 +58,13 @@ export class BusinessRulesDatabaseService {
       });
 
       return rule as BusinessRuleEntity;
-    } catch (_error) {
+    } catch (error) {
       this.logger.error(`Failed to create business rule`, {
         ruleName: ruleData.name,
         clinicId: ruleData.clinicId,
-        _error: _error instanceof Error ? _error.message : String(_error),
+        error: error instanceof Error ? error.message : String(error),
       });
-      throw _error;
+      throw error;
     }
   }
 
@@ -93,12 +93,12 @@ export class BusinessRulesDatabaseService {
 
       await this.cacheService.set(cacheKey, rules, this.RULES_CACHE_TTL);
       return rules as BusinessRuleEntity[];
-    } catch (_error) {
+    } catch (error) {
       this.logger.error(`Failed to get clinic rules`, {
         clinicId,
-        _error: _error instanceof Error ? _error.message : String(_error),
+        error: error instanceof Error ? error.message : String(error),
       });
-      throw _error;
+      throw error;
     }
   }
 
@@ -134,12 +134,12 @@ export class BusinessRulesDatabaseService {
       });
 
       return rule as BusinessRuleEntity;
-    } catch (_error) {
+    } catch (error) {
       this.logger.error(`Failed to update business rule`, {
         ruleId,
-        _error: _error instanceof Error ? _error.message : String(_error),
+        error: error instanceof Error ? error.message : String(error),
       });
-      throw _error;
+      throw error;
     }
   }
 
@@ -161,10 +161,10 @@ export class BusinessRulesDatabaseService {
 
       this.logger.log(`Deleted business rule ${ruleId}`);
       return true;
-    } catch (_error) {
+    } catch (error) {
       this.logger.error(`Failed to delete business rule`, {
         ruleId,
-        _error: _error instanceof Error ? _error.message : String(_error),
+        error: error instanceof Error ? error.message : String(error),
       });
       return false;
     }
@@ -191,10 +191,10 @@ export class BusinessRulesDatabaseService {
       }
 
       return rule as BusinessRuleEntity | null;
-    } catch (_error) {
+    } catch (error) {
       this.logger.error(`Failed to get business rule`, {
         ruleId,
-        _error: _error instanceof Error ? _error.message : String(_error),
+        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }
@@ -255,11 +255,11 @@ export class BusinessRulesDatabaseService {
       }
 
       this.logger.log("Initialized default business rules");
-    } catch (_error) {
+    } catch (error) {
       this.logger.error("Failed to initialize default business rules", {
-        _error: _error instanceof Error ? _error.message : String(_error),
+        error: error instanceof Error ? error.message : String(error),
       });
-      throw _error;
+      throw error;
     }
   }
 

@@ -76,9 +76,9 @@ export class HealthService {
       this.checkDatabaseHealth(),
       this.checkRedisHealth(),
       this.checkQueueHealth(),
-      this.checkLoggerHealth(),
+      Promise.resolve(this.checkLoggerHealth()),
       this.checkSocketHealth(),
-      this.checkEmailHealth(),
+      Promise.resolve(this.checkEmailHealth()),
     ]).then((results) =>
       results.map((result) =>
         result.status === "fulfilled"
@@ -179,7 +179,7 @@ export class HealthService {
         platform: process.platform,
         versions: Object.fromEntries(
           Object.entries(process.versions).filter(
-            ([_, value]) => value !== undefined,
+            ([, value]) => value !== undefined,
           ),
         ) as Record<string, string>,
       },
@@ -239,7 +239,8 @@ export class HealthService {
 
     try {
       // Use a simple raw query that doesn't involve the middleware
-      await (this.prisma as any).$queryRaw`SELECT 1`;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      await this.prisma.$queryRaw`SELECT 1`;
 
       this.databaseStatus = "healthy";
       this.lastDatabaseCheck = now;
@@ -289,11 +290,13 @@ export class HealthService {
 
   private async getRedisMetrics() {
     try {
-      const info = (await this.cacheService.getCacheDebug()) as any;
+      const info = await this.cacheService.getCacheDebug();
       return {
         connectedClients: 1,
-        usedMemory: info?.info?.memoryInfo?.usedMemory || 0,
-        totalKeys: info?.info?.dbSize || 0,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        usedMemory: (info as any)?.info?.memoryInfo?.usedMemory || 0,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        totalKeys: (info as any)?.info?.dbSize || 0,
         lastSave: new Date().toISOString(),
       };
     } catch (_error) {
@@ -323,7 +326,7 @@ export class HealthService {
       const stats = (await this.queueService.getLocationQueueStats(
         "system",
         "clinic",
-      )) as any;
+      )) as { waiting?: number; active?: number };
       const isHealthy =
         stats?.waiting !== undefined && stats?.active !== undefined;
 
@@ -346,7 +349,7 @@ export class HealthService {
     }
   }
 
-  private async checkLoggerHealth(): Promise<ServiceHealth> {
+  private checkLoggerHealth(): ServiceHealth {
     const startTime = performance.now();
     try {
       // Check if logger service is available by testing if it can log
@@ -356,8 +359,6 @@ export class HealthService {
         typeof this.loggingService.log === "function"
       ) {
         // Test logging capability without actually logging to avoid noise
-        const isHealthy = true;
-
         return {
           status: "healthy",
           details: "Logging service is available and functional",
@@ -420,7 +421,7 @@ export class HealthService {
     }
   }
 
-  private async checkEmailHealth(): Promise<ServiceHealth> {
+  private checkEmailHealth(): ServiceHealth {
     const startTime = performance.now();
     try {
       const isHealthy = this.emailService.isHealthy();

@@ -41,11 +41,13 @@ export interface DateRangeParams {
  * Add date range filter to where clause
  * DRY principle - centralize date range logic
  */
-export function addDateRangeFilter<T extends { createdAt?: { gte?: Date; lte?: Date } }>(
+export function addDateRangeFilter<
+  T extends { createdAt?: { gte?: Date; lte?: Date } },
+>(
   where: T,
   dateFrom?: Date | string,
   dateTo?: Date | string,
-  fieldName: 'createdAt' | 'updatedAt' | 'recordedAt' | 'date' = 'createdAt'
+  fieldName: "createdAt" | "updatedAt" | "recordedAt" | "date" = "createdAt",
 ): T {
   const hasDateFilter = dateFrom || dateTo;
 
@@ -54,8 +56,14 @@ export function addDateRangeFilter<T extends { createdAt?: { gte?: Date; lte?: D
   }
 
   // Convert string dates to Date objects
-  const fromDate = dateFrom instanceof Date ? dateFrom : dateFrom ? new Date(dateFrom) : undefined;
-  const toDate = dateTo instanceof Date ? dateTo : dateTo ? new Date(dateTo) : undefined;
+  const fromDate =
+    dateFrom instanceof Date
+      ? dateFrom
+      : dateFrom
+        ? new Date(dateFrom)
+        : undefined;
+  const toDate =
+    dateTo instanceof Date ? dateTo : dateTo ? new Date(dateTo) : undefined;
 
   // Add date range to where clause
   (where as any)[fieldName] = {};
@@ -96,7 +104,7 @@ export function calculatePagination(params: PaginationParams): {
 export function buildPaginationMeta(
   total: number,
   page: number,
-  limit: number
+  limit: number,
 ): {
   total: number;
   page: number;
@@ -124,7 +132,7 @@ export function buildPaginationMeta(
 export function addStringFilter<T>(
   where: T,
   fieldName: string,
-  searchTerm?: string
+  searchTerm?: string,
 ): T {
   if (!searchTerm) {
     return where;
@@ -132,7 +140,7 @@ export function addStringFilter<T>(
 
   (where as any)[fieldName] = {
     contains: searchTerm,
-    mode: 'insensitive',
+    mode: "insensitive",
   };
 
   return where;
@@ -143,8 +151,8 @@ export function addStringFilter<T>(
  */
 export function buildOrderBy(
   sortBy?: string,
-  sortOrder: 'asc' | 'desc' = 'desc'
-): Record<string, 'asc' | 'desc'> | undefined {
+  sortOrder: "asc" | "desc" = "desc",
+): Record<string, "asc" | "desc"> | undefined {
   if (!sortBy) {
     return undefined;
   }
@@ -164,9 +172,9 @@ export function parseSearchTerms(terms?: string): string[] | undefined {
   }
 
   return terms
-    .split(',')
-    .map(t => t.trim())
-    .filter(t => t.length > 0);
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
 }
 
 /**

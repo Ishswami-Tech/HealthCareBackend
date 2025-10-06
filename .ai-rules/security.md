@@ -3,206 +3,190 @@
 ## 🛡️ Authentication & Authorization
 
 ### **JWT Authentication Implementation**
+
+**Current Implementation**: The system uses `JwtAuthGuard` with Redis-backed session management and progressive lockout protection.
+
+**Location**: `src/libs/core/guards/jwt-auth.guard.ts`
+
 ```typescript
 @Injectable()
-export class AuthService {
-  constructor(
-    private readonly jwtService: JwtService,
-    private readonly userService: UserService,
-    private readonly configService: ConfigService
-  ) {}
+export class JwtAuthGuard implements CanActivate {
+  // Progressive lockout intervals in minutes
+  private readonly LOCKOUT_INTERVALS = [10, 25, 45, 60, 360]; // 10m -> 6h
+  private readonly MAX_ATTEMPTS = 10;
+  private readonly MAX_CONCURRENT_SESSIONS = 5;
 
-  async login(credentials: LoginDto): Promise<AuthResponse> {
-    // Validate user credentials
-    const user = await this.validateUser(credentials.email, credentials.password);
-    
-    if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
+
+    // 1. Check if route is public
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(), context.getClass()
+    ]);
+    if (isPublic) return true;
+
+    // 2. Extract and verify JWT token (supports dual verification)
+    const token = this.extractTokenFromHeader(request);
+    const payload = await this.verifyToken(token); // Tries basic JWT + enhanced JWT
+
+    // 3. Check token blacklist in Redis
+    if (payload.jti) {
+      const isBlacklisted = await this.redisService.get(`jwt:blacklist:${payload.jti}`);
+      if (isBlacklisted) throw new UnauthorizedException('Token has been revoked');
     }
 
-    // Generate tokens
-    const payload = { 
-      sub: user.id, 
-      email: user.email, 
-      roles: user.roles,
-      clinicId: user.clinicId 
-    };
-    
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: '15m' // Short-lived access token
-    });
-    
-    const refreshToken = this.jwtService.sign(payload, {
-      expiresIn: '7d', // Longer-lived refresh token
-      secret: this.configService.get('JWT_REFRESH_SECRET')
-    });
+    // 4. Validate session in Redis
+    const sessionData = await this.validateSession(payload.sub, request);
 
-    // Store refresh token (hashed)
-    await this.storeRefreshToken(user.id, refreshToken);
+    // 5. Check concurrent sessions limit
+    await this.checkConcurrentSessions(payload.sub);
 
-    return {
-      accessToken,
-      refreshToken,
-      user: this.sanitizeUser(user)
-    };
-  }
+    // 6. Update session activity
+    await this.updateSessionData(payload.sub, sessionData, request);
 
-  private async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.userService.findByEmail(email);
-    
-    if (user && await bcrypt.compare(password, user.password)) {
-      return user;
-    }
-    
-    return null;
-  }
-
-  private sanitizeUser(user: User): SafeUser {
-    const { password, refreshToken, ...safeUser } = user;
-    return safeUser;
+    request.user = payload;
+    return true;
   }
 }
 ```
+
+**Key Features**:
+- **Dual JWT Verification**: Uses both `JwtService` and `JwtAuthService.verifyEnhancedToken()` for compatibility
+- **Token Blacklist**: Redis-based revoked token tracking (`jwt:blacklist:{jti}`)
+- **Session Validation**: Redis-backed session with device fingerprinting (`session:{userId}:{sessionId}`)
+- **Progressive Lockout**: 10m → 25m → 45m → 1h → 6h based on failed attempts
+- **Concurrent Session Limit**: Maximum 5 active sessions per user
+- **Security Event Tracking**: 30-day retention of auth failures in Redis (`security:events:{identifier}`)
 
 ### **Role-Based Access Control (RBAC)**
-```typescript
-// Role definitions (Healthcare-specific)
-export enum UserRole {
-  SUPER_ADMIN = 'SUPER_ADMIN',
-  CLINIC_ADMIN = 'CLINIC_ADMIN',
-  DOCTOR = 'DOCTOR',
-  NURSE = 'NURSE',
-  PATIENT = 'PATIENT',
-  RECEPTIONIST = 'RECEPTIONIST',
-  PHARMACIST = 'PHARMACIST',
-  LAB_TECHNICIAN = 'LAB_TECHNICIAN',
-  BILLING_STAFF = 'BILLING_STAFF',
-  ACCOUNTANT = 'ACCOUNTANT',
-  AYURVEDA_PRACTITIONER = 'AYURVEDA_PRACTITIONER',
-  THERAPIST = 'THERAPIST'
-}
 
-// Permission definitions
-export enum Permission {
-  // User management
-  CREATE_USER = 'CREATE_USER',
-  READ_USER = 'READ_USER',
-  UPDATE_USER = 'UPDATE_USER',
-  DELETE_USER = 'DELETE_USER',
-  
-  // Medical records
-  CREATE_MEDICAL_RECORD = 'CREATE_MEDICAL_RECORD',
-  READ_MEDICAL_RECORD = 'READ_MEDICAL_RECORD',
-  UPDATE_MEDICAL_RECORD = 'UPDATE_MEDICAL_RECORD',
-  
-  // Appointments
-  CREATE_APPOINTMENT = 'CREATE_APPOINTMENT',
-  READ_APPOINTMENT = 'READ_APPOINTMENT',
-  UPDATE_APPOINTMENT = 'UPDATE_APPOINTMENT',
-  CANCEL_APPOINTMENT = 'CANCEL_APPOINTMENT'
-}
+**Current Implementation**: The system uses `RolesGuard` with healthcare-specific roles from Prisma schema.
 
-// Role-permission mapping
-export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
-  [UserRole.SUPER_ADMIN]: Object.values(Permission),
-  [UserRole.ADMIN]: [
-    Permission.CREATE_USER,
-    Permission.READ_USER,
-    Permission.UPDATE_USER,
-    Permission.READ_MEDICAL_RECORD,
-    Permission.CREATE_APPOINTMENT,
-    Permission.READ_APPOINTMENT,
-    Permission.UPDATE_APPOINTMENT
-  ],
-  [UserRole.DOCTOR]: [
-    Permission.READ_USER,
-    Permission.CREATE_MEDICAL_RECORD,
-    Permission.READ_MEDICAL_RECORD,
-    Permission.UPDATE_MEDICAL_RECORD,
-    Permission.READ_APPOINTMENT,
-    Permission.UPDATE_APPOINTMENT
-  ],
-  [UserRole.NURSE]: [
-    Permission.READ_USER,
-    Permission.READ_MEDICAL_RECORD,
-    Permission.READ_APPOINTMENT,
-    Permission.UPDATE_APPOINTMENT
-  ],
-  [UserRole.PATIENT]: [
-    Permission.READ_APPOINTMENT
-  ],
-  [UserRole.RECEPTIONIST]: [
-    Permission.CREATE_APPOINTMENT,
-    Permission.READ_APPOINTMENT,
-    Permission.UPDATE_APPOINTMENT,
-    Permission.CANCEL_APPOINTMENT
-  ]
-};
-```
+**Location**: `src/libs/core/guards/roles.guard.ts`
 
-### **Permission Guard Implementation**
 ```typescript
 @Injectable()
-export class PermissionGuard implements CanActivate {
+export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredPermissions = this.reflector.getAllAndOverride<Permission[]>('permissions', [
+    // Get required roles from @Roles() decorator
+    const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
 
-    if (!requiredPermissions) {
-      return true;
+    if (!requiredRoles) {
+      return true; // No role requirement
     }
 
-    const { user } = context.switchToHttp().getRequest();
-    
-    if (!user) {
-      return false;
-    }
+    const request = context.switchToHttp().getRequest();
+    const { user } = request;
 
-    const userPermissions = this.getUserPermissions(user.roles);
-    
-    return requiredPermissions.every(permission => 
-      userPermissions.includes(permission)
-    );
-  }
-
-  private getUserPermissions(roles: UserRole[]): Permission[] {
-    const permissions = new Set<Permission>();
-    
-    roles.forEach(role => {
-      ROLE_PERMISSIONS[role]?.forEach(permission => {
-        permissions.add(permission);
-      });
-    });
-    
-    return Array.from(permissions);
-  }
-}
-
-// Permission decorator
-export const RequirePermissions = (...permissions: Permission[]) => 
-  SetMetadata('permissions', permissions);
-
-// Usage in controllers
-@Controller('medical-records')
-@UseGuards(JwtAuthGuard, PermissionGuard)
-export class MedicalRecordsController {
-  @Post()
-  @RequirePermissions(Permission.CREATE_MEDICAL_RECORD)
-  async create(@Body() createDto: CreateMedicalRecordDto) {
-    // Only users with CREATE_MEDICAL_RECORD permission can access
-  }
-
-  @Get(':id')
-  @RequirePermissions(Permission.READ_MEDICAL_RECORD)
-  async findOne(@Param('id') id: string) {
-    // Only users with READ_MEDICAL_RECORD permission can access
+    // Check if user has any of the required roles
+    return requiredRoles.some((role) => user?.role?.includes(role));
   }
 }
 ```
+
+**Prisma Role Enum** (from `schema.prisma`):
+```prisma
+enum Role {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+  DOCTOR
+  PATIENT
+  RECEPTIONIST
+  PHARMACIST
+  THERAPIST
+  LAB_TECHNICIAN
+  FINANCE_BILLING
+  SUPPORT_STAFF
+  NURSE
+  COUNSELOR
+}
+```
+
+**Usage Pattern**:
+```typescript
+// Decorator in src/libs/core/decorators/roles.decorator.ts
+export const ROLES_KEY = 'roles';
+export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+
+// Controller example
+@Controller('appointments')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class AppointmentsController {
+  @Post()
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  async create(@Body() createDto: CreateAppointmentDto) {
+    // Only doctors and receptionists can create appointments
+  }
+
+  @Get()
+  @Roles(Role.DOCTOR, Role.PATIENT, Role.RECEPTIONIST)
+  async findAll() {
+    // Multiple roles can access this endpoint
+  }
+}
+```
+
+### **Clinic Isolation Guard**
+
+**Location**: `src/libs/core/guards/clinic.guard.ts`
+
+Ensures multi-tenant data isolation by validating clinic access:
+
+```typescript
+@Injectable()
+export class ClinicGuard implements CanActivate {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
+
+    // 1. Determine if route requires clinic isolation
+    const isClinicRoute = this.isClinicRoute(context);
+    if (!isClinicRoute) return true;
+
+    // 2. Extract clinic ID from multiple sources (priority order)
+    const clinicId = this.extractClinicId(request); // Headers → Query → JWT → Params → Body
+    if (!clinicId) {
+      throw new ForbiddenException('Clinic ID is required');
+    }
+
+    // 3. Validate clinic access using ClinicIsolationService
+    const clinicResult = await this.clinicIsolationService.validateClinicAccess(
+      request.user?.sub || request.user?.id,
+      clinicId
+    );
+
+    if (!clinicResult.success) {
+      throw new ForbiddenException(`Clinic access denied: ${clinicResult.error}`);
+    }
+
+    // 4. Set clinic context for downstream use
+    request.clinicId = clinicId;
+    request.clinicContext = clinicResult.clinicContext;
+
+    return true;
+  }
+
+  private isClinicRoute(context: ExecutionContext): boolean {
+    // Check patterns: /appointments/, /clinics/, /doctors/, /patients/, /queue/
+    const clinicRoutePatterns = [
+      /\/appointments\//, /\/clinics\//, /\/doctors\//,
+      /\/locations\//, /\/patients\//, /\/queue\//, /\/prescriptions\//
+    ];
+    return clinicRoutePatterns.some(pattern => pattern.test(request.url));
+  }
+}
+```
+
+**Clinic ID Extraction Priority**:
+1. `x-clinic-id` or `clinic-id` headers
+2. `clinicId` or `clinic_id` query parameters
+3. `clinicId` from JWT token payload
+4. `clinicId` from route parameters
+5. `clinicId` from request body
 
 ## 🔐 Input Validation & Sanitization
 
@@ -360,316 +344,550 @@ export class MedicalRecordService {
 ## 🛡️ Security Middleware & Headers
 
 ### **Security Headers Configuration**
+
+**Current Implementation**: Fastify Helmet with CSP, CORS, and production optimizations.
+
+**Location**: `src/main.ts` (lines 796-840)
+
 ```typescript
-// In main.ts
-import helmet from '@fastify/helmet';
+// Security Headers (Helmet)
+await app.register(fastifyHelmet, {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'", "'unsafe-inline'", "'unsafe-eval'",
+        "https://accounts.google.com",
+        "https://apis.google.com",
+        "https://www.googleapis.com"
+      ],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      connectSrc: [
+        "'self'",
+        "http://localhost:3000",
+        "https://ishswami.in",
+        "https://api.ishswami.in",
+        "wss://api.ishswami.in",
+        "https://accounts.google.com"
+      ],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      frameSrc: ["'self'", "https://accounts.google.com"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'", "https://accounts.google.com", "http://localhost:3000"],
+      frameAncestors: ["'none'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+});
 
-async function bootstrap() {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter()
-  );
-
-  // Security headers
-  await app.register(helmet, {
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'self'"],
-        imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'"],
-        fontSrc: ["'self'"],
-        objectSrc: ["'none'"],
-        mediaSrc: ["'self'"],
-        frameSrc: ["'none'"],
-      },
-    },
-    crossOriginEmbedderPolicy: false,
-  });
-
-  // CORS configuration
-  app.enableCors({
-    origin: process.env.NODE_ENV === 'production' 
-      ? ['https://yourdomain.com'] 
-      : ['http://localhost:4000'],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Clinic-ID']
-  });
-
-  await app.listen(8088, '0.0.0.0');
-}
+// CORS Configuration
+app.enableCors({
+  origin: process.env.NODE_ENV === 'production'
+    ? [
+        "https://ishswami.in",
+        "https://www.ishswami.in",
+        /\.ishswami\.in$/,
+        "http://localhost:3000", // Allow local dev frontend
+        "https://accounts.google.com"
+      ]
+    : [
+        "http://localhost:3000",
+        "http://localhost:8088",
+        "http://localhost:5050",
+        "https://accounts.google.com"
+      ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  credentials: true,
+  allowedHeaders: [
+    'Content-Type', 'Authorization', 'X-Session-ID', 'X-Clinic-ID',
+    'Origin', 'Accept', 'X-Requested-With',
+    'Access-Control-Request-Method', 'Access-Control-Request-Headers',
+    'X-Client-Data', 'Sec-Fetch-Site', 'Sec-Fetch-Mode', 'Sec-Fetch-Dest'
+  ],
+  exposedHeaders: ['Set-Cookie', 'Authorization'],
+  maxAge: 86400 // 24 hours
+});
 ```
 
 ### **Rate Limiting**
+
+**Current Implementation**: Redis-based rate limiting with sliding window algorithm.
+
+**Location**: `src/libs/utils/rate-limit/rate-limit.service.ts`
+
 ```typescript
 @Injectable()
-export class RateLimitGuard implements CanActivate {
-  private readonly requests = new Map<string, number[]>();
-  private readonly windowMs = 15 * 60 * 1000; // 15 minutes
-  private readonly maxRequests = 100; // Max requests per window
-
-  canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest();
-    const key = this.getKey(request);
-    
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
-    
-    // Get existing requests for this key
-    const requests = this.requests.get(key) || [];
-    
-    // Filter out old requests
-    const recentRequests = requests.filter(time => time > windowStart);
-    
-    // Check if limit exceeded
-    if (recentRequests.length >= this.maxRequests) {
-      throw new TooManyRequestsException('Rate limit exceeded');
+export class RateLimitService {
+  async isRateLimited(
+    identifier: string,
+    type: string = 'api'
+  ): Promise<{ limited: boolean; remaining: number }> {
+    // Skip in development mode
+    if (this.cacheService.isDevelopmentMode) {
+      return { limited: false, remaining: Number.MAX_SAFE_INTEGER };
     }
-    
-    // Add current request
-    recentRequests.push(now);
-    this.requests.set(key, recentRequests);
-    
-    return true;
+
+    const { maxRequests, windowMs } = this.config.getLimits(type);
+    const key = `ratelimit:${type}:${identifier}`;
+    const now = Date.now();
+    const windowStart = now - windowMs;
+
+    try {
+      // 1. Remove old entries outside the current window (Redis Sorted Set)
+      await this.cacheService.zremrangebyscore(key, 0, windowStart);
+
+      // 2. Add current request with timestamp as score
+      await this.cacheService.zadd(key, now, `${now}`);
+
+      // 3. Get current count in window
+      const requestCount = await this.cacheService.zcard(key);
+
+      // 4. Set expiry on the key
+      await this.cacheService.expire(key, Math.ceil(windowMs / 1000));
+
+      // 5. Track metrics for monitoring
+      await this.trackMetrics(type, requestCount > maxRequests);
+
+      return {
+        limited: requestCount > maxRequests,
+        remaining: Math.max(0, maxRequests - requestCount)
+      };
+    } catch (error) {
+      // Fail open in case of Redis errors
+      return { limited: false, remaining: maxRequests };
+    }
   }
 
-  private getKey(request: any): string {
-    // Use IP + user ID for authenticated requests
-    const ip = request.ip || request.connection.remoteAddress;
-    const userId = request.user?.id;
-    
-    return userId ? `${ip}:${userId}` : ip;
+  // Get rate limit metrics for last N minutes
+  async getRateLimitMetrics(type: string, minutes: number = 5): Promise<{
+    total: number;
+    limited: number;
+    limitedPercentage: number;
+  }> {
+    // Implementation details in file...
   }
 }
+```
+
+**Fastify Rate Limiting** (configured in `main.ts`):
+```typescript
+await app.register(fastifyRateLimit, {
+  max: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10),
+  timeWindow: process.env.RATE_LIMIT_WINDOW || '1 minute',
+  redis: {
+    host: configService.get('REDIS_HOST'),
+    port: configService.get('REDIS_PORT'),
+    password: configService.get('REDIS_PASSWORD')
+  },
+  keyGenerator: (request) => {
+    return `${request.ip}:${request.headers?.['user-agent'] || 'unknown'}`;
+  },
+  addHeaders: {
+    'x-ratelimit-limit': true,
+    'x-ratelimit-remaining': true,
+    'x-ratelimit-reset': true,
+    'retry-after': true
+  }
+});
 ```
 
 ## 🔐 Session Management
 
+**Current Implementation**: Enterprise-grade Redis-based session management with distributed partitioning for 1M+ users.
+
+**Location**: `src/libs/core/session/session-management.service.ts`
+
 ### **Session Service Implementation**
 ```typescript
 @Injectable()
-export class SessionService {
-  constructor(
-    private readonly redis: RedisService,
-    private readonly logger: LoggingService
-  ) {}
+export class SessionManagementService implements OnModuleInit {
+  private readonly SESSION_PREFIX = 'session:';
+  private readonly USER_SESSIONS_PREFIX = 'user_sessions:';
+  private readonly BLACKLIST_PREFIX = 'blacklist:';
 
-  async createSession(userId: string, sessionData: SessionData): Promise<string> {
-    const sessionId = uuidv4();
-    const sessionKey = `session:${userId}:${sessionId}`;
+  private config: SessionConfig = {
+    maxSessionsPerUser: 5,
+    sessionTimeout: 24 * 60 * 60, // 24 hours
+    extendOnActivity: true,
+    distributed: true,
+    partitions: 16 // For horizontal scaling
+  };
 
-    await this.redis.set(
-      sessionKey,
-      JSON.stringify({
-        ...sessionData,
-        createdAt: new Date(),
-        lastActivity: new Date()
-      }),
-      7 * 24 * 60 * 60 // 7 days
-    );
+  /**
+   * Create new session with automatic partition assignment
+   */
+  async createSession(createSessionDto: CreateSessionDto): Promise<SessionData> {
+    const sessionId = this.generateSessionId(); // crypto.randomBytes(32)
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + this.config.sessionTimeout * 1000);
 
-    this.logger.info('Session created', { userId, sessionId });
-    return sessionId;
-  }
+    const sessionData: SessionData = {
+      sessionId,
+      userId: createSessionDto.userId,
+      clinicId: createSessionDto.clinicId,
+      userAgent: createSessionDto.userAgent,
+      ipAddress: createSessionDto.ipAddress,
+      deviceId: createSessionDto.deviceId,
+      loginTime: now,
+      lastActivity: now,
+      expiresAt,
+      isActive: true,
+      metadata: createSessionDto.metadata || {}
+    };
 
-  async getSession(userId: string, sessionId: string): Promise<SessionData | null> {
-    const sessionKey = `session:${userId}:${sessionId}`;
-    const data = await this.redis.get(sessionKey);
+    // 1. Enforce session limits (auto-cleanup oldest sessions)
+    await this.enforceSessionLimits(createSessionDto.userId);
 
-    if (!data) {
-      return null;
-    }
+    // 2. Store session with distributed partitioning
+    await this.storeSession(sessionData);
 
-    // Update last activity
-    const sessionData = JSON.parse(data);
-    sessionData.lastActivity = new Date();
-    await this.redis.set(sessionKey, JSON.stringify(sessionData), 7 * 24 * 60 * 60);
+    // 3. Add to user sessions index (Redis Set)
+    await this.addUserSession(createSessionDto.userId, sessionId);
+
+    // 4. Log security event
+    await this.logging.log(LogType.SECURITY, LogLevel.INFO, 'Session created', ...);
 
     return sessionData;
   }
 
-  async invalidateSession(userId: string, sessionId: string): Promise<void> {
-    const sessionKey = `session:${userId}:${sessionId}`;
-    await this.redis.del(sessionKey);
-    this.logger.info('Session invalidated', { userId, sessionId });
-  }
+  /**
+   * Get session with blacklist and expiry checks
+   */
+  async getSession(sessionId: string): Promise<SessionData | null> {
+    const sessionKey = this.getSessionKey(sessionId);
+    const sessionData = await this.redis.get<SessionData>(sessionKey);
 
-  async invalidateAllUserSessions(userId: string): Promise<void> {
-    const pattern = `session:${userId}:*`;
-    const keys = await this.redis.keys(pattern);
+    if (!sessionData) return null;
 
-    if (keys.length > 0) {
-      await Promise.all(keys.map(key => this.redis.del(key)));
-      this.logger.warn('All sessions invalidated for user', { userId, count: keys.length });
+    // Check expiry
+    if (new Date() > new Date(sessionData.expiresAt)) {
+      await this.invalidateSession(sessionId);
+      return null;
     }
+
+    // Check blacklist
+    if (await this.isSessionBlacklisted(sessionId)) {
+      return null;
+    }
+
+    return sessionData;
   }
 
-  async getUserActiveSessions(userId: string): Promise<SessionData[]> {
-    const pattern = `session:${userId}:*`;
-    const keys = await this.redis.keys(pattern);
+  /**
+   * Update session activity with auto-extension
+   */
+  async updateSessionActivity(sessionId: string, metadata?: Record<string, unknown>): Promise<boolean> {
+    const session = await this.getSession(sessionId);
+    if (!session) return false;
 
-    const sessions = await Promise.all(
-      keys.map(async key => {
-        const data = await this.redis.get(key);
-        return data ? JSON.parse(data) : null;
-      })
-    );
+    const now = new Date();
+    session.lastActivity = now;
 
-    return sessions.filter(s => s !== null);
+    // Extend session if configured
+    if (this.config.extendOnActivity) {
+      session.expiresAt = new Date(now.getTime() + this.config.sessionTimeout * 1000);
+    }
+
+    if (metadata) {
+      session.metadata = { ...session.metadata, ...metadata };
+    }
+
+    await this.storeSession(session);
+    return true;
   }
-}
 
-interface SessionData {
-  userId: string;
-  deviceId?: string;
-  deviceType?: string;
-  ipAddress: string;
-  userAgent: string;
-  clinicId?: string;
-  createdAt: Date;
-  lastActivity: Date;
+  /**
+   * Revoke all user sessions except current
+   */
+  async revokeAllUserSessions(userId: string, exceptSessionId?: string): Promise<number> {
+    const sessions = await this.getUserSessions(userId);
+    let revokedCount = 0;
+
+    for (const session of sessions) {
+      if (exceptSessionId && session.sessionId === exceptSessionId) {
+        continue;
+      }
+      if (await this.invalidateSession(session.sessionId)) {
+        revokedCount++;
+      }
+    }
+
+    return revokedCount;
+  }
+
+  /**
+   * Detect suspicious sessions (auto-runs every 30 minutes)
+   */
+  async detectSuspiciousSessions(): Promise<{
+    suspicious: SessionData[];
+    reasons: Record<string, string[]>;
+  }> {
+    // Checks:
+    // 1. Multiple concurrent sessions from different IPs (> 3)
+    // 2. Unusual user agent patterns (bots, crawlers)
+    // 3. Long inactive sessions (> 24 hours)
+    // 4. Rapid geographical location changes
+  }
+
+  /**
+   * Distributed partition key generation
+   */
+  private getSessionKey(sessionId: string): string {
+    if (this.config.distributed) {
+      const partition = this.getPartition(sessionId); // MD5 hash % partitions
+      return `${this.SESSION_PREFIX}${partition}:${sessionId}`;
+    }
+    return `${this.SESSION_PREFIX}${sessionId}`;
+  }
+
+  /**
+   * Auto-cleanup jobs (runs every hour)
+   */
+  private setupCleanupJobs(): void {
+    // Cleanup expired sessions every hour
+    setInterval(async () => {
+      await this.cleanupExpiredSessions();
+    }, 60 * 60 * 1000);
+
+    // Check for suspicious sessions every 30 minutes
+    setInterval(async () => {
+      const { suspicious } = await this.detectSuspiciousSessions();
+      if (suspicious.length > 0) {
+        this.logger.warn(`Detected ${suspicious.length} suspicious sessions`);
+      }
+    }, 30 * 60 * 1000);
+  }
 }
 ```
+
+**Key Features**:
+- **Distributed Partitioning**: 16 partitions using MD5 hash for horizontal scaling
+- **Session Limits**: Maximum 5 sessions per user (auto-cleanup oldest)
+- **Blacklist System**: Redis-based session blacklisting on invalidation
+- **Auto-Cleanup**: Hourly expired session cleanup + suspicious session detection
+- **Activity Extension**: Auto-extends sessions on activity (configurable)
+- **Security Monitoring**: 10-minute statistics logging, suspicious session detection
+- **Clinic Isolation**: Multi-tenant session support with clinic context
 
 ## 🔍 Audit Logging
 
-### **Audit Trail Implementation**
+**Current Implementation**: Uses enterprise `LoggingService` with structured logging instead of separate audit tables.
+
+**Location**: `src/libs/infrastructure/logging/logging.service.ts`
+
+**Prisma Schema**: AuditLog model exists in schema for compliance tracking:
+```prisma
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String
+  resource    String
+  resourceId  String?
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  clinicId    String?
+  timestamp   DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([clinicId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+```
+
+**Actual Implementation** - Uses `LoggingService`:
+```typescript
+// Security logging in JwtAuthGuard
+await this.trackSecurityEvent(identifier, 'AUTHENTICATION_FAILURE', {
+  error: error.message,
+  path: request.raw?.url || '',
+  method: request.method
+});
+
+private async trackSecurityEvent(
+  identifier: string,
+  eventType: string,
+  details: Record<string, unknown>
+): Promise<void> {
+  const timestamp = new Date().toISOString();
+  const event = {
+    timestamp,
+    eventType,
+    identifier,
+    details
+  };
+
+  // Store in Redis for fast access
+  await this.redisService.rPush(`security:events:${identifier}`, JSON.stringify(event));
+
+  // Trim old events (keep last 1000)
+  await this.redisService.lTrim(`security:events:${identifier}`, -1000, -1);
+
+  // Set expiry for events list (30 days)
+  await this.redisService.expire(`security:events:${identifier}`, 30 * 24 * 60 * 60);
+}
+
+// Security logging in SessionManagementService
+await this.logging.log(
+  LogType.SECURITY,
+  LogLevel.INFO,
+  'Session created',
+  'SessionManagementService',
+  {
+    sessionId,
+    userId: createSessionDto.userId,
+    clinicId: createSessionDto.clinicId,
+    ipAddress: createSessionDto.ipAddress,
+    userAgent: createSessionDto.userAgent
+  }
+);
+
+await this.logging.log(
+  LogType.SECURITY,
+  LogLevel.WARN,
+  'All user sessions revoked',
+  'SessionManagementService',
+  { userId, revokedCount, exceptSessionId }
+);
+```
+
+**LoggingService Features**:
+- **Structured Logging**: JSON-formatted logs with full context
+- **Log Types**: AUTH, SECURITY, SYSTEM, ERROR, DATABASE, CACHE, QUEUE
+- **Multiple Outputs**: Database + File + Console
+- **Automatic Context**: Request ID, user ID, clinic ID, IP address
+- **Search & Filter**: Database queries for compliance audits
+- **Retention**: Configurable retention periods
+
+## 🔌 WebSocket Security
+
+**Current Implementation**: JWT-based WebSocket authentication middleware.
+
+**Location**: `src/libs/communication/socket/socket-auth.middleware.ts`
+
 ```typescript
 @Injectable()
-export class AuditService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly logger: LoggingService
-  ) {}
+export class SocketAuthMiddleware {
+  constructor(private readonly jwtService: JwtService) {}
 
-  async logAction(action: AuditAction): Promise<void> {
+  /**
+   * Validate WebSocket connection with JWT token or session
+   */
+  async validateConnection(client: Socket): Promise<AuthenticatedUser> {
+    // 1. Try session-based auth first (if available)
+    const sessionUser = this.extractFromSession(client);
+    if (sessionUser) {
+      return sessionUser;
+    }
+
+    // 2. Fall back to JWT token auth
+    const token = this.extractToken(client);
+    if (!token) {
+      throw new Error('Authentication required - no token or session');
+    }
+
+    // 3. Verify JWT token
+    const payload = await this.jwtService.verifyAsync(token);
+
+    // 4. Extract user data from token
+    const user: AuthenticatedUser = {
+      userId: payload.sub || payload.userId || payload.id,
+      clinicId: payload.clinicId,
+      role: payload.role,
+      email: payload.email,
+      firstName: payload.firstName,
+      lastName: payload.lastName
+    };
+
+    if (!user.userId) {
+      throw new Error('Invalid token - missing user ID');
+    }
+
+    return user;
+  }
+
+  /**
+   * Extract JWT token from socket connection (multiple methods)
+   */
+  private extractToken(client: Socket): string | null {
+    // Priority order:
+    // 1. Auth object (socket.io v4 recommended way)
+    if (client.handshake.auth?.token) {
+      return client.handshake.auth.token;
+    }
+
+    // 2. Query parameters (fallback)
+    if (client.handshake.query?.token) {
+      return client.handshake.query.token as string;
+    }
+
+    // 3. Authorization header
+    const authHeader = client.handshake.headers.authorization;
+    if (authHeader) {
+      return authHeader.replace(/^Bearer\s+/i, '');
+    }
+
+    return null;
+  }
+
+  /**
+   * Validate token without throwing (for optional auth)
+   */
+  async validateOptional(client: Socket): Promise<AuthenticatedUser | null> {
     try {
-      await this.prisma.$client.auditLog.create({
-        data: {
-          userId: action.userId,
-          action: action.action,
-          resource: action.resource,
-          resourceId: action.resourceId,
-          details: action.details,
-          ipAddress: action.ipAddress,
-          userAgent: action.userAgent,
-          clinicId: action.clinicId,
-          timestamp: new Date()
-        }
-      });
-
-      this.logger.debug('Audit log created', {
-        userId: action.userId,
-        action: action.action,
-        resource: action.resource
-      });
+      return await this.validateConnection(client);
     } catch (error) {
-      this.logger.error('Failed to create audit log', {
-        error: error.message,
-        action
-      });
-      // Don't throw - audit logging should not break the main flow
+      return null; // Allow anonymous connection
     }
   }
-
-  async getAuditLogs(
-    filters: AuditLogFilters,
-    pagination: { page: number; limit: number }
-  ): Promise<PaginatedAuditLogs> {
-    const where: any = {};
-
-    if (filters.userId) where.userId = filters.userId;
-    if (filters.action) where.action = filters.action;
-    if (filters.resource) where.resource = filters.resource;
-    if (filters.clinicId) where.clinicId = filters.clinicId;
-    if (filters.startDate || filters.endDate) {
-      where.timestamp = {};
-      if (filters.startDate) where.timestamp.gte = filters.startDate;
-      if (filters.endDate) where.timestamp.lte = filters.endDate;
-    }
-
-    const skip = (pagination.page - 1) * pagination.limit;
-
-    const [logs, total] = await Promise.all([
-      this.prisma.$client.auditLog.findMany({
-        where,
-        skip,
-        take: pagination.limit,
-        orderBy: { timestamp: 'desc' },
-        include: {
-          user: {
-            select: {
-              name: true,
-              email: true
-            }
-          }
-        }
-      }),
-      this.prisma.$client.auditLog.count({ where })
-    ]);
-
-    return {
-      logs,
-      total,
-      page: pagination.page,
-      limit: pagination.limit,
-      totalPages: Math.ceil(total / pagination.limit)
-    };
-  }
-}
-
-interface AuditAction {
-  userId: string;
-  action: string;
-  resource: string;
-  resourceId?: string;
-  details?: any;
-  ipAddress?: string;
-  userAgent?: string;
-  clinicId?: string;
 }
 ```
 
-// Audit decorator
-export function Audit(action: string, resource: string) {
-  return function (target: any, propertyName: string, descriptor: PropertyDescriptor) {
-    const method = descriptor.value;
-    
-    descriptor.value = async function (...args: any[]) {
-      const result = await method.apply(this, args);
-      
-      // Log the action (implement context extraction)
-      await this.auditService.logAction({
-        userId: this.getCurrentUserId(),
-        action,
-        resource,
-        resourceId: result?.id,
-        details: { args: this.sanitizeArgs(args) },
-        ipAddress: this.getClientIp(),
-        userAgent: this.getUserAgent()
-      });
-      
-      return result;
-    };
-  };
-}
+**WebSocket Configuration** (`main.ts`):
+```typescript
+createIOServer(port: number, options?: Record<string, unknown>) {
+  const server = super.createIOServer(port, {
+    ...options,
+    cors: {
+      origin: process.env.NODE_ENV === 'production'
+        ? process.env.CORS_ORIGIN?.split(',') || ['https://ishswami.in']
+        : '*',
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      credentials: true,
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    },
+    path: '/socket.io',
+    transports: ['websocket', 'polling'],
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    connectTimeout: 45000,
+    maxHttpBufferSize: 1e6
+  });
 
-// Usage
-@Injectable()
-export class UserService {
-  @Audit('CREATE', 'USER')
-  async createUser(data: CreateUserDto): Promise<User> {
-    // Implementation
-  }
+  // Redis adapter for distributed WebSocket (horizontal scaling)
+  server.adapter(createAdapter(pubClient, subClient));
 
-  @Audit('UPDATE', 'USER')
-  async updateUser(id: string, data: UpdateUserDto): Promise<User> {
-    // Implementation
-  }
+  return server;
 }
 ```
+
+**Key Features**:
+- **Dual Authentication**: Session-based + JWT token support
+- **Multiple Token Sources**: Auth object, query params, authorization header
+- **Optional Auth**: Supports anonymous connections where needed
+- **Redis Adapter**: Distributed WebSocket across multiple instances
+- **CORS Protection**: Environment-specific origin validation
+- **Connection Timeout**: 45s timeout with 60s ping timeout
 
 ## 🚫 Security Anti-Patterns
 

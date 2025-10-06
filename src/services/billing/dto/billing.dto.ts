@@ -1,46 +1,55 @@
-import { IsString, IsNumber, IsOptional, IsEnum, IsBoolean, IsDateString, IsObject, Min } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsEnum,
+  IsBoolean,
+  IsDateString,
+  IsObject,
+  Min,
+} from "class-validator";
 
 export enum BillingInterval {
-  DAILY = 'DAILY',
-  WEEKLY = 'WEEKLY',
-  MONTHLY = 'MONTHLY',
-  QUARTERLY = 'QUARTERLY',
-  YEARLY = 'YEARLY',
+  DAILY = "DAILY",
+  WEEKLY = "WEEKLY",
+  MONTHLY = "MONTHLY",
+  QUARTERLY = "QUARTERLY",
+  YEARLY = "YEARLY",
 }
 
 export enum SubscriptionStatus {
-  ACTIVE = 'ACTIVE',
-  PAST_DUE = 'PAST_DUE',
-  CANCELLED = 'CANCELLED',
-  INCOMPLETE = 'INCOMPLETE',
-  INCOMPLETE_EXPIRED = 'INCOMPLETE_EXPIRED',
-  TRIALING = 'TRIALING',
-  PAUSED = 'PAUSED',
+  ACTIVE = "ACTIVE",
+  PAST_DUE = "PAST_DUE",
+  CANCELLED = "CANCELLED",
+  INCOMPLETE = "INCOMPLETE",
+  INCOMPLETE_EXPIRED = "INCOMPLETE_EXPIRED",
+  TRIALING = "TRIALING",
+  PAUSED = "PAUSED",
 }
 
 export enum InvoiceStatus {
-  DRAFT = 'DRAFT',
-  OPEN = 'OPEN',
-  PAID = 'PAID',
-  VOID = 'VOID',
-  UNCOLLECTIBLE = 'UNCOLLECTIBLE',
-  OVERDUE = 'OVERDUE',
+  DRAFT = "DRAFT",
+  OPEN = "OPEN",
+  PAID = "PAID",
+  VOID = "VOID",
+  UNCOLLECTIBLE = "UNCOLLECTIBLE",
+  OVERDUE = "OVERDUE",
 }
 
 export enum PaymentStatus {
-  PENDING = 'PENDING',
-  COMPLETED = 'COMPLETED',
-  FAILED = 'FAILED',
-  REFUNDED = 'REFUNDED',
+  PENDING = "PENDING",
+  COMPLETED = "COMPLETED",
+  FAILED = "FAILED",
+  REFUNDED = "REFUNDED",
 }
 
 export enum PaymentMethod {
-  CASH = 'CASH',
-  CARD = 'CARD',
-  UPI = 'UPI',
-  NET_BANKING = 'NET_BANKING',
-  WALLET = 'WALLET',
-  INSURANCE = 'INSURANCE',
+  CASH = "CASH",
+  CARD = "CARD",
+  UPI = "UPI",
+  NET_BANKING = "NET_BANKING",
+  WALLET = "WALLET",
+  INSURANCE = "INSURANCE",
 }
 
 // Billing Plan DTOs
@@ -58,7 +67,7 @@ export class CreateBillingPlanDto {
 
   @IsOptional()
   @IsString()
-  currency?: string = 'INR';
+  currency?: string = "INR";
 
   @IsEnum(BillingInterval)
   interval: BillingInterval;

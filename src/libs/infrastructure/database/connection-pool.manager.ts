@@ -118,7 +118,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async initializePool() {
+  private initializePool() {
     // Initialize connection pool configuration for Prisma
     const poolConfig = {
       min: this.configService.get<number>("DB_POOL_MIN", 20),
@@ -392,7 +392,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async closePool() {
+  private closePool() {
     // Connection pool will be handled by Prisma disconnect
     this.logger.log("Connection pool manager closed");
   }
@@ -406,7 +406,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     return { ...this.circuitBreaker };
   }
 
-  async resetCircuitBreaker() {
+  resetCircuitBreaker() {
     this.initializeCircuitBreaker();
     this.logger.log("Circuit breaker reset");
   }
@@ -583,7 +583,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     const healthcareConfig = this.configService.get("healthcare");
     const autoScaling = healthcareConfig?.database?.performance?.autoScaling;
 
-    if (!autoScaling?.enabled) return;
+    if (!autoScaling?.enabled) return Promise.resolve();
 
     const currentUtilization = this.metrics.connectionUtilization;
     const currentConnections = this.metrics.activeConnections;

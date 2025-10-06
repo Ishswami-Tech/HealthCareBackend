@@ -1,11 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../../libs/infrastructure/database/prisma/prisma.service';
-import { CacheService } from '../../libs/infrastructure/cache';
-import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
-import { EventService } from '../../libs/infrastructure/events/event.service';
-import { LogLevel, LogType } from '../../libs/infrastructure/logging/types/logging.types';
-import { addDateRangeFilter, addStringFilter, USER_SELECT_FIELDS } from '../../libs/utils/query';
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import { CacheService } from "../../libs/infrastructure/cache";
+import { LoggingService } from "../../libs/infrastructure/logging/logging.service";
+import { EventService } from "../../libs/infrastructure/events/event.service";
+import {
+  LogLevel,
+  LogType,
+} from "../../libs/infrastructure/logging/types/logging.types";
+import {
+  addDateRangeFilter,
+  addStringFilter,
+  USER_SELECT_FIELDS,
+} from "../../libs/utils/query";
 import {
   CreateMedicalHistoryDto,
   UpdateMedicalHistoryDto,
@@ -24,7 +30,7 @@ import {
   CreateImmunizationDto,
   UpdateImmunizationDto,
   HealthRecordSummaryDto,
-} from './dto/ehr.dto';
+} from "./dto/ehr.dto";
 
 @Injectable()
 export class EHRService {
@@ -37,7 +43,11 @@ export class EHRService {
 
   // ============ Comprehensive Health Record ============
 
-  async getComprehensiveHealthRecord(userId: string, clinicId?: string): Promise<HealthRecordSummaryDto> {
+  async getComprehensiveHealthRecord(
+    userId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _clinicId?: string,
+  ): Promise<HealthRecordSummaryDto> {
     const cacheKey = `ehr:comprehensive:${userId}`;
 
     return this.cacheService.cache(
@@ -55,24 +65,42 @@ export class EHRService {
           familyHistory,
           lifestyleAssessment,
         ] = await Promise.all([
-          this.prisma.medicalHistory.findMany({ where: { userId }, orderBy: { date: 'desc' } }),
-          this.prisma.labReport.findMany({ where: { userId }, orderBy: { date: 'desc' } }),
-          this.prisma.radiologyReport.findMany({ where: { userId }, orderBy: { date: 'desc' } }),
-          this.prisma.surgicalRecord.findMany({ where: { userId }, orderBy: { date: 'desc' } }),
-          this.prisma.vital.findMany({ where: { userId }, orderBy: { recordedAt: 'desc' } }),
-          this.prisma.allergy.findMany({ where: { userId }, orderBy: { diagnosedDate: 'desc' } }),
+          this.prisma.medicalHistory.findMany({
+            where: { userId },
+            orderBy: { date: "desc" },
+          }),
+          this.prisma.labReport.findMany({
+            where: { userId },
+            orderBy: { date: "desc" },
+          }),
+          this.prisma.radiologyReport.findMany({
+            where: { userId },
+            orderBy: { date: "desc" },
+          }),
+          this.prisma.surgicalRecord.findMany({
+            where: { userId },
+            orderBy: { date: "desc" },
+          }),
+          this.prisma.vital.findMany({
+            where: { userId },
+            orderBy: { recordedAt: "desc" },
+          }),
+          this.prisma.allergy.findMany({
+            where: { userId },
+            orderBy: { diagnosedDate: "desc" },
+          }),
           this.prisma.medication.findMany({
             where: { userId },
-            orderBy: { startDate: 'desc' },
+            orderBy: { startDate: "desc" },
           }),
           this.prisma.immunization.findMany({
             where: { userId },
-            orderBy: { dateAdministered: 'desc' },
+            orderBy: { dateAdministered: "desc" },
           }),
           this.prisma.familyHistory.findMany({ where: { userId } }),
           this.prisma.lifestyleAssessment.findFirst({
             where: { userId },
-            orderBy: { createdAt: 'desc' },
+            orderBy: { createdAt: "desc" },
           }),
         ]);
 
@@ -92,7 +120,7 @@ export class EHRService {
       {
         ttl: 1800,
         tags: [`ehr:${userId}`],
-        priority: 'high',
+        priority: "high",
         containsPHI: true,
       },
     );
@@ -104,7 +132,7 @@ export class EHRService {
 
   // ============ Medical History ============
 
-  async createMedicalHistory(data: CreateMedicalHistoryDto) {
+  async createMedicalHistory(data: CreateMedicalHistoryDto): Promise<unknown> {
     const record = await this.prisma.medicalHistory.create({
       data: {
         userId: data.userId,
@@ -118,12 +146,14 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Medical history record created',
-      'EHRService',
+      "Medical history record created",
+      "EHRService",
       { recordId: record.id, userId: data.userId, clinicId: data.clinicId },
     );
 
-    await this.eventService.emit('ehr.medical_history.created', { recordId: record.id });
+    await this.eventService.emit("ehr.medical_history.created", {
+      recordId: record.id,
+    });
     await this.invalidateUserEHRCache(data.userId);
     if (data.clinicId) {
       await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
@@ -132,7 +162,7 @@ export class EHRService {
     return record;
   }
 
-  async getMedicalHistory(userId: string, clinicId?: string) {
+  getMedicalHistory(userId: string, clinicId?: string) {
     const where: { userId: string; clinicId?: string } = { userId };
     if (clinicId) {
       where.clinicId = clinicId;
@@ -140,11 +170,14 @@ export class EHRService {
 
     return this.prisma.medicalHistory.findMany({
       where,
-      orderBy: { date: 'desc' },
+      orderBy: { date: "desc" },
     });
   }
 
-  async updateMedicalHistory(id: string, data: UpdateMedicalHistoryDto) {
+  async updateMedicalHistory(
+    id: string,
+    data: UpdateMedicalHistoryDto,
+  ): Promise<unknown> {
     const record = await this.prisma.medicalHistory.update({
       where: { id },
       data: {
@@ -153,24 +186,33 @@ export class EHRService {
       },
     });
 
-    await this.eventService.emit('ehr.medical_history.updated', { recordId: id });
+    await this.eventService.emit("ehr.medical_history.updated", {
+      recordId: id,
+    });
     await this.invalidateUserEHRCache(record.userId);
 
     return record;
   }
 
-  async deleteMedicalHistory(id: string) {
-    const record = await this.prisma.medicalHistory.findUnique({ where: { id } });
-    if (!record) throw new NotFoundException(`Medical history record with ID ${id} not found`);
+  async deleteMedicalHistory(id: string): Promise<void> {
+    const record = await this.prisma.medicalHistory.findUnique({
+      where: { id },
+    });
+    if (!record)
+      throw new NotFoundException(
+        `Medical history record with ID ${id} not found`,
+      );
 
     await this.prisma.medicalHistory.delete({ where: { id } });
-    await this.eventService.emit('ehr.medical_history.deleted', { recordId: id });
+    await this.eventService.emit("ehr.medical_history.deleted", {
+      recordId: id,
+    });
     await this.invalidateUserEHRCache(record.userId);
   }
 
   // ============ Lab Reports ============
 
-  async createLabReport(data: CreateLabReportDto) {
+  async createLabReport(data: CreateLabReportDto): Promise<unknown> {
     const report = await this.prisma.labReport.create({
       data: {
         userId: data.userId,
@@ -185,25 +227,30 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Lab report created',
-      'EHRService',
+      "Lab report created",
+      "EHRService",
       { reportId: report.id, userId: data.userId },
     );
 
-    await this.eventService.emit('ehr.lab_report.created', { reportId: report.id });
+    await this.eventService.emit("ehr.lab_report.created", {
+      reportId: report.id,
+    });
     await this.invalidateUserEHRCache(data.userId);
 
     return report;
   }
 
-  async getLabReports(userId: string) {
+  getLabReports(userId: string) {
     return this.prisma.labReport.findMany({
       where: { userId },
-      orderBy: { date: 'desc' },
+      orderBy: { date: "desc" },
     });
   }
 
-  async updateLabReport(id: string, data: UpdateLabReportDto) {
+  async updateLabReport(
+    id: string,
+    data: UpdateLabReportDto,
+  ): Promise<unknown> {
     const report = await this.prisma.labReport.update({
       where: { id },
       data: {
@@ -212,24 +259,27 @@ export class EHRService {
       },
     });
 
-    await this.eventService.emit('ehr.lab_report.updated', { reportId: id });
+    await this.eventService.emit("ehr.lab_report.updated", { reportId: id });
     await this.invalidateUserEHRCache(report.userId);
 
     return report;
   }
 
-  async deleteLabReport(id: string) {
+  async deleteLabReport(id: string): Promise<void> {
     const report = await this.prisma.labReport.findUnique({ where: { id } });
-    if (!report) throw new NotFoundException(`Lab report with ID ${id} not found`);
+    if (!report)
+      throw new NotFoundException(`Lab report with ID ${id} not found`);
 
     await this.prisma.labReport.delete({ where: { id } });
-    await this.eventService.emit('ehr.lab_report.deleted', { reportId: id });
+    await this.eventService.emit("ehr.lab_report.deleted", { reportId: id });
     await this.invalidateUserEHRCache(report.userId);
   }
 
   // ============ Radiology Reports ============
 
-  async createRadiologyReport(data: CreateRadiologyReportDto) {
+  async createRadiologyReport(
+    data: CreateRadiologyReportDto,
+  ): Promise<unknown> {
     const report = await this.prisma.radiologyReport.create({
       data: {
         userId: data.userId,
@@ -243,25 +293,30 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Radiology report created',
-      'EHRService',
+      "Radiology report created",
+      "EHRService",
       { reportId: report.id, userId: data.userId },
     );
 
-    await this.eventService.emit('ehr.radiology_report.created', { reportId: report.id });
+    await this.eventService.emit("ehr.radiology_report.created", {
+      reportId: report.id,
+    });
     await this.invalidateUserEHRCache(data.userId);
 
     return report;
   }
 
-  async getRadiologyReports(userId: string) {
+  getRadiologyReports(userId: string) {
     return this.prisma.radiologyReport.findMany({
       where: { userId },
-      orderBy: { date: 'desc' },
+      orderBy: { date: "desc" },
     });
   }
 
-  async updateRadiologyReport(id: string, data: UpdateRadiologyReportDto) {
+  async updateRadiologyReport(
+    id: string,
+    data: UpdateRadiologyReportDto,
+  ): Promise<unknown> {
     const report = await this.prisma.radiologyReport.update({
       where: { id },
       data: {
@@ -270,24 +325,31 @@ export class EHRService {
       },
     });
 
-    await this.eventService.emit('ehr.radiology_report.updated', { reportId: id });
+    await this.eventService.emit("ehr.radiology_report.updated", {
+      reportId: id,
+    });
     await this.invalidateUserEHRCache(report.userId);
 
     return report;
   }
 
-  async deleteRadiologyReport(id: string) {
-    const report = await this.prisma.radiologyReport.findUnique({ where: { id } });
-    if (!report) throw new NotFoundException(`Radiology report with ID ${id} not found`);
+  async deleteRadiologyReport(id: string): Promise<void> {
+    const report = await this.prisma.radiologyReport.findUnique({
+      where: { id },
+    });
+    if (!report)
+      throw new NotFoundException(`Radiology report with ID ${id} not found`);
 
     await this.prisma.radiologyReport.delete({ where: { id } });
-    await this.eventService.emit('ehr.radiology_report.deleted', { reportId: id });
+    await this.eventService.emit("ehr.radiology_report.deleted", {
+      reportId: id,
+    });
     await this.invalidateUserEHRCache(report.userId);
   }
 
   // ============ Surgical Records ============
 
-  async createSurgicalRecord(data: CreateSurgicalRecordDto) {
+  async createSurgicalRecord(data: CreateSurgicalRecordDto): Promise<unknown> {
     const record = await this.prisma.surgicalRecord.create({
       data: {
         userId: data.userId,
@@ -301,25 +363,30 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Surgical record created',
-      'EHRService',
+      "Surgical record created",
+      "EHRService",
       { recordId: record.id, userId: data.userId },
     );
 
-    await this.eventService.emit('ehr.surgical_record.created', { recordId: record.id });
+    await this.eventService.emit("ehr.surgical_record.created", {
+      recordId: record.id,
+    });
     await this.invalidateUserEHRCache(data.userId);
 
     return record;
   }
 
-  async getSurgicalRecords(userId: string) {
+  getSurgicalRecords(userId: string) {
     return this.prisma.surgicalRecord.findMany({
       where: { userId },
-      orderBy: { date: 'desc' },
+      orderBy: { date: "desc" },
     });
   }
 
-  async updateSurgicalRecord(id: string, data: UpdateSurgicalRecordDto) {
+  async updateSurgicalRecord(
+    id: string,
+    data: UpdateSurgicalRecordDto,
+  ): Promise<unknown> {
     const record = await this.prisma.surgicalRecord.update({
       where: { id },
       data: {
@@ -328,24 +395,31 @@ export class EHRService {
       },
     });
 
-    await this.eventService.emit('ehr.surgical_record.updated', { recordId: id });
+    await this.eventService.emit("ehr.surgical_record.updated", {
+      recordId: id,
+    });
     await this.invalidateUserEHRCache(record.userId);
 
     return record;
   }
 
-  async deleteSurgicalRecord(id: string) {
-    const record = await this.prisma.surgicalRecord.findUnique({ where: { id } });
-    if (!record) throw new NotFoundException(`Surgical record with ID ${id} not found`);
+  async deleteSurgicalRecord(id: string): Promise<void> {
+    const record = await this.prisma.surgicalRecord.findUnique({
+      where: { id },
+    });
+    if (!record)
+      throw new NotFoundException(`Surgical record with ID ${id} not found`);
 
     await this.prisma.surgicalRecord.delete({ where: { id } });
-    await this.eventService.emit('ehr.surgical_record.deleted', { recordId: id });
+    await this.eventService.emit("ehr.surgical_record.deleted", {
+      recordId: id,
+    });
     await this.invalidateUserEHRCache(record.userId);
   }
 
   // ============ Vitals ============
 
-  async createVital(data: CreateVitalDto) {
+  async createVital(data: CreateVitalDto): Promise<unknown> {
     const vital = await this.prisma.vital.create({
       data: {
         userId: data.userId,
@@ -358,12 +432,12 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Vital record created',
-      'EHRService',
+      "Vital record created",
+      "EHRService",
       { vitalId: vital.id, userId: data.userId, type: data.type },
     );
 
-    await this.eventService.emit('ehr.vital.created', { vitalId: vital.id });
+    await this.eventService.emit("ehr.vital.created", { vitalId: vital.id });
     await this.invalidateUserEHRCache(data.userId);
 
     return vital;
@@ -375,11 +449,11 @@ export class EHRService {
         userId,
         ...(type && { type }),
       },
-      orderBy: { recordedAt: 'desc' },
+      orderBy: { recordedAt: "desc" },
     });
   }
 
-  async updateVital(id: string, data: UpdateVitalDto) {
+  async updateVital(id: string, data: UpdateVitalDto): Promise<unknown> {
     const vital = await this.prisma.vital.update({
       where: { id },
       data: {
@@ -388,24 +462,25 @@ export class EHRService {
       },
     });
 
-    await this.eventService.emit('ehr.vital.updated', { vitalId: id });
+    await this.eventService.emit("ehr.vital.updated", { vitalId: id });
     await this.invalidateUserEHRCache(vital.userId);
 
     return vital;
   }
 
-  async deleteVital(id: string) {
+  async deleteVital(id: string): Promise<void> {
     const vital = await this.prisma.vital.findUnique({ where: { id } });
-    if (!vital) throw new NotFoundException(`Vital record with ID ${id} not found`);
+    if (!vital)
+      throw new NotFoundException(`Vital record with ID ${id} not found`);
 
     await this.prisma.vital.delete({ where: { id } });
-    await this.eventService.emit('ehr.vital.deleted', { vitalId: id });
+    await this.eventService.emit("ehr.vital.deleted", { vitalId: id });
     await this.invalidateUserEHRCache(vital.userId);
   }
 
   // ============ Allergies ============
 
-  async createAllergy(data: CreateAllergyDto) {
+  async createAllergy(data: CreateAllergyDto): Promise<unknown> {
     const allergy = await this.prisma.allergy.create({
       data: {
         userId: data.userId,
@@ -420,12 +495,14 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Allergy record created',
-      'EHRService',
+      "Allergy record created",
+      "EHRService",
       { allergyId: allergy.id, userId: data.userId },
     );
 
-    await this.eventService.emit('ehr.allergy.created', { allergyId: allergy.id });
+    await this.eventService.emit("ehr.allergy.created", {
+      allergyId: allergy.id,
+    });
     await this.invalidateUserEHRCache(data.userId);
 
     return allergy;
@@ -434,37 +511,40 @@ export class EHRService {
   async getAllergies(userId: string) {
     return this.prisma.allergy.findMany({
       where: { userId },
-      orderBy: { diagnosedDate: 'desc' },
+      orderBy: { diagnosedDate: "desc" },
     });
   }
 
-  async updateAllergy(id: string, data: UpdateAllergyDto) {
+  async updateAllergy(id: string, data: UpdateAllergyDto): Promise<unknown> {
     const allergy = await this.prisma.allergy.update({
       where: { id },
       data: {
         ...data,
-        diagnosedDate: data.diagnosedDate ? new Date(data.diagnosedDate) : undefined,
+        diagnosedDate: data.diagnosedDate
+          ? new Date(data.diagnosedDate)
+          : undefined,
       },
     });
 
-    await this.eventService.emit('ehr.allergy.updated', { allergyId: id });
+    await this.eventService.emit("ehr.allergy.updated", { allergyId: id });
     await this.invalidateUserEHRCache(allergy.userId);
 
     return allergy;
   }
 
-  async deleteAllergy(id: string) {
+  async deleteAllergy(id: string): Promise<void> {
     const allergy = await this.prisma.allergy.findUnique({ where: { id } });
-    if (!allergy) throw new NotFoundException(`Allergy record with ID ${id} not found`);
+    if (!allergy)
+      throw new NotFoundException(`Allergy record with ID ${id} not found`);
 
     await this.prisma.allergy.delete({ where: { id } });
-    await this.eventService.emit('ehr.allergy.deleted', { allergyId: id });
+    await this.eventService.emit("ehr.allergy.deleted", { allergyId: id });
     await this.invalidateUserEHRCache(allergy.userId);
   }
 
   // ============ Medications ============
 
-  async createMedication(data: CreateMedicationDto) {
+  async createMedication(data: CreateMedicationDto): Promise<unknown> {
     const medication = await this.prisma.medication.create({
       data: {
         userId: data.userId,
@@ -482,12 +562,14 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Medication record created',
-      'EHRService',
+      "Medication record created",
+      "EHRService",
       { medicationId: medication.id, userId: data.userId },
     );
 
-    await this.eventService.emit('ehr.medication.created', { medicationId: medication.id });
+    await this.eventService.emit("ehr.medication.created", {
+      medicationId: medication.id,
+    });
     await this.invalidateUserEHRCache(data.userId);
 
     return medication;
@@ -499,11 +581,14 @@ export class EHRService {
         userId,
         ...(activeOnly && { isActive: true }),
       },
-      orderBy: { startDate: 'desc' },
+      orderBy: { startDate: "desc" },
     });
   }
 
-  async updateMedication(id: string, data: UpdateMedicationDto) {
+  async updateMedication(
+    id: string,
+    data: UpdateMedicationDto,
+  ): Promise<unknown> {
     const medication = await this.prisma.medication.update({
       where: { id },
       data: {
@@ -513,24 +598,31 @@ export class EHRService {
       },
     });
 
-    await this.eventService.emit('ehr.medication.updated', { medicationId: id });
+    await this.eventService.emit("ehr.medication.updated", {
+      medicationId: id,
+    });
     await this.invalidateUserEHRCache(medication.userId);
 
     return medication;
   }
 
-  async deleteMedication(id: string) {
-    const medication = await this.prisma.medication.findUnique({ where: { id } });
-    if (!medication) throw new NotFoundException(`Medication record with ID ${id} not found`);
+  async deleteMedication(id: string): Promise<void> {
+    const medication = await this.prisma.medication.findUnique({
+      where: { id },
+    });
+    if (!medication)
+      throw new NotFoundException(`Medication record with ID ${id} not found`);
 
     await this.prisma.medication.delete({ where: { id } });
-    await this.eventService.emit('ehr.medication.deleted', { medicationId: id });
+    await this.eventService.emit("ehr.medication.deleted", {
+      medicationId: id,
+    });
     await this.invalidateUserEHRCache(medication.userId);
   }
 
   // ============ Immunizations ============
 
-  async createImmunization(data: CreateImmunizationDto) {
+  async createImmunization(data: CreateImmunizationDto): Promise<unknown> {
     const immunization = await this.prisma.immunization.create({
       data: {
         userId: data.userId,
@@ -547,12 +639,12 @@ export class EHRService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Immunization record created',
-      'EHRService',
+      "Immunization record created",
+      "EHRService",
       { immunizationId: immunization.id, userId: data.userId },
     );
 
-    await this.eventService.emit('ehr.immunization.created', {
+    await this.eventService.emit("ehr.immunization.created", {
       immunizationId: immunization.id,
     });
     await this.invalidateUserEHRCache(data.userId);
@@ -560,42 +652,60 @@ export class EHRService {
     return immunization;
   }
 
-  async getImmunizations(userId: string) {
+  getImmunizations(userId: string) {
     return this.prisma.immunization.findMany({
       where: { userId },
-      orderBy: { dateAdministered: 'desc' },
+      orderBy: { dateAdministered: "desc" },
     });
   }
 
-  async updateImmunization(id: string, data: UpdateImmunizationDto) {
+  async updateImmunization(
+    id: string,
+    data: UpdateImmunizationDto,
+  ): Promise<unknown> {
     const immunization = await this.prisma.immunization.update({
       where: { id },
       data: {
         ...data,
-        dateAdministered: data.dateAdministered ? new Date(data.dateAdministered) : undefined,
+        dateAdministered: data.dateAdministered
+          ? new Date(data.dateAdministered)
+          : undefined,
         nextDueDate: data.nextDueDate ? new Date(data.nextDueDate) : undefined,
       },
     });
 
-    await this.eventService.emit('ehr.immunization.updated', { immunizationId: id });
+    await this.eventService.emit("ehr.immunization.updated", {
+      immunizationId: id,
+    });
     await this.invalidateUserEHRCache(immunization.userId);
 
     return immunization;
   }
 
-  async deleteImmunization(id: string) {
-    const immunization = await this.prisma.immunization.findUnique({ where: { id } });
+  async deleteImmunization(id: string): Promise<void> {
+    const immunization = await this.prisma.immunization.findUnique({
+      where: { id },
+    });
     if (!immunization)
-      throw new NotFoundException(`Immunization record with ID ${id} not found`);
+      throw new NotFoundException(
+        `Immunization record with ID ${id} not found`,
+      );
 
     await this.prisma.immunization.delete({ where: { id } });
-    await this.eventService.emit('ehr.immunization.deleted', { immunizationId: id });
+    await this.eventService.emit("ehr.immunization.deleted", {
+      immunizationId: id,
+    });
     await this.invalidateUserEHRCache(immunization.userId);
   }
 
   // ============ Analytics ============
 
-  async getHealthTrends(userId: string, vitalType: string, startDate?: Date, endDate?: Date) {
+  async getHealthTrends(
+    userId: string,
+    vitalType: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<unknown> {
     const where: {
       userId: string;
       type: string;
@@ -616,7 +726,7 @@ export class EHRService {
 
     const vitals = await this.prisma.vital.findMany({
       where,
-      orderBy: { recordedAt: 'asc' },
+      orderBy: { recordedAt: "asc" },
     });
 
     return {
@@ -626,7 +736,7 @@ export class EHRService {
     };
   }
 
-  async getMedicationAdherence(userId: string) {
+  async getMedicationAdherence(userId: string): Promise<unknown> {
     const medications = await this.prisma.medication.findMany({
       where: {
         userId,
@@ -656,10 +766,15 @@ export class EHRService {
       dateFrom?: Date;
       dateTo?: Date;
     },
-  ) {
+  ): Promise<unknown> {
     type RecordWithUser = Array<{
       id: string;
-      user: { id: string; firstName: string; lastName: string; email: string | null } | null;
+      user: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string | null;
+      } | null;
       [key: string]: unknown;
     }>;
 
@@ -674,72 +789,72 @@ export class EHRService {
     }
 
     interface MedicalHistoryWhere extends BaseWhereClause {
-      condition?: { contains: string; mode: 'insensitive' };
+      condition?: { contains: string; mode: "insensitive" };
     }
 
     interface AllergyWhere extends BaseWhereClause {
-      allergen?: { contains: string; mode: 'insensitive' };
+      allergen?: { contains: string; mode: "insensitive" };
     }
 
     interface MedicationWhere extends BaseWhereClause {
-      name?: { contains: string; mode: 'insensitive' };
+      name?: { contains: string; mode: "insensitive" };
     }
 
     switch (filters?.recordType) {
-      case 'medical_history': {
+      case "medical_history": {
         let where: MedicalHistoryWhere = { clinicId };
-        where = addStringFilter(where, 'condition', filters.hasCondition);
+        where = addStringFilter(where, "condition", filters.hasCondition);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         records = await this.prisma.medicalHistory.findMany({
           where,
           include: { user: { select: USER_SELECT_FIELDS } },
-          orderBy: { date: 'desc' },
+          orderBy: { date: "desc" },
         });
         break;
       }
 
-      case 'lab_report': {
+      case "lab_report": {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         records = await this.prisma.labReport.findMany({
           where,
           include: { user: { select: USER_SELECT_FIELDS } },
-          orderBy: { date: 'desc' },
+          orderBy: { date: "desc" },
         });
         break;
       }
 
-      case 'vital': {
+      case "vital": {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         records = await this.prisma.vital.findMany({
           where,
           include: { user: { select: USER_SELECT_FIELDS } },
-          orderBy: { recordedAt: 'desc' },
+          orderBy: { recordedAt: "desc" },
         });
         break;
       }
 
-      case 'allergy': {
+      case "allergy": {
         let where: AllergyWhere = { clinicId };
-        where = addStringFilter(where, 'allergen', filters.hasAllergy);
+        where = addStringFilter(where, "allergen", filters.hasAllergy);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         records = await this.prisma.allergy.findMany({
           where,
           include: { user: { select: USER_SELECT_FIELDS } },
-          orderBy: { diagnosedDate: 'desc' },
+          orderBy: { diagnosedDate: "desc" },
         });
         break;
       }
 
-      case 'medication': {
+      case "medication": {
         let where: MedicationWhere = { clinicId };
-        where = addStringFilter(where, 'name', filters.onMedication);
+        where = addStringFilter(where, "name", filters.onMedication);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         records = await this.prisma.medication.findMany({
           where,
           include: { user: { select: USER_SELECT_FIELDS } },
-          orderBy: { startDate: 'desc' },
+          orderBy: { startDate: "desc" },
         });
         break;
       }
@@ -747,7 +862,11 @@ export class EHRService {
       default: {
         // Get summary of all record types
         let baseWhere: BaseWhereClause = { clinicId };
-        baseWhere = addDateRangeFilter(baseWhere, filters?.dateFrom, filters?.dateTo);
+        baseWhere = addDateRangeFilter(
+          baseWhere,
+          filters?.dateFrom,
+          filters?.dateTo,
+        );
         const [medHistory, labRep, vit, aller, meds] = await Promise.all([
           this.prisma.medicalHistory.count({ where: baseWhere }),
           this.prisma.labReport.count({ where: baseWhere }),
@@ -781,7 +900,7 @@ export class EHRService {
   /**
    * Get clinic EHR analytics
    */
-  async getClinicEHRAnalytics(clinicId: string) {
+  async getClinicEHRAnalytics(clinicId: string): Promise<unknown> {
     const cacheKey = `ehr:analytics:${clinicId}`;
 
     return this.cacheService.cache(
@@ -801,7 +920,7 @@ export class EHRService {
           this.prisma.medicalHistory.findMany({
             where: { clinicId },
             select: { userId: true },
-            distinct: ['userId'],
+            distinct: ["userId"],
           }),
           this.prisma.medicalHistory.count({ where: { clinicId } }),
           this.prisma.labReport.count({ where: { clinicId } }),
@@ -812,34 +931,38 @@ export class EHRService {
             this.prisma.medicalHistory.count({
               where: {
                 clinicId,
-                createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+                createdAt: {
+                  gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                },
               },
             }),
             this.prisma.labReport.count({
               where: {
                 clinicId,
-                createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+                createdAt: {
+                  gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                },
               },
             }),
           ]),
           this.prisma.medicalHistory.groupBy({
-            by: ['condition'],
+            by: ["condition"],
             where: { clinicId },
             _count: { condition: true },
-            orderBy: { _count: { condition: 'desc' } },
+            orderBy: { _count: { condition: "desc" } },
             take: 10,
           }),
           this.prisma.allergy.groupBy({
-            by: ['allergen'],
+            by: ["allergen"],
             where: { clinicId },
             _count: { allergen: true },
-            orderBy: { _count: { allergen: 'desc' } },
+            orderBy: { _count: { allergen: "desc" } },
             take: 10,
           }),
         ]);
 
-        type ConditionGroup = typeof commonConditions[number];
-        type AllergyGroup = typeof commonAllergies[number];
+        type ConditionGroup = (typeof commonConditions)[number];
+        type AllergyGroup = (typeof commonAllergies)[number];
 
         return {
           clinicId,
@@ -871,8 +994,8 @@ export class EHRService {
       },
       {
         ttl: 3600,
-        tags: [`clinic:${clinicId}`, 'analytics'],
-        priority: 'normal',
+        tags: [`clinic:${clinicId}`, "analytics"],
+        priority: "normal",
       },
     );
   }
@@ -880,7 +1003,7 @@ export class EHRService {
   /**
    * Get clinic patients summary for dashboard
    */
-  async getClinicPatientsSummary(clinicId: string) {
+  async getClinicPatientsSummary(clinicId: string): Promise<unknown> {
     return this.cacheService.cache(
       `ehr:patients:summary:${clinicId}`,
       async () => {
@@ -904,7 +1027,7 @@ export class EHRService {
             gender: true,
             medicalHistories: {
               where: { clinicId },
-              orderBy: { date: 'desc' },
+              orderBy: { date: "desc" },
               take: 1,
             },
             allergies: {
@@ -918,8 +1041,8 @@ export class EHRService {
           },
         });
 
-        type PatientWithRecords = typeof patientsWithRecords[number];
-        type AllergyRecord = PatientWithRecords['allergies'][number];
+        type PatientWithRecords = (typeof patientsWithRecords)[number];
+        type AllergyRecord = PatientWithRecords["allergies"][number];
 
         return {
           clinicId,
@@ -930,20 +1053,25 @@ export class EHRService {
             email: patient.email,
             phone: patient.phone,
             age: patient.dateOfBirth
-              ? Math.floor((Date.now() - patient.dateOfBirth.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+              ? Math.floor(
+                  (Date.now() - patient.dateOfBirth.getTime()) /
+                    (365.25 * 24 * 60 * 60 * 1000),
+                )
               : null,
             gender: patient.gender,
             lastVisit: patient.medicalHistories[0]?.date || null,
             activeAllergies: patient.allergies.length,
             activeMedications: patient.medications.length,
-            criticalAllergies: patient.allergies.filter((a: AllergyRecord) => a.severity === 'Severe'),
+            criticalAllergies: patient.allergies.filter(
+              (a: AllergyRecord) => a.severity === "Severe",
+            ),
           })),
         };
       },
       {
         ttl: 1800,
-        tags: [`clinic:${clinicId}`, 'patients_summary'],
-        priority: 'high',
+        tags: [`clinic:${clinicId}`, "patients_summary"],
+        priority: "high",
         containsPHI: true,
       },
     );
@@ -956,7 +1084,7 @@ export class EHRService {
     clinicId: string,
     searchTerm: string,
     searchTypes?: string[],
-  ) {
+  ): Promise<unknown> {
     type SearchResultItem = {
       id: string;
       user: { id: string; firstName: string; lastName: string } | null;
@@ -969,15 +1097,20 @@ export class EHRService {
       medications?: SearchResultItem[];
       procedures?: SearchResultItem[];
     } = {};
-    const types = searchTypes || ['conditions', 'allergies', 'medications', 'procedures'];
+    const types = searchTypes || [
+      "conditions",
+      "allergies",
+      "medications",
+      "procedures",
+    ];
 
-    if (types.includes('conditions')) {
+    if (types.includes("conditions")) {
       results.conditions = await this.prisma.medicalHistory.findMany({
         where: {
           clinicId,
           OR: [
-            { condition: { contains: searchTerm, mode: 'insensitive' } },
-            { notes: { contains: searchTerm, mode: 'insensitive' } },
+            { condition: { contains: searchTerm, mode: "insensitive" } },
+            { notes: { contains: searchTerm, mode: "insensitive" } },
           ],
         },
         include: {
@@ -987,11 +1120,11 @@ export class EHRService {
       });
     }
 
-    if (types.includes('allergies')) {
+    if (types.includes("allergies")) {
       results.allergies = await this.prisma.allergy.findMany({
         where: {
           clinicId,
-          allergen: { contains: searchTerm, mode: 'insensitive' },
+          allergen: { contains: searchTerm, mode: "insensitive" },
         },
         include: {
           user: { select: { id: true, firstName: true, lastName: true } },
@@ -1000,11 +1133,11 @@ export class EHRService {
       });
     }
 
-    if (types.includes('medications')) {
+    if (types.includes("medications")) {
       results.medications = await this.prisma.medication.findMany({
         where: {
           clinicId,
-          name: { contains: searchTerm, mode: 'insensitive' },
+          name: { contains: searchTerm, mode: "insensitive" },
         },
         include: {
           user: { select: { id: true, firstName: true, lastName: true } },
@@ -1013,11 +1146,11 @@ export class EHRService {
       });
     }
 
-    if (types.includes('procedures')) {
+    if (types.includes("procedures")) {
       results.procedures = await this.prisma.surgicalRecord.findMany({
         where: {
           clinicId,
-          surgeryName: { contains: searchTerm, mode: 'insensitive' },
+          surgeryName: { contains: searchTerm, mode: "insensitive" },
         },
         include: {
           user: { select: { id: true, firstName: true, lastName: true } },
@@ -1041,7 +1174,7 @@ export class EHRService {
   /**
    * Get critical health alerts for clinic
    */
-  async getClinicCriticalAlerts(clinicId: string) {
+  async getClinicCriticalAlerts(clinicId: string): Promise<unknown> {
     return this.cacheService.cache(
       `ehr:alerts:${clinicId}`,
       async () => {
@@ -1049,47 +1182,59 @@ export class EHRService {
           this.prisma.allergy.findMany({
             where: {
               clinicId,
-              severity: 'Severe',
+              severity: "Severe",
             },
             include: {
               user: {
-                select: { id: true, firstName: true, lastName: true, phone: true },
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  phone: true,
+                },
               },
             },
           }),
           this.prisma.vital.findMany({
             where: {
               clinicId,
-              type: { in: ['blood_pressure', 'heart_rate', 'temperature'] },
+              type: { in: ["blood_pressure", "heart_rate", "temperature"] },
               recordedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
             },
             include: {
               user: {
-                select: { id: true, firstName: true, lastName: true, phone: true },
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  phone: true,
+                },
               },
             },
-            orderBy: { recordedAt: 'desc' },
+            orderBy: { recordedAt: "desc" },
           }),
         ]);
 
-        type VitalRecord = typeof criticalVitals[number];
-        type AllergyRecord = typeof severeAllergies[number];
+        type VitalRecord = (typeof criticalVitals)[number];
+        type AllergyRecord = (typeof severeAllergies)[number];
 
-        const criticalVitalAlerts = criticalVitals.filter((vital: VitalRecord) => {
-          if (vital.type === 'blood_pressure') {
-            const [systolic] = vital.value.split('/').map(Number);
-            return systolic >= 180 || systolic <= 90;
-          }
-          if (vital.type === 'heart_rate') {
-            const hr = Number(vital.value);
-            return hr >= 120 || hr <= 50;
-          }
-          if (vital.type === 'temperature') {
-            const temp = Number(vital.value);
-            return temp >= 103 || temp <= 95;
-          }
-          return false;
-        });
+        const criticalVitalAlerts = criticalVitals.filter(
+          (vital: VitalRecord) => {
+            if (vital.type === "blood_pressure") {
+              const [systolic] = vital.value.split("/").map(Number);
+              return systolic >= 180 || systolic <= 90;
+            }
+            if (vital.type === "heart_rate") {
+              const hr = Number(vital.value);
+              return hr >= 120 || hr <= 50;
+            }
+            if (vital.type === "temperature") {
+              const temp = Number(vital.value);
+              return temp >= 103 || temp <= 95;
+            }
+            return false;
+          },
+        );
 
         return {
           clinicId,
@@ -1098,7 +1243,9 @@ export class EHRService {
               count: severeAllergies.length,
               patients: severeAllergies.map((a: AllergyRecord) => ({
                 patientId: a.userId,
-                patientName: a.user ? `${a.user.firstName} ${a.user.lastName}` : 'Unknown',
+                patientName: a.user
+                  ? `${a.user.firstName} ${a.user.lastName}`
+                  : "Unknown",
                 allergen: a.allergen,
                 reaction: a.reaction,
                 diagnosedDate: a.diagnosedDate,
@@ -1108,20 +1255,23 @@ export class EHRService {
               count: criticalVitalAlerts.length,
               readings: criticalVitalAlerts.map((v: VitalRecord) => ({
                 patientId: v.userId,
-                patientName: v.user ? `${v.user.firstName} ${v.user.lastName}` : 'Unknown',
+                patientName: v.user
+                  ? `${v.user.firstName} ${v.user.lastName}`
+                  : "Unknown",
                 vitalType: v.type,
                 value: v.value,
                 recordedAt: v.recordedAt,
               })),
             },
           },
-          totalCriticalAlerts: severeAllergies.length + criticalVitalAlerts.length,
+          totalCriticalAlerts:
+            severeAllergies.length + criticalVitalAlerts.length,
         };
       },
       {
         ttl: 300,
-        tags: [`clinic:${clinicId}`, 'alerts'],
-        priority: 'high',
+        tags: [`clinic:${clinicId}`, "alerts"],
+        priority: "high",
         containsPHI: true,
       },
     );

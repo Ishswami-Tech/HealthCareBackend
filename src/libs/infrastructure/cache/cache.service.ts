@@ -322,7 +322,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async onModuleDestroy() {
+  onModuleDestroy() {
     this.logger.log("🔄 Enterprise Cache Service shutting down gracefully...");
 
     try {
@@ -1439,7 +1439,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.clearRateLimit(key);
   }
 
-  async updateRateLimits(
+  updateRateLimits(
     type: string,
     config: { limit: number; window: number },
   ): Promise<void> {

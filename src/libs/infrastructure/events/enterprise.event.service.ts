@@ -73,7 +73,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     // Initialize metrics
     await this.resetMetrics();
 
-    this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       "Enterprise Event Service initialized with A++ grade features",
@@ -88,7 +88,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
       await this.redisService.zadd("events:by_priority", 1, "init");
       await this.redisService.zadd("events:by_category", 1, "init");
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to create event indices",
@@ -124,7 +124,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         Date.now() - this.lastFailureTime > this.circuitBreakerTimeout
       ) {
         this.circuitBreakerState = "HALF_OPEN";
-        this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           "Circuit breaker moved to HALF_OPEN state",
@@ -252,7 +252,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         },
       );
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to process critical event immediately",
@@ -297,7 +297,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         await this.redisService.zadd(clinicKey, timestamp, event.eventId);
       }
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to store event in cache",
@@ -342,7 +342,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         await this.redisService.multi(pipeline);
       }
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PERFORMANCE,
         LogLevel.INFO,
         `Flushed ${events.length} events from buffer`,
@@ -353,7 +353,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         },
       );
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to flush event buffer",
@@ -406,7 +406,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
       // Log query performance
       const queryTime = Date.now() - startTime;
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PERFORMANCE,
         LogLevel.INFO,
         "Event query executed",
@@ -421,7 +421,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
       return events;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to query events",
@@ -460,7 +460,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
       return metrics;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to get event metrics",
@@ -524,7 +524,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
 
     if (this.failureCount >= this.failureThreshold) {
       this.circuitBreakerState = "OPEN";
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SECURITY,
         LogLevel.ERROR,
         "Circuit breaker OPENED due to high failure rate",
@@ -588,22 +588,22 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     return categories;
   }
 
-  private async getEventsByPriority(): Promise<Record<EventPriority, number>> {
+  private getEventsByPriority(): Promise<Record<EventPriority, number>> {
     // TODO: Implement priority counting
-    return {} as Record<EventPriority, number>;
+    return Promise.resolve({} as Record<EventPriority, number>);
   }
 
-  private async getEventsByStatus(): Promise<Record<EventStatus, number>> {
+  private getEventsByStatus(): Promise<Record<EventStatus, number>> {
     // TODO: Implement status counting
-    return {} as Record<EventStatus, number>;
+    return Promise.resolve({} as Record<EventStatus, number>);
   }
 
-  private async getErrorDistribution(): Promise<Record<string, number>> {
+  private getErrorDistribution(): Promise<Record<string, number>> {
     // TODO: Implement error distribution tracking
-    return {};
+    return Promise.resolve({});
   }
 
-  private async collectPerformanceMetrics() {
+  private collectPerformanceMetrics() {
     const metrics = {
       timestamp: Date.now(),
       processedEvents: this.processedEvents,
@@ -646,7 +646,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
           expiredTime,
         );
 
-        this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           `Cleaned up ${expiredIds.length} expired events`,
@@ -654,7 +654,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         );
       }
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to cleanup expired events",

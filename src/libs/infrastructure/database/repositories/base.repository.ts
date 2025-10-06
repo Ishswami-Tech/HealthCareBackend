@@ -1456,7 +1456,7 @@ export abstract class BaseRepository<
   ): Record<string, { from: unknown; to: unknown }> {
     const changes: Record<string, { from: unknown; to: unknown }> = {};
 
-    for (const key in (current as any)) {
+    for (const key in current as any) {
       if ((previous as any)[key] !== (current as any)[key]) {
         changes[key] = {
           from: (previous as any)[key],

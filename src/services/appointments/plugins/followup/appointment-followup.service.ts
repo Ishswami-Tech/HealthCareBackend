@@ -199,26 +199,24 @@ export class AppointmentFollowUpService {
         },
       });
 
-      const followUpList: FollowUpPlan[] = followUps.map(
-        (followUp: any) => ({
-          id: followUp.id,
-          appointmentId: followUp.appointmentId,
-          patientId: followUp.patientId,
-          doctorId: followUp.doctorId,
-          clinicId: followUp.clinicId,
-          followUpType: followUp.followUpType,
-          scheduledFor: followUp.scheduledFor,
-          status: followUp.status,
-          priority: followUp.priority,
-          instructions: followUp.instructions,
-          medications: followUp.medications || [],
-          tests: followUp.tests || [],
-          restrictions: followUp.restrictions || [],
-          notes: followUp.notes,
-          createdAt: followUp.createdAt,
-          updatedAt: followUp.updatedAt,
-        }),
-      );
+      const followUpList: FollowUpPlan[] = followUps.map((followUp: any) => ({
+        id: followUp.id,
+        appointmentId: followUp.appointmentId,
+        patientId: followUp.patientId,
+        doctorId: followUp.doctorId,
+        clinicId: followUp.clinicId,
+        followUpType: followUp.followUpType,
+        scheduledFor: followUp.scheduledFor,
+        status: followUp.status,
+        priority: followUp.priority,
+        instructions: followUp.instructions,
+        medications: followUp.medications || [],
+        tests: followUp.tests || [],
+        restrictions: followUp.restrictions || [],
+        notes: followUp.notes,
+        createdAt: followUp.createdAt,
+        updatedAt: followUp.updatedAt,
+      }));
 
       await this.cacheService.set(
         cacheKey,

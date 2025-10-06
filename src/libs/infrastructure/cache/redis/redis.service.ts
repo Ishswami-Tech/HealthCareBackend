@@ -738,7 +738,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Method to update rate limit configuration
-  async updateRateLimits(
+  updateRateLimits(
     type: string,
     config: { limit: number; window: number },
   ): Promise<void> {
@@ -746,6 +746,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `Updated rate limits for ${type}: ${JSON.stringify(config)}`,
     );
+    return Promise.resolve();
   }
 
   // Method to get current rate limit configuration
@@ -1314,7 +1315,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   /**
    * Retrieve and decompress data from Redis.
    */
-  private async getDecompressed<T>(data: string): Promise<T> {
+  private getDecompressed<T>(data: string): T {
     if (!data.startsWith("compressed:")) {
       return JSON.parse(data);
     }

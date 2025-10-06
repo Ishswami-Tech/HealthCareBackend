@@ -361,22 +361,28 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async createNewClient(
+  private createNewClient(
     options: DatabaseClientOptions,
   ): Promise<IDatabaseClient> {
     const { type, config } = options;
 
     switch (type) {
       case "base":
-        return this.createBaseClientInstance(config as DatabaseClientConfig);
+        return Promise.resolve(
+          this.createBaseClientInstance(config as DatabaseClientConfig),
+        );
       case "healthcare":
-        return this.createHealthcareClientInstance(
-          config as HealthcareDatabaseConfig,
+        return Promise.resolve(
+          this.createHealthcareClientInstance(
+            config as HealthcareDatabaseConfig,
+          ),
         );
       case "clinic":
-        return this.createClinicClientInstance(
-          options.clinicId!,
-          config as HealthcareDatabaseConfig,
+        return Promise.resolve(
+          this.createClinicClientInstance(
+            options.clinicId!,
+            config as HealthcareDatabaseConfig,
+          ),
         );
       default:
         throw new Error(`Unknown client type: ${type}`);
@@ -510,7 +516,7 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     }, 300000); // Every 5 minutes
   }
 
-  private async logAuditTrail(
+  private logAuditTrail(
     auditInfo: unknown,
     operation: string,
     success: boolean,
@@ -523,5 +529,6 @@ export class DatabaseClientFactory implements OnModuleInit, OnModuleDestroy {
     } catch (_error) {
       this.logger.error("Failed to log audit trail:", _error);
     }
+    return Promise.resolve();
   }
 }

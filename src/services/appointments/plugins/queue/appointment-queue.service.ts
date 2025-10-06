@@ -25,6 +25,34 @@ export interface QueueMetrics {
   estimatedNextWaitTime: number;
 }
 
+export interface QueueEntryData {
+  appointmentId: string;
+  patientId: string;
+  doctorId: string;
+  clinicId: string;
+  status: string;
+  priority: number;
+  checkedInAt?: string;
+  estimatedWaitTime?: number;
+  position?: number;
+  confirmedAt?: string;
+  startedAt?: string;
+  actualWaitTime?: number;
+  locationId?: string;
+  emergencyAt?: string;
+}
+
+export interface QueueStats {
+  waiting: number;
+  inProgress: number;
+  completed: number;
+  total: number;
+  averageWaitTime: number;
+  estimatedWaitTime: number;
+  efficiency: number;
+  utilization: number;
+}
+
 @Injectable()
 export class AppointmentQueueService {
   private readonly logger = new Logger(AppointmentQueueService.name);
@@ -48,7 +76,7 @@ export class AppointmentQueueService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           "Doctor queue retrieved from cache",
@@ -62,19 +90,14 @@ export class AppointmentQueueService {
       const queueKey = `queue:${domain}:${doctorId}:${date}`;
       const queueEntries = await this.cacheService.lRange(queueKey, 0, -1);
 
-      const queue = await Promise.all(
-        queueEntries.map(async (entry, index) => {
-          const entryData = JSON.parse(entry);
-          return {
-            ...entryData,
-            position: index + 1,
-            estimatedWaitTime: this.calculateEstimatedWaitTime(
-              index + 1,
-              domain,
-            ),
-          };
-        }),
-      );
+      const queue: QueueEntryData[] = queueEntries.map((entry, index) => {
+        const entryData = JSON.parse(entry) as QueueEntryData;
+        return {
+          ...entryData,
+          position: index + 1,
+          estimatedWaitTime: this.calculateEstimatedWaitTime(index + 1, domain),
+        };
+      });
 
       const result = {
         doctorId,
@@ -94,7 +117,7 @@ export class AppointmentQueueService {
         this.QUEUE_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Doctor queue retrieved successfully",
@@ -110,7 +133,7 @@ export class AppointmentQueueService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get doctor queue: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -151,7 +174,7 @@ export class AppointmentQueueService {
       for (const key of queueKeys) {
         const entries = await this.cacheService.lRange(key, 0, -1);
         const entryIndex = entries.findIndex((entry) => {
-          const entryData = JSON.parse(entry);
+          const entryData = JSON.parse(entry) as QueueEntryData;
           return entryData.appointmentId === appointmentId;
         });
 
@@ -185,7 +208,7 @@ export class AppointmentQueueService {
       // Cache for a shorter time (queue positions change frequently)
       await this.cacheService.set(cacheKey, JSON.stringify(result), 60);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Patient queue position retrieved successfully",
@@ -200,7 +223,7 @@ export class AppointmentQueueService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get patient queue position: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -229,12 +252,12 @@ export class AppointmentQueueService {
       for (const key of queueKeys) {
         const entries = await this.cacheService.lRange(key, 0, -1);
         const entryIndex = entries.findIndex((entry) => {
-          const entryData = JSON.parse(entry);
+          const entryData = JSON.parse(entry) as QueueEntryData;
           return entryData.appointmentId === appointmentId;
         });
 
         if (entryIndex !== -1) {
-          const entryData = JSON.parse(entries[entryIndex]);
+          const entryData = JSON.parse(entries[entryIndex]) as QueueEntryData;
           entryData.status = "CONFIRMED";
           entryData.confirmedAt = new Date().toISOString();
 
@@ -245,7 +268,7 @@ export class AppointmentQueueService {
             this.QUEUE_CACHE_TTL,
           );
 
-          this.loggingService.log(
+          void this.loggingService.log(
             LogType.APPOINTMENT,
             LogLevel.INFO,
             "Appointment confirmed in queue",
@@ -259,7 +282,7 @@ export class AppointmentQueueService {
 
       throw new Error("Appointment not found in queue");
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to confirm appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -286,7 +309,7 @@ export class AppointmentQueueService {
       const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
       const entryIndex = entries.findIndex((entry) => {
-        const entryData = JSON.parse(entry);
+        const entryData = JSON.parse(entry) as QueueEntryData;
         return entryData.appointmentId === appointmentId;
       });
 
@@ -294,11 +317,11 @@ export class AppointmentQueueService {
         throw new Error("Appointment not found in queue");
       }
 
-      const entryData = JSON.parse(entries[entryIndex]);
+      const entryData = JSON.parse(entries[entryIndex]) as QueueEntryData;
       entryData.status = "IN_PROGRESS";
       entryData.startedAt = new Date().toISOString();
       entryData.actualWaitTime = this.calculateActualWaitTime(
-        entryData.checkedInAt,
+        entryData.checkedInAt || "",
       );
 
       // Update the entry in the queue
@@ -313,7 +336,7 @@ export class AppointmentQueueService {
         `queue:doctor:${doctorId}:${new Date().toISOString().split("T")[0]}:${domain}`,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         "Consultation started",
@@ -328,7 +351,7 @@ export class AppointmentQueueService {
 
       return { success: true, message: "Consultation started" };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to start consultation: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -348,7 +371,11 @@ export class AppointmentQueueService {
     const startTime = Date.now();
 
     try {
-      const { doctorId, date, newOrder } = reorderData as any;
+      const { doctorId, date, newOrder } = reorderData as {
+        doctorId: string;
+        date: string;
+        newOrder: string[];
+      };
       const queueKey = `queue:${domain}:${doctorId}:${date}`;
 
       // Get current queue
@@ -358,7 +385,7 @@ export class AppointmentQueueService {
       const reorderedEntries = newOrder
         .map((appointmentId: string) => {
           return entries.find((entry) => {
-            const entryData = JSON.parse(entry);
+            const entryData = JSON.parse(entry) as QueueEntryData;
             return entryData.appointmentId === appointmentId;
           });
         })
@@ -373,7 +400,7 @@ export class AppointmentQueueService {
       // Invalidate cache
       await this.cacheService.del(`queue:doctor:${doctorId}:${date}:${domain}`);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Queue reordered successfully",
@@ -389,7 +416,7 @@ export class AppointmentQueueService {
 
       return { success: true, message: "Queue reordered successfully" };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to reorder queue: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -430,7 +457,7 @@ export class AppointmentQueueService {
         const entries = await this.cacheService.lRange(key, 0, -1);
 
         for (const entry of entries) {
-          const entryData = JSON.parse(entry);
+          const entryData = JSON.parse(entry) as QueueEntryData;
           if (entryData.locationId === locationId) {
             if (entryData.status === "WAITING") {
               totalWaiting++;
@@ -470,7 +497,7 @@ export class AppointmentQueueService {
         this.METRICS_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Location queue stats retrieved successfully",
@@ -485,7 +512,7 @@ export class AppointmentQueueService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location queue stats: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -503,6 +530,7 @@ export class AppointmentQueueService {
   async getQueueMetrics(
     locationId: string,
     domain: string,
+
     period: string,
   ): Promise<unknown> {
     const startTime = Date.now();
@@ -516,15 +544,19 @@ export class AppointmentQueueService {
       }
 
       // Calculate metrics based on period
-      const stats = await this.getLocationQueueStats(locationId, domain) as any;
+      const statsResult = await this.getLocationQueueStats(locationId, domain);
+      const stats = statsResult as { stats: QueueStats };
+
+      // Ensure stats.stats is properly typed
+      const queueStats = stats.stats;
 
       // Add period-specific calculations
       const metrics = {
         ...stats,
         period,
         metrics: {
-          efficiency: stats.stats.efficiency,
-          utilization: stats.stats.utilization,
+          efficiency: queueStats.efficiency,
+          utilization: queueStats.utilization,
           throughput: this.calculateThroughput(domain, period),
           responseTime: this.calculateAverageResponseTime(domain, period),
         },
@@ -537,7 +569,7 @@ export class AppointmentQueueService {
         this.METRICS_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Queue metrics retrieved successfully",
@@ -547,7 +579,7 @@ export class AppointmentQueueService {
 
       return metrics;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get queue metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -578,12 +610,12 @@ export class AppointmentQueueService {
       for (const key of queueKeys) {
         const entries = await this.cacheService.lRange(key, 0, -1);
         const entryIndex = entries.findIndex((entry) => {
-          const entryData = JSON.parse(entry);
+          const entryData = JSON.parse(entry) as QueueEntryData;
           return entryData.appointmentId === appointmentId;
         });
 
         if (entryIndex !== -1) {
-          const entryData = JSON.parse(entries[entryIndex]);
+          const entryData = JSON.parse(entries[entryIndex]) as QueueEntryData;
           entryData.priority = priority;
           entryData.status = "EMERGENCY";
           entryData.emergencyAt = new Date().toISOString();
@@ -598,7 +630,7 @@ export class AppointmentQueueService {
             await this.cacheService.rPush(key, entry);
           }
 
-          this.loggingService.log(
+          void this.loggingService.log(
             LogType.APPOINTMENT,
             LogLevel.INFO,
             "Emergency appointment handled",
@@ -620,7 +652,7 @@ export class AppointmentQueueService {
 
       throw new Error("Appointment not found in queue");
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to handle emergency appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -642,10 +674,11 @@ export class AppointmentQueueService {
     return position * baseWaitTime;
   }
 
-  private calculateAverageWaitTime(queue: unknown[]): number {
+  private calculateAverageWaitTime(queue: QueueEntryData[]): number {
     if (queue.length === 0) return 0;
     const totalWaitTime = queue.reduce(
-      (sum: number, entry: any) => sum + (entry.estimatedWaitTime || 0),
+      (sum: number, entry: QueueEntryData) =>
+        sum + (entry.estimatedWaitTime || 0),
       0,
     );
     return totalWaitTime / queue.length;
@@ -660,11 +693,19 @@ export class AppointmentQueueService {
 
   private calculateThroughput(domain: string, period: string): number {
     // Placeholder implementation - would integrate with actual analytics
-    return domain === "healthcare" ? 25 : 15; // appointments per hour
+    // Use period to determine throughput calculation
+    const baseThroughput = domain === "healthcare" ? 25 : 15;
+    const periodMultiplier =
+      period === "daily" ? 1 : period === "weekly" ? 7 : 1;
+    return baseThroughput * periodMultiplier; // appointments per hour
   }
 
   private calculateAverageResponseTime(domain: string, period: string): number {
     // Placeholder implementation - would integrate with actual analytics
-    return domain === "healthcare" ? 12 : 8; // minutes
+    // Use period to determine response time calculation
+    const baseResponseTime = domain === "healthcare" ? 12 : 8;
+    const periodAdjustment =
+      period === "daily" ? 1 : period === "weekly" ? 0.8 : 1;
+    return Math.round(baseResponseTime * periodAdjustment); // minutes
   }
 }

@@ -12,10 +12,10 @@ import {
   HttpStatus,
   Res,
   NotFoundException,
-} from '@nestjs/common';
-import { Response } from 'express';
-import { BillingService } from '../billing.service';
-import { InvoicePDFService } from '../invoice-pdf.service';
+} from "@nestjs/common";
+import { Response } from "express";
+import { BillingService } from "../billing.service";
+import { InvoicePDFService } from "../invoice-pdf.service";
 import {
   CreateBillingPlanDto,
   UpdateBillingPlanDto,
@@ -25,13 +25,13 @@ import {
   UpdatePaymentDto,
   CreateInvoiceDto,
   UpdateInvoiceDto,
-} from '../dto/billing.dto';
-import { JwtAuthGuard } from '../../../libs/core/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../libs/core/guards/roles.guard';
-import { Roles } from '../../../libs/core/decorators/roles.decorator';
-import { Role } from '../../../libs/infrastructure/database/prisma/prisma.types';
+} from "../dto/billing.dto";
+import { JwtAuthGuard } from "../../../libs/core/guards/jwt-auth.guard";
+import { RolesGuard } from "../../../libs/core/guards/roles.guard";
+import { Roles } from "../../../libs/core/decorators/roles.decorator";
+import { Role } from "../../../libs/infrastructure/database/prisma/prisma.types";
 
-@Controller('billing')
+@Controller("billing")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class BillingController {
   constructor(
@@ -41,131 +41,133 @@ export class BillingController {
 
   // ============ Billing Plans ============
 
-  @Get('plans')
-  async getBillingPlans(@Query('clinicId') clinicId?: string) {
+  @Get("plans")
+  async getBillingPlans(@Query("clinicId") clinicId?: string) {
     return this.billingService.getBillingPlans(clinicId);
   }
 
-  @Get('plans/:id')
-  async getBillingPlan(@Param('id') id: string) {
+  @Get("plans/:id")
+  async getBillingPlan(@Param("id") id: string) {
     return this.billingService.getBillingPlan(id);
   }
 
-  @Post('plans')
+  @Post("plans")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   async createBillingPlan(@Body() createBillingPlanDto: CreateBillingPlanDto) {
     return this.billingService.createBillingPlan(createBillingPlanDto);
   }
 
-  @Put('plans/:id')
+  @Put("plans/:id")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   async updateBillingPlan(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @Body() updateBillingPlanDto: UpdateBillingPlanDto,
   ) {
     return this.billingService.updateBillingPlan(id, updateBillingPlanDto);
   }
 
-  @Delete('plans/:id')
+  @Delete("plans/:id")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteBillingPlan(@Param('id') id: string) {
+  async deleteBillingPlan(@Param("id") id: string) {
     await this.billingService.deleteBillingPlan(id);
   }
 
   // ============ Subscriptions ============
 
-  @Post('subscriptions')
+  @Post("subscriptions")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
-  async createSubscription(@Body() createSubscriptionDto: CreateSubscriptionDto) {
+  async createSubscription(
+    @Body() createSubscriptionDto: CreateSubscriptionDto,
+  ) {
     return this.billingService.createSubscription(createSubscriptionDto);
   }
 
-  @Get('subscriptions/user/:userId')
-  async getUserSubscriptions(@Param('userId') userId: string) {
+  @Get("subscriptions/user/:userId")
+  async getUserSubscriptions(@Param("userId") userId: string) {
     return this.billingService.getUserSubscriptions(userId);
   }
 
-  @Get('subscriptions/:id')
-  async getSubscription(@Param('id') id: string) {
+  @Get("subscriptions/:id")
+  async getSubscription(@Param("id") id: string) {
     return this.billingService.getSubscription(id);
   }
 
-  @Put('subscriptions/:id')
+  @Put("subscriptions/:id")
   async updateSubscription(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @Body() updateSubscriptionDto: UpdateSubscriptionDto,
   ) {
     return this.billingService.updateSubscription(id, updateSubscriptionDto);
   }
 
-  @Post('subscriptions/:id/cancel')
+  @Post("subscriptions/:id/cancel")
   async cancelSubscription(
-    @Param('id') id: string,
-    @Query('immediate') immediate?: string,
+    @Param("id") id: string,
+    @Query("immediate") immediate?: string,
   ) {
-    return this.billingService.cancelSubscription(id, immediate === 'true');
+    return this.billingService.cancelSubscription(id, immediate === "true");
   }
 
-  @Post('subscriptions/:id/renew')
-  async renewSubscription(@Param('id') id: string) {
+  @Post("subscriptions/:id/renew")
+  async renewSubscription(@Param("id") id: string) {
     return this.billingService.renewSubscription(id);
   }
 
   // ============ Invoices ============
 
-  @Post('invoices')
+  @Post("invoices")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   async createInvoice(@Body() createInvoiceDto: CreateInvoiceDto) {
     return this.billingService.createInvoice(createInvoiceDto);
   }
 
-  @Get('invoices/user/:userId')
-  async getUserInvoices(@Param('userId') userId: string) {
+  @Get("invoices/user/:userId")
+  async getUserInvoices(@Param("userId") userId: string) {
     return this.billingService.getUserInvoices(userId);
   }
 
-  @Get('invoices/:id')
-  async getInvoice(@Param('id') id: string) {
+  @Get("invoices/:id")
+  async getInvoice(@Param("id") id: string) {
     return this.billingService.getInvoice(id);
   }
 
-  @Put('invoices/:id')
+  @Put("invoices/:id")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   async updateInvoice(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @Body() updateInvoiceDto: UpdateInvoiceDto,
   ) {
     return this.billingService.updateInvoice(id, updateInvoiceDto);
   }
 
-  @Post('invoices/:id/mark-paid')
+  @Post("invoices/:id/mark-paid")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
-  async markInvoiceAsPaid(@Param('id') id: string) {
+  async markInvoiceAsPaid(@Param("id") id: string) {
     return this.billingService.markInvoiceAsPaid(id);
   }
 
   // ============ Payments ============
 
-  @Post('payments')
+  @Post("payments")
   async createPayment(@Body() createPaymentDto: CreatePaymentDto) {
     return this.billingService.createPayment(createPaymentDto);
   }
 
-  @Get('payments/user/:userId')
-  async getUserPayments(@Param('userId') userId: string) {
+  @Get("payments/user/:userId")
+  async getUserPayments(@Param("userId") userId: string) {
     return this.billingService.getUserPayments(userId);
   }
 
-  @Get('payments/:id')
-  async getPayment(@Param('id') id: string) {
+  @Get("payments/:id")
+  async getPayment(@Param("id") id: string) {
     return this.billingService.getPayment(id);
   }
 
-  @Put('payments/:id')
+  @Put("payments/:id")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   async updatePayment(
-    @Param('id') id: string,
+    @Param("id") id: string,
     @Body() updatePaymentDto: UpdatePaymentDto,
   ) {
     return this.billingService.updatePayment(id, updatePaymentDto);
@@ -173,12 +175,12 @@ export class BillingController {
 
   // ============ Analytics ============
 
-  @Get('analytics/revenue')
+  @Get("analytics/revenue")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   async getClinicRevenue(
-    @Query('clinicId') clinicId: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
+    @Query("clinicId") clinicId: string,
+    @Query("startDate") startDate?: string,
+    @Query("endDate") endDate?: string,
   ) {
     return this.billingService.getClinicRevenue(
       clinicId,
@@ -187,105 +189,119 @@ export class BillingController {
     );
   }
 
-  @Get('analytics/subscriptions')
+  @Get("analytics/subscriptions")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  async getSubscriptionMetrics(@Query('clinicId') clinicId: string) {
+  async getSubscriptionMetrics(@Query("clinicId") clinicId: string) {
     return this.billingService.getSubscriptionMetrics(clinicId);
   }
 
   // ============ Subscription Appointments ============
 
-  @Get('subscriptions/:id/can-book-appointment')
+  @Get("subscriptions/:id/can-book-appointment")
   async canBookAppointment(
-    @Param('id') subscriptionId: string,
-    @Query('appointmentType') appointmentType?: string,
+    @Param("id") subscriptionId: string,
+    @Query("appointmentType") appointmentType?: string,
   ) {
-    return this.billingService.canBookAppointment(subscriptionId, appointmentType);
+    return this.billingService.canBookAppointment(
+      subscriptionId,
+      appointmentType,
+    );
   }
 
-  @Post('subscriptions/:id/check-coverage')
+  @Post("subscriptions/:id/check-coverage")
   async checkAppointmentCoverage(
-    @Param('id') subscriptionId: string,
+    @Param("id") subscriptionId: string,
     @Body() body: { appointmentType: string },
   ) {
-    return this.billingService.checkAppointmentCoverage(subscriptionId, body.appointmentType);
+    return this.billingService.checkAppointmentCoverage(
+      subscriptionId,
+      body.appointmentType,
+    );
   }
 
-  @Post('subscriptions/:subscriptionId/book-appointment/:appointmentId')
+  @Post("subscriptions/:subscriptionId/book-appointment/:appointmentId")
   async bookAppointmentWithSubscription(
-    @Param('subscriptionId') subscriptionId: string,
-    @Param('appointmentId') appointmentId: string,
+    @Param("subscriptionId") subscriptionId: string,
+    @Param("appointmentId") appointmentId: string,
   ) {
-    await this.billingService.bookAppointmentWithSubscription(subscriptionId, appointmentId);
-    return { message: 'Appointment booked with subscription' };
+    await this.billingService.bookAppointmentWithSubscription(
+      subscriptionId,
+      appointmentId,
+    );
+    return { message: "Appointment booked with subscription" };
   }
 
-  @Post('appointments/:appointmentId/cancel-subscription')
+  @Post("appointments/:appointmentId/cancel-subscription")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PATIENT)
-  async cancelSubscriptionAppointment(@Param('appointmentId') appointmentId: string) {
+  async cancelSubscriptionAppointment(
+    @Param("appointmentId") appointmentId: string,
+  ) {
     await this.billingService.cancelSubscriptionAppointment(appointmentId);
-    return { message: 'Subscription appointment cancelled, quota restored' };
+    return { message: "Subscription appointment cancelled, quota restored" };
   }
 
-  @Get('subscriptions/user/:userId/active')
+  @Get("subscriptions/user/:userId/active")
   async getActiveUserSubscription(
-    @Param('userId') userId: string,
-    @Query('clinicId') clinicId: string,
+    @Param("userId") userId: string,
+    @Query("clinicId") clinicId: string,
   ) {
     return this.billingService.getActiveUserSubscription(userId, clinicId);
   }
 
-  @Get('subscriptions/:id/usage-stats')
-  async getSubscriptionUsageStats(@Param('id') subscriptionId: string) {
+  @Get("subscriptions/:id/usage-stats")
+  async getSubscriptionUsageStats(@Param("id") subscriptionId: string) {
     return this.billingService.getSubscriptionUsageStats(subscriptionId);
   }
 
-  @Post('subscriptions/:id/reset-quota')
+  @Post("subscriptions/:id/reset-quota")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  async resetSubscriptionQuota(@Param('id') subscriptionId: string) {
+  async resetSubscriptionQuota(@Param("id") subscriptionId: string) {
     await this.billingService.resetSubscriptionQuota(subscriptionId);
-    return { message: 'Subscription quota reset' };
+    return { message: "Subscription quota reset" };
   }
 
   // ============ Invoice PDF & WhatsApp ============
 
-  @Post('invoices/:id/generate-pdf')
+  @Post("invoices/:id/generate-pdf")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  async generateInvoicePDF(@Param('id') invoiceId: string) {
+  async generateInvoicePDF(@Param("id") invoiceId: string) {
     await this.billingService.generateInvoicePDF(invoiceId);
-    return { message: 'Invoice PDF generated successfully' };
+    return { message: "Invoice PDF generated successfully" };
   }
 
-  @Post('invoices/:id/send-whatsapp')
+  @Post("invoices/:id/send-whatsapp")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  async sendInvoiceViaWhatsApp(@Param('id') invoiceId: string) {
+  async sendInvoiceViaWhatsApp(@Param("id") invoiceId: string) {
     const success = await this.billingService.sendInvoiceViaWhatsApp(invoiceId);
     return {
       message: success
-        ? 'Invoice sent via WhatsApp successfully'
-        : 'Failed to send invoice via WhatsApp',
+        ? "Invoice sent via WhatsApp successfully"
+        : "Failed to send invoice via WhatsApp",
       success,
     };
   }
 
-  @Get('invoices/download/:fileName')
-  async downloadInvoice(@Param('fileName') fileName: string, @Res() res: Response) {
+  @Get("invoices/download/:fileName")
+  async downloadInvoice(
+    @Param("fileName") fileName: string,
+    @Res() res: Response,
+  ) {
     // Check if file exists
     if (!this.invoicePDFService.invoicePDFExists(fileName)) {
-      throw new NotFoundException('Invoice PDF not found');
+      throw new NotFoundException("Invoice PDF not found");
     }
 
     const filePath = this.invoicePDFService.getInvoiceFilePath(fileName);
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.sendFile(filePath);
   }
 
-  @Post('subscriptions/:id/send-confirmation')
+  @Post("subscriptions/:id/send-confirmation")
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  async sendSubscriptionConfirmation(@Param('id') subscriptionId: string) {
+  async sendSubscriptionConfirmation(@Param("id") subscriptionId: string) {
     await this.billingService.sendSubscriptionConfirmation(subscriptionId);
-    return { message: 'Subscription confirmation sent successfully' };
+    return { message: "Subscription confirmation sent successfully" };
   }
 }

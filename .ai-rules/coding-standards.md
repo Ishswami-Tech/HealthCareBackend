@@ -4,7 +4,7 @@
 ## 🎯 Core Principles
 
 ### **Code Quality Standards**
-- **TypeScript Strict Mode**: Always enabled, no `any` types
+- **TypeScript Strict Mode**: Always enabled, no `any`and `unknown` types
 - **ESLint + Prettier**: Automated formatting and linting
 - **Path Aliases**: Use `@services`, `@dtos`, etc. (never relative imports)
 - **Error Handling**: Comprehensive try-catch with proper logging

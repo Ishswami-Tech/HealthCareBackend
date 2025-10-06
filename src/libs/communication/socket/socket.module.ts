@@ -13,9 +13,9 @@ import { SocketAuthMiddleware } from "./socket-auth.middleware";
     EventEmitterModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'default-secret-key',
-        signOptions: { expiresIn: '7d' },
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>("JWT_SECRET") || "default-secret-key",
+        signOptions: { expiresIn: "7d" },
       }),
       inject: [ConfigService],
     }),

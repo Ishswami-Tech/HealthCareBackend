@@ -294,12 +294,12 @@ export class ClinicContextService {
     fn: () => Promise<T>,
   ): Promise<T> {
     return new Promise((resolve, reject) => {
-      this.contextStore.run(context, async () => {
+      void this.contextStore.run(context, async () => {
         try {
           const result = await fn();
           resolve(result);
         } catch (_error) {
-          reject(_error);
+          reject(_error instanceof Error ? _error : new Error(String(_error)));
         }
       });
     });
@@ -307,17 +307,19 @@ export class ClinicContextService {
 
   // Clinic Management
 
-  async getClinicInfo(clinicId: string): Promise<ClinicInfo> {
+  getClinicInfo(clinicId: string): Promise<ClinicInfo> {
     const clinic = this.clinicCache.get(clinicId);
     if (!clinic) {
       throw new BadRequestException(`Clinic ${clinicId} not found`);
     }
-    return clinic;
+    return Promise.resolve(clinic);
   }
 
-  async getUserClinics(userId: string): Promise<UserClinicAssociation[]> {
+  getUserClinics(userId: string): Promise<UserClinicAssociation[]> {
     const associations = this.userClinicCache.get(userId) || [];
-    return associations.filter((assoc) => assoc.status === "active");
+    return Promise.resolve(
+      associations.filter((assoc) => assoc.status === "active"),
+    );
   }
 
   async addUserToClinic(
@@ -383,10 +385,7 @@ export class ClinicContextService {
     return association;
   }
 
-  async removeUserFromClinic(
-    userId: string,
-    clinicId: string,
-  ): Promise<boolean> {
+  removeUserFromClinic(userId: string, clinicId: string): Promise<boolean> {
     const associations = this.userClinicCache.get(userId) || [];
     const updatedAssociations = associations.filter(
       (assoc) => assoc.clinicId !== clinicId,
@@ -395,10 +394,10 @@ export class ClinicContextService {
     if (updatedAssociations.length < associations.length) {
       this.userClinicCache.set(userId, updatedAssociations);
       this.logger.log(`👤 Removed user ${userId} from clinic ${clinicId}`);
-      return true;
+      return Promise.resolve(true);
     }
 
-    return false;
+    return Promise.resolve(false);
   }
 
   // Access Control and Validation
@@ -593,7 +592,7 @@ export class ClinicContextService {
       ...clinic,
       settings: updatedSettings,
       metadata: {
-        ...((clinic as any).metadata || {}),
+        ...(clinic.metadata || {}),
         updatedAt: new Date(),
       },
     };

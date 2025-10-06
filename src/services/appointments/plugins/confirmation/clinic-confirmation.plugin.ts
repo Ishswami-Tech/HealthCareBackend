@@ -75,7 +75,9 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
         this.logPluginError("Unknown confirmation operation", {
           operation: pluginData.operation,
         });
-        throw new Error(`Unknown confirmation operation: ${pluginData.operation}`);
+        throw new Error(
+          `Unknown confirmation operation: ${pluginData.operation}`,
+        );
     }
   }
 
@@ -100,7 +102,9 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
       return false;
     }
 
-    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
+    const isValid = fields.every(
+      (field: unknown) => pluginData[field as string] !== undefined,
+    );
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

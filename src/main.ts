@@ -3,7 +3,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
-import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
+import { SwaggerModule } from "@nestjs/swagger";
 import {
   ValidationPipe,
   Logger,
@@ -17,7 +17,6 @@ import fastifyHelmet from "@fastify/helmet";
 import fastifyRateLimit from "@fastify/rate-limit";
 import fastifyCompress from "@fastify/compress";
 import fastifyMultipart from "@fastify/multipart";
-import { ConfigService } from "@nestjs/config";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { swaggerConfig, swaggerCustomOptions } from "./config/swagger.config";
 import { LoggingService } from "./libs/infrastructure/logging/logging.service";
@@ -25,24 +24,18 @@ import { LogType } from "./libs/infrastructure/logging/types/logging.types";
 import { LogLevel as AppLogLevel } from "./libs/infrastructure/logging/types/logging.types";
 import developmentConfig from "./config/environment/development.config";
 import productionConfig from "./config/environment/production.config";
-import { RedisService } from "./libs/infrastructure/cache/redis/redis.service";
-import { QueueService } from "./libs/infrastructure/queue/src/queue.service";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "./libs/infrastructure/database/prisma/prisma.service";
-import { EmailModule } from "./libs/communication/messaging/email/email.module";
-import { IoAdapter } from "@nestjs/platform-socket.io";
-import { Server } from "socket.io";
-import { createClient } from "redis";
 import { LoggingInterceptor } from "./libs/infrastructure/logging/logging.interceptor";
-import { FastifyRequest, FastifyReply } from "fastify";
+import { IoAdapter } from "@nestjs/platform-socket.io";
 import cluster from "cluster";
 import * as os from "os";
 import {
   AuthenticatedRequest,
   RateLimitContext,
-  WorkerProcess,
   SerializedRequest,
-  RedisClient,
   SocketConnection,
+  WorkerProcess,
   FastifyLoggerConfig,
 } from "./libs/core/types/request.types";
 
@@ -116,7 +109,10 @@ async function configureProductionMiddleware(
     keyGenerator: (request: Partial<AuthenticatedRequest>) => {
       return `${request.ip}:${request.headers?.["user-agent"] || "unknown"}`;
     },
-    errorResponseBuilder: (request: Partial<AuthenticatedRequest>, context: RateLimitContext) => {
+    errorResponseBuilder: (
+      request: Partial<AuthenticatedRequest>,
+      context: RateLimitContext,
+    ) => {
       return {
         statusCode: 429,
         error: "Too Many Requests",
@@ -194,24 +190,27 @@ function setupProductionClustering(): boolean {
     }
 
     // Handle worker deaths and respawn
-    cluster.on("exit", (worker: WorkerProcess, code: number | null, signal: string | null) => {
-      const pid = worker.process.pid;
+    cluster.on(
+      "exit",
+      (worker: WorkerProcess, code: number | null, signal: string | null) => {
+        const pid = worker.process.pid;
 
-      if (signal) {
-        console.log(`⚠️ Worker ${pid} killed by signal: ${signal}`);
-      } else if (code !== 0 && code !== null) {
-        console.error(`❌ Worker ${pid} exited with error code: ${code}`);
-      } else {
-        console.log(`✅ Worker ${pid} exited successfully`);
-      }
+        if (signal) {
+          console.log(`⚠️ Worker ${pid} killed by signal: ${signal}`);
+        } else if (code !== 0 && code !== null) {
+          console.error(`❌ Worker ${pid} exited with error code: ${code}`);
+        } else {
+          console.log(`✅ Worker ${pid} exited successfully`);
+        }
 
-      // Respawn worker if not in shutdown mode
-      if (!worker.exitedAfterDisconnect) {
-        console.log("🔄 Respawning worker...");
-        const newWorker = cluster.fork();
-        console.log(`🆕 New worker ${newWorker.process.pid} started`);
-      }
-    });
+        // Respawn worker if not in shutdown mode
+        if (!worker.exitedAfterDisconnect) {
+          console.log("🔄 Respawning worker...");
+          const newWorker = cluster.fork();
+          console.log(`🆕 New worker ${newWorker.process.pid} started`);
+        }
+      },
+    );
 
     // Graceful shutdown for cluster
     const shutdownCluster = async (signal: string) => {
@@ -316,7 +315,11 @@ async function bootstrap() {
             req.url?.includes("socket.io") ||
             req.url?.includes("/logs/")
           ) {
-            return { method: req.method || "GET", url: req.url || "", skip: true };
+            return {
+              method: req.method || "GET",
+              url: req.url || "",
+              skip: true,
+            };
           }
           return {
             method: req.method || "GET",
@@ -516,8 +519,12 @@ async function bootstrap() {
         };
 
         // Set up event handlers
-        pubClient.on("error", (err: unknown) => handleRedisError("Pub", err as Error));
-        subClient.on("error", (err: unknown) => handleRedisError("Sub", err as Error));
+        pubClient.on("error", (err: unknown) =>
+          handleRedisError("Pub", err as Error),
+        );
+        subClient.on("error", (err: unknown) =>
+          handleRedisError("Sub", err as Error),
+        );
         pubClient.on("connect", () => handleRedisConnect("Pub"));
         subClient.on("connect", () => handleRedisConnect("Sub"));
 
@@ -580,13 +587,15 @@ async function bootstrap() {
             server.adapter(this.adapterConstructor);
 
             // Health check endpoint
-            server.of("/health").on("connection", (socket: SocketConnection) => {
-              socket.emit("health", {
-                status: "healthy",
-                timestamp: new Date(),
-                environment: process.env.NODE_ENV,
+            server
+              .of("/health")
+              .on("connection", (socket: SocketConnection) => {
+                socket.emit("health", {
+                  status: "healthy",
+                  timestamp: new Date(),
+                  environment: process.env.NODE_ENV,
+                });
               });
-            });
 
             // Test namespace with improved error handling
             server.of("/test").on("connection", (socket: SocketConnection) => {

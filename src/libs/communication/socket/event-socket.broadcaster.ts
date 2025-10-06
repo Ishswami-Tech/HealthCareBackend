@@ -5,9 +5,9 @@
  * Automatically propagates events to relevant clients based on roles and permissions
  */
 
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { SocketService } from './socket.service';
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
+import { SocketService } from "./socket.service";
 
 interface EventPayload {
   userId?: string;
@@ -28,15 +28,15 @@ export class EventSocketBroadcaster implements OnModuleInit {
 
   // Event patterns that should be broadcasted
   private readonly BROADCASTABLE_EVENTS = [
-    'billing.',
-    'ehr.',
-    'appointment.',
-    'user.',
-    'clinic.',
-    'notification.',
-    'payment.',
-    'subscription.',
-    'invoice.',
+    "billing.",
+    "ehr.",
+    "appointment.",
+    "user.",
+    "clinic.",
+    "notification.",
+    "payment.",
+    "subscription.",
+    "invoice.",
   ];
 
   constructor(
@@ -46,18 +46,20 @@ export class EventSocketBroadcaster implements OnModuleInit {
 
   onModuleInit() {
     if (!this.socketService) {
-      this.logger.warn('SocketService not available, event broadcasting disabled');
+      this.logger.warn(
+        "SocketService not available, event broadcasting disabled",
+      );
       this.isEnabled = false;
       return;
     }
 
     // Subscribe to all events
     this.eventEmitter.onAny((event: string | string[], payload: any) => {
-      const eventName = Array.isArray(event) ? event.join('.') : event;
+      const eventName = Array.isArray(event) ? event.join(".") : event;
       this.handleEvent(eventName, payload);
     });
 
-    this.logger.log('Event-to-Socket broadcaster initialized');
+    this.logger.log("Event-to-Socket broadcaster initialized");
   }
 
   /**
@@ -81,13 +83,11 @@ export class EventSocketBroadcaster implements OnModuleInit {
       // Broadcast to all target rooms
       this.broadcastToRooms(event, rooms, eventData);
 
-      this.logger.debug(
-        `Broadcasted event ${event} to ${rooms.length} rooms`,
-      );
+      this.logger.debug(`Broadcasted event ${event} to ${rooms.length} rooms`);
     } catch (error) {
       this.logger.error(
         `Error broadcasting event ${event}:`,
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : "Unknown error",
       );
     }
   }
@@ -106,7 +106,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
    */
   private normalizePayload(payload: any): EventPayload {
     // Handle both direct payload and wrapped payload
-    if (typeof payload === 'object' && payload !== null) {
+    if (typeof payload === "object" && payload !== null) {
       return payload as EventPayload;
     }
     return {};
@@ -115,10 +115,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
   /**
    * Determine which rooms should receive the event
    */
-  private determineTargetRooms(
-    event: string,
-    payload: EventPayload,
-  ): string[] {
+  private determineTargetRooms(event: string, payload: EventPayload): string[] {
     const rooms: Set<string> = new Set();
 
     // User-specific room
@@ -174,14 +171,14 @@ export class EventSocketBroadcaster implements OnModuleInit {
    */
   private isAdminEvent(event: string): boolean {
     const adminEvents = [
-      'billing.',
-      'payment.',
-      'subscription.',
-      'invoice.',
-      'clinic.',
-      'user.created',
-      'user.updated',
-      'user.deleted',
+      "billing.",
+      "payment.",
+      "subscription.",
+      "invoice.",
+      "clinic.",
+      "user.created",
+      "user.updated",
+      "user.deleted",
     ];
 
     return adminEvents.some((pattern) => event.startsWith(pattern));
@@ -192,10 +189,10 @@ export class EventSocketBroadcaster implements OnModuleInit {
    */
   private isDoctorRelevant(event: string): boolean {
     const doctorEvents = [
-      'appointment.',
-      'ehr.',
-      'notification.patient',
-      'user.patient',
+      "appointment.",
+      "ehr.",
+      "notification.patient",
+      "user.patient",
     ];
 
     return doctorEvents.some((pattern) => event.startsWith(pattern));
@@ -206,9 +203,9 @@ export class EventSocketBroadcaster implements OnModuleInit {
    */
   private isReceptionistRelevant(event: string): boolean {
     const receptionistEvents = [
-      'appointment.',
-      'notification.appointment',
-      'user.patient',
+      "appointment.",
+      "notification.appointment",
+      "user.patient",
     ];
 
     return receptionistEvents.some((pattern) => event.startsWith(pattern));
@@ -217,11 +214,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
   /**
    * Broadcast event to multiple rooms
    */
-  private broadcastToRooms(
-    event: string,
-    rooms: string[],
-    data: EventPayload,
-  ) {
+  private broadcastToRooms(event: string, rooms: string[], data: EventPayload) {
     if (!this.socketService) return;
 
     for (const room of rooms) {
@@ -234,7 +227,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
       } catch (error) {
         this.logger.error(
           `Failed to broadcast to room ${room}:`,
-          error instanceof Error ? error.message : 'Unknown error',
+          error instanceof Error ? error.message : "Unknown error",
         );
       }
     }
@@ -245,7 +238,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
    */
   broadcastEvent(event: string, payload: EventPayload, rooms?: string[]) {
     if (!this.isEnabled) {
-      this.logger.warn('Event broadcasting is disabled');
+      this.logger.warn("Event broadcasting is disabled");
       return;
     }
 
@@ -258,7 +251,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
    */
   enable() {
     this.isEnabled = true;
-    this.logger.log('Event broadcasting enabled');
+    this.logger.log("Event broadcasting enabled");
   }
 
   /**
@@ -266,7 +259,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
    */
   disable() {
     this.isEnabled = false;
-    this.logger.log('Event broadcasting disabled');
+    this.logger.log("Event broadcasting disabled");
   }
 
   /**

@@ -64,6 +64,13 @@ export enum Role {
   DOCTOR = "DOCTOR",
   PATIENT = "PATIENT",
   RECEPTIONIST = "RECEPTIONIST",
+  PHARMACIST = "PHARMACIST",
+  THERAPIST = "THERAPIST",
+  LAB_TECHNICIAN = "LAB_TECHNICIAN",
+  FINANCE_BILLING = "FINANCE_BILLING",
+  SUPPORT_STAFF = "SUPPORT_STAFF",
+  NURSE = "NURSE",
+  COUNSELOR = "COUNSELOR",
 }
 
 export enum Gender {
@@ -95,6 +102,12 @@ export enum PaymentMethod {
   CARD = "CARD",
   UPI = "UPI",
   NET_BANKING = "NET_BANKING",
+}
+
+export enum Language {
+  EN = "EN",
+  HI = "HI",
+  MR = "MR",
 }
 
 export enum AppointmentType {
@@ -152,8 +165,88 @@ export enum Dosha {
   KAPHA = "KAPHA",
 }
 
+// Ayurvedic Enums
+export enum TherapyType {
+  SHODHANA = "SHODHANA",
+  SHAMANA = "SHAMANA",
+  RASAYANA = "RASAYANA",
+  VAJIKARANA = "VAJIKARANA",
+}
+
+export enum TherapyDuration {
+  SHORT = "SHORT",
+  MEDIUM = "MEDIUM",
+  LONG = "LONG",
+  EXTENDED = "EXTENDED",
+}
+
+export enum AgniType {
+  SAMA = "SAMA",
+  VISHAMA = "VISHAMA",
+  TIKSHNA = "TIKSHNA",
+  MANDA = "MANDA",
+}
+
+export enum TherapyStatus {
+  SCHEDULED = "SCHEDULED",
+  IN_PROGRESS = "IN_PROGRESS",
+  COMPLETED = "COMPLETED",
+  CANCELLED = "CANCELLED",
+  RESCHEDULED = "RESCHEDULED",
+}
+
 // Export Prisma namespace for input types
 export { Prisma } from "@prisma/client";
+
+// Export new role types
+export type Pharmacist = {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  user?: User;
+};
+
+export type Therapist = {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  user?: User;
+};
+
+export type LabTechnician = {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  user?: User;
+};
+
+export type FinanceBilling = {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  user?: User;
+};
+
+export type SupportStaff = {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  user?: User;
+};
+
+export type Nurse = {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  user?: User;
+};
+
+export type Counselor = {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  user?: User;
+};
 
 // Singleton pattern for PrismaClient with lazy initialization
 let prisma: PrismaClient | undefined;

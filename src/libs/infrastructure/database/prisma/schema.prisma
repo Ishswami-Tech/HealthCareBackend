@@ -43,6 +43,17 @@ model User {
   appName           String?
   medicalConditions String?
 
+  // NEW AYURVEDIC FIELDS
+  prakriti           Prakriti?           // Body constitution
+  vikriti            String?             // Current state/imbalance
+  doshaImbalances    Json?               // Array of dosha imbalances
+  agni               AgniType?           // Digestive fire strength
+  dinacharya         String?             // Daily routine
+  ritucharya         String?             // Seasonal routine
+  dietaryRestrictionsJson Json?          // Food restrictions (JSON format)
+  lifestyleFactors   Json?               // Lifestyle assessment
+  seasonalPatterns   Json?               // Seasonal health patterns
+
   // Primary clinic association
   primaryClinicId String? // Primary clinic for the user
   primaryClinic   Clinic? @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
@@ -64,13 +75,19 @@ model User {
   notifications          Notification[]
   patient                Patient?
   superAdmin             SuperAdmin?
+  pharmacist             Pharmacist?
+  therapist              Therapist?
+  labTechnician          LabTechnician?
+  financeBilling         FinanceBilling?
+  supportStaff           SupportStaff?
+  nurse                  Nurse?
+  counselor              Counselor?
   medicalHistories       MedicalHistory[]
   labReports             LabReport[]
   radiologyReports       RadiologyReport[]
   surgicalRecords        SurgicalRecord[]
   mentalHealthNotes      MentalHealthNote[]
   vitals                 Vital[]
-  ayurvedicTherapies     AyurvedicTherapy[]
   nadiParikshas          NadiPariksha[]
   ayurvedicPrescriptions AyurvedicPrescription[]
   prakritiAnalyses       PrakritiAnalysis[]
@@ -160,6 +177,15 @@ model Clinic {
   resources            Resource[]
   resourceBookings     ResourceBooking[]
   videoConsultations   VideoConsultation[]
+  
+  // NEW AYURVEDIC RELATIONS
+  ayurvedicTherapies   AyurvedicTherapy[]
+  therapyQueues         TherapyQueue[]
+  checkInLocations      CheckInLocation[]
+  
+  // Additional relations for new models
+  rolePermissions       RolePermission[]
+  therapySessions        TherapySession[]
 
   @@index([app_name])
   @@index([isActive])
@@ -213,6 +239,55 @@ model ClinicAdmin {
   @@index([clinicId])
 }
 
+model Pharmacist {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Therapist {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model LabTechnician {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model FinanceBilling {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model SupportStaff {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Nurse {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Counselor {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
 model Doctor {
   id              String         @id @default(uuid())
   userId          String         @unique
@@ -235,6 +310,9 @@ model Doctor {
   appointmentTemplates AppointmentTemplate[]
   waitlistEntries      WaitlistEntry[]
   videoConsultations   VideoConsultation[]
+  
+  // NEW AYURVEDIC RELATIONS
+  therapySessions      TherapySession[]
 }
 
 model Patient {
@@ -255,6 +333,11 @@ model Patient {
   insurance          Insurance[]
   videoConsultations VideoConsultation[]
   reviews            Review[]
+  
+  // NEW AYURVEDIC RELATIONS
+  therapySessions    TherapySession[]
+  queueEntries       QueueEntry[]
+  checkIns           CheckIn[]
 }
 
 model Appointment {
@@ -297,6 +380,11 @@ model Appointment {
   // New Relations for Enhanced Features
   resourceBookings  ResourceBooking[]
   VideoConsultation VideoConsultation[]
+  
+  // NEW AYURVEDIC RELATIONS
+  therapySessions   TherapySession[]
+  queueEntries       QueueEntry[]
+  checkIns           CheckIn[]
 
   @@index([doctorId])
   @@index([patientId])
@@ -606,6 +694,14 @@ enum Role {
   DOCTOR
   PATIENT
   RECEPTIONIST
+  // NEW AYURVEDIC ROLES
+  PHARMACIST           // Medicine desk management
+  THERAPIST           // Panchakarma specialist
+  LAB_TECHNICIAN      // Diagnostic test management
+  FINANCE_BILLING     // Payment and invoice management
+  SUPPORT_STAFF       // General clinic support
+  NURSE               // Clinical support
+  COUNSELOR           // Patient counseling
 }
 
 enum Gender {
@@ -672,6 +768,19 @@ enum AppointmentType {
   IN_PERSON
   VIDEO_CALL
   HOME_VISIT
+  // NEW AYURVEDIC TYPES
+  VIDDHAKARMA        // Surgical procedures
+  AGNIKARMA          // Fire therapy
+  PANCHAKARMA        // Detoxification therapies
+  NADI_PARIKSHA      // Pulse diagnosis
+  DOSHA_ANALYSIS     // Constitutional assessment
+  SHIRODHARA         // Oil pouring therapy
+  VIRECHANA          // Purgation therapy
+  ABHYANGA           // Oil massage
+  SWEDANA            // Sweating therapy
+  BASTI              // Enema therapy
+  NASYA              // Nasal therapy
+  RAKTAMOKSHANA      // Bloodletting therapy
 }
 
 enum Dosha {
@@ -702,6 +811,37 @@ enum DatabaseStatus {
   ERROR
   MIGRATING
   DISABLED
+}
+
+// NEW AYURVEDIC ENUMS
+enum TherapyType {
+  SHODHANA           // Purification therapies
+  SHAMANA            // Palliative therapies
+  RASAYANA           // Rejuvenation therapies
+  VAJIKARANA         // Aphrodisiac therapies
+}
+
+enum TherapyDuration {
+  SHORT              // 30-60 minutes
+  MEDIUM             // 1-3 hours
+  LONG               // 3-8 hours
+  EXTENDED           // Multiple days
+  RESIDENTIAL        // 7-21 days
+}
+
+enum AgniType {
+  TIKSHNA            // Sharp/strong
+  MANDA              // Slow/weak
+  SAMA               // Balanced
+  VISHAMA            // Irregular
+}
+
+enum TherapyStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  PAUSED
 }
 
 model MedicalHistory {
@@ -798,19 +938,6 @@ model Vital {
   @@index([clinicId])
 }
 
-model AyurvedicTherapy {
-  id          String   @id @default(uuid())
-  user        User     @relation(fields: [userId], references: [id])
-  userId      String
-  therapyType String
-  description String?
-  date        DateTime
-  therapist   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([userId])
-}
 
 model NadiPariksha {
   id           String   @id @default(uuid())
@@ -1050,6 +1177,10 @@ model UserRole {
   revokedAt  DateTime?
   revokedBy  String?
   isActive   Boolean   @default(true)
+  // NEW FIELDS
+  isPrimary  Boolean   @default(false)  // Primary role for the clinic
+  permissions Json?                     // Role-specific permissions
+  schedule   Json?                       // Role-specific schedule
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
@@ -1062,24 +1193,28 @@ model UserRole {
   @@index([userId])
   @@index([roleId])
   @@index([clinicId])
+  @@index([isPrimary])
 }
 
 model RolePermission {
   id           String   @id @default(uuid())
   roleId       String
   permissionId String
-  assignedAt   DateTime @default(now())
+  clinicId     String?  // Clinic-specific permissions
   isActive     Boolean  @default(true)
+  assignedAt   DateTime @default(now())
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   // Relations
   role       RbacRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  clinic     Clinic?    @relation(fields: [clinicId], references: [id])
 
-  @@unique([roleId, permissionId])
+  @@unique([roleId, permissionId, clinicId])
   @@index([roleId])
   @@index([permissionId])
+  @@index([clinicId])
 }
 
 // Business Rules Engine Models
@@ -1422,4 +1557,160 @@ enum InvoiceStatus {
   VOID
   UNCOLLECTIBLE
   OVERDUE
+}
+
+// =============================================
+// AYURVEDIC THERAPY MANAGEMENT MODELS
+// =============================================
+
+model AyurvedicTherapy {
+  id                String          @id @default(uuid())
+  name              String
+  description       String?
+  therapyType       TherapyType
+  duration          TherapyDuration
+  estimatedDuration Int             // in minutes
+  isActive          Boolean         @default(true)
+  clinicId          String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  clinic            Clinic          @relation(fields: [clinicId], references: [id])
+  sessions          TherapySession[]
+  
+  @@index([clinicId])
+  @@index([therapyType])
+}
+
+model TherapySession {
+  id                String          @id @default(uuid())
+  therapyId         String
+  appointmentId     String
+  patientId         String
+  doctorId          String
+  clinicId          String
+  sessionDate       DateTime
+  startTime         DateTime
+  endTime           DateTime?
+  status            TherapyStatus   @default(SCHEDULED)
+  notes             String?
+  observations      Json?
+  nextSessionDate   DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  therapy           AyurvedicTherapy @relation(fields: [therapyId], references: [id])
+  appointment       Appointment     @relation(fields: [appointmentId], references: [id])
+  patient           Patient         @relation(fields: [patientId], references: [id])
+  doctor            Doctor          @relation(fields: [doctorId], references: [id])
+  clinic            Clinic          @relation(fields: [clinicId], references: [id])
+  
+  @@index([therapyId])
+  @@index([appointmentId])
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([clinicId])
+  @@index([sessionDate])
+}
+
+// =============================================
+// SPECIALIZED QUEUE MANAGEMENT MODELS
+// =============================================
+
+model TherapyQueue {
+  id                String      @id @default(uuid())
+  clinicId          String
+  therapyType       TherapyType
+  queueName         String      // e.g., "Panchakarma Queue", "Agnikarma Queue"
+  isActive          Boolean     @default(true)
+  maxCapacity      Int         @default(10)
+  currentPosition   Int         @default(0)
+  estimatedWaitTime Int?        // in minutes
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  // Relations
+  clinic            Clinic      @relation(fields: [clinicId], references: [id])
+  queueEntries      QueueEntry[]
+  
+  @@index([clinicId])
+  @@index([therapyType])
+  @@index([isActive])
+}
+
+model QueueEntry {
+  id                String      @id @default(uuid())
+  queueId           String
+  appointmentId     String
+  patientId         String
+  position          Int
+  status            QueueStatus @default(WAITING)
+  estimatedWaitTime Int?        // in minutes
+  actualWaitTime   Int?        // in minutes
+  checkedInAt       DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  priority          Int         @default(0)
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  // Relations
+  queue             TherapyQueue @relation(fields: [queueId], references: [id])
+  appointment       Appointment  @relation(fields: [appointmentId], references: [id])
+  patient           Patient      @relation(fields: [patientId], references: [id])
+  
+  @@index([queueId])
+  @@index([appointmentId])
+  @@index([patientId])
+  @@index([status])
+  @@index([position])
+}
+
+// =============================================
+// LOCATION-BASED CHECK-IN MODELS
+// =============================================
+
+model CheckInLocation {
+  id                String    @id @default(uuid())
+  clinicId          String
+  locationName      String
+  qrCode            String    @unique
+  coordinates       Json      // {lat: number, lng: number}
+  radius            Float     // in meters
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  clinic            Clinic    @relation(fields: [clinicId], references: [id])
+  checkIns          CheckIn[]
+  
+  @@index([clinicId])
+  @@index([qrCode])
+}
+
+model CheckIn {
+  id                String    @id @default(uuid())
+  appointmentId    String
+  locationId        String
+  patientId         String
+  checkedInAt       DateTime  @default(now())
+  coordinates       Json?     // Patient's location when checked in
+  deviceInfo        Json?     // Device information
+  isVerified        Boolean   @default(false)
+  verifiedBy        String?   // Staff member who verified
+  notes             String?
+  
+  // Relations
+  appointment       Appointment    @relation(fields: [appointmentId], references: [id])
+  location          CheckInLocation @relation(fields: [locationId], references: [id])
+  patient           Patient        @relation(fields: [patientId], references: [id])
+  
+  @@index([appointmentId])
+  @@index([locationId])
+  @@index([patientId])
+  @@index([checkedInAt])
 }

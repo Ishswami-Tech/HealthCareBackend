@@ -76,7 +76,9 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
       return true;
     }
 
-    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
+    const isValid = fields.every(
+      (field: unknown) => pluginData[field as string] !== undefined,
+    );
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

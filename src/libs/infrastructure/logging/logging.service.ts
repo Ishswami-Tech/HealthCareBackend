@@ -65,13 +65,13 @@ export class LoggingService {
   private initMetricsBuffering() {
     // More frequent flushing for 1M users - every 5 seconds
     this.metricsFlushInterval = setInterval(() => {
-      this.flushMetricsBuffer();
+      void this.flushMetricsBuffer();
     }, this.flushInterval);
 
     // Emergency flush if buffer gets too large
     setInterval(() => {
       if (this.metricsBuffer.length > this.maxBufferSize) {
-        this.flushMetricsBuffer();
+        void this.flushMetricsBuffer();
       }
     }, 1000);
   }

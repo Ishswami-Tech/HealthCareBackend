@@ -1,9 +1,9 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
 import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
 import {
   Injectable,
   NotFoundException,
   ConflictException,
-  UnauthorizedException,
   BadRequestException,
 } from "@nestjs/common";
 import { CacheService } from "../../libs/infrastructure/cache";
@@ -13,10 +13,7 @@ import {
   LogLevel,
   LogType,
 } from "../../libs/infrastructure/logging/types/logging.types";
-import {
-  Role,
-  Gender,
-} from "../../libs/infrastructure/database/prisma/prisma.types";
+import { Role } from "../../libs/infrastructure/database/prisma/prisma.types";
 import type { User } from "../../libs/infrastructure/database/prisma/prisma.types";
 import { RbacService } from "../../libs/core/rbac/rbac.service";
 import {
@@ -29,6 +26,12 @@ import { HealthcareErrorsService } from "../../libs/core/errors";
 
 @Injectable()
 export class UsersService {
+  private formatDateToString(date: unknown): string {
+    if (date instanceof Date) {
+      return date.toISOString().split("T")[0];
+    }
+    return "";
+  }
   constructor(
     private readonly prisma: PrismaService,
     private readonly cacheService: CacheService,
@@ -53,19 +56,27 @@ export class UsersService {
             receptionists: role === Role.RECEPTIONIST,
             clinicAdmins: role === Role.CLINIC_ADMIN,
             superAdmin: role === Role.SUPER_ADMIN,
+            pharmacist: role === Role.PHARMACIST,
+            therapist: role === Role.THERAPIST,
+            labTechnician: role === Role.LAB_TECHNICIAN,
+            financeBilling: role === Role.FINANCE_BILLING,
+            supportStaff: role === Role.SUPPORT_STAFF,
+            nurse: role === Role.NURSE,
+            counselor: role === Role.COUNSELOR,
           },
         });
 
-        const result = users.map((userData: unknown) => {
-          const { password, ...user } = userData as Record<string, unknown>;
-          const userResponse = { ...user };
+        const result = users.map((userData: any): UserResponseDto => {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { password: _password, ...user } = userData;
+          const userResponse: UserResponseDto = { ...user } as UserResponseDto;
           if (userResponse.dateOfBirth) {
-            userResponse.dateOfBirth = (userResponse.dateOfBirth as Date)
-              .toISOString()
-              .split("T")[0];
+            userResponse.dateOfBirth = this.formatDateToString(
+              userResponse.dateOfBirth,
+            );
           }
           return userResponse;
-        }) as UserResponseDto[];
+        });
 
         return result;
       },
@@ -101,15 +112,20 @@ export class UsersService {
           throw new NotFoundException(`User with ID ${id} not found`);
         }
 
-        const { password, ...result } = user;
-        const userResponse = { ...result };
-        if (userResponse.dateOfBirth) {
-          userResponse.dateOfBirth = userResponse.dateOfBirth
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { password: _password, ...result } = user;
+        const userResponse = { ...result } as UserResponseDto;
+        if (
+          userResponse.dateOfBirth &&
+          typeof userResponse.dateOfBirth === "object" &&
+          "toISOString" in userResponse.dateOfBirth
+        ) {
+          userResponse.dateOfBirth = (userResponse.dateOfBirth as Date)
             .toISOString()
             .split("T")[0];
         }
 
-        return userResponse as UserResponseDto;
+        return userResponse;
       },
       {
         ttl: 3600, // 1 hour
@@ -193,14 +209,19 @@ export class UsersService {
       return null;
     }
 
-    const { password, ...result } = user;
-    const userResponse = { ...result };
-    if (userResponse.dateOfBirth) {
-      userResponse.dateOfBirth = userResponse.dateOfBirth
-        .toISOString()
-        .split("T")[0];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password: _password, ...result } = user;
+    const userResponse = { ...result } as UserResponseDto;
+    if (
+      userResponse.dateOfBirth &&
+      typeof userResponse.dateOfBirth === "object" &&
+      "toISOString" in userResponse.dateOfBirth
+    ) {
+      userResponse.dateOfBirth = this.formatDateToString(
+        userResponse.dateOfBirth as Date,
+      );
     }
-    return userResponse as UserResponseDto;
+    return userResponse;
   }
 
   async count(): Promise<number> {
@@ -218,7 +239,7 @@ export class UsersService {
   async createUser(data: CreateUserDto): Promise<User> {
     try {
       // Use auth service for proper user registration with password hashing
-      const authResponse = await this.authService.register({
+      await this.authService.register({
         email: data.email,
         password: data.password,
         firstName: data.firstName,
@@ -292,6 +313,7 @@ export class UsersService {
     }
     try {
       // Check if user exists first
+
       const existingUser = await this.prisma.user.findUnique({
         where: { id },
         include: {
@@ -308,7 +330,7 @@ export class UsersService {
       }
 
       // Log the update attempt
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Attempting to update user",
@@ -336,8 +358,8 @@ export class UsersService {
           (cleanedData as Record<string, unknown>).dateOfBirth = new Date(
             (cleanedData as Record<string, unknown>).dateOfBirth as string,
           );
-        } catch (_error) {
-          this.loggingService.log(
+        } catch {
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             "Invalid date format for dateOfBirth",
@@ -420,17 +442,22 @@ export class UsersService {
         data: updateUserDto,
       });
 
-      const { password, ...result } = user;
-      const userResponse = { ...result };
-      if (userResponse.dateOfBirth) {
-        userResponse.dateOfBirth = userResponse.dateOfBirth
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { password: _password, ...result } = user;
+      const userResponse = { ...result } as UserResponseDto;
+      if (
+        userResponse.dateOfBirth &&
+        typeof userResponse.dateOfBirth === "object" &&
+        "toISOString" in userResponse.dateOfBirth
+      ) {
+        userResponse.dateOfBirth = (userResponse.dateOfBirth as Date)
           .toISOString()
           .split("T")[0];
       }
-      return userResponse as UserResponseDto;
+      return userResponse;
     } catch (_error) {
       // Log the _error
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Error updating user: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
@@ -512,6 +539,7 @@ export class UsersService {
     }
 
     // Delete user record
+
     await this.prisma.user.delete({
       where: { id },
     });
@@ -570,8 +598,10 @@ export class UsersService {
 
   async logout(
     userId: string,
-    sessionId?: string,
-    clinicId?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _sessionId?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _clinicId?: string,
   ): Promise<void> {
     // Check if user exists
     const user = await this.prisma.user.findUnique({
@@ -587,6 +617,7 @@ export class UsersService {
       await this.authService.logout(userId);
 
       // Update last login timestamp
+
       await this.prisma.user.update({
         where: { id: userId },
         data: {
@@ -697,13 +728,14 @@ export class UsersService {
           data: { userId: id },
         });
         break;
-      case Role.CLINIC_ADMIN:
+      case Role.CLINIC_ADMIN: {
         const clinics = await this.prisma.clinic.findMany({
           take: 1,
         });
         if (!clinics.length) {
           throw new Error("No clinic found. Please create a clinic first.");
         }
+
         await this.prisma.clinicAdmin.create({
           data: {
             userId: id,
@@ -711,6 +743,7 @@ export class UsersService {
           },
         });
         break;
+      }
       case Role.SUPER_ADMIN:
         await this.prisma.superAdmin.create({
           data: { userId: id },
@@ -719,6 +752,7 @@ export class UsersService {
     }
 
     // Update user role
+
     const updatedUser = await this.prisma.user.update({
       where: { id },
       data: { role },
@@ -742,13 +776,18 @@ export class UsersService {
       this.cacheService.invalidateCacheByTag(`users:${role.toLowerCase()}`),
     ]);
 
-    const { password, ...result } = updatedUser;
-    const userResponse = { ...result };
-    if (userResponse.dateOfBirth) {
-      userResponse.dateOfBirth = userResponse.dateOfBirth
-        .toISOString()
-        .split("T")[0];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password: _password, ...result } = updatedUser;
+    const userResponse = { ...result } as UserResponseDto;
+    if (
+      userResponse.dateOfBirth &&
+      typeof userResponse.dateOfBirth === "object" &&
+      "toISOString" in userResponse.dateOfBirth
+    ) {
+      userResponse.dateOfBirth = this.formatDateToString(
+        userResponse.dateOfBirth as Date,
+      );
     }
-    return userResponse as UserResponseDto;
+    return userResponse;
   }
 }

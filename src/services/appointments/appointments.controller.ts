@@ -1092,10 +1092,10 @@ export class AppointmentsController {
       });
 
       // Get appointment details
-      const appointment = await this.appointmentService.getAppointmentById(
+      const appointment = (await this.appointmentService.getAppointmentById(
         appointmentId,
         clinicId,
-      ) as any;
+      )) as any;
       if (!appointment) {
         throw new NotFoundException("Appointment not found");
       }
@@ -1189,10 +1189,10 @@ export class AppointmentsController {
       );
 
       // Get appointment details
-      const appointment = await this.appointmentService.getAppointmentById(
+      const appointment = (await this.appointmentService.getAppointmentById(
         appointmentId,
         clinicId,
-      ) as any;
+      )) as any;
       if (!appointment) {
         throw new NotFoundException("Appointment not found");
       }

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+﻿import { Injectable, Logger } from "@nestjs/common";
 import {
   BasePlugin,
   PluginRegistry,
@@ -23,7 +23,7 @@ export class EnterprisePluginRegistry implements PluginRegistry {
   /**
    * Register a plugin in the registry
    */
-  async register(plugin: BasePlugin): Promise<void> {
+  register(plugin: BasePlugin): Promise<void> {
     try {
       // Validate plugin
       this.validatePlugin(plugin);
@@ -49,12 +49,14 @@ export class EnterprisePluginRegistry implements PluginRegistry {
       });
 
       this.logger.log(
-        `✅ Registered plugin: ${plugin.name} v${plugin.version}`,
+        `âœ… Registered plugin: ${plugin.name} v${plugin.version}`,
       );
     } catch (error) {
-      this.logger.error(`❌ Failed to register plugin ${plugin.name}:`, error);
+      this.logger.error(`âŒ Failed to register plugin ${plugin.name}:`, error);
       throw error;
     }
+
+    return Promise.resolve();
   }
 
   /**
@@ -79,9 +81,9 @@ export class EnterprisePluginRegistry implements PluginRegistry {
       this.pluginHealth.delete(pluginName);
       this.removeFromIndexes(plugin);
 
-      this.logger.log(`🗑️ Unregistered plugin: ${pluginName}`);
+      this.logger.log(`ðŸ—‘ï¸ Unregistered plugin: ${pluginName}`);
     } catch (error) {
-      this.logger.error(`❌ Failed to unregister plugin ${pluginName}:`, error);
+      this.logger.error(`âŒ Failed to unregister plugin ${pluginName}:`, error);
       throw error;
     }
   }
@@ -110,9 +112,9 @@ export class EnterprisePluginRegistry implements PluginRegistry {
   /**
    * Get plugin health status
    */
-  async getPluginHealth(
+  getPluginHealth(
     pluginName?: string,
-  ): Promise<PluginHealth | Record<string, PluginHealth>> {
+  ): PluginHealth | Record<string, PluginHealth> {
     if (pluginName) {
       return (
         this.pluginHealth.get(pluginName) || {
@@ -135,7 +137,7 @@ export class EnterprisePluginRegistry implements PluginRegistry {
    * Check health of all plugins
    */
   async checkAllPluginHealth(): Promise<void> {
-    this.logger.log("🔍 Checking health of all plugins...");
+    this.logger.log("ðŸ” Checking health of all plugins...");
 
     for (const [name, plugin] of Array.from(this.plugins.entries())) {
       try {
@@ -146,11 +148,11 @@ export class EnterprisePluginRegistry implements PluginRegistry {
         });
 
         if (!health.isHealthy) {
-          this.logger.warn(`⚠️ Plugin ${name} is unhealthy:`, health.errors);
+          this.logger.warn(`âš ï¸ Plugin ${name} is unhealthy:`, health.errors);
         }
       } catch (_error) {
         this.logger.error(
-          `❌ Failed to check health for plugin ${name}:`,
+          `âŒ Failed to check health for plugin ${name}:`,
           _error,
         );
         this.pluginHealth.set(name, {
@@ -196,16 +198,16 @@ export class EnterprisePluginRegistry implements PluginRegistry {
    * Initialize all plugins with context
    */
   async initializeAllPlugins(context: PluginContext): Promise<void> {
-    this.logger.log(`🚀 Initializing ${this.plugins.size} plugins...`);
+    this.logger.log(`ðŸš€ Initializing ${this.plugins.size} plugins...`);
 
     const initPromises = Array.from(this.plugins.values()).map(
       async (plugin) => {
         try {
           await plugin.initialize(context);
-          this.logger.log(`✅ Initialized plugin: ${plugin.name}`);
+          this.logger.log(`âœ… Initialized plugin: ${plugin.name}`);
         } catch (error) {
           this.logger.error(
-            `❌ Failed to initialize plugin ${plugin.name}:`,
+            `âŒ Failed to initialize plugin ${plugin.name}:`,
             error,
           );
           throw error;
@@ -214,23 +216,23 @@ export class EnterprisePluginRegistry implements PluginRegistry {
     );
 
     await Promise.all(initPromises);
-    this.logger.log("🎉 All plugins initialized successfully");
+    this.logger.log("ðŸŽ‰ All plugins initialized successfully");
   }
 
   /**
    * Shutdown all plugins
    */
   async shutdownAllPlugins(): Promise<void> {
-    this.logger.log(`🛑 Shutting down ${this.plugins.size} plugins...`);
+    this.logger.log(`ðŸ›‘ Shutting down ${this.plugins.size} plugins...`);
 
     const shutdownPromises = Array.from(this.plugins.values()).map(
       async (plugin) => {
         try {
           await plugin.destroy();
-          this.logger.log(`✅ Shutdown plugin: ${plugin.name}`);
+          this.logger.log(`âœ… Shutdown plugin: ${plugin.name}`);
         } catch (error) {
           this.logger.error(
-            `❌ Failed to shutdown plugin ${plugin.name}:`,
+            `âŒ Failed to shutdown plugin ${plugin.name}:`,
             error,
           );
         }
@@ -238,7 +240,7 @@ export class EnterprisePluginRegistry implements PluginRegistry {
     );
 
     await Promise.all(shutdownPromises);
-    this.logger.log("🏁 All plugins shutdown complete");
+    this.logger.log("ðŸ All plugins shutdown complete");
   }
 
   /**

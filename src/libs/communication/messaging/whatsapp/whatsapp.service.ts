@@ -372,10 +372,10 @@ export class WhatsAppService {
       await this.sendCustomMessage(
         formattedPhone,
         `Hello ${userName},\n\n` +
-        `Your invoice ${invoiceNumber} for ₹${amount} has been generated.\n` +
-        `Due Date: ${dueDate}\n\n` +
-        `Please find your invoice attached below. You can also download it from: ${invoiceUrl}\n\n` +
-        `Thank you for your business!`,
+          `Your invoice ${invoiceNumber} for ₹${amount} has been generated.\n` +
+          `Due Date: ${dueDate}\n\n` +
+          `Please find your invoice attached below. You can also download it from: ${invoiceUrl}\n\n` +
+          `Thank you for your business!`,
       );
 
       // Send invoice PDF as document
@@ -385,9 +385,7 @@ export class WhatsAppService {
         `Invoice ${invoiceNumber}`,
       );
 
-      this.logger.log(
-        `Invoice sent to ${phoneNumber} via WhatsApp`,
-      );
+      this.logger.log(`Invoice sent to ${phoneNumber} via WhatsApp`);
       return true;
     } catch (error) {
       this.logger.error(
@@ -429,13 +427,13 @@ export class WhatsAppService {
       await this.sendCustomMessage(
         formattedPhone,
         `🎉 Subscription Confirmed!\n\n` +
-        `Hello ${userName},\n\n` +
-        `Thank you for subscribing to ${planName}!\n\n` +
-        `Amount: ₹${amount}\n` +
-        `Start Date: ${startDate}\n` +
-        `End Date: ${endDate}\n\n` +
-        `Your invoice will be sent shortly.\n\n` +
-        `Thank you for choosing us!`,
+          `Hello ${userName},\n\n` +
+          `Thank you for subscribing to ${planName}!\n\n` +
+          `Amount: ₹${amount}\n` +
+          `Start Date: ${startDate}\n` +
+          `End Date: ${endDate}\n\n` +
+          `Your invoice will be sent shortly.\n\n` +
+          `Thank you for choosing us!`,
       );
 
       this.logger.log(

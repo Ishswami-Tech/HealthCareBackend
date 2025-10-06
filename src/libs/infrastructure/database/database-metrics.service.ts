@@ -82,13 +82,13 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     private readonly clinicIsolationService: ClinicIsolationService,
   ) {}
 
-  async onModuleInit() {
+  onModuleInit() {
     this.logger.log("Database metrics service initialized");
     this.startMetricsCollection();
     this.startAlertMonitoring();
   }
 
-  async onModuleDestroy() {
+  onModuleDestroy() {
     clearInterval(this.metricsInterval);
     clearInterval(this.alertInterval);
     this.logger.log("Database metrics service destroyed");

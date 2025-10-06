@@ -6,6 +6,9 @@ import {
   Logger,
 } from "@nestjs/common";
 import { PrismaClient, Prisma } from "@prisma/client";
+
+// Export the PrismaClient type for proper typing
+export type { PrismaClient };
 import * as fs from "fs";
 import * as path from "path";
 
@@ -14,6 +17,32 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
+  // Explicitly declare PrismaClient methods to ensure proper typing
+  declare user: PrismaClient["user"];
+  declare doctor: PrismaClient["doctor"];
+  declare patient: PrismaClient["patient"];
+  declare clinic: PrismaClient["clinic"];
+  declare appointment: PrismaClient["appointment"];
+  declare medicalHistory: PrismaClient["medicalHistory"];
+  declare allergy: PrismaClient["allergy"];
+  declare medication: PrismaClient["medication"];
+  declare immunization: PrismaClient["immunization"];
+  declare vitalSign: PrismaClient["vitalSign"];
+  declare receptionist: PrismaClient["receptionist"];
+  declare clinicAdmin: PrismaClient["clinicAdmin"];
+  declare superAdmin: PrismaClient["superAdmin"];
+  declare pharmacist: PrismaClient["pharmacist"];
+  declare therapist: PrismaClient["therapist"];
+  declare labTechnician: PrismaClient["labTechnician"];
+  declare financeBilling: PrismaClient["financeBilling"];
+  declare supportStaff: PrismaClient["supportStaff"];
+  declare nurse: PrismaClient["nurse"];
+  declare counselor: PrismaClient["counselor"];
+  declare auditLog: PrismaClient["auditLog"];
+  declare $queryRaw: PrismaClient["$queryRaw"];
+  declare $executeRaw: PrismaClient["$executeRaw"];
+  declare $transaction: PrismaClient["$transaction"];
+
   private readonly logger = new Logger(PrismaService.name);
   private currentTenantId: string | null = null;
   private static connectionCount = 0;
@@ -345,7 +374,7 @@ export class PrismaService
   }
 
   // Method to get tenant-specific prisma instance
-  async withTenant(tenantId: string) {
+  withTenant(tenantId: string) {
     return this.$extends({
       query: {
         $allOperations({ args, query }: unknown) {
