@@ -264,7 +264,10 @@ export class QueueStatusGateway
         for (const [queueName, status] of Object.entries(allStatuses)) {
           const subscribers = this.queueSubscriptions.get(queueName);
           if (subscribers && subscribers.size > 0) {
-            await this.broadcastQueueMetrics(queueName, (status as any).metrics);
+            await this.broadcastQueueMetrics(
+              queueName,
+              (status as any).metrics,
+            );
           }
         }
 

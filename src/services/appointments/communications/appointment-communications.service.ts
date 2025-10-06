@@ -201,7 +201,7 @@ export class AppointmentCommunicationsService {
         clinicId,
         userId: patientId,
         data: {
-          ...(callData as Record<string, unknown> || {}),
+          ...((callData as Record<string, unknown>) || {}),
           doctorId,
           patientId,
         },

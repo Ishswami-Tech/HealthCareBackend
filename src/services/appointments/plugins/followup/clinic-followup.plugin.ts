@@ -55,13 +55,19 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
         );
 
       case "getFollowUpTemplates":
-        return await this.followUpService.getFollowUpTemplates(pluginData.clinicId);
+        return await this.followUpService.getFollowUpTemplates(
+          pluginData.clinicId,
+        );
 
       case "createFollowUpTemplate":
-        return await this.followUpService.createFollowUpTemplate(pluginData.template);
+        return await this.followUpService.createFollowUpTemplate(
+          pluginData.template,
+        );
 
       case "getOverdueFollowUps":
-        return await this.followUpService.getOverdueFollowUps(pluginData.clinicId);
+        return await this.followUpService.getOverdueFollowUps(
+          pluginData.clinicId,
+        );
 
       case "createRoutineFollowUp":
         return await this.createRoutineFollowUp(data);
@@ -164,7 +170,8 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
     const followUpType = "routine";
     const daysAfter = pluginData.daysAfter || 7;
     const instructions =
-      pluginData.instructions || "Routine follow-up appointment to monitor progress";
+      pluginData.instructions ||
+      "Routine follow-up appointment to monitor progress";
     const priority = pluginData.priority || "normal";
 
     return await this.followUpService.createFollowUpPlan(
@@ -293,4 +300,3 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
     );
   }
 }
-

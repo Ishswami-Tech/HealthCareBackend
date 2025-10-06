@@ -10,7 +10,7 @@ import {
   IsDateString,
   IsArray,
 } from "class-validator";
-import { Transform, Type } from "class-transformer";
+import { Transform } from "class-transformer";
 
 // Health status enum
 export enum HealthStatus {

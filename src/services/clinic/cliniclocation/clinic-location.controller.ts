@@ -80,7 +80,11 @@ export class ClinicLocationController {
     @Param("clinicId") clinicId: string,
     @Request() req: unknown,
   ) {
-    return this.locationService.getLocationById(id, clinicId, (req as any).user.id);
+    return this.locationService.getLocationById(
+      id,
+      clinicId,
+      (req as any).user.id,
+    );
   }
 
   @Put(":id")
@@ -125,6 +129,10 @@ export class ClinicLocationController {
     @Param("clinicId") clinicId: string,
     @Request() req: unknown,
   ) {
-    return this.locationService.deleteLocation(id, clinicId, (req as any).user.id);
+    return this.locationService.deleteLocation(
+      id,
+      clinicId,
+      (req as any).user.id,
+    );
   }
 }

@@ -44,16 +44,28 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
         );
 
       case "joinVideoCall":
-        return await this.videoService.joinVideoCall(videoData.callId, videoData.userId);
+        return await this.videoService.joinVideoCall(
+          videoData.callId,
+          videoData.userId,
+        );
 
       case "endVideoCall":
-        return await this.videoService.endVideoCall(videoData.callId, videoData.userId);
+        return await this.videoService.endVideoCall(
+          videoData.callId,
+          videoData.userId,
+        );
 
       case "startRecording":
-        return await this.videoService.startRecording(videoData.callId, videoData.userId);
+        return await this.videoService.startRecording(
+          videoData.callId,
+          videoData.userId,
+        );
 
       case "stopRecording":
-        return await this.videoService.stopRecording(videoData.callId, videoData.userId);
+        return await this.videoService.stopRecording(
+          videoData.callId,
+          videoData.userId,
+        );
 
       case "shareMedicalImage":
         return await this.videoService.shareMedicalImage(
@@ -218,7 +230,9 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
       return false;
     }
 
-    const isValid = fields.every((field: string) => videoData[field] !== undefined);
+    const isValid = fields.every(
+      (field: string) => videoData[field] !== undefined,
+    );
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

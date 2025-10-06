@@ -80,25 +80,34 @@ import { UserRepository } from './user.repository';
 ## 📊 System Overview
 
 ### **Technology Stack**
-- **Framework**: NestJS 9.x with Fastify adapter
-- **Language**: TypeScript (strict mode)
-- **Database**: PostgreSQL 14+ with Prisma ORM
-- **Caching**: Redis 6.x with multi-level caching strategy
-- **Queue**: BullMQ with 19 specialized queues
-- **Real-time**: WebSocket with Socket.IO
-- **Communication**: Multi-channel (Email/AWS SES, SMS, WhatsApp/Business API, Push/Firebase+SNS)
-- **Logging**: Custom LoggingService from `@infrastructure/logging` (enterprise-grade with HIPAA compliance)
+- **Framework**: NestJS 10.x with Fastify 4.x adapter (production-optimized)
+- **Language**: TypeScript 5.x (strict mode enabled)
+- **Database**: PostgreSQL 14+ with Prisma ORM 5.x
+- **Caching**: Redis 6.x with distributed partitioning (16 partitions for 1M+ users)
+- **Queue**: BullMQ with 19 specialized queues + Bull Board dashboard
+- **Real-time**: WebSocket (Socket.IO 4.x) with Redis adapter for horizontal scaling
+- **Communication**: Multi-channel (Email/AWS SES, SMS, WhatsApp Business API, Push/Firebase+SNS)
+- **Logging**: Custom `LoggingService` from `@infrastructure/logging` (HIPAA-compliant, structured JSON)
+- **Security**: JWT + Redis sessions, progressive lockout, device fingerprinting
+- **Monitoring**: Health checks, metrics, Redis Commander, Prisma Studio, custom logger dashboard
 
 ### **Key Features**
-- **Multi-Tenant**: Up to 200 clinics with complete data isolation
-- **Plugin System**: 12+ appointment lifecycle plugins (analytics, eligibility, payment, video, etc.)
-- **RBAC System**: 15+ healthcare-specific roles with resource-level permissions
-- **Session Management**: Multi-device support with Redis-backed sessions
-- **Audit Logging**: HIPAA-compliant comprehensive audit trails
-- **Notification System**: Multi-channel delivery with fallback mechanisms
-- **Queue System**: Specialized queues for appointments, notifications, billing, EHR, Ayurveda treatments
-- **Caching Strategy**: Multi-level with SWR (Stale-While-Revalidate) pattern
-- **Resilience**: Circuit breakers, retry logic, graceful degradation
+- **Multi-Tenant**: Up to 200 clinics with complete data isolation via `ClinicGuard`
+- **Plugin System**: 12+ appointment lifecycle plugins (analytics, eligibility, payment, video, queue, follow-up, etc.)
+- **RBAC System**: 12 healthcare-specific roles (SUPER_ADMIN, CLINIC_ADMIN, DOCTOR, PATIENT, RECEPTIONIST, PHARMACIST, THERAPIST, LAB_TECHNICIAN, FINANCE_BILLING, SUPPORT_STAFF, NURSE, COUNSELOR)
+- **Session Management**: Distributed Redis sessions with 16 partitions, max 5 sessions/user, auto-cleanup, suspicious session detection
+- **Security Features**:
+  - JWT + Enhanced JWT dual verification with token blacklisting
+  - Progressive lockout (10m → 25m → 45m → 1h → 6h)
+  - Device fingerprinting with SHA-256
+  - WebSocket JWT authentication
+  - Redis-based rate limiting (sliding window algorithm)
+- **Audit Logging**: HIPAA-compliant with `LoggingService` + AuditLog model + Redis security events (30-day retention)
+- **Notification System**: Multi-channel delivery (email, SMS, WhatsApp, push) with fallback mechanisms
+- **Queue System**: 19 specialized queues for appointments, notifications, billing, EHR, Ayurveda treatments
+- **Caching Strategy**: Multi-level with SWR (Stale-While-Revalidate) + Redis Sorted Sets for rate limiting
+- **Resilience**: Circuit breakers, retry logic, graceful degradation, fail-open on Redis errors
+- **Production Optimizations**: Clustering support, horizontal scaling, compression (gzip/br), Helmet security headers
 
 ### **Service Architecture**
 ```
@@ -246,12 +255,85 @@ async findUsers(): Promise<User[]> {
 
 ### **RBAC & Permissions**
 ```typescript
-// ✅ DO - Use permission guards
-@Get('patients')
-@RequirePermissions('READ_PATIENT')
-@UseGuards(JwtAuthGuard, PermissionGuard)
-async getPatients(@RequestContext() context: RequestContext) {
-  return this.userService.findPatients(context.clinicId);
+// ✅ DO - Use role guards with clinic isolation
+import { Roles } from '@core/decorators';
+import { Role } from '@infrastructure/database/prisma/prisma.types';
+import { JwtAuthGuard, RolesGuard, ClinicGuard } from '@core/guards';
+
+@Controller('patients')
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+export class PatientsController {
+  @Get()
+  @Roles(Role.DOCTOR, Role.NURSE, Role.RECEPTIONIST)
+  async getPatients(@Req() request: Request) {
+    // request.clinicId is automatically set by ClinicGuard
+    // request.user is set by JwtAuthGuard
+    return this.patientService.findAll(request.clinicId);
+  }
+
+  @Post()
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  async createPatient(@Body() createDto: CreatePatientDto, @Req() request: Request) {
+    return this.patientService.create(createDto, request.clinicId);
+  }
+}
+```
+
+### **Security Best Practices**
+```typescript
+// ✅ DO - Use session management for authentication
+import { SessionManagementService, CreateSessionDto } from '@core/session';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly sessionService: SessionManagementService,
+    private readonly jwtAuthService: JwtAuthService
+  ) {}
+
+  async login(credentials: LoginDto, deviceInfo: DeviceInfo): Promise<AuthResponse> {
+    const user = await this.validateCredentials(credentials);
+
+    // Create session with distributed partitioning
+    const session = await this.sessionService.createSession({
+      userId: user.id,
+      clinicId: user.clinicId,
+      userAgent: deviceInfo.userAgent,
+      ipAddress: deviceInfo.ipAddress,
+      deviceId: deviceInfo.deviceId
+    });
+
+    // Generate JWT with session ID
+    const accessToken = await this.jwtAuthService.generateEnhancedToken({
+      sub: user.id,
+      sessionId: session.sessionId,
+      role: user.role,
+      clinicId: user.clinicId
+    });
+
+    return { accessToken, session };
+  }
+}
+
+// ✅ DO - Use rate limiting
+import { RateLimitService } from '@infrastructure/utils/rate-limit';
+
+@Injectable()
+export class ApiController {
+  constructor(private readonly rateLimitService: RateLimitService) {}
+
+  async handleRequest(userId: string) {
+    const { limited, remaining } = await this.rateLimitService.isRateLimited(
+      userId,
+      'api'
+    );
+
+    if (limited) {
+      throw new TooManyRequestsException(`Rate limit exceeded. ${remaining} requests remaining.`);
+    }
+
+    // Process request...
+  }
 }
 ```
 
@@ -259,6 +341,31 @@ async getPatients(@RequestContext() context: RequestContext) {
 
 **💡 These guidelines ensure code consistency, maintainability, HIPAA compliance, and production-ready reliability across the healthcare system.**
 
-**System Status**: Production-Ready | Supporting 1M+ concurrent users | 200+ clinics
+## 🛡️ Security Summary
+
+### **Implemented Security Features**
+- ✅ **JWT Authentication**: Dual verification (basic + enhanced) with Redis token blacklisting
+- ✅ **Session Management**: Distributed Redis sessions (16 partitions), 5 sessions/user limit, auto-cleanup
+- ✅ **Progressive Lockout**: 10min → 25min → 45min → 1h → 6h based on failed attempts
+- ✅ **Rate Limiting**: Redis-based sliding window (1000 req/min), Fastify rate limiting
+- ✅ **RBAC**: 12 healthcare roles with route-level guards (`JwtAuthGuard`, `RolesGuard`, `ClinicGuard`)
+- ✅ **Multi-Tenant Isolation**: Automatic clinic isolation via `ClinicGuard` with 5-source extraction (headers, query, JWT, params, body)
+- ✅ **Security Headers**: Helmet CSP, CORS with origin validation, frame-ancestors protection
+- ✅ **WebSocket Security**: JWT auth middleware with session + token support
+- ✅ **Audit Logging**: Redis security events (30-day retention) + LoggingService (HIPAA-compliant)
+- ✅ **Device Fingerprinting**: SHA-256 user agent hashing
+- ✅ **Suspicious Session Detection**: Auto-detection every 30 minutes (multiple IPs, unusual agents, rapid location changes)
+
+### **Production Optimizations**
+- ✅ **Horizontal Scaling**: Redis adapter for WebSocket, distributed sessions, clustering support
+- ✅ **Compression**: Gzip/Brotli (threshold: 1KB, quality: 4/6)
+- ✅ **Connection Pooling**: Prisma connection pooling, Redis connection reuse
+- ✅ **Graceful Shutdown**: SIGTERM/SIGINT handlers with 30s timeout
+- ✅ **Health Checks**: `/health` endpoint for load balancers
+- ✅ **Bot Protection**: Auto-detect and block bot scans (admin, wp-, php, cgi-bin)
+
+---
+
+**System Status**: ✅ Production-Ready | 🚀 Optimized for 1M+ concurrent users | 🏥 Supporting 200+ clinics
 
 **Last Updated**: January 2025

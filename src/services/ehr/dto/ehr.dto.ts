@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsDateString, IsInt, IsNumber, Min } from 'class-validator';
+import { IsString, IsOptional, IsDateString } from "class-validator";
 
 // Medical History DTOs
 export class CreateMedicalHistoryDto {

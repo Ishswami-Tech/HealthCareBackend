@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Injectable } from "@nestjs/common";
 import { BaseAppointmentPlugin } from "../base/base-plugin.service";
 import { CheckInService } from "./check-in.service";
@@ -64,6 +65,20 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       case "getLocationQueue":
         return await this.checkInService.getLocationQueue(pluginData.clinicId);
 
+      // NEW AYURVEDIC OPERATIONS
+      case "processAyurvedicCheckIn":
+        return await this.checkInService.processAyurvedicCheckIn(
+          pluginData.appointmentId,
+          pluginData.clinicId,
+          pluginData.checkInData,
+        );
+
+      case "getTherapyQueue":
+        return await this.checkInService.getTherapyQueue(
+          pluginData.therapyType,
+          pluginData.clinicId,
+        );
+
       default:
         this.logPluginError("Unknown check-in operation", {
           operation: pluginData.operation,
@@ -72,7 +87,7 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
+  validate(data: unknown): Promise<boolean> {
     const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
@@ -84,6 +99,9 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       getDoctorActiveQueue: ["doctorId", "clinicId"],
       reorderQueue: ["clinicId", "appointmentOrder"],
       getLocationQueue: ["clinicId"],
+      // NEW AYURVEDIC FIELDS
+      processAyurvedicCheckIn: ["appointmentId", "clinicId", "checkInData"],
+      getTherapyQueue: ["therapyType", "clinicId"],
     };
 
     const operation = pluginData.operation;
@@ -91,10 +109,12 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
 
     if (!fields) {
       this.logPluginError("Invalid operation", { operation });
-      return false;
+      return Promise.resolve(false);
     }
 
-    const isValid = fields.every((field: unknown) => pluginData[(field as string)] !== undefined);
+    const isValid = fields.every(
+      (field: unknown) => pluginData[field as string] !== undefined,
+    );
     if (!isValid) {
       this.logPluginError("Missing required fields", {
         operation,

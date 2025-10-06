@@ -27,63 +27,58 @@ export enum Gender {
   OTHER = "OTHER",
 }
 
-// Define Role enum for better type safety
-export enum Role {
-  SUPER_ADMIN = "SUPER_ADMIN",
-  CLINIC_ADMIN = "CLINIC_ADMIN",
-  ADMIN = "ADMIN",
-  DOCTOR = "DOCTOR",
-  NURSE = "NURSE",
-  PATIENT = "PATIENT",
-  RECEPTIONIST = "RECEPTIONIST",
-}
+// Import Role enum from Prisma types for consistency
+import { Role } from "../infrastructure/database/prisma/prisma.types";
+
+// Re-export Role for backward compatibility
+export { Role };
 
 /**
  * Base interface with required fields matching schema
  * Following SOLID principles from AI rules
  */
-interface BaseUserFields {
-  email: string;
-  password: string;
-  firstName: string;
-  lastName: string;
-  phone: string;
-  role?: Role;
-  profilePicture?: string;
-  gender?: Gender;
-  dateOfBirth?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  zipCode?: string;
-  lastLogin?: Date;
-  // Multi-tenant fields
-  primaryClinicId?: string;
-  primaryStudioId?: string;
-  appName?: string;
-  // Social login fields
-  googleId?: string;
-  facebookId?: string;
-  appleId?: string;
-  // Medical fields
-  medicalConditions?: string[];
-  emergencyContact?: string;
-}
+// interface BaseUserFields {
+//   email: string;
+//   password: string;
+//   firstName: string;
+//   lastName: string;
+//   phone: string;
+//   role?: Role;
+//   profilePicture?: string;
+//   gender?: Gender;
+//   dateOfBirth?: string;
+//   address?: string;
+//   city?: string;
+//   state?: string;
+//   country?: string;
+//   zipCode?: string;
+//   lastLogin?: Date;
+//   // Multi-tenant fields
+//   primaryClinicId?: string;
+//   primaryStudioId?: string;
+//   appName?: string;
+//   // Social login fields
+//   googleId?: string;
+//   facebookId?: string;
+//   appleId?: string;
+//   // Medical fields
+//   medicalConditions?: string[];
+//   emergencyContact?: string;
+// }
 
 // Role-specific fields
-interface RoleSpecificFields {
-  specialization?: string;
-  experience?: number;
-  clinicId?: string;
-  studioId?: string;
-}
+// interface RoleSpecificFields {
+//   specialization?: string;
+//   experience?: number;
+//   clinicId?: string;
+//   studioId?: string;
+// }
 
 // For create operations - same as base plus role-specific fields
-type CreateUserFields = BaseUserFields & RoleSpecificFields;
+// type CreateUserFields = BaseUserFields & RoleSpecificFields;
 
 // For update operations - all fields optional
-type UpdateUserFields = Partial<BaseUserFields>;
+// type UpdateUserFields = Partial<BaseUserFields>;
 
 /**
  * Simple registration DTO with minimal required fields

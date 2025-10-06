@@ -410,7 +410,7 @@ export class NotificationService {
         content: chatData.content,
         timestamp: chatData.timestamp,
         type: chatData.type,
-        metadata: (chatData as any).metadata,
+        metadata: (chatData as { metadata?: Record<string, unknown> }).metadata,
       });
 
       // Emit event for chat message backup

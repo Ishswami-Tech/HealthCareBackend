@@ -113,7 +113,11 @@ export class AppointmentResourceService {
       const resourceList: Resource[] = resources.map((resource: unknown) => ({
         id: (resource as any).id,
         name: (resource as any).name,
-        type: (resource as any).type as "room" | "equipment" | "vehicle" | "other",
+        type: (resource as any).type as
+          | "room"
+          | "equipment"
+          | "vehicle"
+          | "other",
         clinicId: (resource as any).clinicId,
         capacity: (resource as any).capacity,
         features: [], // This could be stored in database as JSON
@@ -362,7 +366,9 @@ export class AppointmentResourceService {
       );
 
       // Filter out the original resource
-      return alternatives.filter((resource) => (resource as any).id !== resourceId);
+      return alternatives.filter(
+        (resource) => (resource as any).id !== resourceId,
+      );
     } catch (_error) {
       this.logger.error(`Failed to get alternative resources`, {
         resourceId,
@@ -394,15 +400,15 @@ export class AppointmentResourceService {
       }
 
       const resourceResult: Resource = {
-        id: (resourceData as any).id,
-        name: (resourceData as any).name,
-        type: (resourceData as any).type as "room" | "equipment" | "vehicle" | "other",
-        clinicId: (resourceData as any).clinicId,
-        capacity: (resourceData as any).capacity,
+        id: resourceData.id,
+        name: resourceData.name,
+        type: resourceData.type as "room" | "equipment" | "vehicle" | "other",
+        clinicId: resourceData.clinicId,
+        capacity: resourceData.capacity,
         features: [], // This could be stored in database as JSON
-        isActive: (resourceData as any).isActive,
-        createdAt: (resourceData as any).createdAt,
-        updatedAt: (resourceData as any).updatedAt,
+        isActive: resourceData.isActive,
+        createdAt: resourceData.createdAt,
+        updatedAt: resourceData.updatedAt,
       };
 
       await this.cacheService.set(

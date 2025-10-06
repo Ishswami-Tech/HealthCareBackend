@@ -752,9 +752,9 @@ export class SessionManagementService implements OnModuleInit {
     return suspiciousPatterns.some((pattern) => pattern.test(userAgent));
   }
 
-  private async detectRapidLocationChange(session: SessionData): Promise<boolean> {
+  private detectRapidLocationChange(session: SessionData): Promise<boolean> {
     // This would implement geolocation checking logic
     // For now, return false as placeholder
-    return false;
+    return Promise.resolve(false);
   }
 }

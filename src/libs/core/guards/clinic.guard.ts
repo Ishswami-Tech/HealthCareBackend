@@ -11,7 +11,10 @@ import {
   LogType,
   LogLevel,
 } from "../../infrastructure/logging/types/logging.types";
-import { ClinicIsolationService, ClinicContext } from "../../infrastructure/database/clinic-isolation.service";
+import {
+  ClinicIsolationService,
+  ClinicContext,
+} from "../../infrastructure/database/clinic-isolation.service";
 
 // Type definitions for request objects
 interface AuthenticatedUser {
@@ -142,7 +145,10 @@ export class ClinicGuard implements CanActivate {
 
     // Set clinic context in request for downstream use
     request.clinicId = clinicId;
-    request.clinicContext = clinicResult.clinicContext as unknown as { [key: string]: unknown; clinicName?: string };
+    request.clinicContext = clinicResult.clinicContext as unknown as {
+      [key: string]: unknown;
+      clinicName?: string;
+    };
 
     void this.loggingService.log(
       LogType.AUTH,

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Injectable } from "@nestjs/common";
 import { BaseAppointmentPlugin } from "../base/base-plugin.service";
 import { AppointmentReminderService } from "./appointment-reminder.service";
@@ -74,7 +75,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
+  validate(data: unknown): Promise<boolean> {
     const pluginData = data as any;
     const requiredFields = {
       scheduleReminder: [
@@ -121,7 +122,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
 
     if (!required) {
       this.logPluginError("Unknown operation for validation", { operation });
-      return false;
+      return Promise.resolve(false);
     }
 
     for (const field of required) {
@@ -130,11 +131,11 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
           operation,
           field,
         });
-        return false;
+        return Promise.resolve(false);
       }
     }
 
-    return true;
+    return Promise.resolve(true);
   }
 
   /**

@@ -2,6 +2,8 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { CacheService } from "../../../../libs/infrastructure/cache";
 import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
 import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
+import { PrismaService } from "../../../../libs/infrastructure/database/prisma/prisma.service";
+// import type { Doctor } from "../../../../libs/infrastructure/database/prisma/prisma.types";
 
 export interface Location {
   id: string;
@@ -39,7 +41,7 @@ export interface LocationStats {
   patientSatisfaction: number;
 }
 
-export interface Doctor {
+export interface LocationDoctor {
   id: string;
   name: string;
   specialization: string;
@@ -60,6 +62,7 @@ export class AppointmentLocationService {
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async getAllLocations(domain: string): Promise<unknown> {
@@ -70,7 +73,7 @@ export class AppointmentLocationService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           "Locations retrieved from cache",
@@ -81,7 +84,7 @@ export class AppointmentLocationService {
       }
 
       // Get locations from database (placeholder implementation)
-      const locations = await this.fetchLocationsFromDatabase(domain);
+      const locations = this.fetchLocationsFromDatabase(domain);
 
       const result = {
         locations,
@@ -97,7 +100,7 @@ export class AppointmentLocationService {
         this.LOCATION_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Locations retrieved successfully",
@@ -111,7 +114,7 @@ export class AppointmentLocationService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get locations: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -137,7 +140,7 @@ export class AppointmentLocationService {
       }
 
       // Get location from database (placeholder implementation)
-      const location = await this.fetchLocationFromDatabase(locationId, domain);
+      const location = this.fetchLocationFromDatabase(locationId, domain);
 
       if (!location) {
         throw new NotFoundException(`Location not found: ${locationId}`);
@@ -156,7 +159,7 @@ export class AppointmentLocationService {
         this.LOCATION_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Location retrieved successfully",
@@ -166,7 +169,7 @@ export class AppointmentLocationService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -196,7 +199,7 @@ export class AppointmentLocationService {
       }
 
       // Get doctors from database (placeholder implementation)
-      const doctors = await this.fetchDoctorsFromDatabase(locationId, domain);
+      const doctors = this.fetchDoctorsFromDatabase(locationId, domain);
 
       const result = {
         doctors,
@@ -213,7 +216,7 @@ export class AppointmentLocationService {
         this.DOCTORS_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Doctors retrieved successfully",
@@ -228,7 +231,7 @@ export class AppointmentLocationService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get doctors: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -255,7 +258,7 @@ export class AppointmentLocationService {
       }
 
       // Calculate location statistics (placeholder implementation)
-      const stats = await this.calculateLocationStats(locationId, domain);
+      const stats = this.calculateLocationStats();
 
       const result = {
         locationId,
@@ -271,7 +274,7 @@ export class AppointmentLocationService {
         this.STATS_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Location stats calculated successfully",
@@ -281,7 +284,7 @@ export class AppointmentLocationService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location stats: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -314,7 +317,7 @@ export class AppointmentLocationService {
         ),
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Location cache invalidated successfully",
@@ -324,7 +327,7 @@ export class AppointmentLocationService {
 
       return { success: true, message: "Location cache invalidated" };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to invalidate location cache: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -357,7 +360,7 @@ export class AppointmentLocationService {
         ),
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Doctors cache invalidated successfully",
@@ -367,7 +370,7 @@ export class AppointmentLocationService {
 
       return { success: true, message: "Doctors cache invalidated" };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to invalidate doctors cache: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -383,9 +386,7 @@ export class AppointmentLocationService {
   }
 
   // Helper methods (placeholder implementations that would integrate with actual database)
-  private async fetchLocationsFromDatabase(
-    domain: string,
-  ): Promise<Location[]> {
+  private fetchLocationsFromDatabase(domain: string): Location[] {
     // This would integrate with the actual database service
     // For now, return mock data
     const mockLocations: Location[] = [
@@ -450,21 +451,21 @@ export class AppointmentLocationService {
     return mockLocations;
   }
 
-  private async fetchLocationFromDatabase(
+  private fetchLocationFromDatabase(
     locationId: string,
     domain: string,
-  ): Promise<Location | null> {
-    const locations = await this.fetchLocationsFromDatabase(domain);
+  ): Location | null {
+    const locations = this.fetchLocationsFromDatabase(domain);
     return locations.find((loc) => loc.id === locationId) || null;
   }
 
-  private async fetchDoctorsFromDatabase(
+  private fetchDoctorsFromDatabase(
     locationId: string,
     domain: string,
-  ): Promise<Doctor[]> {
+  ): LocationDoctor[] {
     // This would integrate with the actual database service
     // For now, return mock data
-    const mockDoctors: Doctor[] = [
+    const mockDoctors: LocationDoctor[] = [
       {
         id: "doc-1",
         name: "Dr. John Smith",
@@ -492,10 +493,7 @@ export class AppointmentLocationService {
     return mockDoctors;
   }
 
-  private async calculateLocationStats(
-    locationId: string,
-    domain: string,
-  ): Promise<LocationStats> {
+  private calculateLocationStats(): LocationStats {
     // This would integrate with the actual database service
     // For now, return mock statistics
     return {
