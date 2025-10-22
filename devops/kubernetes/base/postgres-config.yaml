@@ -8,15 +8,15 @@ metadata:
   namespace: healthcare-backend
 data:
   postgresql.conf: |
-    # Connection Settings - Optimized for 1M concurrent users
-    max_connections = 500
+    # Connection Settings - Sized for current pod limits (4Gi)
+    max_connections = 300
     superuser_reserved_connections = 10
 
-    # Memory Settings - Assumes 16GB RAM dedicated to PostgreSQL
-    shared_buffers = 4GB
-    effective_cache_size = 12GB
-    maintenance_work_mem = 1GB
-    work_mem = 16MB
+    # Memory Settings - Based on 4Gi memory limit
+    shared_buffers = 1GB           # ~25% of 4Gi
+    effective_cache_size = 3GB     # ~70% of 4Gi
+    maintenance_work_mem = 512MB
+    work_mem = 8MB
     wal_buffers = 16MB
 
     # Query Planning
@@ -29,7 +29,10 @@ data:
     max_wal_size = 4GB
     min_wal_size = 1GB
     checkpoint_completion_target = 0.9
-    checkpoint_timeout = 15min
+    checkpoint_timeout = 10min
+    archive_mode = on
+    archive_command = 'wal-g wal-push %p'
+    archive_timeout = 60s
 
     # Replication & Archiving (for HA)
     max_wal_senders = 10
@@ -82,7 +85,7 @@ data:
     tcp_keepalives_count = 5
 
     # Performance Optimizations
-    synchronous_commit = off  # Async commit for better throughput
+    synchronous_commit = off  # Async commit improves throughput (consider on for strict durability)
     wal_writer_delay = 200ms
     commit_delay = 100
     commit_siblings = 5

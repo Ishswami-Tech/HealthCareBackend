@@ -19,14 +19,15 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
     environment:
       NODE_ENV: production
-      DEV_MODE: "true"
-      CORS_ORIGIN: "*"
+      DEV_MODE: "false"
+      CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in"
       FRONTEND_URL: https://ishswami.in
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
       TRUST_PROXY: 1
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       HOST: 0.0.0.0
@@ -91,7 +92,7 @@ services:
     command: >
       sh -c "
         pnpm exec prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
-        pnpm exec prisma db push --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma --accept-data-loss &&
+        pnpm exec prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
         node dist/main.js
       "
     labels:
@@ -146,7 +147,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: latest-redis
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction --replica-read-only no --replicaof no one
+    command: sh -c "redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction --replica-read-only no --replicaof no one --requirepass ${REDIS_PASSWORD:-changeme}"
     ports:
       - "6379:6379"
     volumes:
@@ -197,48 +198,19 @@ services:
       SERVICE_NAME: worker
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
-    command: >
-      sh -c "
-        node dist/worker-bootstrap.js
-      "
-    networks:
-      app-network:
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 2G
-        reservations:
-          cpus: "0.5"
-          memory: 512M
-    healthcheck:
-      test: ["CMD", "node", "-e", "console.log('OK')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    labels:
-      - "com.docker.compose.service=worker"
-      - "app.component=backend"
-      - "app.type=worker"
 
 volumes:
   postgres_data:
-    name: healthcare_postgres_data
-    labels:
-      - "app.component=database"
-      - "app.persist=true"
-      - "app.type=postgres"
+    name: latest_postgres_data
   redis_data:
-    name: healthcare_redis_data
-    labels:
-      - "app.component=cache"
-      - "app.persist=true"
-      - "app.type=redis"
+    name: latest_redis_data
 
 networks:
   app-network:
     name: app-network
-    external: true
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+

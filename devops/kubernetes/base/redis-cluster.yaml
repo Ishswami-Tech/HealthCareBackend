@@ -31,20 +31,31 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: redis-password
+        - name: REDIS_CLUSTER_ANNOUNCE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         command:
-        - redis-server
-        args:
-        - /config/redis.conf
+        - sh
+        - -c
+        - |
+          exec redis-server /config/redis.conf \
+            --cluster-announce-port 6379 \
+            --cluster-announce-bus-port 16379 \
+            --cluster-announce-ip "$REDIS_CLUSTER_ANNOUNCE_IP" \
+            --requirepass "$REDIS_PASSWORD" \
+            --masterauth "$REDIS_PASSWORD"
         ports:
         - containerPort: 6379
           name: client
         - containerPort: 16379
           name: gossip
-        env:
-        - name: REDIS_CLUSTER_ANNOUNCE_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
         resources:
           requests:
             memory: "1Gi"
@@ -60,8 +71,9 @@ spec:
         livenessProbe:
           exec:
             command:
-            - redis-cli
-            - ping
+            - sh
+            - -c
+            - redis-cli -a "$REDIS_PASSWORD" ping
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
@@ -69,8 +81,9 @@ spec:
         readinessProbe:
           exec:
             command:
-            - redis-cli
-            - ping
+            - sh
+            - -c
+            - redis-cli -a "$REDIS_PASSWORD" ping
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
@@ -126,81 +139,5 @@ spec:
     targetPort: 6379
     name: client
 ---
-# Redis Configuration
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: redis-config
-  namespace: healthcare-backend
-data:
-  redis.conf: |
-    # Redis Cluster Configuration
-    cluster-enabled yes
-    cluster-config-file /data/nodes.conf
-    cluster-node-timeout 5000
-
-    # Persistence
-    appendonly yes
-    appendfsync everysec
-
-    # Memory Management (Optimized for 1M+ users)
-    maxmemory 3072mb
-    maxmemory-policy allkeys-lru
-
-    # Network
-    bind 0.0.0.0
-    protected-mode no
-    port 6379
-
-    # Cluster
-    cluster-require-full-coverage no
-    cluster-migration-barrier 1
-
-    # Performance
-    tcp-backlog 511
-    timeout 0
-    tcp-keepalive 300
-
-    # Logging
-    loglevel notice
-    logfile ""
----
-# HPA for Redis (based on memory usage)
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: redis-hpa
-  namespace: healthcare-backend
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: StatefulSet
-    name: redis
-  minReplicas: 6
-  maxReplicas: 18  # Scale up to 18 nodes for 1M+ users
-  metrics:
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 75
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 600  # 10 minutes before scaling down
-      policies:
-      - type: Pods
-        value: 1
-        periodSeconds: 120
-    scaleUp:
-      stabilizationWindowSeconds: 60
-      policies:
-      - type: Pods
-        value: 2
-        periodSeconds: 60
+# Note: autoscaling Redis cluster nodes requires resharding and is not handled automatically.
+# Prefer manual scaling or an operator for production.

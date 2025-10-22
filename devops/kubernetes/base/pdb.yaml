@@ -10,6 +10,18 @@ spec:
     matchLabels:
       app: healthcare-api
 ---
+# PodDisruptionBudget for Worker - Ensures job processing continuity
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: healthcare-worker-pdb
+  namespace: healthcare-backend
+spec:
+  minAvailable: 1  # Always keep at least 1 worker running
+  selector:
+    matchLabels:
+      app: healthcare-worker
+---
 # PodDisruptionBudget for Redis - Protect cache during maintenance
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -17,7 +29,7 @@ metadata:
   name: redis-pdb
   namespace: healthcare-backend
 spec:
-  minAvailable: 1
+  minAvailable: 2  # Keep majority of Redis nodes running
   selector:
     matchLabels:
       app: redis

@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: healthcare-backend
+  labels:
+    app: pgbouncer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: pgbouncer
+        image: edoburu/pgbouncer:1.22.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 6432
+          name: pgbouncer
+        env:
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: postgres-user
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: postgres-password
+        volumeMounts:
+        - name: config
+          mountPath: /etc/pgbouncer/
+        - name: pgbouncer-config-tpl
+          mountPath: /config-tpl
+          readOnly: true
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          # Render pgbouncer.ini from template using secrets
+          sed "s/{{AUTH_USER}}/${DB_USER}/g" /config-tpl/pgbouncer.ini > /etc/pgbouncer/pgbouncer.ini
+          exec /usr/local/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: config
+        emptyDir: {}
+      - name: pgbouncer-config-tpl
+        configMap:
+          name: pgbouncer-config
+          items:
+          - key: pgbouncer.ini
+            path: pgbouncer.ini

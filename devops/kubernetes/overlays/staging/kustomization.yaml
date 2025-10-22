@@ -5,6 +5,11 @@ kind: Kustomization
 bases:
   - ../../base
 
+resources:
+  - ../../base/vpa.yaml
+  - redis-cluster-config.yaml
+  - redis-cluster-init.yaml
+
 namespace: healthcare-backend-staging
 
 # Staging-specific labels

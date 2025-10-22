@@ -6,47 +6,37 @@ namespace: healthcare-backend
 resources:
   - namespace.yaml
   - rbac.yaml
-  - secrets.yaml
   - network-policies.yaml
+  - configmap.yaml
   - postgres-config.yaml
   - api-deployment.yaml
+  - worker-deployment.yaml
   - postgres-statefulset.yaml
   - redis-cluster.yaml
+  - init-job.yaml
   - ingress.yaml
   - pdb.yaml
-  - vpa.yaml
-  - metrics-server.yaml
+  - pgbouncer-configmap.yaml
+  - pgbouncer-deployment.yaml
+  - pgbouncer-service.yaml
 
 # Common labels applied to all resources
 commonLabels:
   app.kubernetes.io/part-of: healthcare-backend
   app.kubernetes.io/managed-by: kustomize
-
-# Resource name prefix (optional)
-# namePrefix: healthcare-
+  app.kubernetes.io/version: "1.0.0"
 
 # Image configuration
 images:
   - name: your-registry/healthcare-api
     newTag: latest
-
-# ConfigMap generator for environment-specific configs
-configMapGenerator:
-  - name: api-config
-    literals:
-      - NODE_ENV=production
-      - LOG_LEVEL=info
-      - MAX_CONNECTIONS=100
-
-# Secret generator (use sealed-secrets in production)
-secretGenerator:
-  - name: healthcare-secrets
-    envs:
-      - secrets.env
+  - name: your-registry/healthcare-worker
+    newName: your-registry/healthcare-api  # Worker uses same image with different command
+    newTag: latest
 
 # Patches for resource adjustments
 patches:
-  # Increase replicas for production
+  # API replicas
   - target:
       kind: Deployment
       name: healthcare-api
@@ -54,3 +44,12 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 5
+
+  # Worker replicas
+  - target:
+      kind: Deployment
+      name: healthcare-worker
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3

@@ -17,6 +17,10 @@ images:
   - name: your-registry/healthcare-api
     newName: healthcare-api
     newTag: local
+  - name: your-registry/healthcare-worker
+    newName: healthcare-api
+    newTag: local
+
 
 # Local-specific patches
 patches:
@@ -33,6 +37,18 @@ patches:
   - target:
       kind: HorizontalPodAutoscaler
       name: healthcare-api-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+
+  # Lower Redis HPA limits for local
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: redis-hpa
     patch: |-
       - op: replace
         path: /spec/minReplicas
@@ -122,14 +138,17 @@ patches:
         path: /spec/template/spec/containers/0/resources/limits/memory
         value: "512Mi"
 
-# Local development config
-configMapGenerator:
-  - name: api-config
-    behavior: merge
-    literals:
-      - NODE_ENV=development
-      - LOG_LEVEL=debug
-      - MAX_CONNECTIONS=50
-      - POOL_SIZE=10
-      - ENABLE_DEBUG=true
-      - ENABLE_HOT_RELOAD=true
+  # Patch API ConfigMap for local development
+  - target:
+      kind: ConfigMap
+      name: healthcare-api-config
+    patch: |-
+      - op: replace
+        path: /data/NODE_ENV
+        value: "development"
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: "debug"
+      - op: replace
+        path: /data/ENABLE_DEBUG
+        value: "true"

@@ -18,9 +18,56 @@ spec:
         app: postgres
         component: database
     spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values: [stateful]
       containers:
       - name: postgres
         image: postgres:16-alpine
+        env:
+        - name: WALG_S3_PREFIX
+          valueFrom:
+            secretKeyRef:
+              name: wal-g-secrets
+              key: WALG_S3_PREFIX
+              optional: true
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: wal-g-secrets
+              key: AWS_ACCESS_KEY_ID
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: wal-g-secrets
+              key: AWS_SECRET_ACCESS_KEY
+              optional: true
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: wal-g-secrets
+              key: AWS_REGION
+              optional: true
+        - name: WALG_S3_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: wal-g-secrets
+              key: WALG_S3_ENDPOINT
+              optional: true
+        - name: WALG_S3_FORCE_PATH_STYLE
+          value: "true"
+        args:
+        - "-c"
+        - "config_file=/etc/postgresql/postgresql.conf"
+        - "-c"
+        - "hba_file=/etc/postgresql/pg_hba.conf"
         ports:
         - containerPort: 5432
           name: postgres
@@ -49,6 +96,14 @@ spec:
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+          readOnly: true
+        - name: postgres-hba
+          mountPath: /etc/postgresql/pg_hba.conf
+          subPath: pg_hba.conf
+          readOnly: true
         livenessProbe:
           exec:
             command:
@@ -69,6 +124,66 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
+      - name: wal-g-scheduler
+        image: alpine:3.19
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          # Sleep until wal-g is present (installed by init container)
+          for i in $(seq 1 30); do [ -x /wal-g-bin/wal-g ] && break; sleep 2; done
+          if [ ! -x /wal-g-bin/wal-g ]; then echo "wal-g binary missing"; sleep 3600; fi
+          # Nightly backup loop (02:00)
+          while true; do
+            now=$(date +%H:%M)
+            if [ "$now" = "02:00" ]; then
+              echo "[wal-g] Starting base backup..."
+              /wal-g-bin/wal-g backup-push /var/lib/postgresql/data/pgdata || echo "[wal-g] backup failed"
+              echo "[wal-g] Pruning old backups..."
+              /wal-g-bin/wal-g delete retain 7 --confirm || true
+              sleep 90
+            fi
+            sleep 30
+          done
+        envFrom:
+        - secretRef:
+            name: wal-g-secrets
+            optional: true
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: wal-g-bin
+          mountPath: /wal-g-bin
+      initContainers:
+      - name: install-wal-g
+        image: curlimages/curl:8.10.1
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Downloading wal-g..."
+          curl -fsSL -o /wal-g-bin/wal-g https://github.com/wal-g/wal-g/releases/download/v2.0.1/wal-g-pg-ubuntu-20.04-amd64
+          chmod +x /wal-g-bin/wal-g
+        volumeMounts:
+        - name: wal-g-bin
+          mountPath: /wal-g-bin
+      volumes:
+      - name: postgres-config
+        configMap:
+          name: postgres-config
+          items:
+          - key: postgresql.conf
+            path: postgresql.conf
+      - name: postgres-hba
+        configMap:
+          name: postgres-hba
+          items:
+          - key: pg_hba.conf
+            path: pg_hba.conf
+      - name: wal-g-bin
+        emptyDir: {}
   volumeClaimTemplates:
   - metadata:
       name: postgres-storage
@@ -77,6 +192,7 @@ spec:
       resources:
         requests:
           storage: 20Gi
+---
 ---
 apiVersion: v1
 kind: Service
