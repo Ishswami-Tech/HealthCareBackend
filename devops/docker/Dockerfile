@@ -1,15 +1,12 @@
 # Build stage
 FROM node:20-slim as builder
 
-# Label the builder stage
 LABEL stage=builder
 LABEL app.component=backend
 LABEL app.stage=build
 
-# Install pnpm
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
@@ -18,37 +15,27 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy package files
 COPY package.json pnpm-lock.yaml ./
-
-# Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
 COPY . .
 
-# Generate Prisma client
 RUN pnpm prisma:generate
-
-# Build the application
 RUN pnpm build
 
-# Create prisma directory in dist
-RUN mkdir -p /app/dist/libs/infrastructure/database/prisma
-RUN cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/
+# Ensure Prisma schema is available in dist
+RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
+    cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/
 
 # Production stage
 FROM node:20-slim as production
 
-# Label the production image
 LABEL app.component=backend
 LABEL app.stage=production
 LABEL com.docker.compose.service=api
 
-# Install pnpm
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
-# Install production dependencies
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
@@ -57,91 +44,26 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy package files
 COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile && pnpm store prune
 
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile && \
-    pnpm add @faker-js/faker && \
-    pnpm store prune
-
-# Copy built files from builder
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
 COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
 
-# Copy environment file
-COPY .env .env
-
-# Environment-specific configurations
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
 ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
 
-# Production-specific environment variables
 ENV NODE_OPTIONS="--max-old-space-size=1536 --max-http-header-size=16384 --expose-gc"
 ENV ENABLE_GC=true
 ENV GC_INTERVAL=21600
 
-# Expose port
 EXPOSE 8088
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -q --spider http://localhost:8088/health || exit 1
 
-# Start the application
 CMD ["node", "dist/main.js"]
 
-# Development stage
-FROM node:20-alpine AS development
-
-# Label the development image
-LABEL app.component=backend
-LABEL app.stage=development
-
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
-
-# Install development tools
-RUN apk add --no-cache \
-    postgresql-client \
-    redis \
-    busybox-extras \
-    python3 \
-    make \
-    g++ \
-    wget \
-    curl \
-    && rm -rf /var/cache/apk/*
-
-WORKDIR /app
-
-# Copy package files and install dependencies
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-# Copy application files
-COPY . .
-
-# Environment setup
-ENV NODE_ENV=development
-ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
-
-# Generate Prisma client
-RUN pnpm prisma:generate
-
-# Create necessary directories
-RUN mkdir -p /app/dist/libs/infrastructure/database/prisma /app/logs && \
-    chmod -R 777 /app/dist /app/logs
-
-# Expose ports
-EXPOSE 8088 5555
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8088/health || exit 1
-
-# Development startup command
-CMD ["pnpm", "start:dev"]
