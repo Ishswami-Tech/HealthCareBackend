@@ -3,6 +3,14 @@ import { ErrorCode } from "./error-codes.enum";
 /**
  * Centralized error messages for the healthcare application
  * Each message provides clear, user-friendly descriptions
+ *
+ * @constant {Record<ErrorCode, string>} ErrorMessages
+ * @description Maps error codes to human-readable messages
+ * @example
+ * ```typescript
+ * const message = ErrorMessages[ErrorCode.USER_NOT_FOUND];
+ * // Returns: "User not found. Please check the user ID and try again."
+ * ```
  */
 export const ErrorMessages: Record<ErrorCode, string> = {
   // Authentication & Authorization Errors

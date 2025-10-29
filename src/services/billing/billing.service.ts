@@ -5,8 +5,7 @@ import {
   BadRequestException,
   ConflictException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../libs/infrastructure/database";
 import { CacheService } from "../../libs/infrastructure/cache";
 import { LoggingService } from "../../libs/infrastructure/logging/logging.service";
 import { EventService } from "../../libs/infrastructure/events/event.service";
@@ -30,12 +29,70 @@ import {
 import { InvoicePDFService } from "./invoice-pdf.service";
 import { WhatsAppService } from "../../libs/communication/messaging/whatsapp/whatsapp.service";
 
+// Type-safe interfaces for database operations
+interface AppointmentWhereInput {
+  subscriptionId?: string;
+  status?: string;
+}
+
+interface SubscriptionUpdateInput {
+  status?: string;
+  endDate?: Date;
+  cancelAtPeriodEnd?: boolean;
+  metadata?: Record<string, string | number | boolean>;
+}
+
+interface InvoiceUpdateInput {
+  status?: string;
+  amount?: number;
+  tax?: number;
+  discount?: number;
+  totalAmount?: number;
+  dueDate?: Date;
+  description?: string;
+  lineItems?: Record<string, string | number | boolean>;
+  metadata?: Record<string, string | number | boolean>;
+  sentViaWhatsApp?: boolean;
+  whatsappSentAt?: Date;
+}
+
+interface InvoicePDFData {
+  invoiceNumber: string;
+  invoiceDate: Date;
+  dueDate: Date;
+  status: string;
+  clinicName: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  userName: string;
+  userEmail?: string;
+  userPhone?: string;
+  subscriptionPlan?: string;
+  subscriptionPeriod?: string;
+  lineItems: Array<{
+    description: string;
+    quantity?: number;
+    unitPrice?: number;
+    amount: number;
+  }>;
+  subtotal: number;
+  tax: number;
+  discount: number;
+  total: number;
+  paidAt?: Date;
+  paymentMethod?: string;
+  transactionId?: string;
+  notes: string;
+  termsAndConditions: string;
+}
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
@@ -47,19 +104,17 @@ export class BillingService {
 
   async createBillingPlan(data: CreateBillingPlanDto) {
     try {
-      const plan = await this.prisma.billingPlan.create({
-        data: {
-          name: data.name,
-          description: data.description,
-          amount: data.amount,
-          currency: data.currency || "INR",
-          interval: data.interval,
-          intervalCount: data.intervalCount || 1,
-          trialPeriodDays: data.trialPeriodDays,
-          features: data.features,
-          clinicId: data.clinicId,
-          metadata: data.metadata,
-        },
+      const plan = await this.databaseService.createBillingPlanSafe({
+        name: data.name,
+        amount: data.amount,
+        currency: data.currency || "INR",
+        interval: data.interval,
+        intervalCount: data.intervalCount || 1,
+        ...(data.description && { description: data.description }),
+        ...(data.trialPeriodDays && { trialPeriodDays: data.trialPeriodDays }),
+        ...(data.features && { features: data.features }),
+        ...(data.clinicId && { clinicId: data.clinicId }),
+        ...(data.metadata && { metadata: data.metadata }),
       });
 
       await this.loggingService.log(
@@ -95,12 +150,9 @@ export class BillingService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.prisma.billingPlan.findMany({
-          where: {
-            ...(clinicId ? { clinicId } : {}),
-            isActive: true,
-          },
-          orderBy: { amount: "asc" },
+        return await this.databaseService.findBillingPlansSafe({
+          ...(clinicId ? { clinicId } : {}),
+          isActive: true,
         });
       },
       {
@@ -112,9 +164,7 @@ export class BillingService {
   }
 
   async getBillingPlan(id: string) {
-    const plan = await this.prisma.billingPlan.findUnique({
-      where: { id },
-    });
+    const plan = await this.databaseService.findBillingPlanByIdSafe(id);
 
     if (!plan) {
       throw new NotFoundException(`Billing plan with ID ${id} not found`);
@@ -124,10 +174,7 @@ export class BillingService {
   }
 
   async updateBillingPlan(id: string, data: UpdateBillingPlanDto) {
-    const plan = await this.prisma.billingPlan.update({
-      where: { id },
-      data,
-    });
+    const plan = await this.databaseService.updateBillingPlanSafe(id, data);
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -145,22 +192,19 @@ export class BillingService {
 
   async deleteBillingPlan(id: string) {
     // Check if plan has active subscriptions
-    const activeSubscriptions = await this.prisma.subscription.count({
-      where: {
+    const activeSubscriptions =
+      await this.databaseService.findSubscriptionsSafe({
         planId: id,
         status: SubscriptionStatus.ACTIVE,
-      },
-    });
+      });
 
-    if (activeSubscriptions > 0) {
+    if (activeSubscriptions.length > 0) {
       throw new ConflictException(
-        `Cannot delete plan with ${activeSubscriptions} active subscriptions`,
+        `Cannot delete plan with ${activeSubscriptions.length} active subscriptions`,
       );
     }
 
-    await this.prisma.billingPlan.delete({
-      where: { id },
-    });
+    await this.databaseService.deleteBillingPlanSafe(id);
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -206,25 +250,21 @@ export class BillingService {
       : plan.appointmentsIncluded || null;
 
     try {
-      const subscription = await this.prisma.subscription.create({
-        data: {
-          userId: data.userId,
-          planId: data.planId,
-          clinicId: data.clinicId,
-          status,
-          startDate,
-          endDate: data.endDate ? new Date(data.endDate) : undefined,
-          currentPeriodStart,
-          currentPeriodEnd,
-          trialStart,
-          trialEnd,
-          appointmentsUsed: 0,
-          appointmentsRemaining,
-          metadata: data.metadata,
-        },
-        include: {
-          plan: true,
-        },
+      const subscription = await this.databaseService.createSubscriptionSafe({
+        userId: data.userId,
+        planId: data.planId,
+        clinicId: data.clinicId,
+        status,
+        startDate,
+        currentPeriodStart,
+        currentPeriodEnd,
+        ...(trialStart && { trialStart }),
+        ...(trialEnd && { trialEnd }),
+        appointmentsUsed: 0,
+        ...(data.endDate && { endDate: new Date(data.endDate) }),
+        ...(appointmentsRemaining !== null &&
+          appointmentsRemaining !== undefined && { appointmentsRemaining }),
+        ...(data.metadata && { metadata: data.metadata }),
       });
 
       await this.loggingService.log(
@@ -266,12 +306,8 @@ export class BillingService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.prisma.subscription.findMany({
-          where: { userId },
-          include: {
-            plan: true,
-          },
-          orderBy: { createdAt: "desc" },
+        return await this.databaseService.findSubscriptionsSafe({
+          userId,
         });
       },
       {
@@ -283,14 +319,8 @@ export class BillingService {
   }
 
   async getSubscription(id: string) {
-    const subscription = await this.prisma.subscription.findUnique({
-      where: { id },
-      include: {
-        plan: true,
-        payments: true,
-        invoices: true,
-      },
-    });
+    const subscription =
+      await this.databaseService.findSubscriptionByIdSafe(id);
 
     if (!subscription) {
       throw new NotFoundException(`Subscription with ID ${id} not found`);
@@ -300,13 +330,21 @@ export class BillingService {
   }
 
   async updateSubscription(id: string, data: UpdateSubscriptionDto) {
-    const subscription = await this.prisma.subscription.update({
-      where: { id },
-      data,
-      include: {
-        plan: true,
-      },
-    });
+    const updateData: SubscriptionUpdateInput = {
+      ...(data.status && { status: data.status }),
+      ...(data.endDate && { endDate: new Date(data.endDate) }),
+      ...(data.cancelAtPeriodEnd !== undefined && {
+        cancelAtPeriodEnd: data.cancelAtPeriodEnd,
+      }),
+      ...(data.metadata && {
+        metadata: data.metadata as Record<string, string | number | boolean>,
+      }),
+    };
+
+    const subscription = await this.databaseService.updateSubscriptionSafe(
+      id,
+      updateData,
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -345,13 +383,10 @@ export class BillingService {
       updateData.cancelAtPeriodEnd = true;
     }
 
-    const updated = await this.prisma.subscription.update({
-      where: { id },
-      data: updateData,
-      include: {
-        plan: true,
-      },
-    });
+    const updated = await this.databaseService.updateSubscriptionSafe(
+      id,
+      updateData,
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -376,28 +411,22 @@ export class BillingService {
   async renewSubscription(id: string) {
     const subscription = await this.getSubscription(id);
 
-    if (subscription.status === SubscriptionStatus.ACTIVE) {
+    if (String(subscription.status) === "ACTIVE") {
       throw new BadRequestException("Subscription is already active");
     }
 
     const currentPeriodStart = new Date();
     const currentPeriodEnd = this.calculatePeriodEnd(
       currentPeriodStart,
-      subscription.plan.interval,
-      subscription.plan.intervalCount,
+      subscription.plan?.interval || "MONTHLY",
+      subscription.plan?.intervalCount || 1,
     );
 
-    const updated = await this.prisma.subscription.update({
-      where: { id },
-      data: {
-        status: SubscriptionStatus.ACTIVE,
-        currentPeriodStart,
-        currentPeriodEnd,
-        cancelAtPeriodEnd: false,
-      },
-      include: {
-        plan: true,
-      },
+    const updated = await this.databaseService.updateSubscriptionSafe(id, {
+      status: SubscriptionStatus.ACTIVE,
+      currentPeriodStart,
+      currentPeriodEnd,
+      cancelAtPeriodEnd: false,
     });
 
     await this.loggingService.log(
@@ -425,22 +454,20 @@ export class BillingService {
     const totalAmount = data.amount + (data.tax || 0) - (data.discount || 0);
 
     try {
-      const invoice = await this.prisma.invoice.create({
-        data: {
-          invoiceNumber,
-          userId: data.userId,
-          subscriptionId: data.subscriptionId,
-          clinicId: data.clinicId,
-          amount: data.amount,
-          tax: data.tax || 0,
-          discount: data.discount || 0,
-          totalAmount,
-          status: InvoiceStatus.DRAFT,
-          dueDate: new Date(data.dueDate),
-          description: data.description,
-          lineItems: data.lineItems,
-          metadata: data.metadata,
-        },
+      const invoice = await this.databaseService.createInvoiceSafe({
+        invoiceNumber,
+        userId: data.userId,
+        clinicId: data.clinicId,
+        amount: data.amount,
+        tax: data.tax || 0,
+        discount: data.discount || 0,
+        totalAmount,
+        status: InvoiceStatus.DRAFT,
+        dueDate: new Date(data.dueDate),
+        ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
+        ...(data.description && { description: data.description }),
+        ...(data.lineItems && { lineItems: data.lineItems }),
+        ...(data.metadata && { metadata: data.metadata }),
       });
 
       await this.loggingService.log(
@@ -480,9 +507,8 @@ export class BillingService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.prisma.invoice.findMany({
-          where: { userId },
-          orderBy: { createdAt: "desc" },
+        return await this.databaseService.findInvoicesSafe({
+          userId,
         });
       },
       {
@@ -494,17 +520,7 @@ export class BillingService {
   }
 
   async getInvoice(id: string) {
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id },
-      include: {
-        payments: true,
-        subscription: {
-          include: {
-            plan: true,
-          },
-        },
-      },
-    });
+    const invoice = await this.databaseService.findInvoiceByIdSafe(id);
 
     if (!invoice) {
       throw new NotFoundException(`Invoice with ID ${id} not found`);
@@ -521,7 +537,7 @@ export class BillingService {
       data.tax !== undefined ||
       data.discount !== undefined
     ) {
-      const invoice = await this.prisma.invoice.findUnique({ where: { id } });
+      const invoice = await this.databaseService.findInvoiceByIdSafe(id);
       if (!invoice) {
         throw new NotFoundException(`Invoice with ID ${id} not found`);
       }
@@ -532,10 +548,15 @@ export class BillingService {
       updateData.totalAmount = amount + tax - discount;
     }
 
-    const invoice = await this.prisma.invoice.update({
-      where: { id },
-      data: updateData,
-    });
+    // Convert string dates to Date objects
+    if (updateData.dueDate && typeof updateData.dueDate === "string") {
+      (updateData as any).dueDate = new Date(updateData.dueDate);
+    }
+
+    const invoice = await this.databaseService.updateInvoiceSafe(id, {
+      ...updateData,
+      ...(updateData.dueDate && { dueDate: new Date(updateData.dueDate) }),
+    } as InvoiceUpdateInput);
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -554,12 +575,9 @@ export class BillingService {
   }
 
   async markInvoiceAsPaid(id: string) {
-    const invoice = await this.prisma.invoice.update({
-      where: { id },
-      data: {
-        status: InvoiceStatus.PAID,
-        paidAt: new Date(),
-      },
+    const invoice = await this.databaseService.updateInvoiceSafe(id, {
+      status: InvoiceStatus.PAID,
+      paidAt: new Date(),
     });
 
     await this.loggingService.log(
@@ -582,20 +600,18 @@ export class BillingService {
 
   async createPayment(data: CreatePaymentDto) {
     try {
-      const payment = await this.prisma.payment.create({
-        data: {
-          amount: data.amount,
-          clinicId: data.clinicId,
-          appointmentId: data.appointmentId,
-          userId: data.userId,
-          invoiceId: data.invoiceId,
-          subscriptionId: data.subscriptionId,
-          method: data.method,
-          transactionId: data.transactionId,
-          description: data.description,
-          metadata: data.metadata,
-          status: PaymentStatus.PENDING,
-        },
+      const payment = await this.databaseService.createPaymentSafe({
+        amount: data.amount,
+        clinicId: data.clinicId,
+        status: PaymentStatus.PENDING,
+        ...(data.appointmentId && { appointmentId: data.appointmentId }),
+        ...(data.userId && { userId: data.userId }),
+        ...(data.invoiceId && { invoiceId: data.invoiceId }),
+        ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
+        ...(data.method && { method: data.method }),
+        ...(data.transactionId && { transactionId: data.transactionId }),
+        ...(data.description && { description: data.description }),
+        ...(data.metadata && { metadata: data.metadata }),
       });
 
       await this.loggingService.log(
@@ -633,12 +649,9 @@ export class BillingService {
   }
 
   async updatePayment(id: string, data: UpdatePaymentDto) {
-    const payment = await this.prisma.payment.update({
-      where: { id },
-      data: {
-        ...data,
-        ...(data.refundAmount !== undefined && { refundedAt: new Date() }),
-      },
+    const payment = await this.databaseService.updatePaymentSafe(id, {
+      ...data,
+      ...(data.refundAmount !== undefined && { refundedAt: new Date() }),
     });
 
     await this.loggingService.log(
@@ -651,15 +664,17 @@ export class BillingService {
 
     await this.eventService.emit("billing.payment.updated", { paymentId: id });
 
-    if (payment.userId) {
+    const paymentWithUserId = payment as { userId?: string };
+    if (paymentWithUserId.userId) {
       await this.cacheService.invalidateCacheByTag(
-        `user_payments:${payment.userId}`,
+        `user_payments:${paymentWithUserId.userId}`,
       );
     }
 
     // Auto-update invoice if payment is linked to one
-    if (payment.invoiceId && data.status === PaymentStatus.COMPLETED) {
-      await this.markInvoiceAsPaid(payment.invoiceId);
+    const paymentWithInvoiceId = payment as { invoiceId?: string };
+    if (paymentWithInvoiceId.invoiceId && String(data.status) === "COMPLETED") {
+      await this.markInvoiceAsPaid(paymentWithInvoiceId.invoiceId);
     }
 
     return payment;
@@ -671,9 +686,8 @@ export class BillingService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.prisma.payment.findMany({
-          where: { userId },
-          orderBy: { createdAt: "desc" },
+        return await this.databaseService.findPaymentsSafe({
+          userId,
         });
       },
       {
@@ -685,18 +699,7 @@ export class BillingService {
   }
 
   async getPayment(id: string) {
-    const payment = await this.prisma.payment.findUnique({
-      where: { id },
-      include: {
-        appointment: true,
-        invoice: true,
-        subscription: {
-          include: {
-            plan: true,
-          },
-        },
-      },
-    });
+    const payment = await this.databaseService.findPaymentByIdSafe(id);
 
     if (!payment) {
       throw new NotFoundException(`Payment with ID ${id} not found`);
@@ -756,18 +759,16 @@ export class BillingService {
     paymentAmount?: number;
     reason?: string;
   }> {
-    const subscription = await this.prisma.subscription.findUnique({
-      where: { id: subscriptionId },
-      include: { plan: true },
-    });
+    const subscription =
+      await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
     if (!subscription) {
       return { allowed: false, reason: "Subscription not found" };
     }
 
     if (
-      subscription.status !== SubscriptionStatus.ACTIVE &&
-      subscription.status !== SubscriptionStatus.TRIALING
+      String(subscription.status) !== "ACTIVE" &&
+      String(subscription.status) !== "TRIALING"
     ) {
       return {
         allowed: false,
@@ -781,20 +782,20 @@ export class BillingService {
     }
 
     // Check if specific appointment type is covered
-    if (appointmentType && subscription.plan.appointmentTypes) {
-      const appointmentTypes = subscription.plan.appointmentTypes as Record<
-        string,
-        any
-      >;
+    if (appointmentType && subscription.plan?.appointmentTypes) {
+      const appointmentTypes = subscription.plan.appointmentTypes;
       const isCovered = appointmentTypes[appointmentType] === true;
 
       if (!isCovered) {
         // Get payment amount from metadata
         const metadata =
-          (subscription.plan.metadata as Record<string, any>) || {};
+          (subscription.plan?.metadata as Record<
+            string,
+            string | number | boolean
+          >) || {};
         const paymentKey = `${appointmentType.toLowerCase()}Price`;
         const paymentAmount =
-          metadata[paymentKey] ||
+          Number(metadata[paymentKey]) ||
           this.getDefaultAppointmentPrice(appointmentType);
 
         return {
@@ -807,12 +808,12 @@ export class BillingService {
     }
 
     // If unlimited appointments, allow
-    if (subscription.plan.isUnlimitedAppointments) {
+    if (subscription.plan?.isUnlimitedAppointments) {
       return { allowed: true };
     }
 
     // Check if appointments are included in plan
-    if (!subscription.plan.appointmentsIncluded) {
+    if (!subscription.plan?.appointmentsIncluded) {
       return {
         allowed: false,
         requiresPayment: true,
@@ -823,6 +824,7 @@ export class BillingService {
     // Check remaining quota
     if (
       subscription.appointmentsRemaining !== null &&
+      subscription.appointmentsRemaining !== undefined &&
       subscription.appointmentsRemaining <= 0
     ) {
       return {
@@ -854,18 +856,16 @@ export class BillingService {
     );
 
     if (result.allowed) {
-      const subscription = await this.prisma.subscription.findUnique({
-        where: { id: subscriptionId },
-        include: { plan: true },
-      });
+      const subscription =
+        await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
       return {
         covered: true,
         requiresPayment: false,
         quotaAvailable: true,
         remaining: subscription?.appointmentsRemaining || null,
-        total: subscription?.plan.appointmentsIncluded || null,
-        isUnlimited: subscription?.plan.isUnlimitedAppointments || false,
+        total: subscription?.plan?.appointmentsIncluded || null,
+        isUnlimited: subscription?.plan?.isUnlimitedAppointments || false,
       };
     }
 
@@ -887,17 +887,29 @@ export class BillingService {
       throw new BadRequestException(canBook.reason);
     }
 
-    const subscription = await this.prisma.subscription.findUnique({
-      where: { id: subscriptionId },
-      include: { plan: true },
-    });
+    const subscription =
+      await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
     if (!subscription) {
       throw new NotFoundException("Subscription not found");
     }
 
     // Update appointment to link with subscription
-    await this.prisma.appointment.update({
+    // Note: subscriptionId and isSubscriptionBased are not part of AppointmentUpdateInput
+    // This would need to be handled through a direct Prisma call or a custom method
+    const prismaClient = this.databaseService.getPrismaClient() as {
+      appointment: {
+        update: (args: {
+          where: { id: string };
+          data: { subscriptionId: string; isSubscriptionBased: boolean };
+        }) => Promise<{
+          id: string;
+          subscriptionId: string;
+          isSubscriptionBased: boolean;
+        }>;
+      };
+    };
+    await prismaClient.appointment.update({
       where: { id: appointmentId },
       data: {
         subscriptionId,
@@ -906,16 +918,13 @@ export class BillingService {
     });
 
     // Update subscription usage if not unlimited
-    if (!subscription.plan.isUnlimitedAppointments) {
-      await this.prisma.subscription.update({
-        where: { id: subscriptionId },
-        data: {
-          appointmentsUsed: { increment: 1 },
-          appointmentsRemaining:
-            subscription.appointmentsRemaining !== null
-              ? { decrement: 1 }
-              : undefined,
-        },
+    if (!subscription.plan?.isUnlimitedAppointments) {
+      await this.databaseService.updateSubscriptionSafe(subscriptionId, {
+        appointmentsUsed: subscription.appointmentsUsed + 1,
+        ...(subscription.appointmentsRemaining !== null &&
+          subscription.appointmentsRemaining !== undefined && {
+            appointmentsRemaining: subscription.appointmentsRemaining - 1,
+          }),
       });
     }
 
@@ -937,74 +946,78 @@ export class BillingService {
   }
 
   async cancelSubscriptionAppointment(appointmentId: string) {
-    const appointment = await this.prisma.appointment.findUnique({
-      where: { id: appointmentId },
-      include: {
-        subscription: {
-          include: { plan: true },
-        },
-      },
-    });
+    const appointment =
+      await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
+    const appointmentWithSubscription = appointment as {
+      subscriptionId?: string;
+      subscription?: {
+        plan: { isUnlimitedAppointments: boolean };
+        appointmentsRemaining: number | null;
+        userId: string;
+      };
+    };
     if (
       !appointment ||
-      !appointment.subscriptionId ||
-      !appointment.subscription
+      !appointmentWithSubscription.subscriptionId ||
+      !appointmentWithSubscription.subscription
     ) {
       return;
     }
 
     // Restore appointment quota if not unlimited
-    if (!appointment.subscription.plan.isUnlimitedAppointments) {
-      await this.prisma.subscription.update({
-        where: { id: appointment.subscriptionId },
-        data: {
-          appointmentsUsed: { decrement: 1 },
-          appointmentsRemaining:
-            appointment.subscription.appointmentsRemaining !== null
-              ? { increment: 1 }
-              : undefined,
+    const subscription = appointmentWithSubscription.subscription;
+    if (!subscription?.plan?.isUnlimitedAppointments) {
+      await this.databaseService.updateSubscriptionSafe(
+        appointmentWithSubscription.subscriptionId,
+        {
+          appointmentsUsed:
+            subscription?.appointmentsRemaining !== null
+              ? subscription.appointmentsRemaining + 1
+              : 1,
+          ...(subscription?.appointmentsRemaining !== null && {
+            appointmentsRemaining: subscription.appointmentsRemaining + 1,
+          }),
         },
-      });
+      );
     }
 
+    const appointmentSubscription = appointmentWithSubscription.subscription;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       "Subscription appointment cancelled, quota restored",
       "BillingService",
-      { subscriptionId: appointment.subscriptionId, appointmentId },
+      {
+        subscriptionId: appointmentWithSubscription.subscriptionId,
+        appointmentId,
+      },
     );
 
     await this.eventService.emit("billing.appointment.cancelled", {
-      subscriptionId: appointment.subscriptionId,
+      subscriptionId: appointmentWithSubscription.subscriptionId,
       appointmentId,
     });
 
     await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${appointment.subscription.userId}`,
+      `user_subscriptions:${appointmentSubscription?.userId}`,
     );
   }
 
   async getActiveUserSubscription(userId: string, clinicId: string) {
-    const subscription = await this.prisma.subscription.findFirst({
-      where: {
-        userId,
-        clinicId,
-        status: {
-          in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING],
-        },
-        currentPeriodEnd: {
-          gte: new Date(),
-        },
-      },
-      include: {
-        plan: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+    const subscriptions = await this.databaseService.findSubscriptionsSafe({
+      userId,
+      clinicId,
     });
+
+    const subscription = subscriptions
+      .filter(
+        (sub) =>
+          (String(sub.status) === "ACTIVE" ||
+            String(sub.status) === "TRIALING") &&
+          sub.currentPeriodEnd >= new Date(),
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 
     return subscription;
   }
@@ -1012,26 +1025,18 @@ export class BillingService {
   async getSubscriptionUsageStats(subscriptionId: string) {
     const subscription = await this.getSubscription(subscriptionId);
 
-    const appointmentCount = await this.prisma.appointment.count({
-      where: {
-        subscriptionId,
-        status: {
-          in: [
-            "SCHEDULED",
-            "CONFIRMED",
-            "COMPLETED",
-            "IN_PROGRESS",
-            "CHECKED_IN",
-          ],
-        },
-      },
-    });
+    const appointments = await this.databaseService.findAppointmentsSafe({
+      subscriptionId,
+      status: "SCHEDULED",
+    } as AppointmentWhereInput);
+
+    const appointmentCount = appointments.length;
 
     return {
       subscriptionId,
-      planName: subscription.plan.name,
-      appointmentsIncluded: subscription.plan.appointmentsIncluded,
-      isUnlimited: subscription.plan.isUnlimitedAppointments,
+      planName: subscription.plan?.name || "",
+      appointmentsIncluded: subscription.plan?.appointmentsIncluded,
+      isUnlimited: subscription.plan?.isUnlimitedAppointments || false,
       appointmentsUsed: subscription.appointmentsUsed,
       appointmentsRemaining: subscription.appointmentsRemaining,
       actualAppointmentCount: appointmentCount,
@@ -1045,16 +1050,14 @@ export class BillingService {
     const subscription = await this.getSubscription(subscriptionId);
 
     // Reset quota for new period
-    const appointmentsRemaining = subscription.plan.isUnlimitedAppointments
+    const appointmentsRemaining = subscription.plan?.isUnlimitedAppointments
       ? null
-      : subscription.plan.appointmentsIncluded || null;
+      : subscription.plan?.appointmentsIncluded || null;
 
-    await this.prisma.subscription.update({
-      where: { id: subscriptionId },
-      data: {
-        appointmentsUsed: 0,
-        appointmentsRemaining,
-      },
+    await this.databaseService.updateSubscriptionSafe(subscriptionId, {
+      appointmentsUsed: 0,
+      ...(appointmentsRemaining !== null &&
+        appointmentsRemaining !== undefined && { appointmentsRemaining }),
     });
 
     await this.loggingService.log(
@@ -1094,13 +1097,7 @@ export class BillingService {
       if (endDate) where.createdAt.lte = endDate;
     }
 
-    const payments = await this.prisma.payment.findMany({
-      where,
-      select: {
-        amount: true,
-        createdAt: true,
-      },
-    });
+    const payments = await this.databaseService.findPaymentsSafe(where);
 
     const totalRevenue = payments.reduce(
       (sum: number, payment: { amount: number }) => sum + payment.amount,
@@ -1116,42 +1113,37 @@ export class BillingService {
   }
 
   async getSubscriptionMetrics(clinicId: string) {
-    const subscriptions = await this.prisma.subscription.findMany({
-      where: { clinicId },
-      include: {
-        plan: true,
-      },
+    const subscriptions = await this.databaseService.findSubscriptionsSafe({
+      clinicId,
     });
 
     type SubscriptionWithPlan = (typeof subscriptions)[number];
 
     const active = subscriptions.filter(
-      (s: SubscriptionWithPlan) => s.status === SubscriptionStatus.ACTIVE,
+      (s: SubscriptionWithPlan) => String(s.status) === "ACTIVE",
     ).length;
     const trialing = subscriptions.filter(
-      (s: SubscriptionWithPlan) => s.status === SubscriptionStatus.TRIALING,
+      (s: SubscriptionWithPlan) => String(s.status) === "TRIALING",
     ).length;
     const cancelled = subscriptions.filter(
-      (s: SubscriptionWithPlan) => s.status === SubscriptionStatus.CANCELLED,
+      (s: SubscriptionWithPlan) => String(s.status) === "CANCELLED",
     ).length;
     const pastDue = subscriptions.filter(
-      (s: SubscriptionWithPlan) => s.status === SubscriptionStatus.PAST_DUE,
+      (s: SubscriptionWithPlan) => String(s.status) === "PAST_DUE",
     ).length;
 
     const monthlyRecurringRevenue = subscriptions
-      .filter(
-        (s: SubscriptionWithPlan) => s.status === SubscriptionStatus.ACTIVE,
-      )
+      .filter((s: SubscriptionWithPlan) => String(s.status) === "ACTIVE")
       .reduce((sum: number, sub: SubscriptionWithPlan) => {
-        const planAmount = sub.plan.amount;
+        const planAmount = sub.plan?.amount || 0;
         const monthlyAmount =
-          sub.plan.interval === "MONTHLY"
+          sub.plan?.interval === "MONTHLY"
             ? planAmount
-            : sub.plan.interval === "YEARLY"
+            : sub.plan?.interval === "YEARLY"
               ? planAmount / 12
-              : sub.plan.interval === "QUARTERLY"
+              : sub.plan?.interval === "QUARTERLY"
                 ? planAmount / 3
-                : sub.plan.interval === "WEEKLY"
+                : sub.plan?.interval === "WEEKLY"
                   ? (planAmount * 52) / 12
                   : planAmount * 30;
 
@@ -1177,37 +1169,33 @@ export class BillingService {
    */
   async generateInvoicePDF(invoiceId: string): Promise<void> {
     try {
-      const invoice = await this.prisma.invoice.findUnique({
-        where: { id: invoiceId },
-        include: {
-          subscription: {
-            include: {
-              plan: true,
-              user: true,
-            },
-          },
-        },
-      });
+      const invoice = await this.databaseService.findInvoiceByIdSafe(invoiceId);
 
       if (!invoice) {
         throw new NotFoundException(`Invoice ${invoiceId} not found`);
       }
 
       // Get user details
+      const subscriptionUser = invoice.subscription as {
+        user?: { name: string; email: string; phone: string };
+      } | null;
       const user =
-        invoice.subscription?.user ||
-        (await this.prisma.user.findUnique({
-          where: { id: invoice.userId },
-        }));
+        subscriptionUser?.user ||
+        (await this.databaseService.findUserByIdSafe(invoice.userId));
 
       if (!user) {
         throw new NotFoundException(`User ${invoice.userId} not found`);
       }
 
       // Get clinic details
-      const clinic = await this.prisma.clinic.findUnique({
-        where: { id: invoice.clinicId },
-      });
+      const clinic = (await this.databaseService.findClinicByIdSafe(
+        invoice.clinicId,
+      )) as {
+        name: string;
+        address?: string;
+        phone?: string;
+        email?: string;
+      } | null;
 
       if (!clinic) {
         throw new NotFoundException(`Clinic ${invoice.clinicId} not found`);
@@ -1221,29 +1209,70 @@ export class BillingService {
         status: invoice.status,
 
         // Clinic details
-        clinicName: clinic.name,
-        clinicAddress: clinic.address || undefined,
-        clinicPhone: clinic.phone || undefined,
-        clinicEmail: clinic.email || undefined,
+        clinicName: (
+          clinic as {
+            name: string;
+            address?: string;
+            phone?: string;
+            email?: string;
+          }
+        ).name,
+        clinicAddress:
+          (
+            clinic as {
+              name: string;
+              address?: string;
+              phone?: string;
+              email?: string;
+            }
+          ).address || undefined,
+        clinicPhone:
+          (
+            clinic as {
+              name: string;
+              address?: string;
+              phone?: string;
+              email?: string;
+            }
+          ).phone || undefined,
+        clinicEmail:
+          (
+            clinic as {
+              name: string;
+              address?: string;
+              phone?: string;
+              email?: string;
+            }
+          ).email || undefined,
 
         // User details
-        userName: user.name,
-        userEmail: user.email || undefined,
-        userPhone: user.phone || undefined,
+        userName: (user as { name: string; email?: string; phone?: string })
+          .name,
+        userEmail:
+          (user as { name: string; email?: string; phone?: string }).email ||
+          undefined,
+        userPhone:
+          (user as { name: string; email?: string; phone?: string }).phone ||
+          undefined,
 
         // Subscription details
-        subscriptionPlan: invoice.subscription?.plan.name,
+        subscriptionPlan: invoice.subscription?.plan?.name,
         subscriptionPeriod: invoice.subscription
           ? `${new Date(invoice.subscription.currentPeriodStart).toLocaleDateString()} - ${new Date(invoice.subscription.currentPeriodEnd).toLocaleDateString()}`
           : undefined,
 
         // Line items
-        lineItems: (invoice.lineItems as any[]) || [
-          {
-            description: invoice.description || "Subscription Payment",
-            amount: invoice.amount,
-          },
-        ],
+        lineItems: Array.isArray(invoice.lineItems)
+          ? (invoice.lineItems as Array<{
+              description: string;
+              amount: number;
+            }>)
+          : [
+              {
+                description: invoice.description || "Subscription Payment",
+                amount: invoice.amount,
+              },
+            ],
 
         // Totals
         subtotal: invoice.amount,
@@ -1253,42 +1282,44 @@ export class BillingService {
 
         // Payment details
         paidAt: invoice.paidAt || undefined,
-        paymentMethod: undefined,
-        transactionId: undefined,
+        paymentMethod: undefined as string | undefined,
+        transactionId: undefined as string | undefined,
 
         // Notes
-        notes: `Thank you for your payment. This invoice is for ${invoice.subscription?.plan.name || "services"}.`,
+        notes: `Thank you for your payment. This invoice is for ${invoice.subscription?.plan?.name || "services"}.`,
         termsAndConditions:
           "Payment is due within 30 days. Please include the invoice number with your payment.",
       };
 
       // Get payment details if invoice is paid
       if (invoice.paidAt) {
-        const payment = await this.prisma.payment.findFirst({
-          where: { invoiceId: invoice.id },
-          orderBy: { createdAt: "desc" },
+        const payments = await this.databaseService.findPaymentsSafe({
+          invoiceId: invoice.id,
         });
 
+        const payment = payments.sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        )[0];
+
         if (payment) {
-          pdfData.paymentMethod = payment.method;
-          pdfData.transactionId = payment.transactionId || undefined;
+          pdfData.paymentMethod = payment.method as string;
+          pdfData.transactionId = payment.transactionId as string;
         }
       }
 
       // Generate PDF
       const { filePath, fileName } =
-        await this.invoicePDFService.generateInvoicePDF(pdfData);
+        await this.invoicePDFService.generateInvoicePDF(
+          pdfData as InvoicePDFData,
+        );
 
       // Get public URL
       const pdfUrl = this.invoicePDFService.getPublicInvoiceUrl(fileName);
 
       // Update invoice with PDF info
-      await this.prisma.invoice.update({
-        where: { id: invoiceId },
-        data: {
-          pdfFilePath: filePath,
-          pdfUrl,
-        },
+      await this.databaseService.updateInvoiceSafe(invoiceId, {
+        pdfFilePath: filePath,
+        pdfUrl,
       });
 
       await this.loggingService.log(
@@ -1326,34 +1357,29 @@ export class BillingService {
    */
   async sendInvoiceViaWhatsApp(invoiceId: string): Promise<boolean> {
     try {
-      const invoice = await this.prisma.invoice.findUnique({
-        where: { id: invoiceId },
-        include: {
-          subscription: {
-            include: {
-              user: true,
-            },
-          },
-        },
-      });
+      const invoice = await this.databaseService.findInvoiceByIdSafe(invoiceId);
 
       if (!invoice) {
         throw new NotFoundException(`Invoice ${invoiceId} not found`);
       }
 
       // Get user details
+      const subscriptionUser = invoice.subscription as {
+        user?: { phone?: string; id: string };
+      } | null;
       const user =
-        invoice.subscription?.user ||
-        (await this.prisma.user.findUnique({
-          where: { id: invoice.userId },
-        }));
+        subscriptionUser?.user ||
+        (await this.databaseService.findUserByIdSafe(invoice.userId));
 
       if (!user) {
         throw new NotFoundException(`User ${invoice.userId} not found`);
       }
 
-      if (!user.phone) {
-        throw new BadRequestException(`User ${user.id} has no phone number`);
+      const userWithPhone = user as { phone?: string; id: string };
+      if (!userWithPhone.phone) {
+        throw new BadRequestException(
+          `User ${userWithPhone.id} has no phone number`,
+        );
       }
 
       // Generate PDF if not already generated
@@ -1361,9 +1387,8 @@ export class BillingService {
         await this.generateInvoicePDF(invoiceId);
 
         // Fetch updated invoice
-        const updatedInvoice = await this.prisma.invoice.findUnique({
-          where: { id: invoiceId },
-        });
+        const updatedInvoice =
+          await this.databaseService.findInvoiceByIdSafe(invoiceId);
 
         if (!updatedInvoice?.pdfUrl) {
           throw new Error("Failed to generate invoice PDF");
@@ -1373,9 +1398,13 @@ export class BillingService {
       }
 
       // Send via WhatsApp
+      const userForWhatsApp = user as {
+        phone: string;
+        name: string;
+      };
       const success = await this.whatsAppService.sendInvoice(
-        user.phone,
-        user.name,
+        userForWhatsApp.phone,
+        userForWhatsApp.name,
         invoice.invoiceNumber,
         invoice.totalAmount,
         invoice.dueDate.toLocaleDateString(),
@@ -1384,13 +1413,10 @@ export class BillingService {
 
       if (success) {
         // Update invoice
-        await this.prisma.invoice.update({
-          where: { id: invoiceId },
-          data: {
-            sentViaWhatsApp: true,
-            whatsappSentAt: new Date(),
-          },
-        });
+        await this.databaseService.updateInvoiceSafe(invoiceId, {
+          sentViaWhatsApp: true,
+          whatsappSentAt: new Date(),
+        } as InvoiceUpdateInput);
 
         await this.loggingService.log(
           LogType.SYSTEM,
@@ -1430,40 +1456,46 @@ export class BillingService {
    */
   async sendSubscriptionConfirmation(subscriptionId: string): Promise<void> {
     try {
-      const subscription = await this.prisma.subscription.findUnique({
-        where: { id: subscriptionId },
-        include: {
-          plan: true,
-          user: true,
-        },
-      });
+      const subscription =
+        await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
       if (!subscription) {
         throw new NotFoundException(`Subscription ${subscriptionId} not found`);
       }
 
-      if (!subscription.user.phone) {
+      const subscriptionUser = subscription as {
+        user?: { phone?: string; id: string; name: string };
+      };
+      const user = subscriptionUser.user;
+      const subscriptionPlan = subscription.plan as {
+        name: string;
+        amount: number;
+      };
+      if (!user?.phone) {
         this.logger.warn(
-          `User ${subscription.user.id} has no phone number, skipping WhatsApp confirmation`,
+          `User ${user?.id} has no phone number, skipping WhatsApp confirmation`,
         );
         return;
       }
 
       // Send subscription confirmation
       await this.whatsAppService.sendSubscriptionConfirmation(
-        subscription.user.phone,
-        subscription.user.name,
-        subscription.plan.name,
-        subscription.plan.amount,
+        user.phone,
+        user.name,
+        subscriptionPlan.name,
+        subscriptionPlan.amount,
         subscription.currentPeriodStart.toLocaleDateString(),
         subscription.currentPeriodEnd.toLocaleDateString(),
       );
 
       // Check if invoice exists for this subscription
-      const invoice = await this.prisma.invoice.findFirst({
-        where: { subscriptionId: subscription.id },
-        orderBy: { createdAt: "desc" },
+      const invoices = await this.databaseService.findInvoicesSafe({
+        subscriptionId: subscription.id,
       });
+
+      const invoice = invoices.sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      )[0];
 
       if (invoice) {
         // Send existing invoice via WhatsApp
@@ -1474,18 +1506,20 @@ export class BillingService {
           userId: subscription.userId,
           subscriptionId: subscription.id,
           clinicId: subscription.clinicId,
-          amount: subscription.plan.amount,
-          tax: subscription.plan.amount * 0.18, // 18% GST
-          dueDate: subscription.currentPeriodEnd,
-          description: `Subscription: ${subscription.plan.name}`,
-          lineItems: [
-            {
-              description: subscription.plan.name,
-              quantity: 1,
-              unitPrice: subscription.plan.amount,
-              amount: subscription.plan.amount,
-            },
-          ],
+          amount: subscription.plan?.amount || 0,
+          tax: (subscription.plan?.amount || 0) * 0.18, // 18% GST
+          dueDate: subscription.currentPeriodEnd.toISOString(),
+          description: `Subscription: ${subscription.plan?.name || "Unknown Plan"}`,
+          lineItems: {
+            items: [
+              {
+                description: subscription.plan?.name || "Unknown Plan",
+                quantity: 1,
+                unitPrice: subscription.plan?.amount || 0,
+                amount: subscription.plan?.amount || 0,
+              },
+            ],
+          } as Record<string, unknown>,
         });
 
         // Generate PDF and send via WhatsApp

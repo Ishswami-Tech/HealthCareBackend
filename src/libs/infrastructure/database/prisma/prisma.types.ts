@@ -37,6 +37,78 @@ export type User = PrismaUser & {
 export type Product = PrismaProduct;
 export type Appointment = PrismaAppointment;
 export type Payment = PrismaPayment;
+
+// Define billing types manually since they're not available in Prisma client
+export type BillingPlan = {
+  id: string;
+  name: string;
+  description?: string;
+  amount: number;
+  currency: string;
+  interval: string;
+  intervalCount: number;
+  trialPeriodDays?: number;
+  features?: Record<string, unknown>;
+  isActive: boolean;
+  clinicId?: string;
+  metadata?: Record<string, unknown>;
+  appointmentsIncluded?: number;
+  isUnlimitedAppointments: boolean;
+  appointmentTypes?: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+  subscriptions?: Subscription[];
+};
+
+export type Subscription = {
+  id: string;
+  userId: string;
+  planId: string;
+  clinicId: string;
+  status: string;
+  startDate: Date;
+  endDate?: Date;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  cancelAtPeriodEnd: boolean;
+  cancelledAt?: Date;
+  trialStart?: Date;
+  trialEnd?: Date;
+  metadata?: Record<string, unknown>;
+  appointmentsUsed: number;
+  appointmentsRemaining?: number;
+  createdAt: Date;
+  updatedAt: Date;
+  plan?: BillingPlan;
+  payments?: Payment[];
+  invoices?: Invoice[];
+  appointments?: Appointment[];
+};
+
+export type Invoice = {
+  id: string;
+  invoiceNumber: string;
+  userId: string;
+  subscriptionId?: string;
+  clinicId: string;
+  amount: number;
+  tax?: number;
+  discount?: number;
+  totalAmount: number;
+  status: string;
+  dueDate: Date;
+  paidAt?: Date;
+  description?: string;
+  lineItems?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  pdfFilePath?: string;
+  pdfUrl?: string;
+  sentViaWhatsApp: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  subscription?: Subscription;
+  payments?: Payment[];
+};
 export type Doctor = PrismaDoctor;
 export type Patient = PrismaPatient;
 export type Clinic = PrismaClinic & {

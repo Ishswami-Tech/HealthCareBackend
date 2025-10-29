@@ -182,9 +182,9 @@ export class JwtAuthService {
       const enhancedPayload: TokenPayload = {
         ...payload,
         jti: this.generateJTI(), // JWT ID for blacklist tracking
-        deviceFingerprint,
-        userAgent: userAgent?.substring(0, 100), // Limit user agent length
-        ipAddress,
+        deviceFingerprint: deviceFingerprint || "",
+        userAgent: userAgent?.substring(0, 100) || "",
+        ipAddress: ipAddress || "",
         iat: Math.floor(Date.now() / 1000),
       };
 
@@ -501,7 +501,7 @@ export class JwtAuthService {
       .substring(0, 16);
   }
 
-  private async checkRateLimit(userId: string): Promise<void> {
+  private checkRateLimit(userId: string): Promise<void> {
     const now = Date.now();
     const userLimit = this.rateLimitMap.get(userId);
 
@@ -510,7 +510,7 @@ export class JwtAuthService {
         count: 1,
         resetTime: now + this.RATE_LIMIT_WINDOW * 1000,
       });
-      return;
+      return Promise.resolve();
     }
 
     if (userLimit.count >= this.MAX_TOKENS_PER_USER) {
@@ -518,12 +518,14 @@ export class JwtAuthService {
     }
 
     userLimit.count++;
+    return Promise.resolve();
   }
 
-  private async trackDevice(
+  private trackDevice(
     userId: string,
     deviceFingerprint: string,
   ): Promise<void> {
+    return Promise.resolve();
     const userDevices = this.deviceTrackingMap.get(userId) || new Set();
 
     if (

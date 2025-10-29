@@ -42,6 +42,50 @@ export interface LogContext {
  * Designed to handle 1M+ concurrent users with enterprise reliability
  */
 
+/**
+ * Enterprise Logging Service for Healthcare Applications
+ *
+ * Provides comprehensive logging capabilities with HIPAA compliance,
+ * distributed tracing, and real-time monitoring for healthcare applications.
+ * Supports multiple log types, performance metrics, and audit trails.
+ *
+ * @class LoggingService
+ * @description Enterprise-grade logging service with HIPAA compliance and distributed tracing
+ *
+ * @example
+ * ```typescript
+ * // Inject the service
+ * constructor(private readonly loggingService: LoggingService) {}
+ *
+ * // Log an event
+ * await this.loggingService.log(
+ *   LogType.USER_ACTIVITY,
+ *   LogLevel.INFO,
+ *   'User logged in',
+ *   'Authentication',
+ *   { userId: '123', ipAddress: '192.168.1.1' }
+ * );
+ *
+ * // Get logs with filtering
+ * const logs = await this.loggingService.getLogs(
+ *   LogType.USER_ACTIVITY,
+ *   new Date('2024-01-01'),
+ *   new Date('2024-01-31'),
+ *   LogLevel.INFO
+ * );
+ * ```
+ *
+ * @features
+ * - HIPAA-compliant PHI audit logging
+ * - Distributed tracing with correlation IDs
+ * - Real-time performance monitoring
+ * - Multi-tenant clinic isolation
+ * - Advanced security event tracking
+ * - Redis and database persistence
+ * - Structured logging with context
+ * - Performance metrics collection
+ * - Error tracking and alerting
+ */
 @Injectable()
 export class LoggingService {
   private logger!: Logger;
@@ -57,7 +101,7 @@ export class LoggingService {
     private readonly prismaService: PrismaService,
     private readonly redisService: RedisService,
   ) {
-    this.serviceName = process.env.SERVICE_NAME || "healthcare";
+    this.serviceName = process.env["SERVICE_NAME"] || "healthcare";
     this.initLogger();
     this.initMetricsBuffering();
   }
@@ -158,10 +202,10 @@ export class LoggingService {
       metadata: {
         ...(metadata || {}),
         timestamp: timestamp.toISOString(),
-        environment: process.env.NODE_ENV || "development",
+        environment: process.env["NODE_ENV"] || "development",
         service: this.serviceName,
-        nodeId: process.env.NODE_ID || "unknown",
-        version: process.env.APP_VERSION || "1.0.0",
+        nodeId: process.env["NODE_ID"] || "unknown",
+        version: process.env["APP_VERSION"] || "1.0.0",
         correlationId: this.getContext()?.correlationId,
         traceId: this.getContext()?.traceId,
         userId: this.getContext()?.userId,
@@ -173,7 +217,7 @@ export class LoggingService {
     try {
       // Smart console logging for production performance
       if (
-        process.env.NODE_ENV !== "production" ||
+        process.env["NODE_ENV"] !== "production" ||
         level === LogLevel.ERROR ||
         level === LogLevel.WARN
       ) {
@@ -208,15 +252,15 @@ export class LoggingService {
                     userId: systemUser.id,
                     action: type,
                     description: context,
-                    ipAddress: metadata.ipAddress || null,
-                    device: metadata.userAgent || null,
-                    clinicId: metadata.clinicId || null,
+                    ipAddress: metadata["ipAddress"] || null,
+                    device: metadata["userAgent"] || null,
+                    clinicId: metadata["clinicId"] || null,
                   },
                 });
               }
             } catch (auditError) {
               // For 1M users, we need resilient logging
-              if (process.env.NODE_ENV === "development") {
+              if (process.env["NODE_ENV"] === "development") {
                 console.debug(
                   "Audit log creation failed (development mode):",
                   (auditError as Error).message,
@@ -226,7 +270,7 @@ export class LoggingService {
           }
         } catch (dbError) {
           // Enhanced error handling for high-scale operations
-          if (process.env.NODE_ENV === "production") {
+          if (process.env["NODE_ENV"] === "production") {
             console.error("Database logging failed:", dbError);
           }
         }
@@ -284,20 +328,21 @@ export class LoggingService {
       this.metricsBuffer = [];
     }
     const logEntryData = logEntry as Record<string, unknown>;
-    const metadata = (logEntryData.metadata as Record<string, unknown>) || {};
+    const metadata =
+      (logEntryData["metadata"] as Record<string, unknown>) || {};
     this.metricsBuffer.push({
       timestamp: Date.now(),
-      level: logEntryData.level,
-      type: logEntryData.type,
-      context: logEntryData.context,
-      userId: metadata.userId,
-      clinicId: metadata.clinicId,
-      responseTime: metadata.responseTime,
+      level: logEntryData["level"],
+      type: logEntryData["type"],
+      context: logEntryData["context"],
+      userId: metadata["userId"],
+      clinicId: metadata["clinicId"],
+      responseTime: metadata["responseTime"],
     });
 
     // Emergency flush if buffer is getting too large
     if (this.metricsBuffer.length > this.maxBufferSize) {
-      this.flushMetricsBuffer();
+      void this.flushMetricsBuffer();
     }
   }
 
@@ -321,7 +366,7 @@ export class LoggingService {
     startTime?: Date,
     endTime?: Date,
     level?: LogLevel,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     this.ensureLogger();
 
     try {
@@ -338,7 +383,7 @@ export class LoggingService {
       // Enhanced caching with compression for large datasets
       const cachedLogs = await this.redisService?.get(cacheKey);
       if (cachedLogs) {
-        return JSON.parse(cachedLogs);
+        return JSON.parse(cachedLogs) as unknown[];
       }
 
       // Optimized database query for 1M users
@@ -350,7 +395,7 @@ export class LoggingService {
       };
 
       if (type) {
-        (whereClause as Record<string, unknown>).action = type;
+        (whereClause as Record<string, unknown>)["action"] = type;
       }
 
       // Enhanced database query with better indexing
@@ -359,9 +404,10 @@ export class LoggingService {
         const redisLogs =
           (await this.redisService?.lRange("logs", 0, -1)) || [];
         const parsedLogs = redisLogs
-          .map((log) => JSON.parse(log))
-          .filter((log) => {
-            const logDate = new Date(log.timestamp);
+          .map((log) => JSON.parse(log) as unknown)
+          .filter((log: unknown) => {
+            const logData = log as { timestamp: string };
+            const logDate = new Date(logData.timestamp);
             return logDate >= finalStartTime && logDate <= finalEndTime;
           })
           .slice(0, 1000); // Limit for performance
@@ -389,20 +435,20 @@ export class LoggingService {
           },
         });
 
-        const result = dbLogs.map((log: unknown) => {
+        const result = (dbLogs as unknown[]).map((log: unknown) => {
           const logData = log as Record<string, unknown>;
           return {
-            id: logData.id,
-            type: logData.action,
+            id: logData["id"],
+            type: logData["action"],
             level: "INFO", // Default level
-            message: `${logData.action} on ${logData.description}`,
-            context: logData.description,
+            message: `${String(logData["action"])} on ${String(logData["description"])}`,
+            context: logData["description"],
             metadata: {},
 
-            timestamp: (logData.timestamp as Date).toISOString(),
-            userId: logData.userId,
-            ipAddress: logData.ipAddress,
-            userAgent: logData.device,
+            timestamp: (logData["timestamp"] as Date).toISOString(),
+            userId: logData["userId"],
+            ipAddress: logData["ipAddress"],
+            userAgent: logData["device"],
           };
         });
 
@@ -421,9 +467,10 @@ export class LoggingService {
           const redisLogs =
             (await this.redisService?.lRange("logs", 0, -1)) || [];
           const parsedLogs = redisLogs
-            .map((log) => JSON.parse(log))
-            .filter((log) => {
-              const logDate = new Date(log.timestamp);
+            .map((log) => JSON.parse(log) as unknown)
+            .filter((log: unknown) => {
+              const logData = log as { timestamp: string };
+              const logDate = new Date(logData.timestamp);
               return logDate >= finalStartTime && logDate <= finalEndTime;
             })
             .slice(0, 1000); // Limit for performance
@@ -455,26 +502,33 @@ export class LoggingService {
     }
   }
 
-  async getEvents(type?: string): Promise<any[]> {
+  async getEvents(type?: string): Promise<unknown[]> {
     this.ensureLogger();
 
     try {
       // Enhanced event retrieval for 1M users
       const redisEvents =
         (await this.redisService?.lRange("events", 0, -1)) || [];
-      let events = redisEvents.map((event) => JSON.parse(event));
+      let events = redisEvents.map((event) => JSON.parse(event) as unknown);
 
       // Apply filters
       if (type) {
-        events = events.filter((event) => event.type === type);
+        events = events.filter((event: unknown) => {
+          const eventData = event as { type: string };
+          return eventData.type === type;
+        });
       }
 
       // Enhanced sorting and limiting for performance
       return events
-        .sort(
-          (a, b) =>
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-        )
+        .sort((a: unknown, b: unknown) => {
+          const aData = a as { timestamp: string };
+          const bData = b as { timestamp: string };
+          return (
+            new Date(bData.timestamp).getTime() -
+            new Date(aData.timestamp).getTime()
+          );
+        })
         .slice(0, 2000); // Increased limit for 1M users
     } catch (error) {
       console.error("Failed to retrieve events:", error);
@@ -580,7 +634,7 @@ export class LoggingService {
     const criticalThreshold = 5000; // 5 seconds
 
     if (duration > criticalThreshold) {
-      this.logWithContext(
+      void this.logWithContext(
         LogType.PERFORMANCE,
         LogLevel.ERROR,
         `CRITICAL performance issue: ${operation} took ${duration}ms`,
@@ -588,7 +642,7 @@ export class LoggingService {
         performanceData,
       );
     } else if (duration > slowThreshold) {
-      this.logWithContext(
+      void this.logWithContext(
         LogType.PERFORMANCE,
         LogLevel.WARN,
         `Slow operation detected: ${operation} took ${duration}ms`,
@@ -649,10 +703,10 @@ export class LoggingService {
 
       const metricsData =
         typeof cachedMetrics === "string"
-          ? JSON.parse(cachedMetrics)
-          : cachedMetrics;
-      const metrics = metricsData?.metrics;
-      return metrics ? JSON.parse(metrics) : [];
+          ? (JSON.parse(cachedMetrics) as unknown)
+          : (cachedMetrics as unknown);
+      const metrics = (metricsData as { metrics?: string })?.metrics;
+      return metrics ? (JSON.parse(metrics) as unknown) : [];
     } catch (error) {
       this.logger?.error("Failed to get system metrics:", error);
       return [];
@@ -767,30 +821,32 @@ export class LoggingService {
   /**
    * Log high-volume user activity for 1M+ users
    */
-  async logUserActivity(
+  logUserActivity(
     userId: string,
     action: string,
     metadata: Record<string, unknown> = {},
-  ) {
+  ): void {
     // Use async context to avoid blocking
-    setImmediate(async () => {
-      try {
-        await this.logWithContext(
-          LogType.USER_ACTIVITY,
-          LogLevel.DEBUG,
-          `User activity: ${action}`,
-          "UserActivity",
-          {
-            userId,
-            action,
-            ...(metadata || {}),
-            highVolume: true,
-          },
-        );
-      } catch (_error) {
-        // Silent fail for high-volume operations
-        console.debug("User activity logging failed:", _error);
-      }
+    setImmediate(() => {
+      void (async () => {
+        try {
+          await this.logWithContext(
+            LogType.USER_ACTIVITY,
+            LogLevel.DEBUG,
+            `User activity: ${action}`,
+            "UserActivity",
+            {
+              userId,
+              action,
+              ...(metadata || {}),
+              highVolume: true,
+            },
+          );
+        } catch (_error) {
+          // Silent fail for high-volume operations
+          console.debug("User activity logging failed:", _error);
+        }
+      })();
     });
   }
 
@@ -840,16 +896,20 @@ export class LoggingService {
     startTime?: Date,
     endTime?: Date,
     level?: LogLevel,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     const logs = await this.getLogs(type, startTime, endTime, level);
 
     // Filter logs by clinic context
-    return logs.filter(
-      (log) =>
-        log.context?.includes(`clinic_${clinicId}_`) ||
-        ((log as { metadata?: unknown }).metadata as Record<string, unknown>)
-          ?.clinicId === clinicId,
-    );
+    return logs.filter((log: unknown) => {
+      const logData = log as {
+        context?: string;
+        metadata?: Record<string, unknown>;
+      };
+      return (
+        logData.context?.includes(`clinic_${clinicId}_`) ||
+        logData.metadata?.["clinicId"] === clinicId
+      );
+    });
   }
 
   /**

@@ -128,7 +128,7 @@ export class ConflictResolutionService {
     const resolvedOptions = { ...this.defaultOptions, ...options };
 
     this.logger.log(
-      `🔍 Resolving scheduling conflict for ${request.priority} appointment at ${request.requestedTime}`,
+      `🔍 Resolving scheduling conflict for ${request.priority} appointment at ${request.requestedTime.toISOString()}`,
     );
 
     const result: ConflictResolutionResult = {
@@ -150,7 +150,7 @@ export class ConflictResolutionService {
 
     try {
       // Step 1: Detect all conflicts
-      const conflicts = await this.detectConflicts(
+      const conflicts = this.detectConflicts(
         request,
         existingAppointments,
         resolvedOptions,
@@ -161,7 +161,7 @@ export class ConflictResolutionService {
       const criticalConflicts = conflicts.filter(
         (c) => c.severity === "critical",
       );
-      const highConflicts = conflicts.filter((c) => c.severity === "high");
+      const _highConflicts = conflicts.filter((c) => c.severity === "high");
 
       // Step 3: Apply intelligent conflict resolution
       if (conflicts.length === 0) {
@@ -181,10 +181,7 @@ export class ConflictResolutionService {
         result.resolution = {
           strategy: "override",
           reason: "Emergency appointment override",
-          actions: await this.createEmergencyResolutionActions(
-            request,
-            conflicts,
-          ),
+          actions: this.createEmergencyResolutionActions(request, conflicts),
         };
         result.warnings.push(
           "Emergency appointment may cause conflicts with existing appointments",
@@ -198,7 +195,7 @@ export class ConflictResolutionService {
         result.resolution = {
           strategy: "reschedule",
           reason: "Conflicts resolved through intelligent rescheduling",
-          actions: await this.createResolutionActions(
+          actions: this.createResolutionActions(
             conflicts,
             request,
             resolvedOptions,
@@ -216,7 +213,7 @@ export class ConflictResolutionService {
 
       // Step 4: Generate alternative time slots if needed
       if (resolvedOptions.suggestAlternatives) {
-        result.alternatives = await this.generateAlternatives(
+        result.alternatives = this.generateAlternatives(
           request,
           existingAppointments,
           resolvedOptions,
@@ -224,17 +221,13 @@ export class ConflictResolutionService {
       }
 
       // Step 5: Apply business rules validation
-      (
-        (result as { meta?: unknown }).meta as Record<string, unknown>
-      ).rulesApplied = await this.applyBusinessRules(
-        request,
-        result,
-        resolvedOptions,
-      );
+      ((result as { meta?: unknown }).meta as Record<string, unknown>)[
+        "rulesApplied"
+      ] = this.applyBusinessRules(request, result, resolvedOptions);
 
-      (
-        (result as { meta?: unknown }).meta as Record<string, unknown>
-      ).processingTimeMs = Date.now() - startTime;
+      ((result as { meta?: unknown }).meta as Record<string, unknown>)[
+        "processingTimeMs"
+      ] = Date.now() - startTime;
 
       // Emit resolution event for monitoring
       await this.eventEmitter.emitAsync("appointment.conflict-resolved", {
@@ -242,11 +235,11 @@ export class ConflictResolutionService {
         result,
         processingTime: (
           (result as { meta?: unknown }).meta as Record<string, unknown>
-        ).processingTimeMs,
+        )["processingTimeMs"],
       });
 
       this.logger.log(
-        `✅ Conflict resolution complete: ${result.resolution.strategy} (${((result as { meta?: unknown }).meta as Record<string, unknown>).processingTimeMs}ms)`,
+        `✅ Conflict resolution complete: ${result.resolution.strategy} (${String(((result as { meta?: unknown }).meta as Record<string, unknown>)["processingTimeMs"])}ms)`,
       );
 
       return result;
@@ -264,11 +257,11 @@ export class ConflictResolutionService {
     }
   }
 
-  private async detectConflicts(
+  private detectConflicts(
     request: AppointmentRequest,
     existingAppointments: TimeSlot[],
     options: ConflictResolutionOptions,
-  ): Promise<ConflictDetails[]> {
+  ): ConflictDetails[] {
     const conflicts: ConflictDetails[] = [];
 
     const requestEndTime = new Date(
@@ -304,7 +297,9 @@ export class ConflictResolutionService {
           type: "time_overlap",
           severity,
           description: `Time overlap with existing appointment ${appointment.appointmentId}`,
-          conflictingAppointmentId: appointment.appointmentId,
+          ...(appointment.appointmentId && {
+            conflictingAppointmentId: appointment.appointmentId,
+          }),
           conflictingTimeSlot: appointment,
           affectedResources: ["doctor", "time-slot"],
         });
@@ -326,7 +321,7 @@ export class ConflictResolutionService {
     }
 
     // Check doctor availability (this would integrate with doctor schedule)
-    const doctorAvailable = await this.checkDoctorAvailability(
+    const doctorAvailable = this.checkDoctorAvailability(
       request.doctorId,
       request.requestedTime,
     );
@@ -340,7 +335,7 @@ export class ConflictResolutionService {
     }
 
     // Check clinic capacity
-    const clinicCapacity = await this.checkClinicCapacity(
+    const clinicCapacity = this.checkClinicCapacity(
       request.clinicId,
       request.requestedTime,
     );
@@ -368,7 +363,7 @@ export class ConflictResolutionService {
   private calculateConflictSeverity(
     request: AppointmentRequest,
     existingAppointment: TimeSlot,
-    options: ConflictResolutionOptions,
+    _options: ConflictResolutionOptions,
   ): "low" | "medium" | "high" | "critical" {
     // Emergency appointments get highest priority
     if (request.priority === "emergency") {
@@ -408,8 +403,8 @@ export class ConflictResolutionService {
 
   private canResolveConflicts(
     conflicts: ConflictDetails[],
-    request: AppointmentRequest,
-    options: ConflictResolutionOptions,
+    _request: AppointmentRequest,
+    _options: ConflictResolutionOptions,
   ): boolean {
     // Check if all conflicts are resolvable
     for (const conflict of conflicts) {
@@ -425,10 +420,10 @@ export class ConflictResolutionService {
     return true;
   }
 
-  private async createEmergencyResolutionActions(
+  private createEmergencyResolutionActions(
     request: AppointmentRequest,
     conflicts: ConflictDetails[],
-  ): Promise<ResolutionAction[]> {
+  ): ResolutionAction[] {
     const actions: ResolutionAction[] = [];
 
     for (const conflict of conflicts) {
@@ -472,11 +467,11 @@ export class ConflictResolutionService {
     return actions;
   }
 
-  private async createResolutionActions(
+  private createResolutionActions(
     conflicts: ConflictDetails[],
     request: AppointmentRequest,
     options: ConflictResolutionOptions,
-  ): Promise<ResolutionAction[]> {
+  ): ResolutionAction[] {
     const actions: ResolutionAction[] = [];
 
     for (const conflict of conflicts) {
@@ -522,11 +517,11 @@ export class ConflictResolutionService {
     return actions;
   }
 
-  private async generateAlternatives(
+  private generateAlternatives(
     request: AppointmentRequest,
     existingAppointments: TimeSlot[],
     options: ConflictResolutionOptions,
-  ): Promise<AlternativeSlot[]> {
+  ): AlternativeSlot[] {
     const alternatives: AlternativeSlot[] = [];
     const baseTime = new Date(request.requestedTime);
 
@@ -535,7 +530,7 @@ export class ConflictResolutionService {
       const alternativeTime = new Date(baseTime.getTime() + i * 30 * 60000); // 30-minute intervals
 
       // Check if this time slot is available
-      const conflicts = await this.detectConflicts(
+      const conflicts = this.detectConflicts(
         { ...request, requestedTime: alternativeTime },
         existingAppointments,
         options,
@@ -577,7 +572,7 @@ export class ConflictResolutionService {
       ) {
         const alternativeTime = new Date(nextDay.getTime() + hour * 60 * 60000);
 
-        const conflicts = await this.detectConflicts(
+        const conflicts = this.detectConflicts(
           { ...request, requestedTime: alternativeTime },
           existingAppointments,
           options,
@@ -636,11 +631,11 @@ export class ConflictResolutionService {
     return Math.max(0, Math.min(100, score));
   }
 
-  private async applyBusinessRules(
+  private applyBusinessRules(
     request: AppointmentRequest,
     result: ConflictResolutionResult,
     options: ConflictResolutionOptions,
-  ): Promise<string[]> {
+  ): string[] {
     const appliedRules: string[] = [];
 
     // Rule: Emergency override
@@ -664,23 +659,20 @@ export class ConflictResolutionService {
 
   // Helper methods that would integrate with actual data sources
 
-  private async checkDoctorAvailability(
-    doctorId: string,
-    time: Date,
-  ): Promise<boolean> {
+  private checkDoctorAvailability(_doctorId: string, _time: Date): boolean {
     // This would integrate with doctor schedule/availability system
     // For now, return true to indicate doctor is available
     return true;
   }
 
-  private async checkClinicCapacity(
-    clinicId: string,
-    time: Date,
-  ): Promise<{
+  private checkClinicCapacity(
+    _clinicId: string,
+    _time: Date,
+  ): {
     available: boolean;
     current: number;
     maximum: number;
-  }> {
+  } {
     // This would integrate with clinic capacity management system
     // For now, return available capacity
     return {
@@ -692,26 +684,26 @@ export class ConflictResolutionService {
 
   // Public utility methods for external services
 
-  async findNextAvailableSlot(
-    doctorId: string,
-    clinicId: string,
+  findNextAvailableSlot(
+    _doctorId: string,
+    _clinicId: string,
     fromTime: Date,
-    duration: number,
-  ): Promise<Date | null> {
+    _duration: number,
+  ): Date | null {
     // Simplified implementation - would integrate with actual appointment data
     const nextSlot = new Date(fromTime.getTime() + 60 * 60000); // Next hour
     return nextSlot;
   }
 
-  async getConflictStatistics(
-    clinicId: string,
-    dateRange: { from: Date; to: Date },
-  ): Promise<{
+  getConflictStatistics(
+    _clinicId: string,
+    _dateRange: { from: Date; to: Date },
+  ): {
     totalConflicts: number;
     resolvedConflicts: number;
     conflictsByType: Record<string, number>;
     averageResolutionTime: number;
-  }> {
+  } {
     // This would query actual conflict resolution history
     return {
       totalConflicts: 0,

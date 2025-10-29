@@ -42,14 +42,7 @@ import { HealthcareDatabaseClient } from "./clients/healthcare-database.client";
     HealthcareDatabaseClient,
   ],
   exports: [
-    PrismaModule,
-    ConnectionPoolManager,
-    HealthcareQueryOptimizerService,
-    UserRepository,
-    ClinicIsolationService,
-    SimplePatientRepository,
-    DatabaseMetricsService,
-    DatabaseClientFactory,
+    // Single unified database service - use DatabaseService in all services
     HealthcareDatabaseClient,
   ],
 })
@@ -65,7 +58,7 @@ export class DatabaseModule implements OnModuleInit {
   async onModuleInit() {
     try {
       // Determine environment
-      const isProduction = process.env.NODE_ENV === "production";
+      const isProduction = process.env["NODE_ENV"] === "production";
       const isDocker = fs.existsSync("/.dockerenv");
       const isWindows = process.platform === "win32";
 
@@ -152,7 +145,7 @@ export class DatabaseModule implements OnModuleInit {
       this.logger.log(`Using schema path: ${resolvedSchemaPath}`);
 
       // Update environment variable for other services to use
-      process.env.PRISMA_SCHEMA_PATH = resolvedSchemaPath;
+      process.env["PRISMA_SCHEMA_PATH"] = resolvedSchemaPath;
 
       // Initialize the database
       await initDatabase();

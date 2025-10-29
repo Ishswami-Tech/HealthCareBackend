@@ -11,14 +11,11 @@ import {
 } from "@nestjs/websockets";
 import { Logger, Injectable, Inject, Optional } from "@nestjs/common";
 import { Server, Socket } from "socket.io";
-import {
-  SocketService,
-  type SocketEventData,
-} from "@communication/socket/socket.service";
+import { SocketService, type SocketEventData } from "./socket.service";
 import {
   SocketAuthMiddleware,
   type AuthenticatedUser,
-} from "@communication/socket/socket-auth.middleware";
+} from "./socket-auth.middleware";
 
 interface ConnectionSuccessData {
   clientId: string;
@@ -235,7 +232,12 @@ export class BaseSocket
         data: {
           clientId,
           authenticated: !!user,
-          user: user ? { userId: user.userId, role: user.role } : null,
+          user: user
+            ? {
+                userId: user.userId,
+                ...(user.role && { role: user.role }),
+              }
+            : null,
         },
       };
     } catch (error) {

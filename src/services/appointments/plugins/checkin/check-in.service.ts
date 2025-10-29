@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return */
 import {
   Injectable,
   Logger,
@@ -8,7 +7,7 @@ import {
 import { CacheService } from "../../../../libs/infrastructure/cache";
 import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
 import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
-import { PrismaService } from "../../../../libs/infrastructure/database";
+import { DatabaseService } from "../../../../libs/infrastructure/database";
 import {
   Appointment,
   AppointmentType,
@@ -43,8 +42,8 @@ export interface ClinicLocation {
   latitude?: number;
   longitude?: number;
   timezone?: string;
-  workingHours?: any;
-  settings?: any;
+  workingHours?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
 }
 
 export interface CheckInData {
@@ -130,7 +129,7 @@ export class CheckInService {
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly prismaService: PrismaService,
+    private readonly databaseService: DatabaseService,
   ) {}
 
   async checkIn(appointmentId: string, userId: string): Promise<CheckInResult> {
@@ -204,14 +203,14 @@ export class CheckInService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as CheckedInAppointmentsResponse;
       }
 
       // Get checked-in appointments from database (placeholder implementation)
       const appointments = await this.fetchCheckedInAppointments(clinicId);
 
-      const result = {
-        appointments,
+      const result: CheckedInAppointmentsResponse = {
+        appointments: appointments as CheckInAppointment[],
         clinicId,
         total: appointments.length,
         retrievedAt: new Date().toISOString(),
@@ -534,7 +533,7 @@ export class CheckInService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as LocationQueueResponse;
       }
 
       // Get location queue from database (placeholder implementation)
@@ -542,7 +541,7 @@ export class CheckInService {
 
       const result: LocationQueueResponse = {
         locationId: clinicId, // Using clinicId as locationId for now
-        queue,
+        queue: queue as QueuePosition[],
         total: queue.length,
         retrievedAt: new Date().toISOString(),
       };
@@ -696,7 +695,7 @@ export class CheckInService {
   private fetchCheckedInAppointments(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     clinicId: string,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     // This would integrate with the actual database
     // For now, return mock data
     return Promise.resolve([
@@ -732,7 +731,7 @@ export class CheckInService {
     doctorId: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     clinicId: string,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     // This would integrate with the actual queue service
     // For now, return mock data
     return Promise.resolve([
@@ -772,7 +771,7 @@ export class CheckInService {
   private fetchLocationQueue(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     clinicId: string,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     // This would integrate with the actual queue service
     // For now, return mock data
     return Promise.resolve([
@@ -996,7 +995,7 @@ export class CheckInService {
     therapyType: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     clinicId: string,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     // This would integrate with the actual therapy queue service
     // For now, return mock data
     return Promise.resolve([

@@ -33,6 +33,13 @@ export interface MessageHistoryResult {
   error?: string;
 }
 
+export interface ConversationMessage {
+  id: string;
+  senderId: string;
+  timestamp: number;
+  type: "text" | "image" | "file" | "audio" | "video";
+}
+
 export interface ChatBackupStats {
   totalMessages: number;
   messagesLast24h: number;
@@ -223,7 +230,7 @@ export class ChatBackupService implements OnModuleInit {
       const snapshot = await query.once("value");
       const rawConversationMessages = snapshot.val() as Record<
         string,
-        any
+        ConversationMessage
       > | null;
       const conversationMessages: Record<string, unknown> =
         rawConversationMessages || {};
@@ -508,7 +515,7 @@ export class ChatBackupService implements OnModuleInit {
 
       const rawOldMessages = oldMessagesSnapshot.val() as Record<
         string,
-        any
+        ConversationMessage
       > | null;
       const oldMessages: Record<string, unknown> | null = rawOldMessages;
       if (oldMessages) {

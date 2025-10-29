@@ -18,7 +18,7 @@ interface EventPayload {
   paymentId?: string;
   ehrRecordId?: string;
   roles?: string[];
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 @Injectable()
@@ -54,7 +54,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
     }
 
     // Subscribe to all events
-    this.eventEmitter.onAny((event: string | string[], payload: any) => {
+    this.eventEmitter.onAny((event: string | string[], payload: unknown) => {
       const eventName = Array.isArray(event) ? event.join(".") : event;
       this.handleEvent(eventName, payload);
     });
@@ -65,7 +65,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
   /**
    * Handle event and broadcast to relevant sockets
    */
-  private handleEvent(event: string, payload: any) {
+  private handleEvent(event: string, payload: unknown) {
     if (!this.isEnabled) return;
 
     try {
@@ -104,7 +104,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
   /**
    * Normalize payload to standard format
    */
-  private normalizePayload(payload: any): EventPayload {
+  private normalizePayload(payload: unknown): EventPayload {
     // Handle both direct payload and wrapped payload
     if (typeof payload === "object" && payload !== null) {
       return payload as EventPayload;

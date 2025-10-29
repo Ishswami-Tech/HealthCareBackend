@@ -54,7 +54,7 @@ export class PluginHealthService {
     try {
       const cached = await this.cacheService.get(this.HEALTH_CACHE_KEY);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as PluginHealthMetrics[];
       }
 
       const pluginInfo: unknown[] = []; // Mock plugin info array since registry is not available
@@ -62,7 +62,7 @@ export class PluginHealthService {
 
       for (const plugin of pluginInfo) {
         const metrics = await this.getPluginHealthMetrics(
-          (plugin as Record<string, unknown>).name as string,
+          (plugin as Record<string, unknown>)["name"] as string,
         );
         healthMetrics.push(metrics);
       }
@@ -92,12 +92,12 @@ export class PluginHealthService {
       const cached = await this.cacheService.get(cacheKey);
 
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as PluginHealthMetrics;
       }
 
       const pluginInfo: unknown[] = []; // Mock plugin info array since registry is not available
       const plugin = pluginInfo.find(
-        (p) => (p as Record<string, unknown>).name === pluginName,
+        (p) => (p as Record<string, unknown>)["name"] === pluginName,
       );
 
       if (!plugin) {
@@ -109,7 +109,7 @@ export class PluginHealthService {
       // Calculate health metrics (simplified for now)
       const metrics: PluginHealthMetrics = {
         pluginName,
-        domain: (plugin as Record<string, unknown>).domain as string,
+        domain: (plugin as Record<string, unknown>)["domain"] as string,
         status: "healthy", // Default status
         uptime: process.uptime(),
         lastOperation: new Date(),
@@ -118,7 +118,7 @@ export class PluginHealthService {
         averageResponseTime: 0,
         memoryUsage: process.memoryUsage().heapUsed,
         cpuUsage: 0,
-        features: (plugin as Record<string, unknown>).features as string[],
+        features: (plugin as Record<string, unknown>)["features"] as string[],
         enabled: config?.enabled || false,
       };
 
@@ -239,7 +239,7 @@ export class PluginHealthService {
       const cached = await this.cacheService.get(cacheKey);
 
       if (cached) {
-        const metrics: PluginHealthMetrics = JSON.parse(cached as string);
+        const metrics = JSON.parse(cached as string) as PluginHealthMetrics;
 
         // Update metrics
         metrics.lastOperation = new Date();
@@ -287,7 +287,7 @@ export class PluginHealthService {
       // Invalidate individual plugin metrics
       const pluginInfo: unknown[] = []; // Mock plugin info array since registry is not available
       for (const plugin of pluginInfo) {
-        const cacheKey = `${this.METRICS_CACHE_PREFIX}${(plugin as Record<string, unknown>).name as string}`;
+        const cacheKey = `${this.METRICS_CACHE_PREFIX}${(plugin as Record<string, unknown>)["name"] as string}`;
         await this.cacheService.del(cacheKey);
       }
 

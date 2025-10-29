@@ -4,6 +4,15 @@ import { LoggingService } from "../logging/logging.service";
 import { LogLevel, LogType } from "../logging/types/logging.types";
 import { RedisService } from "../cache/redis/redis.service";
 
+/**
+ * Event service for managing application events
+ * @class EventService
+ * @description Provides event emission, subscription, and persistence capabilities
+ * @example
+ * ```typescript
+ * await eventService.emit('user.created', { userId: '123', email: 'user@example.com' });
+ * ```
+ */
 @Injectable()
 export class EventService implements OnModuleInit {
   constructor(
@@ -12,11 +21,14 @@ export class EventService implements OnModuleInit {
     private readonly redisService: RedisService,
   ) {}
 
+  /**
+   * Initialize event service and set up event logging
+   */
   onModuleInit() {
     // Subscribe to all events for logging
-    //@ts-ignore - EventEmitter2 onAny method typing issue
+    // @ts-expect-error - EventEmitter2 onAny method typing issue
     this.eventEmitter.onAny((event: string, ...args: unknown[]) => {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Event emitted: ${event}`,
@@ -26,6 +38,16 @@ export class EventService implements OnModuleInit {
     });
   }
 
+  /**
+   * Emit an event synchronously
+   * @param event - Event name
+   * @param payload - Event payload data
+   * @returns Promise that resolves when event is emitted
+   * @example
+   * ```typescript
+   * await eventService.emit('user.created', { userId: '123' });
+   * ```
+   */
   async emit(event: string, payload: unknown): Promise<void> {
     const eventData = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -43,6 +65,16 @@ export class EventService implements OnModuleInit {
     this.eventEmitter.emit(event, payload);
   }
 
+  /**
+   * Emit an event asynchronously
+   * @param event - Event name
+   * @param payload - Event payload data
+   * @returns Promise that resolves when event is emitted
+   * @example
+   * ```typescript
+   * await eventService.emitAsync('user.updated', { userId: '123' });
+   * ```
+   */
   async emitAsync(event: string, payload: unknown): Promise<void> {
     const eventData = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -60,21 +92,33 @@ export class EventService implements OnModuleInit {
     await this.eventEmitter.emitAsync(event, payload);
   }
 
+  /**
+   * Get events with optional filtering
+   * @param type - Optional event type filter
+   * @param startTime - Optional start time filter (ISO string)
+   * @param endTime - Optional end time filter (ISO string)
+   * @returns Promise resolving to array of events
+   * @example
+   * ```typescript
+   * const events = await eventService.getEvents('user.created', '2023-01-01', '2023-12-31');
+   * ```
+   */
   async getEvents(
     type?: string,
     startTime?: string,
     endTime?: string,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     try {
       // Get events from Redis
       const redisEvents = await this.redisService.lRange("events", 0, -1);
-      let events = redisEvents.map((event) => JSON.parse(event));
+      let events = redisEvents.map((event) => JSON.parse(event) as unknown);
 
       // Apply filters
       if (type || startTime || endTime) {
         events = events.filter((event) => {
-          const eventTime = new Date(event.timestamp);
-          const matchesType = !type || event.type === type;
+          const eventObj = event as { timestamp: string; type: string };
+          const eventTime = new Date(eventObj.timestamp);
+          const matchesType = !type || eventObj.type === type;
           const matchesStartTime =
             !startTime || eventTime >= new Date(startTime);
           const matchesEndTime = !endTime || eventTime <= new Date(endTime);
@@ -83,12 +127,16 @@ export class EventService implements OnModuleInit {
       }
 
       // Sort by timestamp descending
-      return events.sort(
-        (a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-      );
+      return events.sort((a, b) => {
+        const aEvent = a as { timestamp: string };
+        const bEvent = b as { timestamp: string };
+        return (
+          new Date(bEvent.timestamp).getTime() -
+          new Date(aEvent.timestamp).getTime()
+        );
+      });
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         "Failed to retrieve events",
@@ -99,23 +147,67 @@ export class EventService implements OnModuleInit {
     }
   }
 
+  /**
+   * Subscribe to an event
+   * @param event - Event name to subscribe to
+   * @param listener - Event listener function
+   * @example
+   * ```typescript
+   * eventService.on('user.created', (user) => console.log('User created:', user));
+   * ```
+   */
   on(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.on(event, listener);
   }
 
+  /**
+   * Subscribe to an event once
+   * @param event - Event name to subscribe to
+   * @param listener - Event listener function
+   * @example
+   * ```typescript
+   * eventService.once('app.ready', () => console.log('App is ready'));
+   * ```
+   */
   once(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.once(event, listener);
   }
 
+  /**
+   * Unsubscribe from an event
+   * @param event - Event name to unsubscribe from
+   * @param listener - Event listener function to remove
+   * @example
+   * ```typescript
+   * eventService.off('user.created', listenerFunction);
+   * ```
+   */
   off(event: string, listener: (...args: unknown[]) => void): void {
     this.eventEmitter.off(event, listener);
   }
 
+  /**
+   * Remove all listeners for an event or all events
+   * @param event - Optional event name, if not provided removes all listeners
+   * @example
+   * ```typescript
+   * eventService.removeAllListeners('user.created');
+   * ```
+   */
   removeAllListeners(event?: string): void {
     this.eventEmitter.removeAllListeners(event);
   }
 
-  async clearEvents() {
+  /**
+   * Clear all stored events from Redis
+   * @returns Promise resolving to success status
+   * @example
+   * ```typescript
+   * const result = await eventService.clearEvents();
+   * console.log(result.message);
+   * ```
+   */
+  async clearEvents(): Promise<{ success: boolean; message: string }> {
     try {
       await this.redisService.del("events");
       return { success: true, message: "Events cleared successfully" };

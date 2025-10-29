@@ -2,6 +2,12 @@
  * ENTERPRISE QUEUE SERVICE (BullMQ) - PRODUCTION READY EDITION
  * =====================================================================
  * 🚀 High Performance | 🔐 Secure | 📊 Reliable | 🌍 Scalable | 🏥 Domain Isolated
+ *
+ * @fileoverview Enterprise-grade queue management service for healthcare applications
+ * @description Provides comprehensive queue operations with domain isolation, monitoring, and scalability
+ * @version 1.0.0
+ * @author Healthcare Backend Team
+ * @since 2024
  */
 
 import {
@@ -11,7 +17,7 @@ import {
   OnModuleDestroy,
   Inject,
 } from "@nestjs/common";
-import { Queue, Job, JobsOptions, Worker, QueueOptions } from "bullmq";
+import { Queue, Job, JobsOptions, Worker, JobState } from "bullmq";
 import { ConfigService } from "@nestjs/config";
 import { QueueMonitoringService } from "./monitoring/queue-monitoring.service";
 import {
@@ -95,7 +101,7 @@ export interface EnterpriseJobOptions {
   domain?: DomainType;
 }
 
-export interface BulkJobData<T = any> {
+export interface BulkJobData<T = unknown> {
   jobType: string;
   data: T;
   options?: EnterpriseJobOptions;
@@ -123,6 +129,44 @@ export interface QueueHealthStatus {
   averageResponseTime: number;
 }
 
+/**
+ * Enterprise Queue Service for Healthcare Applications
+ *
+ * Provides comprehensive queue management with domain isolation, monitoring,
+ * and scalability features for healthcare applications. Supports multiple
+ * queue types including appointments, notifications, payments, and analytics.
+ *
+ * @class QueueService
+ * @description Main service for managing BullMQ queues with enterprise features
+ * @implements {OnModuleInit} - Initializes queues on module startup
+ * @implements {OnModuleDestroy} - Cleans up resources on module shutdown
+ *
+ * @example
+ * ```typescript
+ * // Inject the service
+ * constructor(private readonly queueService: QueueService) {}
+ *
+ * // Add a job to a queue
+ * await this.queueService.addJob('appointment-queue', 'create-appointment', {
+ *   appointmentId: '123',
+ *   patientId: '456',
+ *   doctorId: '789'
+ * });
+ *
+ * // Get queue status
+ * const status = await this.queueService.getQueueStatus('appointment-queue');
+ * ```
+ *
+ * @features
+ * - Domain isolation (clinic vs worker domains)
+ * - Real-time monitoring and metrics
+ * - Auto-scaling workers
+ * - Comprehensive audit logging
+ * - HIPAA-compliant data handling
+ * - Multi-tenant support
+ * - Circuit breaker patterns
+ * - Dead letter queue management
+ */
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QueueService.name);
@@ -134,6 +178,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private metricsUpdateInterval!: NodeJS.Timeout;
   private autoScalingInterval!: NodeJS.Timeout;
 
+  /**
+   * Creates an instance of QueueService
+   *
+   * @param configService - Configuration service for environment variables
+   * @param bullQueues - Array of BullMQ queue instances injected by the module
+   * @param bullWorkers - Array of BullMQ worker instances (optional)
+   * @param monitoringService - Service for queue monitoring and metrics
+   *
+   * @description Initializes the queue service with dependency injection and
+   * sets up the internal queue and worker management systems.
+   */
   constructor(
     private readonly configService: ConfigService,
     @Inject("BULLMQ_QUEUES") private readonly bullQueues: Queue[],
@@ -141,13 +196,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     private readonly monitoringService: QueueMonitoringService,
   ) {
     this.logger.log(
-      `🚀 QueueService constructor called for ${process.env.SERVICE_NAME || "unknown"} service`,
+      `🚀 QueueService constructor called for ${process.env["SERVICE_NAME"] || "unknown"} service`,
     );
     this.logger.log(
       `📊 Received ${this.bullQueues?.length || 0} queues and ${this.bullWorkers?.length || 0} workers`,
     );
 
-    const currentDomain = this.getCurrentDomain();
+    const _currentDomain = this.getCurrentDomain();
 
     // Safe initialization with error handling
     try {
@@ -168,22 +223,22 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     // Enhanced health monitoring for 10 lakh+ users
     this.healthCheckInterval = setInterval(() => {
-      this.updateHealthStatus();
+      void this.updateHealthStatus();
     }, 15000); // Every 15 seconds for better responsiveness
 
     // Enhanced metrics collection for 10 lakh+ users
     this.metricsUpdateInterval = setInterval(() => {
-      this.updateQueueMetrics();
+      void this.updateQueueMetrics();
     }, 5000); // Every 5 seconds for real-time monitoring
 
     // Auto-scaling based on queue load
     this.autoScalingInterval = setInterval(() => {
-      this.autoScaleWorkers();
+      void this.autoScaleWorkers();
     }, 30000); // Every 30 seconds
   }
 
   private getCurrentDomain(): DomainType {
-    const serviceName = process.env.SERVICE_NAME || "clinic";
+    const serviceName = process.env["SERVICE_NAME"] || "clinic";
     switch (serviceName) {
       case "clinic":
         return DomainType.CLINIC;
@@ -270,7 +325,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       try {
         if (!queue || !queue.name) {
           this.logger.warn(
-            `⚠️  Skipping invalid queue at index ${index}: ${queue}`,
+            `⚠️  Skipping invalid queue at index ${index}: ${JSON.stringify(queue)}`,
           );
           return;
         }
@@ -306,7 +361,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       try {
         if (!worker || !worker.name) {
           this.logger.warn(
-            `⚠️  Skipping invalid worker at index ${index}: ${worker}`,
+            `⚠️  Skipping invalid worker at index ${index}: ${JSON.stringify(worker)}`,
           );
           return;
         }
@@ -329,9 +384,31 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Add a job to a domain-specific queue with enhanced options for 1M users
+   * Adds a new job to the specified queue
+   *
+   * @template T - Type of the job data
+   * @param queueName - Name of the target queue
+   * @param jobType - Type/category of the job
+   * @param data - Job data payload
+   * @param options - Additional job options (priority, delay, etc.)
+   * @returns Promise resolving to the created Job instance
+   *
+   * @description Adds a job to the specified queue with enterprise features
+   * including domain validation, audit logging, and monitoring integration.
+   *
+   * @example
+   * ```typescript
+   * const job = await this.queueService.addJob(
+   *   'appointment-queue',
+   *   'create-appointment',
+   *   { appointmentId: '123', patientId: '456' },
+   *   { priority: JobPriority.HIGH, delay: 5000 }
+   * );
+   * ```
+   *
+   * @throws {Error} When queue is not found or domain access is denied
    */
-  async addJob<T = any>(
+  async addJob<T = unknown>(
     queueName: string,
     jobType: string,
     data: T,
@@ -359,7 +436,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         removeOnComplete: options.removeOnComplete ?? 100,
         removeOnFail: options.removeOnFail ?? 50,
         // timeout: options.timeout || 30000, // BullMQ doesn't support timeout in JobsOptions
-        jobId: options.correlationId,
+        ...(options.correlationId && { jobId: options.correlationId }),
         // Enhanced metadata for 1M users - stored in job data instead
       };
 
@@ -375,7 +452,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       );
 
       // Update monitoring metrics
-      await this.updateMonitoringMetrics(queueName);
+      void this.updateMonitoringMetrics(queueName);
 
       this.logger.log(
         `Job added to queue ${queueName}: ${job.id} for domain ${this.getCurrentDomain()}`,
@@ -405,7 +482,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Add multiple jobs in bulk for high-throughput operations
    */
-  async addBulkJobs<T = any>(
+  async addBulkJobs<T = unknown>(
     queueName: string,
     jobs: BulkJobData<T>[],
   ): Promise<Job[]> {
@@ -439,7 +516,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           removeOnComplete: job.options?.removeOnComplete ?? 100,
           removeOnFail: job.options?.removeOnFail ?? 50,
           timeout: job.options?.timeout || 30000,
-          jobId: job.options?.correlationId,
+          ...(job.options?.correlationId && {
+            jobId: job.options.correlationId,
+          }),
           metadata: {
             domain: this.getCurrentDomain(),
             tenantId: job.options?.tenantId,
@@ -491,13 +570,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Enhanced job filtering for 1M users
-      const jobStates = (filters.status || [
+      const jobStates: JobState[] = (filters.status as JobState[]) || [
         "waiting",
         "active",
         "completed",
         "failed",
         "delayed",
-      ]) as any[];
+      ];
       const jobs: Job[] = [];
 
       for (const state of jobStates) {
@@ -509,11 +588,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       const filteredJobs = jobs.filter((job) => {
         if (
           filters.priority &&
-          job.opts.priority !== this.getJobPriority(filters.priority[0] as any)
+          job.opts.priority !== this.getJobPriority(Number(filters.priority[0]))
         ) {
           return false;
         }
-        if (filters.tenantId && job.data._tenantId !== filters.tenantId) {
+        if (
+          filters.tenantId &&
+          (job.data as { _tenantId?: string })._tenantId !== filters.tenantId
+        ) {
           return false;
         }
         return true;
@@ -683,22 +765,27 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
-      const jobs = await this.getJobs(queueName, { domain: domain as any });
+      const jobs = await this.getJobs(queueName, {
+        domain: domain as DomainType,
+      });
 
       const queue = jobs
         .filter(
-          (job) => job.data.doctorId === doctorId && job.data.date === date,
+          (job) =>
+            (job.data as { doctorId: string; date: string }).doctorId ===
+              doctorId &&
+            (job.data as { doctorId: string; date: string }).date === date,
         )
         .map((job, index) => ({
           id: job.id,
-          appointmentId: job.data.appointmentId,
+          appointmentId: (job.data as { appointmentId: string }).appointmentId,
           position: index + 1,
           estimatedWaitTime: this.calculateEstimatedWaitTime(index + 1, domain),
-          status: job.data.status || "WAITING",
+          status: (job.data as { status?: string }).status || "WAITING",
           priority: job.opts.priority || 3,
-          checkedInAt: job.data.checkedInAt,
-          startedAt: job.data.startedAt,
-          completedAt: job.data.completedAt,
+          checkedInAt: (job.data as { checkedInAt?: string }).checkedInAt,
+          startedAt: (job.data as { startedAt?: string }).startedAt,
+          completedAt: (job.data as { completedAt?: string }).completedAt,
         }));
 
       return {
@@ -707,7 +794,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         domain,
         queue,
         totalLength: queue.length,
-        averageWaitTime: this.calculateAverageWaitTime(queue),
+        averageWaitTime: this.calculateAppointmentQueueAverageWaitTime(queue),
         estimatedNextWaitTime:
           queue.length > 0 ? this.calculateEstimatedWaitTime(1, domain) : 0,
       };
@@ -728,9 +815,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
-      const jobs = await this.getJobs(queueName, { domain: domain as any });
+      const jobs = await this.getJobs(queueName, {
+        domain: domain as DomainType,
+      });
 
-      const job = jobs.find((j) => j.data.appointmentId === appointmentId);
+      const job = jobs.find(
+        (j) =>
+          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+      );
       if (!job) {
         throw new Error("Appointment not found in queue");
       }
@@ -747,7 +839,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         totalInQueue: jobs.length,
         estimatedWaitTime,
         domain,
-        doctorId: job.data.doctorId,
+        doctorId: (job.data as { doctorId: string }).doctorId,
       };
     } catch (_error) {
       this.logger.error(
@@ -766,16 +858,23 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
-      const jobs = await this.getJobs(queueName, { domain: domain as any });
+      const jobs = await this.getJobs(queueName, {
+        domain: domain as DomainType,
+      });
 
-      const job = jobs.find((j) => j.data.appointmentId === appointmentId);
+      const job = jobs.find(
+        (j) =>
+          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+      );
       if (!job) {
         throw new Error("Appointment not found in queue");
       }
 
       // Update job data
-      job.data.status = "CONFIRMED";
-      job.data.confirmedAt = new Date().toISOString();
+      (job.data as { status: string; confirmedAt: string }).status =
+        "CONFIRMED";
+      (job.data as { status: string; confirmedAt: string }).confirmedAt =
+        new Date().toISOString();
 
       // Update the job in the queue
       await this.updateJob(queueName, job.id as string, job.data);
@@ -799,18 +898,51 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
-      const jobs = await this.getJobs(queueName, { domain: domain as any });
+      const jobs = await this.getJobs(queueName, {
+        domain: domain as DomainType,
+      });
 
-      const job = jobs.find((j) => j.data.appointmentId === appointmentId);
+      const job = jobs.find(
+        (j) =>
+          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+      );
       if (!job) {
         throw new Error("Appointment not found in queue");
       }
 
       // Update job data
-      job.data.status = "IN_PROGRESS";
-      job.data.startedAt = new Date().toISOString();
-      job.data.actualWaitTime = this.calculateActualWaitTime(
-        job.data.checkedInAt,
+      (
+        job.data as {
+          status: string;
+          startedAt: string;
+          actualWaitTime: number;
+          checkedInAt: string;
+        }
+      ).status = "IN_PROGRESS";
+      (
+        job.data as {
+          status: string;
+          startedAt: string;
+          actualWaitTime: number;
+          checkedInAt: string;
+        }
+      ).startedAt = new Date().toISOString();
+      (
+        job.data as {
+          status: string;
+          startedAt: string;
+          actualWaitTime: number;
+          checkedInAt: string;
+        }
+      ).actualWaitTime = this.calculateActualWaitTime(
+        (
+          job.data as {
+            status: string;
+            startedAt: string;
+            actualWaitTime: number;
+            checkedInAt: string;
+          }
+        ).checkedInAt,
       );
 
       // Update the job in the queue
@@ -835,17 +967,28 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
-      const jobs = await this.getJobs(queueName, { domain: domain as any });
+      const jobs = await this.getJobs(queueName, {
+        domain: domain as DomainType,
+      });
 
-      const job = jobs.find((j) => j.data.appointmentId === appointmentId);
+      const job = jobs.find(
+        (j) =>
+          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+      );
       if (!job) {
         throw new Error("Appointment not found in queue");
       }
 
       // Update job data with emergency priority
-      job.data.priority = priority;
-      job.data.status = "EMERGENCY";
-      job.data.emergencyAt = new Date().toISOString();
+      (
+        job.data as { priority: number; status: string; emergencyAt: string }
+      ).priority = priority;
+      (
+        job.data as { priority: number; status: string; emergencyAt: string }
+      ).status = "EMERGENCY";
+      (
+        job.data as { priority: number; status: string; emergencyAt: string }
+      ).emergencyAt = new Date().toISOString();
 
       // Remove and re-add with higher priority
       await this.updateJob(queueName, job.id as string, job.data);
@@ -868,14 +1011,18 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
-      const jobs = await this.getJobs(queueName, { domain: domain as any });
+      const jobs = await this.getJobs(queueName, {
+        domain: domain as DomainType,
+      });
 
-      const locationJobs = jobs.filter((j) => j.data.locationId === locationId);
+      const locationJobs = jobs.filter(
+        (j) => (j.data as { locationId: string }).locationId === locationId,
+      );
       const waitingJobs = locationJobs.filter(
-        (j) => j.data.status === "WAITING",
+        (j) => (j.data as { status: string }).status === "WAITING",
       );
       const completedJobs = locationJobs.filter(
-        (j) => j.data.status === "COMPLETED",
+        (j) => (j.data as { status: string }).status === "COMPLETED",
       );
 
       const totalWaiting = waitingJobs.length;
@@ -883,7 +1030,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       const averageWaitTime =
         waitingJobs.length > 0
           ? waitingJobs.reduce(
-              (sum, j) => sum + (j.data.estimatedWaitTime || 0),
+              (sum, j) =>
+                sum +
+                ((j.data as { estimatedWaitTime?: number }).estimatedWaitTime ||
+                  0),
               0,
             ) / waitingJobs.length
           : 0;
@@ -925,12 +1075,36 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     return position * baseWaitTime;
   }
 
-  private calculateAverageWaitTime(queue: unknown[]): number {
+  private calculateAverageWaitTime(
+    queue: Array<{ processedOn?: number; timestamp?: number }>,
+  ): number {
     if (queue.length === 0) return 0;
     const totalWaitTime = queue.reduce(
       (sum: number, entry) =>
         sum +
-        (((entry as Record<string, unknown>).estimatedWaitTime as number) || 0),
+        (((entry as Record<string, unknown>)["estimatedWaitTime"] as number) ||
+          0),
+      0,
+    );
+    return totalWaitTime / queue.length;
+  }
+
+  private calculateAppointmentQueueAverageWaitTime(
+    queue: Array<{
+      id: string | undefined;
+      appointmentId: string;
+      position: number;
+      estimatedWaitTime: number;
+      status: string;
+      priority: number;
+      checkedInAt: string | undefined;
+      startedAt: string | undefined;
+      completedAt: string | undefined;
+    }>,
+  ): number {
+    if (queue.length === 0) return 0;
+    const totalWaitTime = queue.reduce(
+      (sum: number, entry) => sum + entry.estimatedWaitTime,
       0,
     );
     return totalWaitTime / queue.length;
@@ -957,7 +1131,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       const failed = await queue.getFailed();
       const delayed = await queue.getDelayed();
       // Note: getPaused() method may not be available in all BullMQ versions
-      const paused: unknown[] = []; // Placeholder for paused jobs
+      const paused: Array<Record<string, unknown>> = []; // Placeholder for paused jobs
 
       const metrics = {
         totalJobs:
@@ -982,7 +1156,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
             : 0,
       };
 
-      await this.monitoringService.updateMetrics(
+      this.monitoringService.updateMetrics(
         queueName,
         this.getCurrentDomain(),
         metrics,
@@ -999,8 +1173,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    * Domain validation removed - single application access
    */
   private validateDomainAccess(
-    queueName: string,
-    requestedDomain?: DomainType,
+    _queueName: string,
+    _requestedDomain?: DomainType,
   ): void {
     // No domain restrictions - single application can access all queues
     return;
@@ -1027,7 +1201,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Calculate error rate
    */
-  private calculateErrorRate(queueName: string): number {
+  private calculateErrorRate(_queueName: string): number {
     // Implementation for error rate calculation
     return 0; // Placeholder
   }
@@ -1154,7 +1328,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   private async autoScaleWorkers(): Promise<void> {
     try {
-      for (const [queueName, queue] of Array.from(this.queues.entries())) {
+      for (const [queueName, _queue] of Array.from(this.queues.entries())) {
         const metrics = await this.getQueueMetrics(queueName);
         const currentWorkers = this.workers.get(queueName)?.length || 0;
 
@@ -1182,17 +1356,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Scale up workers for a specific queue
    */
-  private async scaleUpWorkers(
-    queueName: string,
-    count: number,
-  ): Promise<void> {
+  private scaleUpWorkers(queueName: string, count: number): Promise<void> {
     try {
       for (let i = 0; i < count; i++) {
         const worker = new Worker(
           queueName,
-          async (job) => {
+          (_job: Job) => {
             // Worker logic will be handled by existing processors
-            return { processed: true, timestamp: new Date() };
+            return Promise.resolve({ processed: true, timestamp: new Date() });
           },
           {
             connection: {
@@ -1210,8 +1381,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logger.log(`Scaled up ${count} workers for queue: ${queueName}`);
+      return Promise.resolve();
     } catch (_error) {
       this.logger.error(`Failed to scale up workers for ${queueName}:`, _error);
+      return Promise.reject(
+        _error instanceof Error ? _error : new Error(String(_error)),
+      );
     }
   }
 
@@ -1309,7 +1484,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async onModuleInit() {
+  onModuleInit() {
     this.logger.log(
       `Queue Service initialized for domain: ${this.getCurrentDomain()}`,
     );

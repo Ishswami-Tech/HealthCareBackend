@@ -261,11 +261,15 @@ export class CacheController {
   })
   async updateCacheConfig(@Body() config: unknown) {
     // Update rate limits if provided
-    if ((config as Record<string, unknown>).rateLimits) {
-      const rateLimits = (config as Record<string, unknown>)
-        .rateLimits as Record<string, unknown>;
+    if ((config as Record<string, unknown>)["rateLimits"]) {
+      const rateLimits = (config as Record<string, unknown>)[
+        "rateLimits"
+      ] as Record<string, unknown>;
       for (const [type, limits] of Object.entries(rateLimits)) {
-        await this.redis.updateRateLimits(type, limits as any);
+        await this.redis.updateRateLimits(
+          type,
+          limits as { limit: number; window: number },
+        );
       }
     }
 

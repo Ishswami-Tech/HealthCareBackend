@@ -37,11 +37,39 @@ import {
 } from "./appointment.dto";
 
 // Legacy imports for backward compatibility
-import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../libs/infrastructure/database";
 import { QrService } from "../../libs/utils/QR";
 
 // Auth Integration
 import { AuthService } from "../auth/auth.service";
+
+// Type definitions for appointment with relations
+interface AppointmentWithRelations {
+  id: string;
+  patientId: string;
+  doctorId: string;
+  clinicId: string;
+  locationId: string;
+  status: string;
+  patient?: {
+    id: string;
+    userId: string;
+    name?: string;
+  };
+  doctor?: {
+    id: string;
+    userId: string;
+    name?: string;
+  };
+  clinic?: {
+    id: string;
+    name: string;
+  };
+  location?: {
+    id: string;
+    name: string;
+  };
+}
 
 /**
  * Enhanced Appointments Service
@@ -78,7 +106,7 @@ export class AppointmentsService {
     private readonly eventEmitter: EventEmitter2,
 
     // Legacy Services (for backward compatibility)
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly qrService: QrService,
 
     // Auth Integration
@@ -90,6 +118,22 @@ export class AppointmentsService {
     private readonly notificationQueue: Queue,
     @InjectQueue("clinic-analytics") private readonly analyticsQueue: Queue,
   ) {}
+
+  /**
+   * Safely access Prisma appointment operations
+   */
+  private get appointmentPrisma() {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    return this.databaseService.getPrismaClient().appointment;
+  }
+
+  /**
+   * Safely access Prisma patient operations
+   */
+  private get patientPrisma() {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    return this.databaseService.getPrismaClient().patient;
+  }
 
   // =============================================
   // ENHANCED APPOINTMENT OPERATIONS
@@ -140,7 +184,9 @@ export class AppointmentsService {
         "Appointment created successfully",
         "AppointmentsService",
         {
-          appointmentId: (result.data as Record<string, unknown>)?.id as string,
+          appointmentId: (result.data as Record<string, unknown>)?.[
+            "id"
+          ] as string,
           doctorId: createDto.doctorId,
           patientId: createDto.patientId,
           userId,
@@ -150,7 +196,7 @@ export class AppointmentsService {
 
       // Invalidate related cache entries
       await this.cacheService.invalidateAppointmentCache(
-        (result.data as Record<string, unknown>)?.id as string,
+        (result.data as Record<string, unknown>)?.["id"] as string,
         createDto.patientId,
         createDto.doctorId,
         clinicId,
@@ -158,11 +204,13 @@ export class AppointmentsService {
 
       // Emit event for real-time broadcasting
       this.eventEmitter.emit("appointment.created", {
-        appointmentId: (result.data as Record<string, unknown>)?.id as string,
+        appointmentId: (result.data as Record<string, unknown>)?.[
+          "id"
+        ] as string,
         userId: createDto.patientId,
         doctorId: createDto.doctorId,
         clinicId,
-        status: (result.data as Record<string, unknown>)?.status as string,
+        status: (result.data as Record<string, unknown>)?.["status"] as string,
         appointmentType: createDto.type,
         createdBy: userId,
       });
@@ -178,7 +226,7 @@ export class AppointmentsService {
     filters: AppointmentFilterDto,
     userId: string,
     clinicId: string,
-    role: string = "USER",
+    _role: string = "USER",
     page: number = 1,
     limit: number = 20,
   ): Promise<AppointmentResult> {
@@ -198,11 +246,11 @@ export class AppointmentsService {
 
     const context: AppointmentContext = {
       userId,
-      role,
+      role: _role,
       clinicId,
-      locationId: filters.locationId,
-      doctorId: filters.providerId,
-      patientId: filters.patientId,
+      ...(filters.locationId && { locationId: filters.locationId }),
+      ...(filters.providerId && { doctorId: filters.providerId }),
+      ...(filters.patientId && { patientId: filters.patientId }),
     };
 
     // Use cache service for appointment data
@@ -268,16 +316,20 @@ export class AppointmentsService {
     if (result.success) {
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
-        (result.data as Record<string, unknown>)?.patientId as string,
-        (result.data as Record<string, unknown>)?.doctorId as string,
+        (result.data as Record<string, unknown>)?.["patientId"] as string,
+        (result.data as Record<string, unknown>)?.["doctorId"] as string,
         clinicId,
       );
 
       // Emit event for real-time broadcasting
       this.eventEmitter.emit("appointment.updated", {
         appointmentId,
-        userId: (result.data as Record<string, unknown>)?.patientId as string,
-        doctorId: (result.data as Record<string, unknown>)?.doctorId as string,
+        userId: (result.data as Record<string, unknown>)?.[
+          "patientId"
+        ] as string,
+        doctorId: (result.data as Record<string, unknown>)?.[
+          "doctorId"
+        ] as string,
         clinicId,
         changes: updateDto,
         updatedBy: userId,
@@ -327,16 +379,20 @@ export class AppointmentsService {
     if (result.success) {
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
-        (result.data as Record<string, unknown>)?.patientId as string,
-        (result.data as Record<string, unknown>)?.doctorId as string,
+        (result.data as Record<string, unknown>)?.["patientId"] as string,
+        (result.data as Record<string, unknown>)?.["doctorId"] as string,
         clinicId,
       );
 
       // Emit event for real-time broadcasting
       this.eventEmitter.emit("appointment.cancelled", {
         appointmentId,
-        userId: (result.data as Record<string, unknown>)?.patientId as string,
-        doctorId: (result.data as Record<string, unknown>)?.doctorId as string,
+        userId: (result.data as Record<string, unknown>)?.[
+          "patientId"
+        ] as string,
+        doctorId: (result.data as Record<string, unknown>)?.[
+          "doctorId"
+        ] as string,
         clinicId,
         reason,
         cancelledBy: userId,
@@ -602,7 +658,8 @@ export class AppointmentsService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const appointment = await this.prisma.appointment.findFirst({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        const appointment = (await this.appointmentPrisma.findFirst({
           where: {
             id,
             clinicId,
@@ -613,7 +670,7 @@ export class AppointmentsService {
             clinic: true,
             location: true,
           },
-        });
+        })) as AppointmentWithRelations | null;
 
         if (!appointment) {
           throw new Error("Appointment not found");
@@ -641,14 +698,15 @@ export class AppointmentsService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const patient = await this.prisma.patient.findFirst({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        const patient = (await this.patientPrisma.findFirst({
           where: {
             userId,
           },
           include: {
             user: true,
           },
-        });
+        })) as unknown;
 
         return patient;
       },
@@ -681,15 +739,15 @@ export class AppointmentsService {
   /**
    * Get plugin information
    */
-  async getPluginInfo(): Promise<unknown> {
-    return await this.pluginManager.getPluginInfo();
+  getPluginInfo(): unknown {
+    return this.pluginManager.getPluginInfo();
   }
 
   /**
    * Get domain features
    */
-  async getDomainFeatures(domain: string): Promise<string[]> {
-    return await this.pluginManager.getDomainFeatures(domain);
+  getDomainFeatures(domain: string): string[] {
+    return this.pluginManager.getDomainFeatures(domain);
   }
 
   /**
@@ -794,7 +852,7 @@ export class AppointmentsService {
       async () => {
         const filters: AppointmentFilterDto = {
           patientId: userId,
-          startDate: new Date().toISOString().split("T")[0],
+          startDate: new Date().toISOString().split("T")[0] || "",
           status: AppointmentStatus.SCHEDULED,
         };
 

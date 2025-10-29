@@ -37,22 +37,21 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
     const { operation, ...params } = data as {
       operation: string;
-      params: unknown;
+      [key: string]: unknown;
     };
 
     this.logger.log(`Processing template operation: ${operation}`, {
       operation,
-      clinicId: (params as Record<string, unknown>).clinicId as string,
+      clinicId: (params as Record<string, unknown>)["clinicId"] as string,
     });
 
     try {
       switch (operation) {
         case "createTemplate":
           return await this.templateService.createTemplate(
-            (params as Record<string, unknown>).templateData as Omit<
+            (params as Record<string, unknown>)["templateData"] as Omit<
               AppointmentTemplate,
               "id" | "createdAt" | "updatedAt"
             >,
@@ -60,27 +59,29 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
 
         case "getClinicTemplates":
           return await this.templateService.getClinicTemplates(
-            (params as Record<string, unknown>).clinicId as string,
+            (params as Record<string, unknown>)["clinicId"] as string,
           );
 
         case "createRecurringSeries":
           return await this.templateService.createRecurringSeries(
-            (params as Record<string, unknown>).templateId as string,
-            (params as Record<string, unknown>).patientId as string,
-            (params as Record<string, unknown>).clinicId as string,
-            new Date((params as Record<string, unknown>).startDate as string),
-            new Date((params as Record<string, unknown>).endDate as string),
+            (params as Record<string, unknown>)["templateId"] as string,
+            (params as Record<string, unknown>)["patientId"] as string,
+            (params as Record<string, unknown>)["clinicId"] as string,
+            new Date(
+              (params as Record<string, unknown>)["startDate"] as string,
+            ),
+            new Date((params as Record<string, unknown>)["endDate"] as string),
           );
 
         case "getTemplate":
           return await this.templateService.getTemplate(
-            (params as Record<string, unknown>).templateId as string,
+            (params as Record<string, unknown>)["templateId"] as string,
           );
 
         case "updateTemplate":
           return await this.templateService.updateTemplate(
-            (params as Record<string, unknown>).templateId as string,
-            (params as Record<string, unknown>).updateData as Record<
+            (params as Record<string, unknown>)["templateId"] as string,
+            (params as Record<string, unknown>)["updateData"] as Record<
               string,
               unknown
             >,
@@ -88,7 +89,7 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
 
         case "deleteTemplate":
           return await this.templateService.deleteTemplate(
-            (params as Record<string, unknown>).templateId as string,
+            (params as Record<string, unknown>)["templateId"] as string,
           );
 
         default:
@@ -103,55 +104,66 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
+  validate(data: unknown): Promise<boolean> {
     const dataObj = data as Record<string, unknown>;
     const { operation, ...params } = dataObj;
 
     // Validate required parameters based on operation
     switch (operation) {
       case "createTemplate":
-        return !!(
-          (params as Record<string, unknown>).templateData &&
-          (
-            (params as Record<string, unknown>).templateData as Record<
-              string,
-              unknown
-            >
-          ).name &&
-          (
-            (params as Record<string, unknown>).templateData as Record<
-              string,
-              unknown
-            >
-          ).clinicId
+        return Promise.resolve(
+          !!(
+            (params as Record<string, unknown>)["templateData"] &&
+            (
+              (params as Record<string, unknown>)["templateData"] as Record<
+                string,
+                unknown
+              >
+            )["name"] &&
+            (
+              (params as Record<string, unknown>)["templateData"] as Record<
+                string,
+                unknown
+              >
+            )["clinicId"]
+          ),
         );
 
       case "getClinicTemplates":
-        return !!(params as Record<string, unknown>).clinicId;
+        return Promise.resolve(
+          !!(params as Record<string, unknown>)["clinicId"],
+        );
 
       case "createRecurringSeries":
-        return !!(
-          (params as Record<string, unknown>).templateId &&
-          (params as Record<string, unknown>).patientId &&
-          (params as Record<string, unknown>).clinicId &&
-          (params as Record<string, unknown>).startDate
+        return Promise.resolve(
+          !!(
+            (params as Record<string, unknown>)["templateId"] &&
+            (params as Record<string, unknown>)["patientId"] &&
+            (params as Record<string, unknown>)["clinicId"] &&
+            (params as Record<string, unknown>)["startDate"]
+          ),
         );
 
       case "getTemplate":
-        return !!(params as Record<string, unknown>).templateId;
+        return Promise.resolve(
+          !!(params as Record<string, unknown>)["templateId"],
+        );
 
       case "updateTemplate":
-        return !!(
-          (params as Record<string, unknown>).templateId &&
-          (params as Record<string, unknown>).updateData
+        return Promise.resolve(
+          !!(
+            (params as Record<string, unknown>)["templateId"] &&
+            (params as Record<string, unknown>)["updateData"]
+          ),
         );
 
       case "deleteTemplate":
-        return !!(params as Record<string, unknown>).templateId;
+        return Promise.resolve(
+          !!(params as Record<string, unknown>)["templateId"],
+        );
 
       default:
-        return false;
+        return Promise.resolve(false);
     }
   }
 

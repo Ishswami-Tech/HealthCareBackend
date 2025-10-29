@@ -15,7 +15,7 @@ export async function initDatabase() {
     logger.log("Initializing database...");
 
     // Use the PRISMA_SCHEMA_PATH environment variable directly (already resolved in DatabaseModule)
-    let schemaPath = process.env.PRISMA_SCHEMA_PATH;
+    let schemaPath = process.env["PRISMA_SCHEMA_PATH"];
 
     // Final validation to ensure schema exists
     if (!schemaPath || !fs.existsSync(schemaPath)) {
@@ -25,7 +25,7 @@ export async function initDatabase() {
 
       // If not set or doesn't exist, try to find it
       const isDocker = fs.existsSync("/.dockerenv");
-      const isProduction = process.env.NODE_ENV === "production";
+      const isProduction = process.env["NODE_ENV"] === "production";
       const isWindows = process.platform === "win32";
 
       // Find the first path that exists
@@ -108,7 +108,7 @@ export async function initDatabase() {
     }
 
     // Check if DATABASE_URL is set
-    if (!process.env.DATABASE_URL) {
+    if (!process.env["DATABASE_URL"]) {
       logger.error("DATABASE_URL is not set");
       throw new Error(
         "DATABASE_URL environment variable is not set. Database connection cannot be established.",

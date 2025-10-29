@@ -57,12 +57,10 @@ export class SNSBackupService implements OnModuleInit {
       });
 
       // Get platform application ARNs from config
-      this.platformApplicationArn.ios = this.configService.get<string>(
-        "AWS_SNS_IOS_PLATFORM_ARN",
-      );
-      this.platformApplicationArn.android = this.configService.get<string>(
-        "AWS_SNS_ANDROID_PLATFORM_ARN",
-      );
+      this.platformApplicationArn.ios =
+        this.configService.get<string>("AWS_SNS_IOS_PLATFORM_ARN") || "";
+      this.platformApplicationArn.android =
+        this.configService.get<string>("AWS_SNS_ANDROID_PLATFORM_ARN") || "";
 
       if (
         !this.platformApplicationArn.ios &&
@@ -124,7 +122,10 @@ export class SNSBackupService implements OnModuleInit {
         title: notification.title,
       });
 
-      return { success: true, messageId: response.MessageId };
+      return {
+        success: true,
+        ...(response.MessageId && { messageId: response.MessageId }),
+      };
     } catch (error) {
       this.logger.error("Failed to send SNS push notification", {
         error: error instanceof Error ? error.message : "Unknown error",
@@ -192,7 +193,7 @@ export class SNSBackupService implements OnModuleInit {
       success: successCount > 0,
       successCount,
       failureCount,
-      error: errors.length > 0 ? errors.join("; ") : undefined,
+      ...(errors.length > 0 && { error: errors.join("; ") }),
     };
   }
 
@@ -215,7 +216,10 @@ export class SNSBackupService implements OnModuleInit {
       });
 
       const response = await this.snsClient.send(command);
-      return { success: true, messageId: response.MessageId };
+      return {
+        success: true,
+        ...(response.MessageId && { messageId: response.MessageId }),
+      };
     } catch (error) {
       return {
         success: false,

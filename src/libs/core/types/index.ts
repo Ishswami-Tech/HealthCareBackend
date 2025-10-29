@@ -1,20 +1,67 @@
-// Core types for the healthcare application
+/**
+ * Core types for the healthcare application
+ * @module CoreTypes
+ * @description Central type definitions for authentication, user management, and system operations
+ */
+
+/**
+ * Authentication response interface
+ * @interface AuthResponse
+ * @description Response structure for authentication operations
+ * @example
+ * ```typescript
+ * const authResponse: AuthResponse = {
+ *   success: true,
+ *   user: userData,
+ *   tokens: { accessToken: "token123", refreshToken: "refresh456" },
+ *   sessionId: "session-789",
+ *   message: "Login successful"
+ * };
+ * ```
+ */
 export interface AuthResponse {
-  success: boolean;
-  user?: unknown;
-  tokens?: AuthTokens;
-  session_id?: string;
-  sessionId?: string;
-  message?: string;
-  error?: string;
+  /** Whether the authentication was successful */
+  readonly success: boolean;
+  /** Optional user data */
+  readonly user?: unknown;
+  /** Optional authentication tokens */
+  readonly tokens?: AuthTokens;
+  /** Optional session ID (legacy field) */
+  readonly session_id?: string;
+  /** Optional session ID */
+  readonly sessionId?: string;
+  /** Optional success/error message */
+  readonly message?: string;
+  /** Optional error message */
+  readonly error?: string;
 }
 
+/**
+ * Authentication tokens interface
+ * @interface AuthTokens
+ * @description Contains JWT tokens and session information
+ * @example
+ * ```typescript
+ * const tokens: AuthTokens = {
+ *   accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+ *   refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+ *   expiresIn: 3600,
+ *   sessionId: "session-123",
+ *   tokenType: "Bearer"
+ * };
+ * ```
+ */
 export interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  sessionId: string;
-  tokenType?: string;
+  /** JWT access token */
+  readonly accessToken: string;
+  /** JWT refresh token */
+  readonly refreshToken: string;
+  /** Token expiration time in seconds */
+  readonly expiresIn: number;
+  /** Session identifier */
+  readonly sessionId: string;
+  /** Optional token type (default: Bearer) */
+  readonly tokenType?: string;
 }
 
 export interface OTPResult {

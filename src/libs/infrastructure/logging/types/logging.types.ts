@@ -359,8 +359,8 @@ export function createLogData(
     metadata: {
       ...(metadata || {}),
       timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || "development",
-      service: process.env.SERVICE_NAME || "healthcare-backend",
+      environment: process.env["NODE_ENV"] || "development",
+      service: process.env["SERVICE_NAME"] || "healthcare-backend",
     },
     timestamp: new Date(),
   };

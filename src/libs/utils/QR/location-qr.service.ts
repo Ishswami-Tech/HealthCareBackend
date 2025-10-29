@@ -1,19 +1,68 @@
 import { Injectable } from "@nestjs/common";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException } from "@nestjs/common";
 
+/**
+ * Interface for location QR data structure
+ */
+interface LocationQRData {
+  locationId: string;
+  type: string;
+  timestamp: string;
+}
+
+/**
+ * Location QR Service for Healthcare Applications
+ *
+ * Provides QR code generation and verification for clinic locations,
+ * enabling location-based check-in functionality for healthcare applications.
+ *
+ * @class LocationQrService
+ * @description Service for generating and verifying location-based QR codes
+ * @version 1.0.0
+ * @author Healthcare Backend Team
+ * @since 2024
+ *
+ * @example
+ * ```typescript
+ * // Inject the service
+ * constructor(private readonly locationQrService: LocationQrService) {}
+ *
+ * // Generate QR code for location
+ * const qrData = await this.locationQrService.generateLocationQR('location-123');
+ *
+ * // Verify QR code
+ * const isValid = await this.locationQrService.verifyLocationQR(qrData, 'location-123');
+ * ```
+ */
 @Injectable()
 export class LocationQrService {
+  /**
+   * Creates an instance of LocationQrService
+   */
   constructor() {}
 
   /**
    * Generate a QR code for a specific clinic location
+   *
    * @param locationId - The ID of the clinic location
-   * @returns Promise<string> - Base64 encoded QR code image
+   * @returns Promise<string> - JSON string containing location QR data
+   *
+   * @description Generates QR code data for a specific clinic location that can be
+   * used for location-based check-in functionality. The QR code contains location
+   * information and timestamp for validation.
+   *
+   * @example
+   * ```typescript
+   * const qrData = await this.locationQrService.generateLocationQR('location-123');
+   * // Returns: '{"locationId":"location-123","type":"LOCATION_CHECK_IN","timestamp":"2024-01-01T00:00:00.000Z"}'
+   * ```
+   *
+   * @throws {BadRequestException} When QR code generation fails
    */
-  async generateLocationQR(locationId: string): Promise<string> {
+  generateLocationQR(locationId: string): Promise<string> {
     try {
       // Create QR data with location information
-      const qrData = {
+      const qrData: LocationQRData = {
         locationId,
         type: "LOCATION_CHECK_IN",
         timestamp: new Date().toISOString(),
@@ -21,7 +70,7 @@ export class LocationQrService {
 
       // Generate QR code
       // Note: This would integrate with QrService in a real implementation
-      return JSON.stringify(qrData);
+      return Promise.resolve(JSON.stringify(qrData));
     } catch (_error) {
       const _message =
         _error instanceof Error ? _error.message : String(_error);
@@ -33,16 +82,31 @@ export class LocationQrService {
 
   /**
    * Verify QR code for a specific location
+   *
    * @param qrData - The data scanned from the QR code
    * @param appointmentLocationId - The location ID from the appointment
-   * @returns boolean - Whether the QR code is valid for this location
+   * @returns Promise<boolean> - Whether the QR code is valid for this location
+   *
+   * @description Verifies that a scanned QR code is valid for the specified location.
+   * Validates the QR code format and ensures it matches the expected location ID.
+   *
+   * @example
+   * ```typescript
+   * const isValid = await this.locationQrService.verifyLocationQR(
+   *   '{"locationId":"location-123","type":"LOCATION_CHECK_IN","timestamp":"2024-01-01T00:00:00.000Z"}',
+   *   'location-123'
+   * );
+   * // Returns: true if valid, throws BadRequestException if invalid
+   * ```
+   *
+   * @throws {BadRequestException} When QR code is invalid or doesn't match location
    */
-  async verifyLocationQR(
+  verifyLocationQR(
     qrData: string,
     appointmentLocationId: string,
   ): Promise<boolean> {
     try {
-      const data = JSON.parse(qrData);
+      const data = JSON.parse(qrData) as LocationQRData;
 
       // Validate QR data format
       if (data.type !== "LOCATION_CHECK_IN") {
@@ -54,7 +118,7 @@ export class LocationQrService {
         throw new BadRequestException("QR code is not valid for this location");
       }
 
-      return true;
+      return Promise.resolve(true);
     } catch (_error) {
       const _message =
         _error instanceof Error ? _error.message : String(_error);

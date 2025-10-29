@@ -10,7 +10,6 @@ import {
   Matches,
   ValidateNested,
   IsObject,
-  IsUUID,
 } from "class-validator";
 import { Type } from "class-transformer";
 import { CreateClinicLocationDto } from "./create-clinic-location.dto";

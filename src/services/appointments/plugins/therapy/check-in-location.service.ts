@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-floating-promises */
 import {
   Injectable,
   Logger,
   NotFoundException,
   BadRequestException,
 } from "@nestjs/common";
-import { PrismaService } from "../../../../libs/infrastructure/database";
+import { DatabaseService } from "../../../../libs/infrastructure/database";
 import { CacheService } from "../../../../libs/infrastructure/cache";
 import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
 import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
@@ -77,7 +78,7 @@ export class CheckInLocationService {
   private readonly CHECKIN_CACHE_TTL = 1800; // 30 minutes
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
   ) {}
@@ -94,15 +95,17 @@ export class CheckInLocationService {
       // Generate QR code (unique identifier)
       const qrCode = this.generateQRCode(data.clinicId, data.locationName);
 
-      const location = await this.prisma.checkInLocation.create({
-        data: {
-          clinicId: data.clinicId,
-          locationName: data.locationName,
-          qrCode,
-          coordinates: data.coordinates as any,
-          radius: data.radius,
-        },
-      });
+      const location = await this.databaseService
+        .getPrismaClient()
+        .checkInLocation.create({
+          data: {
+            clinicId: data.clinicId,
+            locationName: data.locationName,
+            qrCode,
+            coordinates: data.coordinates as any,
+            radius: data.radius,
+          },
+        });
 
       // Invalidate cache
       await this.cacheService.invalidateByPattern(
@@ -155,19 +158,21 @@ export class CheckInLocationService {
         return JSON.parse(cached as string);
       }
 
-      const locations = await this.prisma.checkInLocation.findMany({
-        where: {
-          clinicId,
-          ...(isActive !== undefined && { isActive }),
-        },
-        include: {
-          checkIns: {
-            take: 10,
-            orderBy: { checkedInAt: "desc" },
+      const locations = await this.databaseService
+        .getPrismaClient()
+        .checkInLocation.findMany({
+          where: {
+            clinicId,
+            ...(isActive !== undefined && { isActive }),
           },
-        },
-        orderBy: { createdAt: "desc" },
-      });
+          include: {
+            checkIns: {
+              take: 10,
+              orderBy: { checkedInAt: "desc" },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        });
 
       // Cache the result
       await this.cacheService.set(
@@ -218,9 +223,11 @@ export class CheckInLocationService {
         return JSON.parse(cached as string);
       }
 
-      const location = await this.prisma.checkInLocation.findUnique({
-        where: { qrCode },
-      });
+      const location = await this.databaseService
+        .getPrismaClient()
+        .checkInLocation.findUnique({
+          where: { qrCode },
+        });
 
       if (!location) {
         throw new NotFoundException(
@@ -277,13 +284,15 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      const location = await this.prisma.checkInLocation.update({
-        where: { id: locationId },
-        data: {
-          ...data,
-          coordinates: data.coordinates as any,
-        },
-      });
+      const location = await this.databaseService
+        .getPrismaClient()
+        .checkInLocation.update({
+          where: { id: locationId },
+          data: {
+            ...data,
+            coordinates: data.coordinates as any,
+          },
+        });
 
       // Invalidate cache
       await this.cacheService.del(`checkin-location:${locationId}`);
@@ -328,15 +337,17 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      const location = await this.prisma.checkInLocation.findUnique({
-        where: { id: locationId },
-      });
+      const location = await this.databaseService
+        .getPrismaClient()
+        .checkInLocation.findUnique({
+          where: { id: locationId },
+        });
 
       if (!location) {
         throw new NotFoundException(`Location with ID ${locationId} not found`);
       }
 
-      await this.prisma.checkInLocation.delete({
+      await this.databaseService.getPrismaClient().checkInLocation.delete({
         where: { id: locationId },
       });
 
@@ -386,9 +397,11 @@ export class CheckInLocationService {
 
     try {
       // Validate appointment exists
-      const appointment = await this.prisma.appointment.findUnique({
-        where: { id: data.appointmentId },
-      });
+      const appointment = await this.databaseService
+        .getPrismaClient()
+        .appointment.findUnique({
+          where: { id: data.appointmentId },
+        });
 
       if (!appointment) {
         throw new NotFoundException(
@@ -397,20 +410,24 @@ export class CheckInLocationService {
       }
 
       // Check if already checked in
-      const existingCheckIn = await this.prisma.checkIn.findFirst({
-        where: {
-          appointmentId: data.appointmentId,
-        },
-      });
+      const existingCheckIn = await this.databaseService
+        .getPrismaClient()
+        .checkIn.findFirst({
+          where: {
+            appointmentId: data.appointmentId,
+          },
+        });
 
       if (existingCheckIn) {
         throw new BadRequestException("Appointment already checked in");
       }
 
       // Get location details
-      const location = await this.prisma.checkInLocation.findUnique({
-        where: { id: data.locationId },
-      });
+      const location = await this.databaseService
+        .getPrismaClient()
+        .checkInLocation.findUnique({
+          where: { id: data.locationId },
+        });
 
       if (!location) {
         throw new NotFoundException(
@@ -431,40 +448,42 @@ export class CheckInLocationService {
       }
 
       // Create check-in
-      const checkIn = await this.prisma.checkIn.create({
-        data: {
-          appointmentId: data.appointmentId,
-          locationId: data.locationId,
-          patientId: data.patientId,
-          coordinates: data.coordinates as any,
-          deviceInfo: data.deviceInfo as any,
-        },
-        include: {
-          location: true,
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const checkIn = await this.databaseService
+        .getPrismaClient()
+        .checkIn.create({
+          data: {
+            appointmentId: data.appointmentId,
+            locationId: data.locationId,
+            patientId: data.patientId,
+            coordinates: data.coordinates as any,
+            deviceInfo: data.deviceInfo as any,
+          },
+          include: {
+            location: true,
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
                 },
               },
             },
-          },
-          appointment: {
-            select: {
-              id: true,
-              type: true,
-              date: true,
-              time: true,
+            appointment: {
+              select: {
+                id: true,
+                type: true,
+                date: true,
+                time: true,
+              },
             },
           },
-        },
-      });
+        });
 
       // Update appointment status
-      await this.prisma.appointment.update({
+      await this.databaseService.getPrismaClient().appointment.update({
         where: { id: data.appointmentId },
         data: {
           checkedInAt: new Date(),
@@ -511,29 +530,31 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      const checkIn = await this.prisma.checkIn.update({
-        where: { id: data.checkInId },
-        data: {
-          isVerified: true,
-          verifiedBy: data.verifiedBy,
-          notes: data.notes,
-        },
-        include: {
-          location: true,
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const checkIn = await this.databaseService
+        .getPrismaClient()
+        .checkIn.update({
+          where: { id: data.checkInId },
+          data: {
+            isVerified: true,
+            verifiedBy: data.verifiedBy,
+            notes: data.notes,
+          },
+          include: {
+            location: true,
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
                 },
               },
             },
+            appointment: true,
           },
-          appointment: true,
-        },
-      });
+        });
 
       // Invalidate cache
       await this.cacheService.invalidateByPattern(`checkins:*`);
@@ -586,31 +607,33 @@ export class CheckInLocationService {
         };
       }
 
-      const checkIns = await this.prisma.checkIn.findMany({
-        where: whereClause,
-        include: {
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const checkIns = await this.databaseService
+        .getPrismaClient()
+        .checkIn.findMany({
+          where: whereClause,
+          include: {
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
                 },
               },
             },
-          },
-          appointment: {
-            select: {
-              id: true,
-              type: true,
-              date: true,
-              time: true,
+            appointment: {
+              select: {
+                id: true,
+                type: true,
+                date: true,
+                time: true,
+              },
             },
           },
-        },
-        orderBy: { checkedInAt: "desc" },
-      });
+          orderBy: { checkedInAt: "desc" },
+        });
 
       this.loggingService.log(
         LogType.SYSTEM,
@@ -669,9 +692,11 @@ export class CheckInLocationService {
         };
       }
 
-      const checkIns = await this.prisma.checkIn.findMany({
-        where: whereClause,
-      });
+      const checkIns = await this.databaseService
+        .getPrismaClient()
+        .checkIn.findMany({
+          where: whereClause,
+        });
 
       type CheckInWithVerification = { isVerified: boolean };
       const checkInsTyped = checkIns as CheckInWithVerification[];
@@ -783,3 +808,4 @@ export class CheckInLocationService {
     return `CHK-${clinicId.substring(0, 8)}-${nameHash}-${timestamp}-${random}`;
   }
 }
+/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-floating-promises */

@@ -100,11 +100,11 @@ export class SocketAuthMiddleware {
 
       const user: AuthenticatedUser = {
         userId,
-        clinicId: payload.clinicId,
-        role: payload.role,
-        email: payload.email,
-        firstName: payload.firstName,
-        lastName: payload.lastName,
+        ...(payload.clinicId && { clinicId: payload.clinicId }),
+        ...(payload.role && { role: payload.role }),
+        ...(payload.email && { email: payload.email }),
+        ...(payload.firstName && { firstName: payload.firstName }),
+        ...(payload.lastName && { lastName: payload.lastName }),
       };
 
       this.logger.log(
@@ -141,11 +141,11 @@ export class SocketAuthMiddleware {
 
     return {
       userId,
-      clinicId: user.clinicId,
-      role: user.role,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
+      ...(user.clinicId && { clinicId: user.clinicId }),
+      ...(user.role && { role: user.role }),
+      ...(user.email && { email: user.email }),
+      ...(user.firstName && { firstName: user.firstName }),
+      ...(user.lastName && { lastName: user.lastName }),
     };
   }
 
@@ -168,7 +168,9 @@ export class SocketAuthMiddleware {
       return authToken;
     }
 
-    const queryToken = this.normalizeTokenValue(handshake.query?.token ?? null);
+    const queryToken = this.normalizeTokenValue(
+      handshake.query?.["token"] ?? null,
+    );
     if (queryToken) {
       return queryToken;
     }

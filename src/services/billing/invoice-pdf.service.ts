@@ -447,7 +447,7 @@ export class InvoicePDFService {
   /**
    * Delete invoice PDF file
    */
-  async deleteInvoicePDF(fileName: string): Promise<void> {
+  deleteInvoicePDF(fileName: string): void {
     try {
       const filePath = path.join(this.invoicesDir, fileName);
 

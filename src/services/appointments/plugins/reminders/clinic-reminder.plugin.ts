@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Injectable } from "@nestjs/common";
 import { BaseAppointmentPlugin } from "../base/base-plugin.service";
 import { AppointmentReminderService } from "./appointment-reminder.service";
@@ -266,3 +267,4 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     );
   }
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */

@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Injectable } from "@nestjs/common";
 import { BaseAppointmentPlugin } from "../base/base-plugin.service";
 import { CheckInService } from "./check-in.service";
 
 @Injectable()
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
   readonly name = "clinic-checkin-plugin";
   readonly version = "1.0.0";
@@ -125,3 +125,4 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     return isValid;
   }
 }
+/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
