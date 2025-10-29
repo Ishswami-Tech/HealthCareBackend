@@ -20,7 +20,12 @@ import { Transform, Type } from "class-transformer";
 import { PartialType, OmitType } from "@nestjs/mapped-types";
 import { ValidateNested } from "class-validator";
 
-// Define Gender enum locally since it's not exported from prisma.types
+/**
+ * Gender enumeration
+ * @enum {string} Gender
+ * @description Defines the gender options for users
+ * @example Gender.MALE
+ */
 export enum Gender {
   MALE = "MALE",
   FEMALE = "FEMALE",
@@ -81,8 +86,16 @@ export { Role };
 // type UpdateUserFields = Partial<BaseUserFields>;
 
 /**
- * Simple registration DTO with minimal required fields
- * Following NestJS best practices for public endpoints
+ * Data Transfer Object for simple user registration
+ * @class SimpleCreateUserDto
+ * @description Contains minimal required fields for user registration
+ * @example
+ * ```typescript
+ * const user = new SimpleCreateUserDto();
+ * user.email = "john.doe@example.com";
+ * user.firstName = "John";
+ * user.lastName = "Doe";
+ * ```
  */
 export class SimpleCreateUserDto {
   @ApiProperty({
@@ -91,7 +104,9 @@ export class SimpleCreateUserDto {
     format: "email",
   })
   @IsEmail({}, { message: "Please provide a valid email address" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email: string = "";
 
   @ApiProperty({
@@ -118,7 +133,9 @@ export class SimpleCreateUserDto {
   @IsNotEmpty({ message: "First name is required" })
   @MinLength(2, { message: "First name must be at least 2 characters long" })
   @MaxLength(50, { message: "First name cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   firstName: string = "";
 
   @ApiProperty({
@@ -131,7 +148,9 @@ export class SimpleCreateUserDto {
   @IsNotEmpty({ message: "Last name is required" })
   @MinLength(2, { message: "Last name must be at least 2 characters long" })
   @MaxLength(50, { message: "Last name cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   lastName: string = "";
 
   @ApiProperty({
@@ -187,7 +206,9 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: "Address must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   address?: string;
 
   @ApiPropertyOptional({
@@ -196,7 +217,9 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: "City must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   city?: string;
 
   @ApiPropertyOptional({
@@ -205,7 +228,9 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: "State must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   state?: string;
 
   @ApiPropertyOptional({
@@ -214,7 +239,9 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: "Country must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   country?: string;
 
   @ApiPropertyOptional({
@@ -223,7 +250,9 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: "Zip code must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   zipCode?: string;
 
   @ApiPropertyOptional({
@@ -244,7 +273,17 @@ export class SimpleCreateUserDto {
 }
 
 /**
- * Enhanced user creation DTO with all fields
+ * Data Transfer Object for enhanced user creation
+ * @class CreateUserDto
+ * @description Extends SimpleCreateUserDto with additional user fields
+ * @extends SimpleCreateUserDto
+ * @example
+ * ```typescript
+ * const user = new CreateUserDto();
+ * user.role = Role.DOCTOR;
+ * user.specialization = "Cardiology";
+ * user.experience = 5;
+ * ```
  */
 export class CreateUserDto extends SimpleCreateUserDto {
   @ApiPropertyOptional({
@@ -337,7 +376,16 @@ export class CreateUserDto extends SimpleCreateUserDto {
 }
 
 /**
- * User update DTO - all fields optional
+ * Data Transfer Object for updating user information
+ * @class UpdateUserDto
+ * @description Contains optional fields for user updates
+ * @extends PartialType(CreateUserDto)
+ * @example
+ * ```typescript
+ * const update = new UpdateUserDto();
+ * update.firstName = "Updated Name";
+ * update.lastLogin = new Date();
+ * ```
  */
 export class UpdateUserDto extends PartialType(CreateUserDto) {
   @ApiPropertyOptional({
@@ -351,7 +399,17 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
 }
 
 /**
- * User response DTO - excludes sensitive information
+ * Data Transfer Object for user responses
+ * @class UserResponseDto
+ * @description Contains user data for API responses, excluding sensitive information
+ * @extends OmitType(CreateUserDto, ["password"])
+ * @example
+ * ```typescript
+ * const response = new UserResponseDto();
+ * response.id = "user-uuid-123";
+ * response.email = "user@example.com";
+ * response.isVerified = true;
+ * ```
  */
 export class UserResponseDto extends OmitType(CreateUserDto, [
   "password",
@@ -403,7 +461,16 @@ export class UserResponseDto extends OmitType(CreateUserDto, [
 }
 
 /**
- * User list response DTO for pagination
+ * Data Transfer Object for paginated user list responses
+ * @class UserListResponseDto
+ * @description Contains array of users and pagination metadata
+ * @example
+ * ```typescript
+ * const list = new UserListResponseDto();
+ * list.users = [user1, user2];
+ * list.total = 100;
+ * list.page = 1;
+ * ```
  */
 export class UserListResponseDto {
   @ApiProperty({
@@ -434,7 +501,16 @@ export class UserListResponseDto {
 }
 
 /**
- * User search/filter DTO
+ * Data Transfer Object for user search and filtering
+ * @class UserSearchDto
+ * @description Contains optional fields for searching and filtering users
+ * @example
+ * ```typescript
+ * const search = new UserSearchDto();
+ * search.search = "john";
+ * search.role = Role.DOCTOR;
+ * search.isVerified = true;
+ * ```
  */
 export class UserSearchDto {
   @ApiPropertyOptional({
@@ -488,7 +564,16 @@ export class UserSearchDto {
 }
 
 /**
- * User profile update DTO (for users updating their own profile)
+ * Data Transfer Object for user profile updates
+ * @class UpdateUserProfileDto
+ * @description Contains fields that users can update in their own profile
+ * @example
+ * ```typescript
+ * const profile = new UpdateUserProfileDto();
+ * profile.firstName = "Updated Name";
+ * profile.phone = "+1234567890";
+ * profile.address = "123 New Street";
+ * ```
  */
 export class UpdateUserProfileDto {
   @ApiPropertyOptional({
@@ -499,7 +584,9 @@ export class UpdateUserProfileDto {
   @IsString({ message: "First name must be a string" })
   @MinLength(2, { message: "First name must be at least 2 characters long" })
   @MaxLength(50, { message: "First name cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   firstName?: string;
 
   @ApiPropertyOptional({
@@ -510,7 +597,9 @@ export class UpdateUserProfileDto {
   @IsString({ message: "Last name must be a string" })
   @MinLength(2, { message: "Last name must be at least 2 characters long" })
   @MaxLength(50, { message: "Last name cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   lastName?: string;
 
   @ApiPropertyOptional({
@@ -552,7 +641,9 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: "Address must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   address?: string;
 
   @ApiPropertyOptional({
@@ -561,7 +652,9 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: "City must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   city?: string;
 
   @ApiPropertyOptional({
@@ -570,7 +663,9 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: "State must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   state?: string;
 
   @ApiPropertyOptional({
@@ -579,7 +674,9 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: "Country must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   country?: string;
 
   @ApiPropertyOptional({
@@ -588,7 +685,9 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: "Zip code must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   zipCode?: string;
 
   @ApiPropertyOptional({
@@ -604,7 +703,15 @@ export class UpdateUserProfileDto {
 }
 
 /**
- * DTO for updating user role - admin only
+ * Data Transfer Object for updating user roles (admin only)
+ * @class UpdateUserRoleDto
+ * @description Contains role and clinic context for role updates
+ * @example
+ * ```typescript
+ * const role = new UpdateUserRoleDto();
+ * role.role = Role.DOCTOR;
+ * role.clinicId = "clinic-uuid-123";
+ * ```
  */
 export class UpdateUserRoleDto {
   @ApiProperty({

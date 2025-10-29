@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   Injectable,
   Logger,
   NotFoundException,
   BadRequestException,
 } from "@nestjs/common";
-import { PrismaService } from "../../../../libs/infrastructure/database";
+import { DatabaseService } from "../../../../libs/infrastructure/database";
 import { CacheService } from "../../../../libs/infrastructure/cache";
 import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
 import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
@@ -86,7 +87,7 @@ export class TherapyQueueService {
   private readonly STATS_CACHE_TTL = 180; // 3 minutes
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
   ) {}
@@ -99,14 +100,16 @@ export class TherapyQueueService {
 
     try {
       // Check if queue already exists for this therapy type
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const existingQueue = await this.prisma.therapyQueue.findFirst({
-        where: {
-          clinicId: data.clinicId,
-          therapyType: data.therapyType,
-          isActive: true,
-        },
-      });
+
+      const existingQueue = await this.databaseService
+        .getPrismaClient()
+        .therapyQueue.findFirst({
+          where: {
+            clinicId: data.clinicId,
+            therapyType: data.therapyType,
+            isActive: true,
+          },
+        });
 
       if (existingQueue) {
         throw new BadRequestException(
@@ -114,15 +117,16 @@ export class TherapyQueueService {
         );
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const queue = await this.prisma.therapyQueue.create({
-        data: {
-          clinicId: data.clinicId,
-          therapyType: data.therapyType,
-          queueName: data.queueName,
-          maxCapacity: data.maxCapacity || 10,
-        },
-      });
+      const queue = await this.databaseService
+        .getPrismaClient()
+        .therapyQueue.create({
+          data: {
+            clinicId: data.clinicId,
+            therapyType: data.therapyType,
+            queueName: data.queueName,
+            maxCapacity: data.maxCapacity || 10,
+          },
+        });
 
       // Invalidate cache
       await this.cacheService.invalidateByPattern(
@@ -175,37 +179,38 @@ export class TherapyQueueService {
         return JSON.parse(cached as string);
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const queues = await this.prisma.therapyQueue.findMany({
-        where: {
-          clinicId,
-          ...(isActive !== undefined && { isActive }),
-        },
-        include: {
-          queueEntries: {
-            where: {
-              status: {
-                in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+      const queues = await this.databaseService
+        .getPrismaClient()
+        .therapyQueue.findMany({
+          where: {
+            clinicId,
+            ...(isActive !== undefined && { isActive }),
+          },
+          include: {
+            queueEntries: {
+              where: {
+                status: {
+                  in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+                },
               },
-            },
-            orderBy: { position: "asc" },
-            include: {
-              patient: {
-                include: {
-                  user: {
-                    select: {
-                      name: true,
-                      email: true,
-                      phone: true,
+              orderBy: { position: "asc" },
+              include: {
+                patient: {
+                  include: {
+                    user: {
+                      select: {
+                        name: true,
+                        email: true,
+                        phone: true,
+                      },
                     },
                   },
                 },
               },
             },
           },
-        },
-        orderBy: { createdAt: "desc" },
-      });
+          orderBy: { createdAt: "desc" },
+        });
 
       // Cache the result
       await this.cacheService.set(
@@ -259,45 +264,46 @@ export class TherapyQueueService {
         return JSON.parse(cached as string);
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const queue = await this.prisma.therapyQueue.findFirst({
-        where: {
-          clinicId,
-          therapyType,
-          isActive: true,
-        },
-        include: {
-          queueEntries: {
-            where: {
-              status: {
-                in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+      const queue = await this.databaseService
+        .getPrismaClient()
+        .therapyQueue.findFirst({
+          where: {
+            clinicId,
+            therapyType,
+            isActive: true,
+          },
+          include: {
+            queueEntries: {
+              where: {
+                status: {
+                  in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+                },
               },
-            },
-            orderBy: { position: "asc" },
-            include: {
-              patient: {
-                include: {
-                  user: {
-                    select: {
-                      name: true,
-                      email: true,
-                      phone: true,
+              orderBy: { position: "asc" },
+              include: {
+                patient: {
+                  include: {
+                    user: {
+                      select: {
+                        name: true,
+                        email: true,
+                        phone: true,
+                      },
                     },
                   },
                 },
-              },
-              appointment: {
-                select: {
-                  id: true,
-                  type: true,
-                  date: true,
-                  time: true,
+                appointment: {
+                  select: {
+                    id: true,
+                    type: true,
+                    date: true,
+                    time: true,
+                  },
                 },
               },
             },
           },
-        },
-      });
+        });
 
       if (!queue) {
         throw new NotFoundException(
@@ -350,19 +356,21 @@ export class TherapyQueueService {
 
     try {
       // Get the queue to check capacity
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const queue = await this.prisma.therapyQueue.findUnique({
-        where: { id: data.queueId },
-        include: {
-          queueEntries: {
-            where: {
-              status: {
-                in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+
+      const queue = await this.databaseService
+        .getPrismaClient()
+        .therapyQueue.findUnique({
+          where: { id: data.queueId },
+          include: {
+            queueEntries: {
+              where: {
+                status: {
+                  in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+                },
               },
             },
           },
-        },
-      });
+        });
 
       if (!queue) {
         throw new NotFoundException(`Queue with ID ${data.queueId} not found`);
@@ -378,16 +386,18 @@ export class TherapyQueueService {
       }
 
       // Check if patient already in queue
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const existingEntry = await this.prisma.queueEntry.findFirst({
-        where: {
-          queueId: data.queueId,
-          patientId: data.patientId,
-          status: {
-            in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+
+      const existingEntry = await this.databaseService
+        .getPrismaClient()
+        .queueEntry.findFirst({
+          where: {
+            queueId: data.queueId,
+            patientId: data.patientId,
+            status: {
+              in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+            },
           },
-        },
-      });
+        });
 
       if (existingEntry) {
         throw new BadRequestException("Patient is already in the queue");
@@ -405,37 +415,38 @@ export class TherapyQueueService {
         queue.therapyType,
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const entry = await this.prisma.queueEntry.create({
-        data: {
-          queueId: data.queueId,
-          appointmentId: data.appointmentId,
-          patientId: data.patientId,
-          position,
-          priority: data.priority || 0,
-          estimatedWaitTime,
-          notes: data.notes,
-          status: QueueStatus.WAITING,
-        },
-        include: {
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const entry = await this.databaseService
+        .getPrismaClient()
+        .queueEntry.create({
+          data: {
+            queueId: data.queueId,
+            appointmentId: data.appointmentId,
+            patientId: data.patientId,
+            position,
+            priority: data.priority || 0,
+            estimatedWaitTime,
+            notes: data.notes,
+            status: QueueStatus.WAITING,
+          },
+          include: {
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
                 },
               },
             },
+            appointment: true,
           },
-          appointment: true,
-        },
-      });
+        });
 
       // Update queue current position
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await this.prisma.therapyQueue.update({
+
+      await this.databaseService.getPrismaClient().therapyQueue.update({
         where: { id: data.queueId },
         data: {
           currentPosition: queue.currentPosition + 1,
@@ -485,26 +496,27 @@ export class TherapyQueueService {
     const startTime = Date.now();
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const entry = await this.prisma.queueEntry.update({
-        where: { id: entryId },
-        data,
-        include: {
-          queue: true,
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const entry = await this.databaseService
+        .getPrismaClient()
+        .queueEntry.update({
+          where: { id: entryId },
+          data,
+          include: {
+            queue: true,
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
                 },
               },
             },
+            appointment: true,
           },
-          appointment: true,
-        },
-      });
+        });
 
       // Invalidate cache
       await this.invalidateQueueCache(entry.queue.clinicId, entry.queueId);
@@ -553,10 +565,11 @@ export class TherapyQueueService {
     entryId: string,
     actualWaitTime?: number,
   ): Promise<QueueEntry> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const entry = await this.prisma.queueEntry.findUnique({
-      where: { id: entryId },
-    });
+    const entry = await this.databaseService
+      .getPrismaClient()
+      .queueEntry.findUnique({
+        where: { id: entryId },
+      });
 
     if (!entry) {
       throw new NotFoundException(`Queue entry with ID ${entryId} not found`);
@@ -572,7 +585,7 @@ export class TherapyQueueService {
 
     return this.updateQueueEntry(entryId, {
       status: QueueStatus.COMPLETED,
-      actualWaitTime: waitTime,
+      ...(waitTime !== undefined && { actualWaitTime: waitTime }),
     });
   }
 
@@ -583,18 +596,18 @@ export class TherapyQueueService {
     const startTime = Date.now();
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const entry = await this.prisma.queueEntry.findUnique({
-        where: { id: entryId },
-        include: { queue: true },
-      });
+      const entry = await this.databaseService
+        .getPrismaClient()
+        .queueEntry.findUnique({
+          where: { id: entryId },
+          include: { queue: true },
+        });
 
       if (!entry) {
         throw new NotFoundException(`Queue entry with ID ${entryId} not found`);
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await this.prisma.queueEntry.delete({
+      await this.databaseService.getPrismaClient().queueEntry.delete({
         where: { id: entryId },
       });
 
@@ -642,28 +655,29 @@ export class TherapyQueueService {
     const startTime = Date.now();
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const entry = await this.prisma.queueEntry.findFirst({
-        where: {
-          appointmentId,
-          status: {
-            in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+      const entry = await this.databaseService
+        .getPrismaClient()
+        .queueEntry.findFirst({
+          where: {
+            appointmentId,
+            status: {
+              in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+            },
           },
-        },
-        include: {
-          queue: {
-            include: {
-              queueEntries: {
-                where: {
-                  status: {
-                    in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+          include: {
+            queue: {
+              include: {
+                queueEntries: {
+                  where: {
+                    status: {
+                      in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+                    },
                   },
                 },
               },
             },
           },
-        },
-      });
+        });
 
       if (!entry) {
         throw new NotFoundException("Patient not found in any queue");
@@ -718,13 +732,14 @@ export class TherapyQueueService {
         return JSON.parse(cached as string);
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const queue = await this.prisma.therapyQueue.findUnique({
-        where: { id: queueId },
-        include: {
-          queueEntries: true,
-        },
-      });
+      const queue = await this.databaseService
+        .getPrismaClient()
+        .therapyQueue.findUnique({
+          where: { id: queueId },
+          include: {
+            queueEntries: true,
+          },
+        });
 
       if (!queue) {
         throw new NotFoundException(`Queue with ID ${queueId} not found`);
@@ -814,20 +829,21 @@ export class TherapyQueueService {
    * Reorder queue entries
    */
   async reorderQueue(queueId: string): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const entries = await this.prisma.queueEntry.findMany({
-      where: {
-        queueId,
-        status: {
-          in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+    const entries = await this.databaseService
+      .getPrismaClient()
+      .queueEntry.findMany({
+        where: {
+          queueId,
+          status: {
+            in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+          },
         },
-      },
-      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
-    });
+        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+      });
 
     // Update positions
     for (let i = 0; i < entries.length; i++) {
-      await this.prisma.queueEntry.update({
+      await this.databaseService.getPrismaClient().queueEntry.update({
         where: { id: entries[i].id },
         data: { position: i + 1 },
       });
@@ -841,16 +857,17 @@ export class TherapyQueueService {
     queueId: string,
     priority: number,
   ): Promise<number> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const entries = await this.prisma.queueEntry.findMany({
-      where: {
-        queueId,
-        status: {
-          in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+    const entries = await this.databaseService
+      .getPrismaClient()
+      .queueEntry.findMany({
+        where: {
+          queueId,
+          status: {
+            in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+          },
         },
-      },
-      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
-    });
+        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+      });
 
     // Find position based on priority
     let position = entries.length + 1;
@@ -859,7 +876,7 @@ export class TherapyQueueService {
         position = i + 1;
         // Update positions of entries after this one
         for (let j = i; j < entries.length; j++) {
-          await this.prisma.queueEntry.update({
+          await this.databaseService.getPrismaClient().queueEntry.update({
             where: { id: entries[j].id },
             data: { position: j + 2 },
           });
@@ -906,3 +923,4 @@ export class TherapyQueueService {
     ]);
   }
 }
+/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */

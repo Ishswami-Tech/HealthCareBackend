@@ -149,47 +149,51 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     return {
       queryPerformance: {
         trend: this.calculateTrend(
-          last.performance.averageQueryTime,
-          first.performance.averageQueryTime,
+          last?.performance.averageQueryTime || 0,
+          first?.performance.averageQueryTime || 0,
         ),
         change:
-          ((last.performance.averageQueryTime -
-            first.performance.averageQueryTime) /
-            first.performance.averageQueryTime) *
+          (((last?.performance.averageQueryTime || 0) -
+            (first?.performance.averageQueryTime || 0)) /
+            (first?.performance.averageQueryTime || 1)) *
           100,
       },
       connectionPool: {
         trend: this.calculateTrend(
-          last.connectionPool.connectionPoolUsage,
-          first.connectionPool.connectionPoolUsage,
+          last?.connectionPool.connectionPoolUsage || 0,
+          first?.connectionPool.connectionPoolUsage || 0,
         ),
         change:
-          ((last.connectionPool.connectionPoolUsage -
-            first.connectionPool.connectionPoolUsage) /
-            first.connectionPool.connectionPoolUsage) *
+          (((last?.connectionPool.connectionPoolUsage || 0) -
+            (first?.connectionPool.connectionPoolUsage || 0)) /
+            (first?.connectionPool.connectionPoolUsage || 1)) *
           100,
       },
       errorRate: {
         trend: this.calculateTrend(
-          last.performance.failedQueries / last.performance.totalQueries,
-          first.performance.failedQueries / first.performance.totalQueries,
+          (last?.performance.failedQueries || 0) /
+            (last?.performance.totalQueries || 1),
+          (first?.performance.failedQueries || 0) /
+            (first?.performance.totalQueries || 1),
         ),
         change:
-          ((last.performance.failedQueries / last.performance.totalQueries -
-            first.performance.failedQueries / first.performance.totalQueries) /
-            (first.performance.failedQueries /
-              first.performance.totalQueries)) *
+          (((last?.performance.failedQueries || 0) /
+            (last?.performance.totalQueries || 1) -
+            (first?.performance.failedQueries || 0) /
+              (first?.performance.totalQueries || 1)) /
+            ((first?.performance.failedQueries || 0) /
+              (first?.performance.totalQueries || 1))) *
           100,
       },
       throughput: {
         trend: this.calculateTrend(
-          last.performance.queryThroughput,
-          first.performance.queryThroughput,
+          last?.performance.queryThroughput || 0,
+          first?.performance.queryThroughput || 0,
         ),
         change:
-          ((last.performance.queryThroughput -
-            first.performance.queryThroughput) /
-            first.performance.queryThroughput) *
+          (((last?.performance.queryThroughput || 0) -
+            (first?.performance.queryThroughput || 0)) /
+            (first?.performance.queryThroughput || 1)) *
           100,
       },
     };
@@ -407,8 +411,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // Get query optimizer stats
     const optimizerStats = this.queryOptimizer.getOptimizerStats();
     this.currentMetrics.performance.cacheHitRate = (
-      optimizerStats.cacheStats as Record<string, unknown>
-    ).hitRate as number;
+      optimizerStats["cacheStats"] as Record<string, unknown>
+    )["hitRate"] as number;
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -482,13 +486,13 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
             where: {
               appointments: {
                 some: {
-                  clinicId: (clinic as Record<string, unknown>).id as string,
+                  clinicId: (clinic as Record<string, unknown>)["id"] as string,
                 },
               },
             },
           });
           return {
-            clinicId: (clinic as Record<string, unknown>).id as string,
+            clinicId: (clinic as Record<string, unknown>)["id"] as string,
             patientCount,
           };
         }),

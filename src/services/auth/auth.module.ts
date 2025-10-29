@@ -31,7 +31,7 @@ import { SocialAuthService } from "./core/social-auth.service";
   imports: [
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>("JWT_SECRET") || "default-secret",
         signOptions: {
           expiresIn:
@@ -76,7 +76,7 @@ import { SocialAuthService } from "./core/social-auth.service";
 export class AuthModule implements OnModuleInit {
   constructor() {}
 
-  async onModuleInit() {
+  onModuleInit() {
     console.log("✅ Auth Module initialized successfully");
   }
 }

@@ -397,7 +397,7 @@ export class LoggingController {
     @Query("level") level?: string,
     @Query("startTime") startTime?: string,
     @Query("endTime") endTime?: string,
-  ) {
+  ): Promise<unknown[]> {
     try {
       const logs = await this.loggingService.getLogs(
         type,
@@ -406,8 +406,8 @@ export class LoggingController {
         (level as LogLevel) || undefined,
       );
 
-      return logs.map((log) => ({
-        ...log,
+      return logs.map((log: unknown) => ({
+        ...(log as Record<string, unknown>),
         disabled: false, // Ensure disabled property is always set
       }));
     } catch (error) {

@@ -13,7 +13,12 @@ import {
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 
-// Clinic status enum
+/**
+ * Clinic status enumeration
+ * @enum {string} ClinicStatus
+ * @description Defines the operational status of a clinic
+ * @example ClinicStatus.ACTIVE
+ */
 export enum ClinicStatus {
   ACTIVE = "ACTIVE",
   INACTIVE = "INACTIVE",
@@ -21,7 +26,12 @@ export enum ClinicStatus {
   MAINTENANCE = "MAINTENANCE",
 }
 
-// Clinic type enum
+/**
+ * Clinic type enumeration
+ * @enum {string} ClinicType
+ * @description Defines the different types of healthcare clinics
+ * @example ClinicType.GENERAL
+ */
 export enum ClinicType {
   GENERAL = "GENERAL",
   SPECIALTY = "SPECIALTY",
@@ -32,8 +42,16 @@ export enum ClinicType {
 }
 
 /**
- * Base clinic DTO following NestJS best practices
- * Based on AI rules: @nestjs-specific.md and @coding-standards.md
+ * Data Transfer Object for creating new clinics
+ * @class CreateClinicDto
+ * @description Contains all required fields for clinic creation with validation
+ * @example
+ * ```typescript
+ * const clinic = new CreateClinicDto();
+ * clinic.name = "Main Street Medical Center";
+ * clinic.type = ClinicType.GENERAL;
+ * clinic.address = "123 Main Street";
+ * ```
  */
 export class CreateClinicDto {
   @ApiProperty({
@@ -46,7 +64,9 @@ export class CreateClinicDto {
   @IsNotEmpty({ message: "Clinic name is required" })
   @Min(2, { message: "Clinic name must be at least 2 characters long" })
   @Max(100, { message: "Clinic name cannot exceed 100 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   name!: string;
 
   @ApiProperty({
@@ -68,7 +88,9 @@ export class CreateClinicDto {
   @IsNotEmpty({ message: "Address is required" })
   @Min(5, { message: "Address must be at least 5 characters long" })
   @Max(200, { message: "Address cannot exceed 200 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   address!: string;
 
   @ApiProperty({
@@ -81,7 +103,9 @@ export class CreateClinicDto {
   @IsNotEmpty({ message: "City is required" })
   @Min(2, { message: "City must be at least 2 characters long" })
   @Max(50, { message: "City cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   city!: string;
 
   @ApiProperty({
@@ -94,7 +118,9 @@ export class CreateClinicDto {
   @IsNotEmpty({ message: "State is required" })
   @Min(2, { message: "State must be at least 2 characters long" })
   @Max(50, { message: "State cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   state!: string;
 
   @ApiProperty({
@@ -107,7 +133,9 @@ export class CreateClinicDto {
   @IsNotEmpty({ message: "Country is required" })
   @Min(2, { message: "Country must be at least 2 characters long" })
   @Max(50, { message: "Country cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   country!: string;
 
   @ApiProperty({
@@ -120,7 +148,9 @@ export class CreateClinicDto {
   @IsNotEmpty({ message: "Zip code is required" })
   @Min(3, { message: "Zip code must be at least 3 characters long" })
   @Max(20, { message: "Zip code cannot exceed 20 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   zipCode!: string;
 
   @ApiProperty({
@@ -139,7 +169,9 @@ export class CreateClinicDto {
   })
   @IsString({ message: "Email must be a string" })
   @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email!: string;
 
   @ApiPropertyOptional({
@@ -150,13 +182,10 @@ export class CreateClinicDto {
   @IsUrl({}, { message: "Website must be a valid URL" })
   website?: string;
 
-  @ApiPropertyOptional({
-    example: "Mon-Fri 8AM-6PM, Sat 9AM-2PM",
-    description: "Clinic operating hours",
-  })
-  @IsOptional()
   @IsString({ message: "Operating hours must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   operatingHours?: string;
 
   @ApiPropertyOptional({
@@ -170,7 +199,15 @@ export class CreateClinicDto {
 }
 
 /**
- * Clinic update DTO - all fields optional
+ * Data Transfer Object for updating existing clinics
+ * @class UpdateClinicDto
+ * @description Contains optional fields for clinic updates with validation
+ * @example
+ * ```typescript
+ * const update = new UpdateClinicDto();
+ * update.name = "Updated Clinic Name";
+ * update.status = ClinicStatus.ACTIVE;
+ * ```
  */
 export class UpdateClinicDto {
   @ApiPropertyOptional({
@@ -181,7 +218,9 @@ export class UpdateClinicDto {
   @IsString({ message: "Clinic name must be a string" })
   @Min(2, { message: "Clinic name must be at least 2 characters long" })
   @Max(100, { message: "Clinic name cannot exceed 100 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   name?: string;
 
   @ApiPropertyOptional({
@@ -200,7 +239,9 @@ export class UpdateClinicDto {
   @IsString({ message: "Address must be a string" })
   @Min(5, { message: "Address must be at least 5 characters long" })
   @Max(200, { message: "Address cannot exceed 200 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   address?: string;
 
   @ApiPropertyOptional({
@@ -211,7 +252,9 @@ export class UpdateClinicDto {
   @IsString({ message: "City must be a string" })
   @Min(2, { message: "City must be at least 2 characters long" })
   @Max(50, { message: "City cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   city?: string;
 
   @ApiPropertyOptional({
@@ -222,7 +265,9 @@ export class UpdateClinicDto {
   @IsString({ message: "State must be a string" })
   @Min(2, { message: "State must be at least 2 characters long" })
   @Max(50, { message: "State cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   state?: string;
 
   @ApiPropertyOptional({
@@ -233,7 +278,9 @@ export class UpdateClinicDto {
   @IsString({ message: "Country must be a string" })
   @Min(2, { message: "Country must be at least 2 characters long" })
   @Max(50, { message: "Country cannot exceed 50 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   country?: string;
 
   @ApiPropertyOptional({
@@ -244,7 +291,9 @@ export class UpdateClinicDto {
   @IsString({ message: "Zip code must be a string" })
   @Min(3, { message: "Zip code must be at least 3 characters long" })
   @Max(20, { message: "Zip code cannot exceed 20 characters" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   zipCode?: string;
 
   @ApiPropertyOptional({
@@ -261,7 +310,9 @@ export class UpdateClinicDto {
   })
   @IsOptional()
   @IsString({ message: "Email must be a string" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email?: string;
 
   @ApiPropertyOptional({
@@ -278,7 +329,9 @@ export class UpdateClinicDto {
   })
   @IsOptional()
   @IsString({ message: "Operating hours must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   operatingHours?: string;
 
   @ApiPropertyOptional({
@@ -291,7 +344,16 @@ export class UpdateClinicDto {
 }
 
 /**
- * Clinic response DTO - excludes sensitive information
+ * Data Transfer Object for clinic responses
+ * @class ClinicResponseDto
+ * @description Contains clinic data for API responses, excluding sensitive information
+ * @example
+ * ```typescript
+ * const response = new ClinicResponseDto();
+ * response.id = "clinic-uuid-123";
+ * response.name = "Main Street Medical Center";
+ * response.status = ClinicStatus.ACTIVE;
+ * ```
  */
 export class ClinicResponseDto {
   @ApiProperty({
@@ -411,7 +473,16 @@ export class ClinicResponseDto {
 }
 
 /**
- * Clinic search/filter DTO
+ * Data Transfer Object for clinic search and filtering
+ * @class ClinicSearchDto
+ * @description Contains optional fields for searching and filtering clinics
+ * @example
+ * ```typescript
+ * const search = new ClinicSearchDto();
+ * search.search = "medical";
+ * search.type = ClinicType.GENERAL;
+ * search.status = ClinicStatus.ACTIVE;
+ * ```
  */
 export class ClinicSearchDto {
   @ApiPropertyOptional({
@@ -467,7 +538,16 @@ export class ClinicSearchDto {
 }
 
 /**
- * Clinic list response DTO for pagination
+ * Data Transfer Object for paginated clinic list responses
+ * @class ClinicListResponseDto
+ * @description Contains array of clinics and pagination metadata
+ * @example
+ * ```typescript
+ * const list = new ClinicListResponseDto();
+ * list.clinics = [clinic1, clinic2];
+ * list.total = 100;
+ * list.page = 1;
+ * ```
  */
 export class ClinicListResponseDto {
   @ApiProperty({

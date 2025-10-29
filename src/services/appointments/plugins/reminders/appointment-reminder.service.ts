@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/require-await */
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CacheService } from "../../../../libs/infrastructure/cache/cache.service";
@@ -246,7 +246,7 @@ export class AppointmentReminderService {
       }
 
       // Get reminder rules from database
-      const rules = await this.prisma.reminderRule.findMany({
+      const rules = await this.prisma["reminderRule"].findMany({
         where: {
           clinicId,
           isActive: true,

@@ -258,6 +258,9 @@ importers:
       '@types/qrcode':
         specifier: ^1.5.5
         version: 1.5.5
+      '@types/redis-info':
+        specifier: ^3.0.3
+        version: 3.0.3
       '@types/supertest':
         specifier: ^6.0.2
         version: 6.0.3
@@ -2324,6 +2327,9 @@ packages:
 
   '@types/range-parser@1.2.7':
     resolution: {integrity: sha512-hKormJbkJqzQGhziax5PItDUTMAM9uE2XXQmM37dyd4hVM+5aVl7oVxMVUiVQn2oCQFN/LKCZdvSM0pFRqbSmQ==}
+
+  '@types/redis-info@3.0.3':
+    resolution: {integrity: sha512-VIkNy6JbYI/RLdbPHdm9JQvv6RVld2uE2/6Hdid38Qdq+zvDli2FTpImI8pC5zwp8xS8qVqfzlfyAub8xZEd5g==}
 
   '@types/request@2.48.13':
     resolution: {integrity: sha512-FGJ6udDNUCjd19pp0Q3iTiDkwhYup7J8hpMW9c4k53NrccQFFWKRho6hvtPPEhnXWKvukfwAlB6DbDz4yhH5Gg==}
@@ -9338,6 +9344,8 @@ snapshots:
   '@types/qs@6.14.0': {}
 
   '@types/range-parser@1.2.7': {}
+
+  '@types/redis-info@3.0.3': {}
 
   '@types/request@2.48.13':
     dependencies:

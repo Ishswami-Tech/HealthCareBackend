@@ -14,18 +14,23 @@ import { ApiProperty } from "@nestjs/swagger";
 import { Transform } from "class-transformer";
 
 /**
- * Enhanced login DTO following NestJS best practices
- * Based on AI rules: @nestjs-specific.md and @coding-standards.md
+ * Data Transfer Object for user login
+ * @class LoginDto
+ * @description Contains credentials and optional context for user authentication
+ * @example
+ * ```typescript
+ * const login = new LoginDto();
+ * login.email = "user@example.com";
+ * login.password = "SecurePassword123!";
+ * login.clinicId = "clinic-uuid-123";
+ * ```
  */
 export class LoginDto {
-  @ApiProperty({
-    description: "User email address",
-    example: "user@example.com",
-    format: "email",
-  })
   @IsEmail({}, { message: "Please provide a valid email address" })
   @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email!: string;
 
   @ApiProperty({
@@ -77,17 +82,23 @@ export class LoginDto {
 }
 
 /**
- * Enhanced registration DTO extending user creation
+ * Data Transfer Object for user registration
+ * @class RegisterDto
+ * @description Contains user information for account creation with validation
+ * @example
+ * ```typescript
+ * const register = new RegisterDto();
+ * register.email = "user@example.com";
+ * register.firstName = "John";
+ * register.lastName = "Doe";
+ * ```
  */
 export class RegisterDto {
-  @ApiProperty({
-    description: "User email address",
-    example: "newuser@example.com",
-    format: "email",
-  })
   @IsEmail({}, { message: "Please provide a valid email address" })
   @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email!: string;
 
   @ApiProperty({
@@ -108,7 +119,9 @@ export class RegisterDto {
   })
   @IsString({ message: "First name must be a string" })
   @IsNotEmpty({ message: "First name is required" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   firstName!: string;
 
   @ApiProperty({
@@ -119,7 +132,9 @@ export class RegisterDto {
   })
   @IsString({ message: "Last name must be a string" })
   @IsNotEmpty({ message: "Last name is required" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   lastName!: string;
 
   @ApiProperty({
@@ -215,7 +230,15 @@ export class RegisterDto {
 }
 
 /**
- * Logout DTO for session management
+ * Data Transfer Object for user logout
+ * @class LogoutDto
+ * @description Contains session management options for user logout
+ * @example
+ * ```typescript
+ * const logout = new LogoutDto();
+ * logout.sessionId = "session_123456789";
+ * logout.allDevices = false;
+ * ```
  */
 export class LogoutDto {
   @ApiProperty({
@@ -239,31 +262,15 @@ export class LogoutDto {
 }
 
 /**
- * Password reset request DTO
- */
-export class PasswordResetRequestDto {
-  @ApiProperty({
-    description: "User email address for password reset",
-    example: "user@example.com",
-    format: "email",
-  })
-  @IsEmail({}, { message: "Please provide a valid email address" })
-  @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
-  email!: string;
-
-  @ApiProperty({
-    description: "Clinic ID for multi-tenant context",
-    example: "clinic-uuid-123",
-    required: false,
-  })
-  @IsUUID("4", { message: "Clinic ID must be a valid UUID" })
-  @IsOptional()
-  clinicId?: string;
-}
-
-/**
- * Password reset confirmation DTO
+ * Data Transfer Object for password reset confirmation
+ * @class PasswordResetDto
+ * @description Contains reset token and new password for password reset process
+ * @example
+ * ```typescript
+ * const reset = new PasswordResetDto();
+ * reset.token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+ * reset.newPassword = "NewSecurePassword123!";
+ * ```
  */
 export class PasswordResetDto {
   @ApiProperty({
@@ -298,7 +305,15 @@ export class PasswordResetDto {
 }
 
 /**
- * Refresh token DTO with enhanced security fields
+ * Data Transfer Object for refresh token requests
+ * @class RefreshTokenDto
+ * @description Contains refresh token and security context for token renewal
+ * @example
+ * ```typescript
+ * const refresh = new RefreshTokenDto();
+ * refresh.refreshToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+ * refresh.deviceFingerprint = "fp_1234567890abcdef";
+ * ```
  */
 export class RefreshTokenDto {
   @ApiProperty({
@@ -338,7 +353,15 @@ export class RefreshTokenDto {
 }
 
 /**
- * Change password DTO for authenticated users
+ * Data Transfer Object for changing user password
+ * @class ChangePasswordDto
+ * @description Contains current and new password for authenticated password changes
+ * @example
+ * ```typescript
+ * const change = new ChangePasswordDto();
+ * change.currentPassword = "CurrentPassword123!";
+ * change.newPassword = "NewSecurePassword123!";
+ * ```
  */
 export class ChangePasswordDto {
   @ApiProperty({
@@ -373,9 +396,17 @@ export class ChangePasswordDto {
 }
 
 /**
- * Forgot password request DTO
+ * Data Transfer Object for password reset requests
+ * @class PasswordResetRequestDto
+ * @description Contains email and clinic context for password reset initiation
+ * @example
+ * ```typescript
+ * const reset = new PasswordResetRequestDto();
+ * reset.email = "user@example.com";
+ * reset.clinicId = "clinic-uuid-123";
+ * ```
  */
-export class ForgotPasswordRequestDto {
+export class PasswordResetRequestDto {
   @ApiProperty({
     description: "User email address for password reset",
     example: "user@example.com",
@@ -383,7 +414,9 @@ export class ForgotPasswordRequestDto {
   })
   @IsEmail({}, { message: "Please provide a valid email address" })
   @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email!: string;
 
   @ApiProperty({
@@ -397,7 +430,15 @@ export class ForgotPasswordRequestDto {
 }
 
 /**
- * Request OTP DTO
+ * Data Transfer Object for OTP requests
+ * @class RequestOtpDto
+ * @description Contains identifier and clinic context for OTP generation
+ * @example
+ * ```typescript
+ * const otp = new RequestOtpDto();
+ * otp.identifier = "user@example.com";
+ * otp.clinicId = "clinic-uuid-123";
+ * ```
  */
 export class RequestOtpDto {
   @ApiProperty({
@@ -419,7 +460,15 @@ export class RequestOtpDto {
 }
 
 /**
- * Verify OTP request DTO
+ * Data Transfer Object for OTP verification
+ * @class VerifyOtpRequestDto
+ * @description Contains email, OTP code, and clinic context for verification
+ * @example
+ * ```typescript
+ * const verify = new VerifyOtpRequestDto();
+ * verify.email = "user@example.com";
+ * verify.otp = "123456";
+ * ```
  */
 export class VerifyOtpRequestDto {
   @ApiProperty({
@@ -429,7 +478,9 @@ export class VerifyOtpRequestDto {
   })
   @IsEmail({}, { message: "Please provide a valid email address" })
   @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email!: string;
 
   @ApiProperty({
@@ -451,7 +502,14 @@ export class VerifyOtpRequestDto {
 }
 
 /**
- * Check OTP status DTO
+ * Data Transfer Object for checking OTP status
+ * @class CheckOtpStatusDto
+ * @description Contains email for checking OTP verification status
+ * @example
+ * ```typescript
+ * const check = new CheckOtpStatusDto();
+ * check.email = "user@example.com";
+ * ```
  */
 export class CheckOtpStatusDto {
   @ApiProperty({
@@ -461,12 +519,21 @@ export class CheckOtpStatusDto {
   })
   @IsEmail({}, { message: "Please provide a valid email address" })
   @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email!: string;
 }
 
 /**
- * Invalidate OTP DTO
+ * Data Transfer Object for invalidating OTP
+ * @class InvalidateOtpDto
+ * @description Contains email for invalidating existing OTP
+ * @example
+ * ```typescript
+ * const invalidate = new InvalidateOtpDto();
+ * invalidate.email = "user@example.com";
+ * ```
  */
 export class InvalidateOtpDto {
   @ApiProperty({
@@ -476,12 +543,22 @@ export class InvalidateOtpDto {
   })
   @IsEmail({}, { message: "Please provide a valid email address" })
   @IsNotEmpty({ message: "Email is required" })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+  )
   email!: string;
 }
 
 /**
- * Authentication response DTO
+ * Data Transfer Object for authentication responses
+ * @class AuthResponse
+ * @description Contains access token, refresh token, and user information
+ * @example
+ * ```typescript
+ * const auth = new AuthResponse();
+ * auth.accessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+ * auth.refreshToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+ * ```
  */
 export class AuthResponse {
   @ApiProperty({
@@ -507,12 +584,24 @@ export class AuthResponse {
 }
 
 /**
- * Login request DTO (alias for LoginDto)
+ * Data Transfer Object for login requests (alias for LoginDto)
+ * @class LoginRequestDto
+ * @description Alias for LoginDto to maintain API consistency
+ * @extends LoginDto
  */
 export class LoginRequestDto extends LoginDto {}
 
 /**
- * Registration with OAuth DTO
+ * Data Transfer Object for OAuth registration
+ * @class RegisterDtoWithOAuth
+ * @description Extends RegisterDto with OAuth provider IDs
+ * @extends RegisterDto
+ * @example
+ * ```typescript
+ * const oauth = new RegisterDtoWithOAuth();
+ * oauth.googleId = "google-oauth-id-123";
+ * oauth.facebookId = "facebook-oauth-id-123";
+ * ```
  */
 export class RegisterDtoWithOAuth extends RegisterDto {
   @ApiProperty({
@@ -544,7 +633,10 @@ export class RegisterDtoWithOAuth extends RegisterDto {
 }
 
 /**
- * Verify OTP request DTO with clinic context
+ * Data Transfer Object for OTP verification with clinic context
+ * @class VerifyOtpRequestDtoWithClinic
+ * @description Extends VerifyOtpRequestDto with additional clinic context
+ * @extends VerifyOtpRequestDto
  */
 export class VerifyOtpRequestDtoWithClinic extends VerifyOtpRequestDto {
   @ApiProperty({

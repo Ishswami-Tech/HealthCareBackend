@@ -34,54 +34,58 @@ export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
-    const { operation, ...params } = data as any;
+    const { operation, ...params } = data as {
+      operation: string;
+      [key: string]: unknown;
+    };
 
     this.logger.log(`Processing waitlist operation: ${operation}`, {
       operation,
-      doctorId: params.doctorId,
-      clinicId: params.clinicId,
+      doctorId: params["doctorId"],
+      clinicId: params["clinicId"],
     });
 
     try {
       switch (operation) {
         case "addToWaitlist":
           return await this.waitlistService.addToWaitlist(
-            params.patientId,
-            params.doctorId,
-            params.clinicId,
-            params.preferredDate,
-            params.reason,
-            params.priority,
-            params.preferredTime,
+            params["patientId"] as string,
+            params["doctorId"] as string,
+            params["clinicId"] as string,
+            params["preferredDate"] as Date,
+            params["reason"] as string,
+            params["priority"] as "low" | "normal" | "high" | "urgent",
+            params["preferredTime"] as string | undefined,
           );
 
         case "getWaitlist":
           return await this.waitlistService.getWaitlist(
-            params.doctorId,
-            params.clinicId,
-            params.status,
+            params["doctorId"] as string | undefined,
+            params["clinicId"] as string | undefined,
+            params["status"] as string | undefined,
           );
 
         case "processWaitlist":
           return await this.waitlistService.processWaitlist(
-            params.doctorId,
-            params.clinicId,
+            params["doctorId"] as string,
+            params["clinicId"] as string,
           );
 
         case "getWaitlistMetrics":
           return await this.waitlistService.getWaitlistMetrics(
-            params.doctorId,
-            params.clinicId,
+            params["doctorId"] as string | undefined,
+            params["clinicId"] as string | undefined,
           );
 
         case "removeFromWaitlist":
-          return await this.waitlistService.removeFromWaitlist(params.entryId);
+          return await this.waitlistService.removeFromWaitlist(
+            params["entryId"] as string,
+          );
 
         case "updateWaitlistEntry":
           return await this.waitlistService.updateWaitlistEntry(
-            params.entryId,
-            params.updateData,
+            params["entryId"] as string,
+            params["updateData"] as Record<string, unknown>,
           );
 
         default:
@@ -96,38 +100,42 @@ export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
-    const { operation, ...params } = data as any;
+  validate(data: unknown): Promise<boolean> {
+    const { operation, ...params } = data as {
+      operation: string;
+      [key: string]: unknown;
+    };
 
     // Validate required parameters based on operation
     switch (operation) {
       case "addToWaitlist":
-        return !!(
-          params.patientId &&
-          params.doctorId &&
-          params.clinicId &&
-          params.preferredDate &&
-          params.reason
+        return Promise.resolve(
+          !!(
+            params["patientId"] &&
+            params["doctorId"] &&
+            params["clinicId"] &&
+            params["preferredDate"] &&
+            params["reason"]
+          ),
         );
 
       case "getWaitlist":
-        return !!(params.doctorId || params.clinicId);
+        return Promise.resolve(!!(params["doctorId"] || params["clinicId"]));
 
       case "processWaitlist":
-        return !!(params.doctorId && params.clinicId);
+        return Promise.resolve(!!(params["doctorId"] && params["clinicId"]));
 
       case "getWaitlistMetrics":
-        return !!(params.doctorId || params.clinicId);
+        return Promise.resolve(!!(params["doctorId"] || params["clinicId"]));
 
       case "removeFromWaitlist":
-        return !!params.entryId;
+        return Promise.resolve(!!params["entryId"]);
 
       case "updateWaitlistEntry":
-        return !!(params.entryId && params.updateData);
+        return Promise.resolve(!!(params["entryId"] && params["updateData"]));
 
       default:
-        return false;
+        return Promise.resolve(false);
     }
   }
 

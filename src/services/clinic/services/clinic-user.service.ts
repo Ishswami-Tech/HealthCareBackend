@@ -1,157 +1,292 @@
 import { Injectable } from "@nestjs/common";
-import { PrismaService } from "src/libs/infrastructure/database/prisma/prisma.service";
-import { LoggingService } from "src/libs/infrastructure/logging/logging.service";
+import { DatabaseService } from "../../../libs/infrastructure/database";
+import { LoggingService } from "../../../libs/infrastructure/logging";
 import {
   LogType,
   LogLevel,
-} from "src/libs/infrastructure/logging/types/logging.types";
-import { Role } from "src/libs/infrastructure/database/prisma/prisma.types";
-import { resolveClinicUUID } from "src/libs/utils/clinic.utils";
-import type {
-  Doctor,
-  User,
-} from "src/libs/infrastructure/database/prisma/prisma.types";
+} from "../../../libs/infrastructure/logging/types/logging.types";
+import {
+  ClinicUserCreateInput,
+  ClinicUserUpdateInput,
+  ClinicUserResponseDto,
+} from "../types/clinic-user.types";
 
 @Injectable()
 export class ClinicUserService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
   ) {}
 
-  async getClinicUsers(clinicId: string): Promise<{
-    doctors: Array<{
-      id: string;
-      clinicId: string;
-      doctorId: string;
-      doctor: Doctor & { user: User };
-    }>;
-    receptionists: Array<{
-      id: string;
-      userId: string;
-      clinicId: string;
-      user: User;
-      clinic: { id: string; name: string };
-    }>;
-    patients: Array<{
-      id: string;
-      userId: string;
-      user: User;
-    }>;
-  }> {
-    await resolveClinicUUID(this.prisma, clinicId);
+  async createClinicUser(
+    data: ClinicUserCreateInput,
+    _userId: string,
+  ): Promise<ClinicUserResponseDto> {
     try {
-      // Get doctors
-      const doctors = await this.prisma.doctorClinic.findMany({
-        where: { clinicId },
-        include: {
-          doctor: {
-            include: {
-              user: true,
-            },
-          },
-        },
-      });
+      const prismaClient = this.databaseService.getPrismaClient();
 
-      // Get receptionists
-      const receptionists = await this.prisma.receptionist.findMany({
-        where: { clinicId },
-        include: {
-          user: true,
-          clinic: true,
+      const clinicUser = await prismaClient.clinicUser.create({
+        data: {
+          ...data,
+          isActive: data.isActive ?? true,
         },
-      });
-
-      // Get patients with clinic association
-      const patients = await this.prisma.patient.findMany({
-        where: {
+        include: {
           user: {
-            clinics: {
-              some: {
-                id: clinicId,
-              },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              isActive: true,
             },
           },
         },
-        include: {
-          user: true,
-        },
       });
 
-      return {
-        doctors,
-        receptionists,
-        patients,
-      };
+      this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Clinic user created: ${clinicUser.id}`,
+        "ClinicUserService",
+        { clinicUserId: clinicUser.id },
+      );
+
+      return clinicUser as ClinicUserResponseDto;
     } catch (error) {
-      void this.loggingService.log(
+      this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to create clinic user: ${(error as Error).message}`,
         "ClinicUserService",
-        {
-          clinicId,
-          error:
-            error instanceof Error ? error.stack : "No stack trace available",
-        },
+        { error: (error as Error).stack },
       );
       throw error;
     }
   }
 
-  async getClinicUsersByRole(clinicId: string, role: Role): Promise<unknown[]> {
-    await resolveClinicUUID(this.prisma, clinicId);
+  async getClinicUsers(
+    clinicId: string,
+    includeUser = true,
+  ): Promise<ClinicUserResponseDto[]> {
     try {
-      switch (role) {
-        case Role.DOCTOR:
-          return await this.prisma.doctorClinic.findMany({
-            where: { clinicId },
-            include: {
-              doctor: {
-                include: {
-                  user: true,
-                },
+      const prismaClient = this.databaseService.getPrismaClient();
+
+      const include = includeUser
+        ? {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                isActive: true,
               },
             },
-          });
-        case Role.RECEPTIONIST:
-          return await this.prisma.receptionist.findMany({
-            where: { clinicId },
-            include: {
-              user: true,
-              clinic: true,
-            },
-          });
-        case Role.PATIENT:
-          return await this.prisma.patient.findMany({
-            where: {
-              user: {
-                clinics: {
-                  some: {
-                    id: clinicId,
-                  },
-                },
-              },
-            },
-            include: {
-              user: true,
-            },
-          });
-        default:
-          return [];
-      }
+          }
+        : undefined;
+
+      const clinicUsers = await prismaClient.clinicUser.findMany({
+        where: {
+          clinicId,
+          isActive: true,
+        },
+        include,
+      });
+
+      return clinicUsers as ClinicUserResponseDto[];
     } catch (error) {
-      void this.loggingService.log(
+      this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get clinic users by role: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to get clinic users: ${(error as Error).message}`,
         "ClinicUserService",
-        {
+        { error: (error as Error).stack },
+      );
+      throw error;
+    }
+  }
+
+  async getClinicUsersByRole(
+    clinicId: string,
+    role: string,
+    includeUser = true,
+  ): Promise<ClinicUserResponseDto[]> {
+    try {
+      const prismaClient = this.databaseService.getPrismaClient();
+
+      const include = includeUser
+        ? {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                isActive: true,
+              },
+            },
+          }
+        : undefined;
+
+      const clinicUsers = await prismaClient.clinicUser.findMany({
+        where: {
           clinicId,
           role,
-          error:
-            error instanceof Error ? error.stack : "No stack trace available",
+          isActive: true,
         },
+        include,
+      });
+
+      return clinicUsers as ClinicUserResponseDto[];
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get clinic users by role: ${(error as Error).message}`,
+        "ClinicUserService",
+        { error: (error as Error).stack },
+      );
+      throw error;
+    }
+  }
+
+  async getClinicUserById(
+    id: string,
+    includeUser = true,
+  ): Promise<ClinicUserResponseDto | null> {
+    try {
+      const prismaClient = this.databaseService.getPrismaClient();
+
+      const include = includeUser
+        ? {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                isActive: true,
+              },
+            },
+          }
+        : undefined;
+
+      const clinicUser = await prismaClient.clinicUser.findFirst({
+        where: { id },
+        include,
+      });
+
+      return clinicUser as ClinicUserResponseDto | null;
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get clinic user: ${(error as Error).message}`,
+        "ClinicUserService",
+        { error: (error as Error).stack },
+      );
+      throw error;
+    }
+  }
+
+  async updateClinicUser(
+    id: string,
+    data: ClinicUserUpdateInput,
+    _userId: string,
+  ): Promise<ClinicUserResponseDto> {
+    try {
+      const prismaClient = this.databaseService.getPrismaClient();
+
+      const clinicUser = await prismaClient.clinicUser.update({
+        where: { id },
+        data: {
+          ...data,
+          updatedAt: new Date(),
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              isActive: true,
+            },
+          },
+        },
+      });
+
+      this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Clinic user updated: ${clinicUser.id}`,
+        "ClinicUserService",
+        { clinicUserId: clinicUser.id },
+      );
+
+      return clinicUser as ClinicUserResponseDto;
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update clinic user: ${(error as Error).message}`,
+        "ClinicUserService",
+        { error: (error as Error).stack },
+      );
+      throw error;
+    }
+  }
+
+  async deleteClinicUser(id: string, _userId: string): Promise<void> {
+    try {
+      const prismaClient = this.databaseService.getPrismaClient();
+
+      await prismaClient.clinicUser.update({
+        where: { id },
+        data: {
+          isActive: false,
+          updatedAt: new Date(),
+        },
+      });
+
+      this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Clinic user deactivated: ${id}`,
+        "ClinicUserService",
+        { clinicUserId: id },
+      );
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to delete clinic user: ${(error as Error).message}`,
+        "ClinicUserService",
+        { error: (error as Error).stack },
+      );
+      throw error;
+    }
+  }
+
+  async getClinicUserCount(clinicId: string): Promise<number> {
+    try {
+      const prismaClient = this.databaseService.getPrismaClient();
+
+      const count = await prismaClient.clinicUser.count({
+        where: {
+          clinicId,
+          isActive: true,
+        },
+      });
+
+      return count;
+    } catch (error) {
+      this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get clinic user count: ${(error as Error).message}`,
+        "ClinicUserService",
+        { error: (error as Error).stack },
       );
       throw error;
     }

@@ -8,91 +8,253 @@ import { ConfigService } from "@nestjs/config";
 import { RedisService } from "./redis/redis.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 
+/**
+ * Healthcare cache configuration interface
+ * @interface HealthcareCacheConfig
+ * @description Configuration options for healthcare-specific caching with enterprise features
+ * @example
+ * ```typescript
+ * const config: HealthcareCacheConfig = {
+ *   patientRecordsTTL: 3600,
+ *   appointmentsTTL: 1800,
+ *   enableCompression: true,
+ *   maxCacheSize: 1024
+ * };
+ * ```
+ */
 export interface HealthcareCacheConfig {
+  /** TTL for patient records cache in seconds */
   patientRecordsTTL: number;
+  /** TTL for appointments cache in seconds */
   appointmentsTTL: number;
+  /** TTL for doctor profiles cache in seconds */
   doctorProfilesTTL: number;
+  /** TTL for clinic data cache in seconds */
   clinicDataTTL: number;
+  /** TTL for medical history cache in seconds */
   medicalHistoryTTL: number;
+  /** TTL for prescriptions cache in seconds */
   prescriptionsTTL: number;
+  /** TTL for emergency data cache in seconds */
   emergencyDataTTL: number;
+  /** Whether to enable compression for large values */
   enableCompression: boolean;
+  /** Whether to enable cache metrics collection */
   enableMetrics: boolean;
+  /** Default TTL for cache entries in seconds */
   defaultTTL: number;
-  maxCacheSize: number; // Maximum cache size in MB
-  enableBatchOperations: boolean; // Enable batch cache operations
-  compressionThreshold: number; // Compress values larger than this size
+  /** Maximum cache size in MB */
+  maxCacheSize: number;
+  /** Whether to enable batch cache operations */
+  enableBatchOperations: boolean;
+  /** Compress values larger than this size in bytes */
+  compressionThreshold: number;
 
   // Enterprise-grade configurations for 10M+ users
+  /** Connection pool size for Redis connections */
   connectionPoolSize: number;
+  /** Maximum number of connections */
   maxConnections: number;
+  /** Connection timeout in milliseconds */
   connectionTimeout: number;
+  /** Command timeout in milliseconds */
   commandTimeout: number;
+  /** Number of retry attempts for failed operations */
   retryAttempts: number;
+  /** Delay between retry attempts in milliseconds */
   retryDelay: number;
+  /** Circuit breaker failure threshold */
   circuitBreakerThreshold: number;
+  /** Circuit breaker timeout in milliseconds */
   circuitBreakerTimeout: number;
+  /** Whether adaptive caching is enabled */
   adaptiveCachingEnabled: boolean;
+  /** Whether load balancing is enabled */
   loadBalancingEnabled: boolean;
+  /** Whether sharding is enabled */
   shardingEnabled: boolean;
+  /** Whether replication is enabled */
   replicationEnabled: boolean;
+  /** Whether memory optimization is enabled */
   memoryOptimizationEnabled: boolean;
+  /** Whether performance monitoring is enabled */
   performanceMonitoringEnabled: boolean;
+  /** Whether auto-scaling is enabled */
   autoScalingEnabled: boolean;
+  /** Whether cache warming is enabled */
   cacheWarmingEnabled: boolean;
+  /** Whether predictive caching is enabled */
   predictiveCachingEnabled: boolean;
+  /** Compression level (1-9) */
   compressionLevel: number;
+  /** Whether encryption is enabled */
   encryptionEnabled: boolean;
+  /** Whether audit logging is enabled */
   auditLoggingEnabled: boolean;
 }
 
+/**
+ * Cache invalidation event interface
+ * @interface CacheInvalidationEvent
+ * @description Represents a cache invalidation event for healthcare entities
+ * @example
+ * ```typescript
+ * const event: CacheInvalidationEvent = {
+ *   type: 'patient_updated',
+ *   entityId: 'patient-123',
+ *   clinicId: 'clinic-456',
+ *   timestamp: new Date(),
+ *   affectedPatterns: ['patient:*', 'clinic:456:*']
+ * };
+ * ```
+ */
 export interface CacheInvalidationEvent {
+  /** Type of invalidation event */
   type:
     | "patient_updated"
     | "appointment_changed"
     | "doctor_updated"
     | "clinic_updated"
     | "prescription_created";
+  /** ID of the affected entity */
   entityId: string;
+  /** Optional clinic ID for clinic-specific invalidation */
   clinicId?: string;
+  /** Optional user ID for user-specific invalidation */
   userId?: string;
+  /** Timestamp when the invalidation occurred */
   timestamp: Date;
+  /** Cache key patterns affected by this invalidation */
   affectedPatterns: string[];
 }
 
+/**
+ * Circuit breaker state interface
+ * @interface CircuitBreakerState
+ * @description Represents the current state of the circuit breaker pattern
+ * @example
+ * ```typescript
+ * const state: CircuitBreakerState = {
+ *   isOpen: false,
+ *   failureCount: 0,
+ *   lastFailureTime: 0,
+ *   nextAttemptTime: 0
+ * };
+ * ```
+ */
 export interface CircuitBreakerState {
+  /** Whether the circuit breaker is currently open */
   isOpen: boolean;
+  /** Number of consecutive failures */
   failureCount: number;
+  /** Timestamp of the last failure */
   lastFailureTime: number;
+  /** Timestamp when the next attempt is allowed */
   nextAttemptTime: number;
 }
 
+/**
+ * Performance metrics interface
+ * @interface PerformanceMetrics
+ * @description Comprehensive performance metrics for cache operations
+ * @example
+ * ```typescript
+ * const metrics: PerformanceMetrics = {
+ *   totalRequests: 1000,
+ *   successfulRequests: 950,
+ *   failedRequests: 50,
+ *   averageResponseTime: 10.5,
+ *   cacheHitRate: 0.85,
+ *   timestamp: new Date()
+ * };
+ * ```
+ */
 export interface PerformanceMetrics {
+  /** Total number of requests */
   totalRequests: number;
+  /** Number of successful requests */
   successfulRequests: number;
+  /** Number of failed requests */
   failedRequests: number;
+  /** Average response time in milliseconds */
   averageResponseTime: number;
+  /** 95th percentile response time in milliseconds */
   p95ResponseTime: number;
+  /** 99th percentile response time in milliseconds */
   p99ResponseTime: number;
+  /** Cache hit rate as a decimal (0-1) */
   cacheHitRate: number;
+  /** Memory usage in MB */
   memoryUsage: number;
+  /** Connection pool utilization as a decimal (0-1) */
   connectionPoolUtilization: number;
+  /** Throughput in requests per second */
   throughput: number;
+  /** Error rate as a decimal (0-1) */
   errorRate: number;
+  /** Timestamp when metrics were collected */
   timestamp: Date;
 }
 
+/**
+ * Cache shard interface
+ * @interface CacheShard
+ * @description Represents a cache shard in a distributed cache setup
+ * @example
+ * ```typescript
+ * const shard: CacheShard = {
+ *   id: 'shard-1',
+ *   host: 'redis-1.example.com',
+ *   port: 6379,
+ *   weight: 1.0,
+ *   isHealthy: true,
+ *   lastHealthCheck: new Date(),
+ *   connectionCount: 10,
+ *   loadFactor: 0.5
+ * };
+ * ```
+ */
 export interface CacheShard {
+  /** Unique identifier for the shard */
   id: string;
+  /** Host address of the shard */
   host: string;
+  /** Port number of the shard */
   port: number;
+  /** Weight for load balancing */
   weight: number;
+  /** Whether the shard is currently healthy */
   isHealthy: boolean;
+  /** Timestamp of the last health check */
   lastHealthCheck: Date;
+  /** Current number of connections */
   connectionCount: number;
+  /** Current load factor (0-1) */
   loadFactor: number;
 }
 
+/**
+ * Enterprise-grade cache service for healthcare applications
+ * @class CacheService
+ * @description Provides comprehensive caching capabilities with healthcare-specific optimizations,
+ * circuit breaker patterns, sharding, and enterprise features for 1M+ users
+ * @example
+ * ```typescript
+ * // Cache patient records
+ * const patient = await cacheService.cachePatientRecords(
+ *   'patient-123',
+ *   'clinic-456',
+ *   () => fetchPatientFromDB('patient-123')
+ * );
+ *
+ * // Cache with custom options
+ * const data = await cacheService.cache('key', fetchFn, {
+ *   ttl: 3600,
+ *   containsPHI: true,
+ *   priority: 'high'
+ * });
+ * ```
+ */
 @Injectable()
 export class CacheService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CacheService.name);
@@ -327,7 +489,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Graceful shutdown
-      this.stopPerformanceMonitoring();
+      void this.stopPerformanceMonitoring();
       this.stopAdaptiveCaching();
       this.stopPredictiveCaching();
       this.closeConnectionPool();
@@ -347,19 +509,21 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     // Initialize shards based on configuration
     const shardConfigs = this.configService.get("CACHE_SHARDS", []);
-    this.cacheShards = shardConfigs.map((config: unknown, index: number) => {
-      const shardConfig = config as Record<string, unknown>;
-      return {
-        id: `shard-${index}`,
-        host: (shardConfig.host as string) || "localhost",
-        port: (shardConfig.port as number) || 6379,
-        weight: (shardConfig.weight as number) || 1,
-        isHealthy: true,
-        lastHealthCheck: new Date(),
-        connectionCount: 0,
-        loadFactor: 0,
-      };
-    });
+    this.cacheShards = shardConfigs.map(
+      (config: Record<string, unknown>, index: number) => {
+        const shardConfig = config;
+        return {
+          id: `shard-${index}`,
+          host: (shardConfig["host"] as string) || "localhost",
+          port: (shardConfig["port"] as number) || 6379,
+          weight: (shardConfig["weight"] as number) || 1,
+          isHealthy: true,
+          lastHealthCheck: new Date(),
+          connectionCount: 0,
+          loadFactor: 0,
+        };
+      },
+    );
 
     this.logger.log(`✅ Initialized ${this.cacheShards.length} cache shards`);
   }
@@ -626,13 +790,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   private selectOptimalShard(key: string): CacheShard {
     if (!this.config.shardingEnabled || this.cacheShards.length === 0) {
-      return this.cacheShards[0] || null;
+      return this.cacheShards[0]!;
     }
 
     // Use consistent hashing to select shard
     const hash = this.hashKey(key);
     const shardIndex = hash % this.cacheShards.length;
-    return this.cacheShards[shardIndex];
+    return this.cacheShards[shardIndex]!;
   }
 
   private hashKey(key: string): number {
@@ -657,7 +821,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       timestamp: new Date(),
       operation,
       key,
-      userId,
+      ...(userId && { userId }),
       result,
     };
 
@@ -854,7 +1018,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.medicalHistoryTTL,
-      compress: options.includeImages || options.includeReports,
+      ...(options.includeImages || options.includeReports
+        ? { compress: true }
+        : {}),
       priority: "high",
       tags,
       enableSwr: true,
@@ -898,7 +1064,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     await this.emitCacheInvalidationEvent({
       type: "patient_updated",
       entityId: patientId,
-      clinicId,
+      ...(clinicId && { clinicId }),
       timestamp: new Date(),
       affectedPatterns: patterns,
     });
@@ -939,7 +1105,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     await this.emitCacheInvalidationEvent({
       type: "doctor_updated",
       entityId: doctorId,
-      clinicId,
+      ...(clinicId && { clinicId }),
       timestamp: new Date(),
       affectedPatterns: patterns,
     });
@@ -985,8 +1151,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     await this.emitCacheInvalidationEvent({
       type: "appointment_changed",
       entityId: appointmentId,
-      clinicId,
-      userId: patientId || doctorId,
+      ...(clinicId && { clinicId }),
+      ...(patientId && { userId: patientId }),
+      ...(doctorId && { userId: doctorId }),
       timestamp: new Date(),
       affectedPatterns: patterns,
     });
@@ -1134,14 +1301,16 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       // Use Promise.all for concurrent operations
       const promises = keys.map(async (key) => {
         const value = await this.redisService.get(key);
-        return { key, value: value ? JSON.parse(value) : null };
+        return { key, value: value ? (JSON.parse(value) as T) : null };
       });
 
       const batchResults = await Promise.all(promises);
 
-      batchResults.forEach(({ key, value }) => {
-        results.set(key, value);
-      });
+      batchResults.forEach(
+        ({ key, value }: { key: string; value: T | null }) => {
+          results.set(key, value);
+        },
+      );
 
       return results;
     } catch (error) {

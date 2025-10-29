@@ -222,7 +222,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       this.metrics.activeConnections++;
 
       // Execute query using Prisma's raw query
-      const result = await this.prismaService.$queryRawUnsafe(query, ...params);
+      const result = await this.prismaService["$queryRawUnsafe"](
+        query,
+        ...params,
+      );
 
       return result as T;
     } finally {

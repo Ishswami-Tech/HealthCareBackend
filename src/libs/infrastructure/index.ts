@@ -1,9 +1,7 @@
 // Infrastructure exports
 export {
   DatabaseModule,
-  DatabaseClient,
-  DatabaseMetrics,
-  PrismaService,
+  DatabaseService,
   DatabaseHealthStatus,
 } from "./database";
 export {

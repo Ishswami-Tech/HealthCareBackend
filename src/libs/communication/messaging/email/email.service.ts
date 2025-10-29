@@ -16,15 +16,32 @@ import {
 import * as nodemailer from "nodemailer";
 import { MailtrapClient } from "mailtrap";
 
+/**
+ * Email configuration interface
+ * @interface EmailConfig
+ */
 interface EmailConfig {
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  password: string;
-  from: string;
+  /** SMTP server host */
+  readonly host: string;
+  /** SMTP server port */
+  readonly port: number;
+  /** Whether to use secure connection (TLS) */
+  readonly secure: boolean;
+  /** SMTP username */
+  readonly user: string;
+  /** SMTP password */
+  readonly password: string;
+  /** Default sender email address */
+  readonly from: string;
 }
 
+/**
+ * Email service for sending emails via SMTP or API
+ * Supports multiple providers and templates
+ *
+ * @class EmailService
+ * @implements {OnModuleInit}
+ */
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
@@ -33,9 +50,17 @@ export class EmailService implements OnModuleInit {
   private isInitialized = false;
   private provider!: "smtp" | "api";
 
-  constructor(private configService: ConfigService) {}
+  /**
+   * Creates an instance of EmailService
+   * @param configService - Configuration service for environment variables
+   */
+  constructor(private readonly configService: ConfigService) {}
 
-  async onModuleInit() {
+  /**
+   * Initializes the email service on module startup
+   * Determines provider and sets up appropriate client
+   */
+  async onModuleInit(): Promise<void> {
     this.provider = (this.configService.get<string>("EMAIL_PROVIDER") ||
       "smtp") as "smtp" | "api";
     if (this.provider === "smtp") {
@@ -45,7 +70,11 @@ export class EmailService implements OnModuleInit {
     }
   }
 
-  private async initSMTP() {
+  /**
+   * Initializes SMTP transporter
+   * @private
+   */
+  private async initSMTP(): Promise<void> {
     try {
       const emailConfig = this.configService.get<EmailConfig>("email");
       if (!emailConfig || !emailConfig.user || !emailConfig.password) {
@@ -80,6 +109,10 @@ export class EmailService implements OnModuleInit {
     }
   }
 
+  /**
+   * Initializes Mailtrap API client
+   * @private
+   */
   private initAPI(): void {
     try {
       const token = this.configService.get<string>("MAILTRAP_API_TOKEN");
@@ -100,6 +133,11 @@ export class EmailService implements OnModuleInit {
     }
   }
 
+  /**
+   * Sends an email using the configured provider
+   * @param options - Email options including template and context
+   * @returns Promise resolving to true if email was sent successfully
+   */
   async sendEmail(options: EmailOptions): Promise<boolean> {
     if (!this.isInitialized) {
       this.logger.warn("Email service is not initialized, skipping email send");
@@ -112,6 +150,12 @@ export class EmailService implements OnModuleInit {
     }
   }
 
+  /**
+   * Sends email via SMTP
+   * @param options - Email options
+   * @returns Promise resolving to true if successful
+   * @private
+   */
   private async sendViaSMTP(options: EmailOptions): Promise<boolean> {
     try {
       const emailConfig = this.configService.get<EmailConfig>("email");
@@ -135,6 +179,12 @@ export class EmailService implements OnModuleInit {
     }
   }
 
+  /**
+   * Sends email via Mailtrap API
+   * @param options - Email options
+   * @returns Promise resolving to true if successful
+   * @private
+   */
   private async sendViaAPI(options: EmailOptions): Promise<boolean> {
     try {
       // Use defaults if not present in options
@@ -167,6 +217,13 @@ export class EmailService implements OnModuleInit {
     }
   }
 
+  /**
+   * Gets email template HTML based on template type and context
+   * @param template - Email template type
+   * @param context - Template context data
+   * @returns HTML string for the email
+   * @private
+   */
   private getEmailTemplate(
     template: EmailTemplate,
     context: EmailContext,
@@ -272,7 +329,7 @@ export class EmailService implements OnModuleInit {
         <p>Your password has been successfully reset.</p>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${context.loginUrl}" style="background-color: #4CAF50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+          <a href="${context["loginUrl"]}" style="background-color: #4CAF50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">
             Login to Your Account
           </a>
         </div>
@@ -321,7 +378,7 @@ export class EmailService implements OnModuleInit {
         <p>You requested a magic link to sign in to your Healthcare App account. Click the button below to login:</p>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${context.loginUrl}" style="background-color: #4CAF50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+          <a href="${context["loginUrl"]}" style="background-color: #4CAF50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">
             Login to Your Account
           </a>
         </div>
@@ -352,7 +409,7 @@ export class EmailService implements OnModuleInit {
             ? `<p>Your account has been created using Google Sign-In. You can continue to use Google to log in to your account.</p>`
             : `<p>You can now log in to your account using your email and password:</p>
           <div style="text-align: center; margin: 30px 0;">
-            <a href="${context.loginUrl}" style="background-color: #4CAF50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+            <a href="${context["loginUrl"]}" style="background-color: #4CAF50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">
               Login to Your Account
             </a>
           </div>`
@@ -461,6 +518,12 @@ export class EmailService implements OnModuleInit {
     `;
   }
 
+  /**
+   * Generates a random OTP
+   * @param length - Length of the OTP (default: 6)
+   * @returns Generated OTP string
+   * @private
+   */
   private generateOTP(length: number = 6): string {
     const digits = "0123456789";
     let otp = "";
@@ -470,6 +533,10 @@ export class EmailService implements OnModuleInit {
     return otp;
   }
 
+  /**
+   * Checks if the email service is healthy and initialized
+   * @returns True if service is ready to send emails
+   */
   isHealthy(): boolean {
     return this.isInitialized;
   }

@@ -1,6 +1,33 @@
 import { Injectable, Logger, Inject } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import type {
+  UserWithRelations,
+  AppointmentWithRelations,
+  AppointmentTimeSlot,
+  UserCreateInput,
+  UserUpdateInput,
+  UserWhereInput,
+  AppointmentCreateInput,
+  AppointmentUpdateInput,
+  AppointmentWhereInput,
+  BillingPlanWithRelations,
+  SubscriptionWithRelations,
+  InvoiceWithRelations,
+  PaymentWithRelations,
+  BillingPlanCreateInput,
+  BillingPlanUpdateInput,
+  BillingPlanWhereInput,
+  SubscriptionCreateInput,
+  SubscriptionUpdateInput,
+  SubscriptionWhereInput,
+  InvoiceCreateInput,
+  InvoiceUpdateInput,
+  InvoiceWhereInput,
+  PaymentCreateInput,
+  PaymentUpdateInput,
+  PaymentWhereInput,
+} from "../prisma/prisma.service";
 import { ConnectionPoolManager } from "../connection-pool.manager";
 import { DatabaseMetricsService } from "../database-metrics.service";
 import { ClinicIsolationService } from "../clinic-isolation.service";
@@ -54,20 +81,304 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return this.prismaService;
   }
 
+  // Comprehensive type-safe database operations
+  async findUserByIdSafe(id: string): Promise<UserWithRelations | null> {
+    return this.prismaService.findUserByIdSafe(
+      id,
+    ) as Promise<UserWithRelations | null>;
+  }
+
+  async findUserByEmailSafe(email: string): Promise<UserWithRelations | null> {
+    return this.prismaService.findUserByEmailSafe(
+      email,
+    ) as Promise<UserWithRelations | null>;
+  }
+
+  async findUsersSafe(where: UserWhereInput): Promise<UserWithRelations[]> {
+    return this.prismaService.findUsersSafe(where) as Promise<
+      UserWithRelations[]
+    >;
+  }
+
+  async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {
+    return this.prismaService.createUserSafe(data);
+  }
+
+  async updateUserSafe(
+    id: string,
+    data: UserUpdateInput,
+  ): Promise<UserWithRelations> {
+    return this.prismaService.updateUserSafe(id, data);
+  }
+
+  async deleteUserSafe(id: string): Promise<UserWithRelations> {
+    return this.prismaService.deleteUserSafe(id);
+  }
+
+  async findAppointmentByIdSafe(
+    id: string,
+  ): Promise<AppointmentWithRelations | null> {
+    return this.prismaService.findAppointmentByIdSafe(
+      id,
+    ) as Promise<AppointmentWithRelations | null>;
+  }
+
+  async findAppointmentsSafe(
+    where: AppointmentWhereInput,
+  ): Promise<AppointmentWithRelations[]> {
+    return this.prismaService.findAppointmentsSafe(where) as Promise<
+      AppointmentWithRelations[]
+    >;
+  }
+
+  async createAppointmentSafe(
+    data: AppointmentCreateInput,
+  ): Promise<AppointmentWithRelations> {
+    return this.prismaService.createAppointmentSafe(data);
+  }
+
+  async updateAppointmentSafe(
+    id: string,
+    data: AppointmentUpdateInput,
+  ): Promise<AppointmentWithRelations> {
+    return this.prismaService.updateAppointmentSafe(id, data);
+  }
+
+  async deleteAppointmentSafe(id: string): Promise<AppointmentWithRelations> {
+    return this.prismaService.deleteAppointmentSafe(id);
+  }
+
+  async findAppointmentTimeSlotsSafe(
+    doctorId: string,
+    clinicId: string,
+    date: Date,
+  ): Promise<AppointmentTimeSlot[]> {
+    return this.prismaService.findAppointmentTimeSlotsSafe(
+      doctorId,
+      clinicId,
+      date,
+    ) as Promise<AppointmentTimeSlot[]>;
+  }
+
+  async countUsersSafe(where: UserWhereInput): Promise<number> {
+    return this.prismaService.countUsersSafe(where);
+  }
+
+  async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {
+    return this.prismaService.countAppointmentsSafe(where);
+  }
+
+  // Billing-related type-safe methods
+  async findBillingPlanByIdSafe(
+    id: string,
+  ): Promise<BillingPlanWithRelations | null> {
+    return this.prismaService.findBillingPlanByIdSafe(id);
+  }
+
+  async findBillingPlansSafe(
+    where: BillingPlanWhereInput,
+  ): Promise<BillingPlanWithRelations[]> {
+    return this.prismaService.findBillingPlansSafe(where);
+  }
+
+  async createBillingPlanSafe(
+    data: BillingPlanCreateInput,
+  ): Promise<BillingPlanWithRelations> {
+    return this.prismaService.createBillingPlanSafe(data);
+  }
+
+  async updateBillingPlanSafe(
+    id: string,
+    data: BillingPlanUpdateInput,
+  ): Promise<BillingPlanWithRelations> {
+    return this.prismaService.updateBillingPlanSafe(id, data);
+  }
+
+  async findSubscriptionByIdSafe(
+    id: string,
+  ): Promise<SubscriptionWithRelations | null> {
+    return this.prismaService.findSubscriptionByIdSafe(id);
+  }
+
+  async findSubscriptionsSafe(
+    where: SubscriptionWhereInput,
+  ): Promise<SubscriptionWithRelations[]> {
+    return this.prismaService.findSubscriptionsSafe(where);
+  }
+
+  async createSubscriptionSafe(
+    data: SubscriptionCreateInput,
+  ): Promise<SubscriptionWithRelations> {
+    return this.prismaService.createSubscriptionSafe(data);
+  }
+
+  async updateSubscriptionSafe(
+    id: string,
+    data: SubscriptionUpdateInput,
+  ): Promise<SubscriptionWithRelations> {
+    return this.prismaService.updateSubscriptionSafe(id, data);
+  }
+
+  async findInvoiceByIdSafe(id: string): Promise<InvoiceWithRelations | null> {
+    return this.prismaService.findInvoiceByIdSafe(id);
+  }
+
+  async findInvoicesSafe(
+    where: InvoiceWhereInput,
+  ): Promise<InvoiceWithRelations[]> {
+    return this.prismaService.findInvoicesSafe(where);
+  }
+
+  async createInvoiceSafe(
+    data: InvoiceCreateInput,
+  ): Promise<InvoiceWithRelations> {
+    return this.prismaService.createInvoiceSafe(data);
+  }
+
+  async updateInvoiceSafe(
+    id: string,
+    data: InvoiceUpdateInput,
+  ): Promise<InvoiceWithRelations> {
+    return this.prismaService.updateInvoiceSafe(id, data);
+  }
+
+  async findPaymentByIdSafe(id: string): Promise<PaymentWithRelations | null> {
+    return this.prismaService.findPaymentByIdSafe(id);
+  }
+
+  async findPaymentsSafe(
+    where: PaymentWhereInput,
+  ): Promise<PaymentWithRelations[]> {
+    return this.prismaService.findPaymentsSafe(where);
+  }
+
+  async createPaymentSafe(
+    data: PaymentCreateInput,
+  ): Promise<PaymentWithRelations> {
+    return this.prismaService.createPaymentSafe(data);
+  }
+
+  async updatePaymentSafe(
+    id: string,
+    data: PaymentUpdateInput,
+  ): Promise<PaymentWithRelations> {
+    return this.prismaService.updatePaymentSafe(id, data);
+  }
+
+  // Delete methods
+  async deleteBillingPlanSafe(id: string): Promise<BillingPlanWithRelations> {
+    return this.prismaService.deleteBillingPlanSafe(id);
+  }
+
+  async deleteSubscriptionSafe(id: string): Promise<SubscriptionWithRelations> {
+    return this.prismaService.deleteSubscriptionSafe(id);
+  }
+
+  async deleteInvoiceSafe(id: string): Promise<InvoiceWithRelations> {
+    return this.prismaService.deleteInvoiceSafe(id);
+  }
+
+  async deletePaymentSafe(id: string): Promise<PaymentWithRelations> {
+    return this.prismaService.deletePaymentSafe(id);
+  }
+
+  // Clinic methods
+  async findClinicByIdSafe(id: string): Promise<{
+    name: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+  } | null> {
+    return this.prismaService.findClinicByIdSafe(id) as Promise<{
+      name: string;
+      address?: string;
+      phone?: string;
+      email?: string;
+    } | null>;
+  }
+
+  async deleteClinicSafe(id: string): Promise<{ id: string; name: string }> {
+    return this.prismaService.deleteClinicSafe(id) as Promise<{
+      id: string;
+      name: string;
+    }>;
+  }
+
+  // Clinic Admin methods
+  async createClinicAdminSafe(data: {
+    userId: string;
+    clinicId: string;
+  }): Promise<{ id: string; userId: string; clinicId: string }> {
+    return this.prismaService.createClinicAdminSafe(data) as Promise<{
+      id: string;
+      userId: string;
+      clinicId: string;
+    }>;
+  }
+
+  async findClinicAdminByIdSafe(id: string): Promise<{
+    id: string;
+    userId: string;
+    clinicId: string;
+    user?: { id: string; email: string; name: string; role: string };
+  } | null> {
+    return this.prismaService.findClinicAdminByIdSafe(id) as Promise<{
+      id: string;
+      userId: string;
+      clinicId: string;
+      user?: { id: string; email: string; name: string; role: string };
+    } | null>;
+  }
+
+  async findClinicAdminsSafe(where: {
+    clinicId?: string;
+    userId?: string;
+  }): Promise<
+    {
+      id: string;
+      userId: string;
+      clinicId: string;
+      user?: { id: string; email: string; name: string; role: string };
+    }[]
+  > {
+    return this.prismaService.findClinicAdminsSafe(where) as Promise<
+      {
+        id: string;
+        userId: string;
+        clinicId: string;
+        user?: { id: string; email: string; name: string; role: string };
+      }[]
+    >;
+  }
+
+  async deleteClinicAdminSafe(
+    id: string,
+  ): Promise<{ id: string; userId: string; clinicId: string }> {
+    return this.prismaService.deleteClinicAdminSafe(id) as Promise<{
+      id: string;
+      userId: string;
+      clinicId: string;
+    }>;
+  }
+
   /**
    * Execute a raw query with metrics and error handling
    */
-  async executeRawQuery<T = any>(
+  async executeRawQuery<T = unknown>(
     query: string,
     params: unknown[] = [],
   ): Promise<T> {
     const startTime = Date.now();
 
     try {
-      const result = await this.connectionPoolManager.executeQuery<T>(
+      const result: T = await this.connectionPoolManager.executeQuery<T>(
         query,
         params,
-        { timeout: this.config.queryTimeout },
+        {
+          ...(this.config.queryTimeout !== undefined && {
+            timeout: this.config.queryTimeout,
+          }),
+        },
       );
 
       const executionTime = Date.now() - startTime;
@@ -110,7 +421,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      const result = await this.prismaService.$transaction(operation, {
+      const result = await this.prismaService.$transaction(operation as any, {
         maxWait: this.config.connectionTimeout || 10000,
         timeout: this.config.queryTimeout || 60000,
       });
@@ -149,7 +460,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      const result = await this.connectionPoolManager.executeHealthcareRead<T>(
+      const _result = await this.connectionPoolManager.executeHealthcareRead<T>(
         "", // Query will be executed through Prisma client
         [],
         { priority: "normal", timeout: 30000 },
@@ -207,15 +518,16 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
     try {
       // Use prioritized write connection
-      const result = await this.connectionPoolManager.executeHealthcareWrite<T>(
-        "", // Query will be executed through Prisma client
-        [],
-        { priority: "high", timeout: 60000 },
-      );
+      const _result =
+        await this.connectionPoolManager.executeHealthcareWrite<T>(
+          "", // Query will be executed through Prisma client
+          [],
+          { priority: "high", timeout: 60000 },
+        );
 
       // Execute within transaction for data consistency
       const data = await this.executeInTransaction(async (client) => {
-        const operationResult = await operation(client as any);
+        const operationResult = await operation(client as unknown);
 
         // Create audit trail entry
         if (this.config.enableAuditLogging) {
@@ -298,7 +610,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
     try {
       // Use critical operation connection with highest priority
-      const result = await this.connectionPoolManager.executeCriticalQuery<T>(
+      const _result = await this.connectionPoolManager.executeCriticalQuery<T>(
         "", // Query will be executed through Prisma client
         [],
         {
@@ -371,10 +683,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
       if (!result.success) {
         throw new ClinicError(
-          `Clinic operation failed: ${result.error}`,
+          `Clinic operation failed: ${result.error as string}`,
           "CLINIC_CONTEXT_ERROR",
           clinicId,
-          { originalError: result.error },
+          { originalError: result.error as unknown as Error },
         );
       }
 
@@ -406,7 +718,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       const start = Date.now();
 
       // Test database connectivity
-      await this.prismaService.$queryRaw`SELECT 1`;
+      (await this.prismaService.$queryRaw`SELECT 1`) as Promise<unknown>;
       const responseTime = Date.now() - start;
 
       return {
@@ -478,7 +790,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
    * Get clinic-specific metrics
    */
   async getClinicMetrics(clinicId: string): Promise<ClinicDatabaseMetrics> {
-    const baseMetrics = await this.getMetrics();
+    const baseMetrics = this.getMetrics();
     const clinicMetrics = this.metricsService.getClinicMetrics(clinicId);
 
     // Get clinic info
@@ -496,7 +808,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       appointmentCount: clinicMetrics?.appointmentCount || 0,
       staffCount: await this.getStaffCount(clinicId),
       locationCount: await this.getLocationCount(clinicId),
-    };
+    } as unknown as ClinicDatabaseMetrics;
   }
 
   /**
@@ -519,7 +831,9 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
             totalDoctors,
             totalLocations,
             recentActivity,
-          ] = await Promise.all([
+          ] = await Promise.all<
+            [number, number, number, number, number, number, any[]]
+          >([
             // Total patients (through appointments)
             client.patient.count({
               where: {
@@ -608,7 +922,19 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
             upcomingAppointments,
             totalDoctors,
             totalLocations,
-            recentActivity,
+            recentActivity: Array.isArray(recentActivity)
+              ? recentActivity.map(
+                  (activity: {
+                    patient: unknown;
+                    doctor: unknown;
+                    location: unknown;
+                  }) => ({
+                    patient: activity.patient,
+                    doctor: activity.doctor,
+                    location: activity.location,
+                  }),
+                )
+              : [],
           };
         });
       },
@@ -641,7 +967,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return this.executeWithResult(
       async () => {
         return this.executeWithClinicContext(clinicId, async (client) => {
-          const whereClause: unknown = {
+          const whereClause: Record<string, unknown> = {
             appointments: {
               some: {
                 clinicId,
@@ -652,7 +978,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
           // Add search filter
           if (searchTerm) {
-            (whereClause as Record<string, unknown>).user = {
+            whereClause["user"] = {
               OR: [
                 { name: { contains: searchTerm, mode: "insensitive" } },
                 { firstName: { contains: searchTerm, mode: "insensitive" } },
@@ -665,7 +991,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
           const skip = (page - 1) * limit;
 
-          const [patients, total] = await Promise.all([
+          const [patients, total] = await Promise.all<[any[], number]>([
             client.patient.findMany({
               where: whereClause,
               include: {
@@ -704,7 +1030,9 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
           const totalPages = Math.ceil(total / limit);
 
           return {
-            patients,
+            patients: Array.isArray(patients)
+              ? patients.map((patient: Record<string, unknown>) => patient)
+              : [],
             total,
             page,
             totalPages,
@@ -744,7 +1072,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return this.executeWithResult(
       async () => {
         return this.executeWithClinicContext(clinicId, async (client) => {
-          const whereClause: unknown = {
+          const whereClause: Record<string, unknown> = {
             clinicId,
             ...(locationId ? { locationId } : {}),
             ...(doctorId ? { doctorId } : {}),
@@ -826,7 +1154,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
    */
   async disconnect(): Promise<void> {
     try {
-      await this.prismaService.$disconnect();
+      await this.prismaService["$disconnect"]();
       this.logger.log("Database client disconnected");
     } catch (error) {
       this.logger.error("Failed to disconnect database client:", error);
@@ -859,8 +1187,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       return RepositoryResult.success(result, {
         executionTime,
         operation: operationName,
-        clinicId,
-        userId,
+        ...(clinicId && { clinicId }),
+        ...(userId && { userId }),
         timestamp: new Date(),
       });
     } catch (error) {
@@ -884,8 +1212,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       return RepositoryResult.failure(error as Error, {
         executionTime,
         operation: operationName,
-        clinicId,
-        userId,
+        ...(clinicId && { clinicId }),
+        ...(userId && { userId }),
         timestamp: new Date(),
       });
     }

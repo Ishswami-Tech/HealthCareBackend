@@ -1,47 +1,130 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../infrastructure/database";
 import { RedisService } from "../../infrastructure/cache/redis/redis.service";
+import { isPrismaPermission } from "./types/prisma.types";
 
+/**
+ * Represents a permission in the RBAC system
+ * @interface Permission
+ * @description Defines the structure of a permission with resource-action pairs
+ * @example
+ * ```typescript
+ * const permission: Permission = {
+ *   id: "perm-123",
+ *   name: "Read Users",
+ *   resource: "users",
+ *   action: "read",
+ *   description: "View user information",
+ *   domain: "healthcare",
+ *   isSystemPermission: true,
+ *   isActive: true,
+ *   createdAt: new Date(),
+ *   updatedAt: new Date()
+ * };
+ * ```
+ */
 export interface Permission {
-  id: string;
-  name: string;
-  resource: string;
-  action: string;
-  description?: string;
-  domain: string;
-  isSystemPermission: boolean;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  readonly id: string;
+  readonly name: string;
+  readonly resource: string;
+  readonly action: string;
+  readonly description?: string;
+  readonly domain: string;
+  readonly isSystemPermission: boolean;
+  readonly isActive: boolean;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
 }
 
+/**
+ * Data transfer object for creating a new permission
+ * @interface CreatePermissionDto
+ * @description Required fields for creating a permission
+ * @example
+ * ```typescript
+ * const createDto: CreatePermissionDto = {
+ *   name: "Read Users",
+ *   resource: "users",
+ *   action: "read",
+ *   description: "View user information",
+ *   domain: "healthcare"
+ * };
+ * ```
+ */
 export interface CreatePermissionDto {
-  name: string;
-  resource: string;
-  action: string;
-  description?: string;
-  domain: string;
+  readonly name: string;
+  readonly resource: string;
+  readonly action: string;
+  readonly description?: string;
+  readonly domain: string;
 }
 
+/**
+ * Data transfer object for updating an existing permission
+ * @interface UpdatePermissionDto
+ * @description Optional fields for updating a permission
+ * @example
+ * ```typescript
+ * const updateDto: UpdatePermissionDto = {
+ *   name: "Updated Permission Name",
+ *   description: "Updated description",
+ *   isActive: false
+ * };
+ * ```
+ */
 export interface UpdatePermissionDto {
-  name?: string;
-  description?: string;
-  isActive?: boolean;
+  readonly name?: string;
+  readonly description?: string;
+  readonly isActive?: boolean;
 }
 
+/**
+ * Service for managing permissions in the RBAC system
+ * @class PermissionService
+ * @description Handles CRUD operations for permissions, system permission initialization,
+ * and permission caching for performance optimization
+ * @example
+ * ```typescript
+ * const permissionService = new PermissionService(prismaService, redisService);
+ * const permission = await permissionService.createPermission({
+ *   name: "Read Users",
+ *   resource: "users",
+ *   action: "read",
+ *   domain: "healthcare"
+ * });
+ * ```
+ */
 @Injectable()
 export class PermissionService {
   private readonly logger = new Logger(PermissionService.name);
   private readonly CACHE_TTL = 3600; // 1 hour
   private readonly CACHE_PREFIX = "permissions:";
 
+  /**
+   * Creates an instance of PermissionService
+   * @constructor
+   * @param prisma - Prisma database service
+   * @param redis - Redis caching service
+   */
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly redis: RedisService,
   ) {}
 
   /**
    * Create a new permission
+   * @param createPermissionDto - The permission data to create
+   * @returns Promise<Permission> - The created permission
+   * @throws Error if permission already exists
+   * @example
+   * ```typescript
+   * const permission = await permissionService.createPermission({
+   *   name: "Read Users",
+   *   resource: "users",
+   *   action: "read",
+   *   domain: "healthcare"
+   * });
+   * ```
    */
   async createPermission(
     createPermissionDto: CreatePermissionDto,
@@ -60,8 +143,9 @@ export class PermissionService {
         );
       }
 
-      const permission = await this.prisma.permission.create({
-        data: {
+      const permissionResult = (await this.databaseService
+        .getPrismaClient()
+        .createPermissionSafe({
           name: createPermissionDto.name,
           resource: createPermissionDto.resource,
           action: createPermissionDto.action,
@@ -69,8 +153,24 @@ export class PermissionService {
           domain: createPermissionDto.domain,
           isSystemPermission: false,
           isActive: true,
-        },
-      });
+        })) as {
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      };
+
+      if (!isPrismaPermission(permissionResult)) {
+        throw new Error("Invalid permission data returned from database");
+      }
+
+      const permission = permissionResult;
 
       await this.clearPermissionCache();
 
@@ -100,13 +200,26 @@ export class PermissionService {
         return cached;
       }
 
-      const permission = await this.prisma.permission.findUnique({
-        where: { id: permissionId },
-      });
+      const permissionResult = (await this.databaseService
+        .getPrismaClient()
+        .findPermissionByIdSafe(permissionId)) as {
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
 
-      if (!permission) {
+      if (!permissionResult || !isPrismaPermission(permissionResult)) {
         return null;
       }
+
+      const permission = permissionResult;
 
       const mappedPermission = this.mapToPermission(permission);
 
@@ -138,13 +251,20 @@ export class PermissionService {
         return cached;
       }
 
-      const permission = await this.prisma.permission.findFirst({
-        where: {
-          resource,
-          action,
-          domain,
-        },
-      });
+      const permission = (await this.databaseService
+        .getPrismaClient()
+        .findPermissionByResourceActionSafe(resource, action, domain)) as {
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
 
       if (!permission) {
         return null;
@@ -179,16 +299,22 @@ export class PermissionService {
         return cached;
       }
 
-      const permissions = await this.prisma.permission.findMany({
-        where: {
-          domain,
-          resource,
-          isActive: true,
-        },
-        orderBy: [{ resource: "asc" }, { action: "asc" }],
-      });
+      const permissions = (await this.databaseService
+        .getPrismaClient()
+        .findPermissionsByResourceSafe(resource || "*", domain)) as Array<{
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      }>;
 
-      const mappedPermissions = permissions.map((permission: unknown) =>
+      const mappedPermissions: Permission[] = permissions.map((permission) =>
         this.mapToPermission(permission),
       );
 
@@ -209,9 +335,20 @@ export class PermissionService {
     updatePermissionDto: UpdatePermissionDto,
   ): Promise<Permission> {
     try {
-      const existingPermission = await this.prisma.permission.findUnique({
-        where: { id: permissionId },
-      });
+      const existingPermission = (await this.databaseService
+        .getPrismaClient()
+        .findPermissionByIdSafe(permissionId)) as {
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
 
       if (!existingPermission) {
         throw new NotFoundException(
@@ -219,19 +356,29 @@ export class PermissionService {
         );
       }
 
-      if (existingPermission.isSystemPermission) {
+      if (existingPermission && existingPermission.isSystemPermission) {
         throw new Error("Cannot modify system permissions");
       }
 
-      const permission = await this.prisma.permission.update({
-        where: { id: permissionId },
-        data: {
+      const permission = (await this.databaseService
+        .getPrismaClient()
+        .updatePermissionSafe(permissionId, {
           name: updatePermissionDto.name,
           description: updatePermissionDto.description,
           isActive: updatePermissionDto.isActive,
           updatedAt: new Date(),
-        },
-      });
+        })) as {
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      };
 
       await this.clearPermissionCache();
 
@@ -254,9 +401,20 @@ export class PermissionService {
    */
   async deletePermission(permissionId: string): Promise<void> {
     try {
-      const permission = await this.prisma.permission.findUnique({
-        where: { id: permissionId },
-      });
+      const permission = (await this.databaseService
+        .getPrismaClient()
+        .findPermissionByIdSafe(permissionId)) as {
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
 
       if (!permission) {
         throw new NotFoundException(
@@ -264,30 +422,26 @@ export class PermissionService {
         );
       }
 
-      if (permission.isSystemPermission) {
+      if (permission && permission.isSystemPermission) {
         throw new Error("Cannot delete system permissions");
       }
 
       // Check if permission is assigned to any roles
-      const rolePermissions = await this.prisma.rolePermission.count({
-        where: {
-          permissionId,
-          isActive: true,
-        },
-      });
+      const rolePermissions = (await this.databaseService
+        .getPrismaClient()
+        .countRolePermissionsSafe(permissionId)) as number;
 
       if (rolePermissions > 0) {
         throw new Error("Cannot delete permission that is assigned to roles");
       }
 
       // Soft delete permission
-      await this.prisma.permission.update({
-        where: { id: permissionId },
-        data: {
+      await this.databaseService
+        .getPrismaClient()
+        .updatePermissionSafe(permissionId, {
           isActive: false,
           updatedAt: new Date(),
-        },
-      });
+        });
 
       await this.clearPermissionCache();
 
@@ -318,17 +472,22 @@ export class PermissionService {
    */
   async getSystemPermissions(): Promise<Permission[]> {
     try {
-      const permissions = await this.prisma.permission.findMany({
-        where: {
-          isSystemPermission: true,
-          isActive: true,
-        },
-        orderBy: [{ resource: "asc" }, { action: "asc" }],
-      });
+      const permissions = (await this.databaseService
+        .getPrismaClient()
+        .findSystemPermissionsSafe()) as Array<{
+        id: string;
+        name: string;
+        resource: string;
+        action: string;
+        description: string | null;
+        domain: string;
+        isSystemPermission: boolean;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      }>;
 
-      return permissions.map((permission: unknown) =>
-        this.mapToPermission(permission),
-      );
+      return permissions.map((permission) => this.mapToPermission(permission));
     } catch (_error) {
       this.logger.error(
         "Failed to get system permissions",
@@ -647,13 +806,11 @@ export class PermissionService {
         );
 
         if (!existing) {
-          await this.prisma.permission.create({
-            data: {
-              ...permissionData,
-              domain: "healthcare",
-              isSystemPermission: true,
-              isActive: true,
-            },
+          await this.databaseService.getPrismaClient().createPermissionSafe({
+            ...permissionData,
+            domain: "healthcare",
+            isSystemPermission: true,
+            isActive: true,
           });
 
           this.logger.log(`System permission created: ${permissionData.name}`);
@@ -746,25 +903,31 @@ export class PermissionService {
 
   /**
    * Map database permission to Permission interface
+   * @param permission - The database permission object
+   * @returns Permission - The mapped permission interface
+   * @private
    */
   private mapToPermission(permission: unknown): Permission {
     const perm = permission as Record<string, unknown>;
     return {
-      id: perm.id as string,
-      name: perm.name as string,
-      resource: perm.resource as string,
-      action: perm.action as string,
-      description: perm.description as string | undefined,
-      domain: perm.domain as string,
-      isSystemPermission: perm.isSystemPermission as boolean,
-      isActive: perm.isActive as boolean,
-      createdAt: perm.createdAt as Date,
-      updatedAt: perm.updatedAt as Date,
+      id: perm["id"] as string,
+      name: perm["name"] as string,
+      resource: perm["resource"] as string,
+      action: perm["action"] as string,
+      ...(perm["description"]
+        ? { description: perm["description"] as string }
+        : {}),
+      domain: perm["domain"] as string,
+      isSystemPermission: perm["isSystemPermission"] as boolean,
+      isActive: perm["isActive"] as boolean,
+      createdAt: perm["createdAt"] as Date,
+      updatedAt: perm["updatedAt"] as Date,
     };
   }
 
   /**
    * Clear permission cache
+   * @private
    */
   private async clearPermissionCache(): Promise<void> {
     try {

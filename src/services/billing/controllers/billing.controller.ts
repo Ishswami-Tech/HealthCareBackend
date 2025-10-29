@@ -282,10 +282,7 @@ export class BillingController {
   }
 
   @Get("invoices/download/:fileName")
-  async downloadInvoice(
-    @Param("fileName") fileName: string,
-    @Res() res: Response,
-  ) {
+  downloadInvoice(@Param("fileName") fileName: string, @Res() res: Response) {
     // Check if file exists
     if (!this.invoicePDFService.invoicePDFExists(fileName)) {
       throw new NotFoundException("Invoice PDF not found");

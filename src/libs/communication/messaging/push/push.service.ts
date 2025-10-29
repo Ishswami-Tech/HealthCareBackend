@@ -2,32 +2,65 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as admin from "firebase-admin";
 
+/**
+ * Push notification data interface
+ * @interface PushNotificationData
+ */
 export interface PushNotificationData {
-  title: string;
-  body: string;
-  data?: Record<string, string>;
+  /** Notification title */
+  readonly title: string;
+  /** Notification body text */
+  readonly body: string;
+  /** Optional custom data payload */
+  readonly data?: Record<string, string>;
 }
 
+/**
+ * Push notification result interface
+ * @interface PushNotificationResult
+ */
 export interface PushNotificationResult {
-  success: boolean;
-  messageId?: string;
-  successCount?: number;
-  failureCount?: number;
-  error?: string;
+  /** Whether the operation was successful */
+  readonly success: boolean;
+  /** Message ID from Firebase (single device) */
+  readonly messageId?: string;
+  /** Number of successful deliveries (multiple devices) */
+  readonly successCount?: number;
+  /** Number of failed deliveries (multiple devices) */
+  readonly failureCount?: number;
+  /** Error message if operation failed */
+  readonly error?: string;
 }
 
+/**
+ * Push notification service using Firebase Cloud Messaging
+ *
+ * @class PushNotificationService
+ * @implements {OnModuleInit}
+ */
 @Injectable()
 export class PushNotificationService implements OnModuleInit {
   private readonly logger = new Logger(PushNotificationService.name);
   private firebaseApp: admin.app.App | null = null;
   private isInitialized = false;
 
+  /**
+   * Creates an instance of PushNotificationService
+   * @param configService - Configuration service for environment variables
+   */
   constructor(private readonly configService: ConfigService) {}
 
+  /**
+   * Initializes Firebase on module startup
+   */
   onModuleInit(): void {
     this.initializeFirebase();
   }
 
+  /**
+   * Initializes Firebase Admin SDK
+   * @private
+   */
   private initializeFirebase(): void {
     try {
       const projectId = this.configService.get<string>("FIREBASE_PROJECT_ID");
@@ -70,6 +103,12 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
+  /**
+   * Sends push notification to a single device
+   * @param deviceToken - Firebase device token
+   * @param notification - Notification data
+   * @returns Promise resolving to notification result
+   */
   async sendToDevice(
     deviceToken: string,
     notification: PushNotificationData,
@@ -129,6 +168,12 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
+  /**
+   * Sends push notification to multiple devices
+   * @param deviceTokens - Array of Firebase device tokens
+   * @param notification - Notification data
+   * @returns Promise resolving to notification result
+   */
   async sendToMultipleDevices(
     deviceTokens: string[],
     notification: PushNotificationData,
@@ -178,7 +223,7 @@ export class PushNotificationService implements OnModuleInit {
         response.responses.forEach((resp, idx: number) => {
           if (!resp.success && resp.error) {
             this.logger.warn("Failed to send to device", {
-              deviceToken: this.maskToken(deviceTokens[idx]),
+              deviceToken: this.maskToken(deviceTokens[idx] || ""),
               error: resp.error.message,
             });
           }
@@ -208,6 +253,12 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
+  /**
+   * Sends push notification to a topic
+   * @param topic - Firebase topic name
+   * @param notification - Notification data
+   * @returns Promise resolving to notification result
+   */
   async sendToTopic(
     topic: string,
     notification: PushNotificationData,
@@ -267,6 +318,12 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
+  /**
+   * Subscribes a device to a topic
+   * @param deviceToken - Firebase device token
+   * @param topic - Topic name to subscribe to
+   * @returns Promise resolving to true if successful
+   */
   async subscribeToTopic(deviceToken: string, topic: string): Promise<boolean> {
     if (!this.isInitialized || !this.firebaseApp) {
       this.logger.warn("Push notification service is not initialized");
@@ -292,6 +349,12 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
+  /**
+   * Unsubscribes a device from a topic
+   * @param deviceToken - Firebase device token
+   * @param topic - Topic name to unsubscribe from
+   * @returns Promise resolving to true if successful
+   */
   async unsubscribeFromTopic(
     deviceToken: string,
     topic: string,
@@ -320,11 +383,21 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
+  /**
+   * Masks device token for logging (privacy)
+   * @param token - Device token to mask
+   * @returns Masked token string
+   * @private
+   */
   private maskToken(token: string): string {
     if (!token || token.length < 10) return "INVALID_TOKEN";
     return `${token.substring(0, 6)}...${token.substring(token.length - 4)}`;
   }
 
+  /**
+   * Checks if the push notification service is healthy and initialized
+   * @returns True if service is ready to send notifications
+   */
   isHealthy(): boolean {
     return this.isInitialized;
   }

@@ -139,7 +139,10 @@ export class SESEmailService implements OnModuleInit {
         subject: options.subject,
       });
 
-      return { success: true, messageId: response.MessageId };
+      return {
+        success: true,
+        ...(response.MessageId && { messageId: response.MessageId }),
+      };
     } catch (error) {
       this.logger.error("Failed to send SES email", {
         error: error instanceof Error ? error.message : "Unknown error",

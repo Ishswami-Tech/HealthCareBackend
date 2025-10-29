@@ -1,34 +1,36 @@
-// Database infrastructure exports
+/**
+ * Database Infrastructure - Single Unified Service
+ *
+ * This module provides ONE unified database service for the entire application.
+ * All services should use DatabaseService instead of direct PrismaService access.
+ *
+ * Usage:
+ * ```typescript
+ * import { DatabaseService } from "../../libs/infrastructure/database";
+ *
+ * constructor(
+ *   private readonly databaseService: DatabaseService,
+ * ) {}
+ *
+ * // Access Prisma client
+ * const user = await this.databaseService.getPrismaClient().user.findUnique({...});
+ * ```
+ */
 export * from "./database.module";
-export * from "./database-client.factory";
-export * from "./database-metrics.service";
-export * from "./connection-pool.manager";
-export * from "./query-optimizer.service";
-export * from "./clinic-isolation.service";
 
-// Client exports
-export * from "./clients/healthcare-database.client";
+// Main database service - HealthcareDatabaseClient as the single service
+export { HealthcareDatabaseClient as DatabaseService } from "./clients/healthcare-database.client";
 
-// Interface exports
-export * from "./interfaces/database-client.interface";
-
-// Prisma exports
-export * from "./prisma/prisma.service";
-
-// Type aliases for backwards compatibility (following DRY principle)
-export { HealthcareDatabaseClient as DatabaseClient } from "./clients/healthcare-database.client";
+// Type exports for the unified service
 export type { DatabaseHealthStatus } from "./interfaces/database-client.interface";
+export type {
+  UserWithPassword,
+  UserCreateData,
+  UserSelectResult,
+  UserWithRelations,
+  UserResponse,
+} from "./prisma/user.types";
 
-// Repository exports - commented out until implemented
-// export * from './repositories/base.repository';
-
-// Config exports - commented out until implemented
-// export * from './config/database.config';
-
-// Interface exports - commented out until implemented
-// export * from './interfaces/database.interface';
-// export * from './interfaces/connection.interface';
-
-// Type exports - commented out until implemented
-// export * from './types/database.types';
-// export * from './types/connection.types';
+// Internal exports (not for external use)
+// These are only used internally by the DatabaseService
+export { HealthcareDatabaseClient } from "./clients/healthcare-database.client";

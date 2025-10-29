@@ -11,10 +11,42 @@ import {
   CHEQUP_QUEUE,
 } from "../queue.constants";
 
+/**
+ * Bull Board Service for Queue Management
+ *
+ * Provides comprehensive queue monitoring, statistics, and health checks
+ * for all healthcare system queues. Integrates with Bull Board dashboard
+ * for real-time queue visualization and management.
+ *
+ * @class BullBoardService
+ * @description Enterprise-grade queue monitoring service with health checks and statistics
+ * @example
+ * ```typescript
+ * // Inject the service
+ * constructor(private readonly bullBoardService: BullBoardService) {}
+ *
+ * // Get queue statistics
+ * const stats = await this.bullBoardService.getQueueStats();
+ *
+ * // Check queue health
+ * const health = await this.bullBoardService.getQueueHealth();
+ * ```
+ */
 @Injectable()
 export class BullBoardService {
   private readonly logger = new Logger(BullBoardService.name);
 
+  /**
+   * Constructor for BullBoardService
+   *
+   * @param serviceQueue - Service queue instance (optional)
+   * @param appointmentQueue - Appointment queue instance (optional)
+   * @param emailQueue - Email queue instance (optional)
+   * @param notificationQueue - Notification queue instance (optional)
+   * @param vidhakarmaQueue - Vidhakarma queue instance (optional)
+   * @param panchakarmaQueue - Panchakarma queue instance (optional)
+   * @param chequpQueue - Chequp queue instance (optional)
+   */
   constructor(
     @Optional() @InjectQueue(SERVICE_QUEUE) private serviceQueue: Queue,
     @Optional() @InjectQueue(APPOINTMENT_QUEUE) private appointmentQueue: Queue,
@@ -29,8 +61,11 @@ export class BullBoardService {
 
   /**
    * Get all registered queues for BullBoard
+   *
+   * @returns Record of queue names to queue instances
+   * @description Returns all available queue instances for dashboard display
    */
-  getQueues() {
+  getQueues(): Record<string, Queue | undefined> {
     const queues: Record<string, Queue | undefined> = {};
     if (this.serviceQueue) queues[SERVICE_QUEUE] = this.serviceQueue;
     if (this.appointmentQueue)
@@ -47,6 +82,9 @@ export class BullBoardService {
 
   /**
    * Get queue statistics for monitoring
+   *
+   * @returns Promise resolving to queue statistics
+   * @description Collects comprehensive statistics from all registered queues
    */
   async getQueueStats() {
     const queues = this.getQueues();
@@ -262,21 +300,23 @@ export class BullBoardService {
 
     for (const [queueName, queueStats] of Object.entries(stats)) {
       const stat = queueStats as Record<string, unknown>;
-      if (stat.error) {
+      if (stat["error"]) {
         health.queues[queueName] = "unhealthy";
-        health.issues.push(`Queue ${queueName}: ${stat.error}`);
+        health.issues.push(
+          `Queue ${queueName}: ${stat["error"] instanceof Error ? stat["error"].message : JSON.stringify(stat["error"])}`,
+        );
         health.overall = "unhealthy";
-      } else if ((stat.failed as number) > 100) {
+      } else if ((stat["failed"] as number) > 100) {
         health.queues[queueName] = "degraded";
         health.issues.push(
-          `Queue ${queueName}: High failure rate (${stat.failed} failed jobs)`,
+          `Queue ${queueName}: High failure rate (${String(stat["failed"])} failed jobs)`,
         );
         health.overall =
           health.overall === "healthy" ? "degraded" : health.overall;
-      } else if ((stat.waiting as number) > 1000) {
+      } else if ((stat["waiting"] as number) > 1000) {
         health.queues[queueName] = "degraded";
         health.issues.push(
-          `Queue ${queueName}: High queue depth (${stat.waiting} waiting jobs)`,
+          `Queue ${queueName}: High queue depth (${String(stat["waiting"])} waiting jobs)`,
         );
         health.overall =
           health.overall === "healthy" ? "degraded" : health.overall;

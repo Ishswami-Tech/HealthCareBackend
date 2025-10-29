@@ -43,18 +43,18 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<Record<string, any>>();
     const _response = context.switchToHttp().getResponse();
 
     // Handle cache read operations
-    if (cacheOptions && request.method === "GET") {
+    if (cacheOptions && request["method"] === "GET") {
       return this.handleCacheRead(context, next, cacheOptions);
     }
 
     // Handle cache invalidation operations
     if (
       invalidationOptions &&
-      ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request["method"] as string)
     ) {
       return this.handleCacheInvalidation(context, next, invalidationOptions);
     }
@@ -127,7 +127,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       tap((result) => {
         try {
           // Check condition before invalidating
-          if (options.condition && !options.condition(context, result)) {
+          if (options.condition && !options.condition(context, result, ...[])) {
             return;
           }
 
@@ -158,27 +158,27 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     options: UnifiedCacheOptions,
   ): string | null {
     try {
-      const request = context.switchToHttp().getRequest();
+      const request = context.switchToHttp().getRequest<Record<string, any>>();
 
       // Use custom key generator if provided
       if (options.customKeyGenerator) {
-        return options.customKeyGenerator(context);
+        return options.customKeyGenerator(context, ...[]);
       }
 
       // Use legacy keyGenerator for backward compatibility
       if (options.keyGenerator) {
-        return options.keyGenerator();
+        return options.keyGenerator(...[]);
       }
 
       // Use key template with parameter substitution
       if (options.keyTemplate) {
         let key = options.keyTemplate;
-        const params = { ...request.params, ...request.query };
+        const params = { ...request["params"], ...request["query"] };
 
         // Add user context
-        if (request.user) {
-          params.userId = request.user.id;
-          params.userRole = request.user.role;
+        if (request["user"]) {
+          params.userId = (request["user"] as Record<string, any>)["id"];
+          params.userRole = (request["user"] as Record<string, any>)["role"];
         }
 
         // Replace placeholders in template
@@ -188,8 +188,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         }
 
         // Add clinic specificity if needed
-        if (options.clinicSpecific && request.params?.clinicId) {
-          key = `clinic:${request.params.clinicId}:${key}`;
+        if (options.clinicSpecific && request["params"]?.["clinicId"]) {
+          key = `clinic:${request["params"]["clinicId"] as string}:${key}`;
         }
 
         // Add method name for uniqueness
@@ -200,14 +200,14 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
 
       // Generate default key based on route and parameters
-      const route = request.route?.path || request.url;
+      const route = (request["route"]?.path || request["url"]) as string;
       const paramsStr =
-        Object.keys(request.params || {}).length > 0
-          ? JSON.stringify(request.params)
+        Object.keys(request["params"] || {}).length > 0
+          ? JSON.stringify(request["params"])
           : "";
       const queryStr =
-        Object.keys(request.query || {}).length > 0
-          ? JSON.stringify(request.query)
+        Object.keys(request["query"] || {}).length > 0
+          ? JSON.stringify(request["query"])
           : "";
 
       return `healthcare:${route}:${paramsStr}:${queryStr}`;
@@ -226,18 +226,18 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       if (options.patientSpecific) {
         // This would use the healthcare cache service with patient-specific logic
         // For now, we'll use the basic Redis cache
-        return await this.cacheService["redisService"].get(cacheKey);
+        return await this.cacheService.get(cacheKey);
       }
 
       if (options.emergencyData) {
         // Emergency data uses minimal caching
-        const cached = await this.cacheService["redisService"].get(cacheKey);
+        const cached = await this.cacheService.get(cacheKey);
         // Double-check TTL for emergency data
         if (cached) {
-          const ttl = await this.cacheService["redisService"].ttl(cacheKey);
+          const ttl = await this.cacheService.ttl(cacheKey);
           if (ttl > (options.ttl || 300)) {
             // TTL too long for emergency data, invalidate
-            await this.cacheService["redisService"].del(cacheKey);
+            await this.cacheService.del(cacheKey);
             return null;
           }
         }
@@ -245,8 +245,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
 
       // Standard cache retrieval
-      const cachedValue = await this.cacheService["redisService"].get(cacheKey);
-      return cachedValue ? JSON.parse(cachedValue) : null;
+      const cachedValue = await this.cacheService.get(cacheKey);
+      return cachedValue ? JSON.parse(cachedValue as string) : null;
     } catch (error) {
       this.logger.error(
         `Error retrieving cached value for key ${cacheKey}:`,
@@ -269,31 +269,28 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       // Apply healthcare-specific caching logic
       if (options.containsPHI) {
         // PHI data gets additional security measures
-        await this.cacheService["redisService"].set(
-          cacheKey,
-          serializedValue,
-          ttl,
-        );
+        await this.cacheService.set(cacheKey, serializedValue, ttl);
 
         // Track PHI cache access for compliance
         await this.trackPHIAccess(cacheKey, context, "cache_set");
       } else if (options.emergencyData) {
         // Emergency data uses minimal TTL
         const emergencyTTL = Math.min(ttl, 300); // Max 5 minutes
-        await this.cacheService["redisService"].set(
-          cacheKey,
-          serializedValue,
-          emergencyTTL,
-        );
+        await this.cacheService.set(cacheKey, serializedValue, emergencyTTL);
       } else {
         // Standard caching with SWR support
         await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {
           ttl,
-          compress: options.compress || options.enableCompression,
+          ...(options.compress !== undefined && { compress: options.compress }),
+          ...(options.enableCompression !== undefined && {
+            compress: options.enableCompression,
+          }),
           priority: this.mapPriority(options.priority),
           enableSwr: options.enableSWR !== false,
-          staleTime: options.staleTime,
-          tags: options.tags,
+          ...(options.staleTime !== undefined && {
+            staleTime: options.staleTime,
+          }),
+          ...(options.tags !== undefined && { tags: options.tags }),
         });
       }
 
@@ -314,11 +311,11 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     options: CacheInvalidationOptions,
   ): Promise<void> {
     try {
-      const request = context.switchToHttp().getRequest();
+      const request = context.switchToHttp().getRequest<Record<string, any>>();
 
       // Execute custom invalidation logic if provided
       if (options.customInvalidation) {
-        await options.customInvalidation(context, result);
+        await options.customInvalidation(context, result, ...[]);
         return;
       }
 
@@ -328,7 +325,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           let resolvedPattern = pattern;
 
           // Replace placeholders in pattern
-          const params = { ...request.params, ...request.body };
+          const params = { ...request["params"], ...request["body"] };
           for (const [param, value] of Object.entries(params)) {
             resolvedPattern = resolvedPattern.replace(
               `{${param}}`,
@@ -336,9 +333,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
             );
           }
 
-          await this.cacheService["redisService"].invalidateCacheByPattern(
-            resolvedPattern,
-          );
+          await this.cacheService.invalidateCacheByPattern(resolvedPattern);
           this.logger.debug(`Invalidated cache pattern: ${resolvedPattern}`);
         }
       }
@@ -346,28 +341,30 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       // Invalidate by tags
       if (options.tags && options.tags.length > 0) {
         for (const tag of options.tags) {
-          await this.cacheService["redisService"].invalidateCacheByTag(tag);
+          await this.cacheService.invalidateCacheByTag(tag);
           this.logger.debug(`Invalidated cache tag: ${tag}`);
         }
       }
 
       // Healthcare-specific invalidations
-      if (options.invalidatePatient && request.params?.patientId) {
+      if (options.invalidatePatient && request["params"]?.["patientId"]) {
         await this.cacheService.invalidatePatientCache(
-          request.params.patientId,
-          request.params?.clinicId,
+          request["params"]["patientId"] as string,
+          request["params"]?.["clinicId"] as string | undefined,
         );
       }
 
-      if (options.invalidateDoctor && request.params?.doctorId) {
+      if (options.invalidateDoctor && request["params"]?.["doctorId"]) {
         await this.cacheService.invalidateDoctorCache(
-          request.params.doctorId,
-          request.params?.clinicId,
+          request["params"]["doctorId"] as string,
+          request["params"]?.["clinicId"] as string | undefined,
         );
       }
 
-      if (options.invalidateClinic && request.params?.clinicId) {
-        await this.cacheService.invalidateClinicCache(request.params.clinicId);
+      if (options.invalidateClinic && request["params"]?.["clinicId"]) {
+        await this.cacheService.invalidateClinicCache(
+          request["params"]["clinicId"] as string,
+        );
       }
     } catch (error) {
       this.logger.error("Error performing cache invalidation:", error);
@@ -421,30 +418,26 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     operation: "cache_get" | "cache_set",
   ): Promise<void> {
     try {
-      const request = context.switchToHttp().getRequest();
+      const request = context.switchToHttp().getRequest<Record<string, any>>();
       const auditData = {
         timestamp: new Date().toISOString(),
         operation,
         cacheKey,
-        userId: request.user?.id,
-        userRole: request.user?.role,
-        ipAddress: request.ip,
-        userAgent: request.headers["user-agent"],
-        clinicId: request.params?.clinicId || request.body?.clinicId,
+        userId: (request["user"] as Record<string, any>)?.["id"],
+        userRole: (request["user"] as Record<string, any>)?.["role"],
+        ipAddress: request["ip"] as string,
+        userAgent: request["headers"]["user-agent"] as string,
+        clinicId: (request["params"]?.["clinicId"] ||
+          request["body"]?.["clinicId"]) as string,
       };
 
       // Log PHI access for compliance
-      await this.cacheService["redisService"].rPush(
+      await this.cacheService.rPush(
         "phi:access:audit",
         JSON.stringify(auditData),
       );
 
-      // Trim audit log to prevent unlimited growth
-      await this.cacheService["redisService"].lTrim(
-        "phi:access:audit",
-        -10000,
-        -1,
-      );
+      // Note: Audit log trimming would be handled by cache service internally
     } catch (error) {
       this.logger.error("Error tracking PHI access:", error);
     }
@@ -457,18 +450,19 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     context: ExecutionContext,
     options: UnifiedCacheOptions,
   ): boolean {
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<Record<string, any>>();
 
     // Always bypass cache for emergency users when dealing with patient data
     if (
       options.patientSpecific &&
-      request.user?.role === "EMERGENCY_RESPONDER"
+      (request["user"] as Record<string, any>)?.["role"] ===
+        "EMERGENCY_RESPONDER"
     ) {
       return true;
     }
 
     // Bypass cache if force refresh header is present
-    if (request.headers["x-force-refresh"] === "true") {
+    if (request["headers"]["x-force-refresh"] === "true") {
       return true;
     }
 

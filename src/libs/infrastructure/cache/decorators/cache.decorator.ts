@@ -357,15 +357,15 @@ export const InvalidateClinicCache = (
  */
 export const ClinicId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext) => {
-    const request = ctx.switchToHttp().getRequest();
+    const request = ctx.switchToHttp().getRequest<Record<string, any>>();
 
     // Try to get clinic ID from various sources
     return (
-      request.params?.clinicId ||
-      request.body?.clinicId ||
-      request.query?.clinicId ||
-      request.user?.clinicId ||
-      request.headers["x-clinic-id"]
+      request["params"]?.clinicId ||
+      request["body"]?.clinicId ||
+      request["query"]?.clinicId ||
+      request["user"]?.clinicId ||
+      request["headers"]["x-clinic-id"]
     );
   },
 );
@@ -453,7 +453,7 @@ export const CacheConditions = {
   /**
    * Only cache successful responses (2xx status codes)
    */
-  onSuccess: (context: ExecutionContext, result: unknown) => {
+  onSuccess: (context: ExecutionContext, _result: unknown) => {
     const response = context.switchToHttp().getResponse();
     return response.statusCode >= 200 && response.statusCode < 300;
   },
@@ -461,7 +461,7 @@ export const CacheConditions = {
   /**
    * Only cache non-empty results
    */
-  nonEmpty: (context: ExecutionContext, result: unknown) => {
+  nonEmpty: (_context: ExecutionContext, result: unknown) => {
     return (
       result !== null &&
       result !== undefined &&
@@ -472,7 +472,7 @@ export const CacheConditions = {
   /**
    * Only cache during business hours (to prevent stale emergency data)
    */
-  businessHours: (context: ExecutionContext, result: unknown) => {
+  businessHours: (_context: ExecutionContext, _result: unknown) => {
     const now = new Date();
     const hour = now.getHours();
     return hour >= 8 && hour <= 18; // 8 AM to 6 PM
@@ -481,7 +481,7 @@ export const CacheConditions = {
   /**
    * Don't cache if user has emergency role
    */
-  nonEmergencyUser: (context: ExecutionContext, result: unknown) => {
+  nonEmergencyUser: (context: ExecutionContext, _result: unknown) => {
     const request = context.switchToHttp().getRequest();
     return request.user?.role !== "EMERGENCY_RESPONDER";
   },
@@ -489,7 +489,9 @@ export const CacheConditions = {
   /**
    * Combine multiple conditions with AND logic
    */
-  and: (...conditions: Function[]) => {
+  and: (
+    ...conditions: ((context: ExecutionContext, result: unknown) => boolean)[]
+  ) => {
     return (context: ExecutionContext, result: unknown) => {
       return conditions.every((condition) => condition(context, result));
     };
@@ -498,7 +500,9 @@ export const CacheConditions = {
   /**
    * Combine multiple conditions with OR logic
    */
-  or: (...conditions: Function[]) => {
+  or: (
+    ...conditions: ((context: ExecutionContext, result: unknown) => boolean)[]
+  ) => {
     return (context: ExecutionContext, result: unknown) => {
       return conditions.some((condition) => condition(context, result));
     };
@@ -512,7 +516,7 @@ export const HealthcareKeyGenerators = {
   /**
    * Generate patient-specific cache key
    */
-  patient: (context: ExecutionContext, ...args: unknown[]) => {
+  patient: (context: ExecutionContext, ..._args: unknown[]) => {
     const request = context.switchToHttp().getRequest();
     const patientId = request.params?.patientId || request.body?.patientId;
     const clinicId = request.params?.clinicId || request.body?.clinicId;
@@ -524,7 +528,7 @@ export const HealthcareKeyGenerators = {
   /**
    * Generate doctor-specific cache key
    */
-  doctor: (context: ExecutionContext, ...args: unknown[]) => {
+  doctor: (context: ExecutionContext, ..._args: unknown[]) => {
     const request = context.switchToHttp().getRequest();
     const doctorId = request.params?.doctorId || request.user?.id;
     const clinicId = request.params?.clinicId || request.body?.clinicId;
@@ -536,7 +540,7 @@ export const HealthcareKeyGenerators = {
   /**
    * Generate appointment-specific cache key
    */
-  appointment: (context: ExecutionContext, ...args: unknown[]) => {
+  appointment: (context: ExecutionContext, ..._args: unknown[]) => {
     const request = context.switchToHttp().getRequest();
     const appointmentId =
       request.params?.appointmentId || request.body?.appointmentId;
@@ -548,7 +552,7 @@ export const HealthcareKeyGenerators = {
   /**
    * Generate clinic-specific cache key
    */
-  clinic: (context: ExecutionContext, ...args: unknown[]) => {
+  clinic: (context: ExecutionContext, ..._args: unknown[]) => {
     const request = context.switchToHttp().getRequest();
     const clinicId = request.params?.clinicId || request.body?.clinicId;
     const method = context.getHandler().name;
@@ -559,7 +563,7 @@ export const HealthcareKeyGenerators = {
   /**
    * Generate time-based cache key for daily data
    */
-  daily: (context: ExecutionContext, ...args: unknown[]) => {
+  daily: (context: ExecutionContext, ..._args: unknown[]) => {
     const request = context.switchToHttp().getRequest();
     const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
     const entityId =

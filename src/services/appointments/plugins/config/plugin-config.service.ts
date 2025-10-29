@@ -49,7 +49,7 @@ export class PluginConfigService {
       // Try to get from cache first
       const cached = await this.cacheService.get(this.CONFIG_CACHE_KEY);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as PluginConfigMap;
       }
 
       // Generate configurations from environment
@@ -255,7 +255,15 @@ export class PluginConfigService {
   ): Promise<boolean> {
     try {
       const allConfigs = await this.getAllPluginConfigs();
-      allConfigs[pluginName] = { ...allConfigs[pluginName], ...config };
+      allConfigs[pluginName] = {
+        ...allConfigs[pluginName],
+        ...config,
+        enabled: config.enabled ?? allConfigs[pluginName]?.enabled ?? true,
+        priority: config.priority ?? allConfigs[pluginName]?.priority ?? 0,
+        settings: config.settings ?? allConfigs[pluginName]?.settings ?? {},
+        features: config.features ?? allConfigs[pluginName]?.features ?? [],
+        domain: config.domain ?? allConfigs[pluginName]?.domain ?? "",
+      };
 
       // Update cache
       await this.cacheService.set(

@@ -1,7 +1,10 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { ConfigService } from "@nestjs/config";
-import { PluginConfigService } from "./config/plugin-config.service";
+import {
+  PluginConfigService,
+  PluginConfig,
+} from "./config/plugin-config.service";
 import { PluginHealthService } from "./health/plugin-health.service";
 
 export interface PluginOperationResult {
@@ -25,6 +28,23 @@ export interface PluginHealthStatus {
   };
 }
 
+export interface EnterprisePluginMetrics {
+  totalOperations: number;
+  successfulOperations: number;
+  failedOperations: number;
+  totalExecutionTime: number;
+  averageExecutionTime: number;
+  lastOperation: Date | null;
+}
+
+export interface PluginInfo {
+  name: string;
+  version: string;
+  domain: string;
+  feature: string;
+  isActive: boolean;
+}
+
 /**
  * Enterprise Plugin Manager for Healthcare Appointments
  *
@@ -39,9 +59,9 @@ export interface PluginHealthStatus {
 @Injectable()
 export class AppointmentEnterprisePluginManager implements OnModuleInit {
   private readonly logger = new Logger(AppointmentEnterprisePluginManager.name);
-  private readonly pluginMetrics = new Map<string, any>();
+  private readonly pluginMetrics = new Map<string, EnterprisePluginMetrics>();
   private readonly pluginHealthStatus = new Map<string, PluginHealthStatus>();
-  private readonly registeredPlugins = new Map<string, any>();
+  private readonly registeredPlugins = new Map<string, PluginInfo>();
 
   constructor(
     private readonly eventEmitter: EventEmitter2,
@@ -50,8 +70,8 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
     private readonly pluginHealthService: PluginHealthService,
   ) {}
 
-  async onModuleInit() {
-    await this.initializePlugins();
+  onModuleInit() {
+    this.initializePlugins();
     this.startHealthMonitoring();
     this.logger.log("Enterprise Plugin Manager initialized");
   }
@@ -59,25 +79,35 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
   /**
    * Initialize all available plugins
    */
-  private async initializePlugins(): Promise<void> {
+  private initializePlugins(): void {
     try {
       // Register core plugins - simplified for now
-      const corePlugins = [
-        { name: "clinic-queue", domain: "healthcare", feature: "queue" },
+      const corePlugins: PluginInfo[] = [
+        {
+          name: "clinic-queue",
+          version: "1.0.0",
+          domain: "healthcare",
+          feature: "queue",
+          isActive: true,
+        },
         {
           name: "appointment-scheduler",
+          version: "1.0.0",
           domain: "healthcare",
           feature: "scheduling",
+          isActive: true,
         },
         {
           name: "notification-service",
+          version: "1.0.0",
           domain: "healthcare",
           feature: "notifications",
+          isActive: true,
         },
       ];
 
       for (const plugin of corePlugins) {
-        await this.registerPlugin(plugin);
+        this.registerPlugin(plugin);
       }
 
       this.logger.log(`Initialized ${corePlugins.length} core plugins`);
@@ -90,23 +120,13 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
   /**
    * Register a plugin with the system
    */
-  async registerPlugin(plugin: unknown): Promise<void> {
+  registerPlugin(plugin: PluginInfo): void {
     try {
-      this.registeredPlugins.set(
-        (plugin as Record<string, unknown>).name as string,
-        plugin,
-      );
-      this.initializePluginMetrics(
-        (plugin as Record<string, unknown>).name as string,
-      );
-      this.logger.log(
-        `Plugin registered: ${(plugin as Record<string, unknown>).name as string}`,
-      );
+      this.registeredPlugins.set(plugin.name, plugin);
+      this.initializePluginMetrics(plugin.name);
+      this.logger.log(`Plugin registered: ${plugin.name}`);
     } catch (_error) {
-      this.logger.error(
-        `Failed to register plugin ${(plugin as Record<string, unknown>).name as string}:`,
-        _error,
-      );
+      this.logger.error(`Failed to register plugin ${plugin.name}:`, _error);
       throw _error;
     }
   }
@@ -169,12 +189,12 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
   /**
    * Execute plugin method - simplified implementation
    */
-  private async executePluginMethod(
+  private executePluginMethod(
     pluginName: string,
     operation: string,
     data: unknown,
     context?: unknown,
-  ): Promise<unknown> {
+  ): unknown {
     // This is a simplified implementation - in a real system, this would call actual plugin methods
     switch (pluginName) {
       case "healthcare.queue":
@@ -188,29 +208,29 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
     }
   }
 
-  private async executeQueueOperation(
+  private executeQueueOperation(
     operation: string,
     data: unknown,
     context?: unknown,
-  ): Promise<unknown> {
+  ): unknown {
     // Simplified queue operations
     return { operation, data, context, timestamp: new Date() };
   }
 
-  private async executeSchedulingOperation(
+  private executeSchedulingOperation(
     operation: string,
     data: unknown,
     context?: unknown,
-  ): Promise<unknown> {
+  ): unknown {
     // Simplified scheduling operations
     return { operation, data, context, timestamp: new Date() };
   }
 
-  private async executeNotificationOperation(
+  private executeNotificationOperation(
     operation: string,
     data: unknown,
     context?: unknown,
-  ): Promise<unknown> {
+  ): unknown {
     // Simplified notification operations
     return { operation, data, context, timestamp: new Date() };
   }
@@ -339,24 +359,24 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
    * Start health monitoring
    */
   private startHealthMonitoring(): void {
-    setInterval(async () => {
-      await this.performHealthCheck();
+    setInterval(() => {
+      void this.performHealthCheck();
     }, 30000); // Check every 30 seconds
   }
 
   /**
    * Perform health check on all plugins
    */
-  private async performHealthCheck(): Promise<void> {
+  private performHealthCheck(): void {
     for (const [pluginName, healthStatus] of Array.from(
       this.pluginHealthStatus.entries(),
     )) {
       try {
         // Simplified health check - in a real implementation, this would call actual health check methods
-        const isHealthy = await this.checkPluginHealth(pluginName);
+        const isHealthy = this.checkPluginHealth(pluginName);
         healthStatus.healthy = isHealthy;
         healthStatus.lastCheck = new Date();
-        healthStatus.error = undefined;
+        // healthStatus.error = undefined; // Omit for healthy status
       } catch (_error) {
         healthStatus.healthy = false;
         healthStatus.lastCheck = new Date();
@@ -373,7 +393,7 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
   /**
    * Simplified plugin health check
    */
-  private async checkPluginHealth(pluginName: string): Promise<boolean> {
+  private checkPluginHealth(pluginName: string): boolean {
     // Simplified health check - just check if plugin is registered and has recent activity
     const plugin = this.registeredPlugins.get(pluginName);
     if (!plugin) return false;
@@ -405,7 +425,7 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
   ): Promise<void> {
     await this.pluginConfigService.updatePluginConfig(
       pluginName,
-      config as any,
+      config as Partial<PluginConfig>,
     );
     this.logger.log(`Configuration updated for plugin: ${pluginName}`);
   }
@@ -413,7 +433,7 @@ export class AppointmentEnterprisePluginManager implements OnModuleInit {
   /**
    * Restart plugin
    */
-  async restartPlugin(pluginName: string): Promise<void> {
+  restartPlugin(pluginName: string): void {
     try {
       const plugin = this.registeredPlugins.get(pluginName);
       if (plugin) {

@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../infrastructure/database";
 import { LoggingService } from "../../infrastructure/logging/logging.service";
 import {
   LogType,
@@ -16,60 +16,154 @@ import {
   ClinicContext,
 } from "../../infrastructure/database/clinic-isolation.service";
 
-// Type definitions for request objects
-interface AuthenticatedUser {
-  id?: string;
-  sub?: string;
-  role?: string;
+/**
+ * Authenticated user interface for request context
+ *
+ * @interface AuthenticatedUser
+ * @description Defines the structure of authenticated user information
+ */
+export interface AuthenticatedUser {
+  readonly id?: string;
+  readonly sub?: string;
+  readonly role?: string;
+  readonly clinicId?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Request headers interface for clinic-specific headers
+ *
+ * @interface ClinicRequestHeaders
+ * @description Defines the structure of request headers including clinic-specific ones
+ */
+export interface ClinicRequestHeaders {
+  readonly "x-clinic-id"?: string;
+  readonly "clinic-id"?: string;
+  readonly [key: string]: string | undefined;
+}
+
+/**
+ * Query parameters interface for clinic requests
+ *
+ * @interface ClinicQueryParams
+ * @description Defines the structure of query parameters for clinic requests
+ */
+export interface ClinicQueryParams {
+  readonly clinicId?: string;
+  readonly clinic_id?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Route parameters interface for clinic requests
+ *
+ * @interface ClinicRouteParams
+ * @description Defines the structure of route parameters for clinic requests
+ */
+export interface ClinicRouteParams {
+  readonly clinicId?: string;
+  readonly clinic_id?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Request body interface for clinic requests
+ *
+ * @interface ClinicRequestBody
+ * @description Defines the structure of request body for clinic requests
+ */
+export interface ClinicRequestBody {
+  readonly clinicId?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Clinic context interface for request context
+ *
+ * @interface ClinicRequestContext
+ * @description Defines the structure of clinic context in requests
+ */
+export interface ClinicRequestContext {
+  readonly clinicName?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Clinic request interface with healthcare-specific properties
+ *
+ * @interface ClinicRequest
+ * @description Enhanced request interface for clinic-specific operations
+ */
+export interface ClinicRequest {
+  readonly url: string;
+  readonly method: string;
+  readonly user?: AuthenticatedUser;
+  readonly headers: ClinicRequestHeaders;
+  readonly query?: ClinicQueryParams;
+  readonly params?: ClinicRouteParams;
+  readonly body?: ClinicRequestBody;
   clinicId?: string;
-  [key: string]: unknown;
+  clinicContext?: ClinicRequestContext;
 }
 
-interface ClinicRequest {
-  url: string;
-  method: string;
-  user?: AuthenticatedUser;
-  headers: {
-    "x-clinic-id"?: string;
-    "clinic-id"?: string;
-    [key: string]: string | undefined;
-  };
-  query?: {
-    clinicId?: string;
-    clinic_id?: string;
-    [key: string]: unknown;
-  };
-  params?: {
-    clinicId?: string;
-    clinic_id?: string;
-    [key: string]: unknown;
-  };
-  body?: {
-    clinicId?: string;
-    [key: string]: unknown;
-  };
-  clinicId?: string;
-  clinicContext?: {
-    clinicName?: string;
-    [key: string]: unknown;
-  };
+/**
+ * Clinic validation result interface
+ *
+ * @interface ClinicValidationResult
+ * @description Defines the structure of clinic validation results
+ */
+export interface ClinicValidationResult {
+  readonly success: boolean;
+  readonly error?: string;
+  readonly clinicContext?: ClinicContext;
 }
 
-interface ClinicValidationResult {
-  success: boolean;
-  error?: string;
-  clinicContext?: ClinicContext;
-}
-
+/**
+ * Clinic Guard for Healthcare Applications
+ *
+ * @class ClinicGuard
+ * @implements CanActivate
+ * @description Guards clinic-specific routes to ensure proper clinic context and access control.
+ * Validates clinic access and sets clinic context for downstream use.
+ *
+ * @example
+ * ```typescript
+ * // Use with @UseGuards decorator
+ * @Controller('appointments')
+ * @UseGuards(ClinicGuard)
+ * export class AppointmentsController {
+ *   @Get()
+ *   async getAppointments() {
+ *     // Clinic context is automatically available
+ *   }
+ * }
+ * ```
+ */
 @Injectable()
 export class ClinicGuard implements CanActivate {
+  /**
+   * Creates a new ClinicGuard instance
+   *
+   * @param reflector - NestJS reflector for metadata access
+   * @param prisma - Prisma service for database operations
+   * @param loggingService - Logging service for audit trails
+   * @param clinicIsolationService - Service for clinic access validation
+   */
   constructor(
-    private reflector: Reflector,
-    private prisma: PrismaService,
-    private loggingService: LoggingService,
-    private clinicIsolationService: ClinicIsolationService,
+    private readonly reflector: Reflector,
+    private readonly databaseService: DatabaseService,
+    private readonly loggingService: LoggingService,
+    private readonly clinicIsolationService: ClinicIsolationService,
   ) {}
 
+  /**
+   * Determines if the current request can proceed with clinic access
+   *
+   * @param context - The execution context containing request information
+   * @returns Promise<boolean> - True if access is allowed, false otherwise
+   * @throws ForbiddenException - When clinic access is denied
+   * @description Validates clinic access for clinic-specific routes and sets clinic context
+   */
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<ClinicRequest>();
     const user = request.user;
@@ -166,6 +260,13 @@ export class ClinicGuard implements CanActivate {
     return true;
   }
 
+  /**
+   * Determines if the current route requires clinic context
+   *
+   * @param context - The execution context containing route information
+   * @returns True if the route requires clinic context
+   * @private
+   */
   private isClinicRoute(context: ExecutionContext): boolean {
     // Get the controller and handler metadata to determine if this is a clinic route
     const isPublic = this.reflector.getAllAndOverride<boolean>("isPublic", [
@@ -207,6 +308,13 @@ export class ClinicGuard implements CanActivate {
     return clinicRoutePatterns.some((pattern) => pattern.test(path));
   }
 
+  /**
+   * Extracts clinic ID from various sources in the request
+   *
+   * @param request - The clinic request object
+   * @returns The clinic ID if found, null otherwise
+   * @private
+   */
   private extractClinicId(request: ClinicRequest): string | null {
     // Try to get clinic ID from various sources
 

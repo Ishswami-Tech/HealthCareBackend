@@ -1,8 +1,15 @@
 import { ApiProperty } from "@nestjs/swagger";
 
 /**
- * Base response DTO following NestJS best practices
- * Based on AI rules: @nestjs-specific.md and @coding-standards.md
+ * Base response Data Transfer Object
+ * @class BaseResponseDto
+ * @description Provides common structure for all API responses
+ * @example
+ * ```typescript
+ * const response = new BaseResponseDto("Operation completed successfully");
+ * response.status = "success";
+ * response.timestamp = "2024-01-01T00:00:00.000Z";
+ * ```
  */
 export class BaseResponseDto {
   @ApiProperty({
@@ -39,7 +46,15 @@ export class BaseResponseDto {
 }
 
 /**
- * Pagination metadata DTO
+ * Data Transfer Object for pagination metadata
+ * @class PaginationMetaDto
+ * @description Contains pagination information for list responses
+ * @example
+ * ```typescript
+ * const meta = new PaginationMetaDto(1, 10, 100);
+ * meta.totalPages = 10;
+ * meta.hasNext = true;
+ * ```
  */
 export class PaginationMetaDto {
   @ApiProperty({
@@ -92,7 +107,15 @@ export class PaginationMetaDto {
 }
 
 /**
- * Paginated response DTO for list endpoints
+ * Data Transfer Object for paginated list responses
+ * @class PaginatedResponseDto
+ * @description Generic DTO for paginated data responses
+ * @template T Type of items in the data array
+ * @extends BaseResponseDto
+ * @example
+ * ```typescript
+ * const response = new PaginatedResponseDto(users, meta, "Users retrieved successfully");
+ * ```
  */
 export class PaginatedResponseDto<T> extends BaseResponseDto {
   @ApiProperty({
@@ -118,7 +141,15 @@ export class PaginatedResponseDto<T> extends BaseResponseDto {
 }
 
 /**
- * Single data response DTO for detail endpoints
+ * Data Transfer Object for single data responses
+ * @class DataResponseDto
+ * @description Generic DTO for single item responses
+ * @template T Type of the data object
+ * @extends BaseResponseDto
+ * @example
+ * ```typescript
+ * const response = new DataResponseDto(user, "User retrieved successfully");
+ * ```
  */
 export class DataResponseDto<T> extends BaseResponseDto {
   @ApiProperty({
@@ -133,7 +164,14 @@ export class DataResponseDto<T> extends BaseResponseDto {
 }
 
 /**
- * Error response DTO for consistent error handling
+ * Data Transfer Object for error responses
+ * @class ErrorResponseDto
+ * @description Provides consistent structure for error responses
+ * @extends BaseResponseDto
+ * @example
+ * ```typescript
+ * const error = new ErrorResponseDto("Validation failed", "VALIDATION_ERROR", details, 400);
+ * ```
  */
 export class ErrorResponseDto extends BaseResponseDto {
   @ApiProperty({
@@ -164,14 +202,21 @@ export class ErrorResponseDto extends BaseResponseDto {
     statusCode?: number,
   ) {
     super(message, "error");
-    this.errorCode = errorCode;
+    this.errorCode = errorCode || "";
     this.details = details;
-    this.statusCode = statusCode;
+    this.statusCode = statusCode || 500;
   }
 }
 
 /**
- * Success response DTO for simple success messages
+ * Data Transfer Object for simple success responses
+ * @class SuccessResponseDto
+ * @description Provides simple success response structure
+ * @extends BaseResponseDto
+ * @example
+ * ```typescript
+ * const success = new SuccessResponseDto("Operation completed successfully");
+ * ```
  */
 export class SuccessResponseDto extends BaseResponseDto {
   @ApiProperty({

@@ -95,7 +95,7 @@ export class OtpService {
         context: {
           name,
           otp,
-        } as any,
+        },
       });
 
       this.logger.log(`OTP sent to ${email} for ${purpose}`);

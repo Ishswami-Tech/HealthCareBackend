@@ -30,14 +30,14 @@ import {
   FOLLOW_UP_QUEUE,
   RECURRING_APPOINTMENT_QUEUE,
 } from "./queue.constants";
-import { Queue, Worker } from "bullmq";
-import { DatabaseModule, PrismaService } from "../../database";
+import { Queue, Worker, Job } from "bullmq";
+import { DatabaseModule, DatabaseService } from "../../database";
 
 @Module({})
 export class QueueModule {
   static forRoot(): DynamicModule {
     // Filter queues based on service type to prevent conflicts
-    const serviceName = process.env.SERVICE_NAME || "clinic";
+    const serviceName = process.env["SERVICE_NAME"] || "clinic";
 
     // Define service-specific queues with domain prefixes
     const clinicQueues = [
@@ -70,20 +70,20 @@ export class QueueModule {
       queueNames = clinicQueues;
       // Fashion-specific Redis configuration
       redisConfig = {
-        host: process.env.REDIS_HOST || "localhost",
-        port: parseInt(process.env.REDIS_PORT || "6379"),
-        password: process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.REDIS_DB || "2"), // Database for queue operations
+        host: process.env["REDIS_HOST"] || "localhost",
+        port: parseInt(process.env["REDIS_PORT"] || "6379"),
+        password: process.env["REDIS_PASSWORD"],
+        db: parseInt(process.env["REDIS_DB"] || "2"), // Database for queue operations
       };
     } else if (serviceName === "worker") {
       // Worker processes ALL queues from both services
       queueNames = [...clinicQueues, ...clinicQueues];
       // Worker uses default Redis configuration
       redisConfig = {
-        host: process.env.REDIS_HOST || "localhost",
-        port: parseInt(process.env.REDIS_PORT || "6379"),
-        password: process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.REDIS_DB || "1"),
+        host: process.env["REDIS_HOST"] || "localhost",
+        port: parseInt(process.env["REDIS_PORT"] || "6379"),
+        password: process.env["REDIS_PASSWORD"],
+        db: parseInt(process.env["REDIS_DB"] || "1"),
       };
     } else {
       // Default to clinic queues (including 'clinic' service)
@@ -91,15 +91,17 @@ export class QueueModule {
       // Clinic-specific Redis configuration
       redisConfig = {
         host:
-          process.env.CLINIC_REDIS_HOST ||
-          process.env.REDIS_HOST ||
+          process.env["CLINIC_REDIS_HOST"] ||
+          process.env["REDIS_HOST"] ||
           "localhost",
         port: parseInt(
-          process.env.CLINIC_REDIS_PORT || process.env.REDIS_PORT || "6379",
+          process.env["CLINIC_REDIS_PORT"] ||
+            process.env["REDIS_PORT"] ||
+            "6379",
         ),
         password:
-          process.env.CLINIC_REDIS_PASSWORD || process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.CLINIC_REDIS_DB || "1"), // Separate DB for clinic
+          process.env["CLINIC_REDIS_PASSWORD"] || process.env["REDIS_PASSWORD"],
+        db: parseInt(process.env["CLINIC_REDIS_DB"] || "1"), // Separate DB for clinic
       };
     }
 
@@ -111,7 +113,7 @@ export class QueueModule {
         QueueMonitoringModule,
         BullModule.forRootAsync({
           imports: [ConfigModule],
-          useFactory: async (configService: ConfigService) => ({
+          useFactory: (_configService: ConfigService) => ({
             connection: {
               ...(redisConfig || {}),
               // Enterprise connection settings for 1M users
@@ -214,9 +216,9 @@ export class QueueModule {
           ? [
               {
                 provide: "BULLMQ_WORKERS",
-                useFactory: async (
+                useFactory: (
                   queueProcessor: QueueProcessor,
-                  prisma: PrismaService,
+                  _prisma: DatabaseService,
                 ) => {
                   const workers = [];
 
@@ -229,34 +231,22 @@ export class QueueModule {
                     workers.push(
                       new Worker(
                         queueName,
-                        async (job) => {
+                        async (job: Job<any, any, string>) => {
                           try {
                             switch (job.name) {
                               case "create":
-                                return await queueProcessor.processCreateJob(
-                                  job,
-                                );
+                                return queueProcessor.processCreateJob(job);
                               case "update":
-                                return await queueProcessor.processUpdateJob(
-                                  job,
-                                );
+                                return queueProcessor.processUpdateJob(job);
                               case "confirm":
-                                return await queueProcessor.processConfirmJob(
-                                  job,
-                                );
+                                return queueProcessor.processConfirmJob(job);
                               case "complete":
-                                return await queueProcessor.processCompleteJob(
-                                  job,
-                                );
+                                return queueProcessor.processCompleteJob(job);
                               case "notify":
-                                return await queueProcessor.processNotifyJob(
-                                  job,
-                                );
+                                return queueProcessor.processNotifyJob(job);
                               case "process":
                                 // Generic job processing - delegate to appropriate method based on job data
-                                return await queueProcessor.processCreateJob(
-                                  job,
-                                );
+                                return queueProcessor.processCreateJob(job);
                               default:
                                 throw new Error(
                                   `Unknown job type: ${job.name}`,
@@ -301,7 +291,7 @@ export class QueueModule {
 
                   return workers;
                 },
-                inject: [QueueProcessor, PrismaService],
+                inject: [QueueProcessor, DatabaseService],
               },
             ]
           : []),

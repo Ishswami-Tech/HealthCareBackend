@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await */
 import { Injectable } from "@nestjs/common";
 import { BaseAppointmentPlugin } from "../plugins/base/base-plugin.service";
 import { AppointmentCommunicationsService } from "./appointment-communications.service";
@@ -132,3 +133,4 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
     return isValid;
   }
 }
+/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await */

@@ -1,5 +1,4 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { InjectQueue } from "@nestjs/bull";
 import { Queue, Job } from "bull";
 
 export interface EmailQueueData {
@@ -45,10 +44,11 @@ export interface EmailQueueStats {
 @Injectable()
 export class EmailQueueService {
   private readonly logger = new Logger(EmailQueueService.name);
+  private readonly emailQueue: Queue<EmailQueueData>;
 
-  constructor(
-    @InjectQueue("email") private readonly emailQueue: Queue<EmailQueueData>,
-  ) {}
+  constructor(emailQueue: Queue<EmailQueueData>) {
+    this.emailQueue = emailQueue;
+  }
 
   async addEmailToQueue(
     emailData: EmailQueueData,

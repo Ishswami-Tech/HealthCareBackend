@@ -90,13 +90,16 @@ export class RbacGuard implements CanActivate {
       for (const requirement of rbacRequirements) {
         const rbacContext: RbacContext = {
           userId,
-          clinicId: requirement.clinicId || clinicId,
+          ...(requirement.clinicId ? { clinicId: requirement.clinicId } : {}),
+          ...(clinicId && !requirement.clinicId ? { clinicId } : {}),
           resource: requirement.resource,
           action: requirement.action,
           metadata: {
             requestUrl: request.url,
             requestMethod: request.method,
-            userAgent: request.headers["user-agent"],
+            ...(request.headers["user-agent"] && {
+              userAgent: request.headers["user-agent"],
+            }),
             ipAddress: this.extractClientIp(request),
           },
         };
@@ -167,9 +170,9 @@ export class RbacGuard implements CanActivate {
   ): string | undefined {
     // Try to get clinic ID from various sources
     const sources = [
-      request.params?.clinicId as string | undefined,
-      request.body?.clinicId as string | undefined,
-      request.query?.clinicId as string | undefined,
+      request.params?.["clinicId"] as string | undefined,
+      request.body?.["clinicId"] as string | undefined,
+      request.query?.["clinicId"] as string | undefined,
       request.headers["x-clinic-id"],
       request.user?.clinicId,
     ];
@@ -275,8 +278,8 @@ export class RbacGuard implements CanActivate {
       }
     }
 
-    const bodyId = request.body?.id;
-    const queryId = request.query?.id;
+    const bodyId = request.body?.["id"];
+    const queryId = request.query?.["id"];
 
     if (bodyId && typeof bodyId === "string") return bodyId;
     if (queryId && typeof queryId === "string") return queryId;

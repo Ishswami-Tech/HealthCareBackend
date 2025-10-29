@@ -1,12 +1,48 @@
 import { Injectable, Logger } from "@nestjs/common";
 
+/**
+ * Configuration options for circuit breaker
+ * @interface CircuitBreakerOptions
+ * @description Defines the behavior and thresholds for circuit breaker pattern
+ * @example
+ * ```typescript
+ * const options: CircuitBreakerOptions = {
+ *   name: "database-service",
+ *   failureThreshold: 5,
+ *   recoveryTimeout: 30000,
+ *   onStateChange: (state, name) => console.log(`${name} circuit is now ${state}`)
+ * };
+ * ```
+ */
 export interface CircuitBreakerOptions {
-  name: string;
-  failureThreshold: number;
-  recoveryTimeout: number;
-  onStateChange?: (state: string, name: string) => void;
+  /** Unique name for the circuit breaker */
+  readonly name: string;
+  /** Number of failures before opening the circuit */
+  readonly failureThreshold: number;
+  /** Time in milliseconds before attempting to close the circuit */
+  readonly recoveryTimeout: number;
+  /** Optional callback when circuit state changes */
+  readonly onStateChange?: (state: string, name: string) => void;
 }
 
+/**
+ * Circuit Breaker Service for Healthcare Backend
+ * @class CircuitBreakerService
+ * @description Implements the circuit breaker pattern to prevent cascading failures
+ * and improve system resilience. Provides automatic failure detection and recovery.
+ * @example
+ * ```typescript
+ * // Execute a function with circuit breaker protection
+ * const result = await circuitBreakerService.execute(
+ *   () => databaseService.query("SELECT * FROM users"),
+ *   {
+ *     name: "database-query",
+ *     failureThreshold: 5,
+ *     recoveryTimeout: 30000
+ *   }
+ * );
+ * ```
+ */
 @Injectable()
 export class CircuitBreakerService {
   private readonly logger = new Logger(CircuitBreakerService.name);
@@ -19,6 +55,27 @@ export class CircuitBreakerService {
     }
   >();
 
+  /**
+   * Execute a function with circuit breaker protection
+   * @description Executes the provided function with circuit breaker pattern protection.
+   * Automatically tracks failures and opens the circuit when threshold is reached.
+   * @template T - The return type of the function
+   * @param fn - The function to execute
+   * @param options - Circuit breaker configuration options
+   * @returns Promise<T> - The result of the function execution
+   * @throws Error - The original error if the function fails
+   * @example
+   * ```typescript
+   * const result = await circuitBreakerService.execute(
+   *   async () => await externalApiCall(),
+   *   {
+   *     name: "external-api",
+   *     failureThreshold: 3,
+   *     recoveryTimeout: 60000
+   *   }
+   * );
+   * ```
+   */
   async execute<T>(
     fn: () => Promise<T>,
     options: CircuitBreakerOptions,

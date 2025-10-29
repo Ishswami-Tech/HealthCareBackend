@@ -1,10 +1,20 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Server } from "socket.io";
 
+/**
+ * Socket event data interface
+ * @interface SocketEventData
+ */
 export interface SocketEventData {
-  [key: string]: unknown;
+  /** Event data properties */
+  readonly [key: string]: unknown;
 }
 
+/**
+ * Socket service for managing WebSocket connections and broadcasting
+ *
+ * @class SocketService
+ */
 @Injectable()
 export class SocketService {
   private readonly logger = new Logger(SocketService.name);
@@ -13,7 +23,11 @@ export class SocketService {
   private healthCheckInterval!: NodeJS.Timeout;
   private readonly HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
 
-  setServer(server: Server) {
+  /**
+   * Sets the Socket.IO server instance
+   * @param server - Socket.IO server instance
+   */
+  setServer(server: Server): void {
     try {
       if (!server) {
         throw new Error("Cannot initialize SocketService with null server");
@@ -97,6 +111,10 @@ export class SocketService {
     // For example, try to reconnect or notify administrators
   }
 
+  /**
+   * Gets the initialization state of the socket service
+   * @returns True if the service is initialized
+   */
   getInitializationState(): boolean {
     return this.isServerInitialized;
   }
@@ -247,7 +265,10 @@ export class SocketService {
   /**
    * Clean up resources when the service is destroyed
    */
-  onModuleDestroy() {
+  /**
+   * Cleanup on module destroy
+   */
+  onModuleDestroy(): void {
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
     }

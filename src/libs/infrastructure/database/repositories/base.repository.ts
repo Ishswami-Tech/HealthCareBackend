@@ -25,8 +25,8 @@ export class RepositoryResult<T, E = Error> {
     this._timestamp = new Date();
     this._executionTime = executionTime;
     this._operationType = operationType;
-    this._clinicId = clinicId;
-    this._userId = userId;
+    this._clinicId = clinicId || "";
+    this._userId = userId || "";
     this._auditTrail = [];
   }
 
@@ -613,7 +613,7 @@ export abstract class BaseRepository<
       this.logger.debug(`Creating ${data.length} ${this.entityName}s`);
 
       // Use batch optimization for large datasets
-      const batchSize = (context?.metadata?.batchSize as number) || 100;
+      const batchSize = (context?.metadata?.["batchSize"] as number) || 100;
       const results: TEntity[] = [];
 
       for (let i = 0; i < data.length; i += batchSize) {
@@ -900,7 +900,7 @@ export abstract class BaseRepository<
           hasPreviousPage: page > 1,
         },
         metadata: {
-          clinicId: context?.clinicId,
+          ...(context?.clinicId && { clinicId: context.clinicId }),
           executionTime,
           cacheHit: false,
           rowCount: entities.length,
@@ -1363,28 +1363,28 @@ export abstract class BaseRepository<
   ): unknown {
     if (!options) return {};
 
-    const queryOptions: any = {};
+    const queryOptions: Record<string, unknown> = {};
 
     if (options.include) {
-      queryOptions.include = options.include;
+      queryOptions["include"] = options.include;
     }
 
     if (options.select) {
-      queryOptions.select = options.select;
+      queryOptions["select"] = options.select;
     }
 
     if (options.where) {
-      queryOptions.where = this.buildWhereClause(options);
+      queryOptions["where"] = this.buildWhereClause(options);
     }
 
     if (options.orderBy) {
-      queryOptions.orderBy = options.orderBy;
+      queryOptions["orderBy"] = options.orderBy;
     }
 
     // Add healthcare-specific options
     if (options.rowLevelSecurity && options.clinicId) {
-      queryOptions.where = {
-        ...queryOptions.where,
+      queryOptions["where"] = {
+        ...(queryOptions["where"] || {}),
         clinicId: options.clinicId,
       };
     }
@@ -1396,11 +1396,11 @@ export abstract class BaseRepository<
    * Build where clause with healthcare-specific features
    */
   protected buildWhereClause(options?: QueryOptions): unknown {
-    const where: any = { ...options?.where };
+    const where: Record<string, unknown> = { ...options?.where };
 
     // Add clinic isolation if specified
     if (options?.clinicId && options?.rowLevelSecurity !== false) {
-      where.clinicId = options.clinicId;
+      where["clinicId"] = options.clinicId;
     }
 
     // Add data masking for sensitive fields

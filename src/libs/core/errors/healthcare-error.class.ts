@@ -3,22 +3,70 @@ import { ErrorCode } from "./error-codes.enum";
 import { ErrorMessages } from "./error-messages.constant";
 
 /**
+ * Error metadata interface for structured error information
+ *
+ * @interface ErrorMetadata
+ * @description Defines the structure for error metadata
+ */
+export interface ErrorMetadata {
+  readonly [key: string]: unknown;
+}
+
+/**
+ * API response error structure
+ *
+ * @interface ApiErrorResponse
+ * @description Defines the structure for API error responses
+ */
+export interface ApiErrorResponse {
+  readonly error: {
+    readonly code: ErrorCode;
+    readonly message: string;
+    readonly timestamp: string;
+    readonly metadata?: ErrorMetadata;
+  };
+}
+
+/**
  * Custom Healthcare Error class that extends the standard Error
  * Provides structured error handling with codes, messages, and metadata
+ *
+ * @class HealthcareError
+ * @extends Error
+ * @description Comprehensive error class for healthcare applications
+ * @example
+ * ```typescript
+ * throw new HealthcareError(
+ *   ErrorCode.USER_NOT_FOUND,
+ *   'User not found',
+ *   HttpStatus.NOT_FOUND,
+ *   { userId: '123' },
+ *   'UserService.findUser'
+ * );
+ * ```
  */
 export class HealthcareError extends Error {
   public readonly code: ErrorCode;
   public readonly statusCode: HttpStatus;
   public readonly timestamp: string;
-  public readonly metadata?: Record<string, unknown>;
+  public readonly metadata?: ErrorMetadata;
   public readonly isOperational: boolean;
   public readonly context?: string;
 
+  /**
+   * Creates a new HealthcareError instance
+   *
+   * @param code - The error code from ErrorCode enum
+   * @param message - Optional custom error message (defaults to ErrorMessages[code])
+   * @param statusCode - HTTP status code (defaults to INTERNAL_SERVER_ERROR)
+   * @param metadata - Optional metadata object for additional context
+   * @param context - Optional context string for debugging
+   */
   constructor(
     code: ErrorCode,
     message?: string,
     statusCode: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR,
-    metadata?: Record<string, unknown>,
+    metadata?: ErrorMetadata,
     context?: string,
   ) {
     const errorMessage = message || ErrorMessages[code];
@@ -28,9 +76,9 @@ export class HealthcareError extends Error {
     this.code = code;
     this.statusCode = statusCode;
     this.timestamp = new Date().toISOString();
-    this.metadata = metadata;
+    this.metadata = metadata || {};
     this.isOperational = true;
-    this.context = context;
+    this.context = context || "";
 
     // Maintains proper stack trace for where our error was thrown
     Error.captureStackTrace(this, HealthcareError);
@@ -38,6 +86,13 @@ export class HealthcareError extends Error {
 
   /**
    * Convert error to JSON format for logging and API responses
+   *
+   * @returns JSON representation of the error with all properties
+   * @example
+   * ```typescript
+   * const error = new HealthcareError(ErrorCode.USER_NOT_FOUND);
+   * console.log(error.toJSON());
+   * ```
    */
   toJSON(): Record<string, unknown> {
     return {
@@ -54,26 +109,41 @@ export class HealthcareError extends Error {
 
   /**
    * Convert error to API response format (without sensitive information)
+   *
+   * @returns API response format with sanitized error information
+   * @example
+   * ```typescript
+   * const error = new HealthcareError(ErrorCode.USER_NOT_FOUND);
+   * return error.toApiResponse();
+   * ```
    */
-  toApiResponse(): Record<string, unknown> {
-    const response: Record<string, unknown> = {
-      error: {
-        code: this.code,
-        message: this.message,
-        timestamp: this.timestamp,
-      },
+  toApiResponse(): ApiErrorResponse {
+    const errorResponse: {
+      code: ErrorCode;
+      message: string;
+      timestamp: string;
+      metadata?: ErrorMetadata;
+    } = {
+      code: this.code,
+      message: this.message,
+      timestamp: this.timestamp,
     };
 
     // Add metadata if it's safe to expose
     if (this.metadata && this.isMetadataSafe()) {
-      (response.error as Record<string, unknown>).metadata = this.metadata;
+      errorResponse.metadata = this.metadata;
     }
 
-    return response;
+    return {
+      error: errorResponse,
+    };
   }
 
   /**
    * Check if metadata is safe to expose in API responses
+   *
+   * @returns True if metadata doesn't contain sensitive information
+   * @private
    */
   private isMetadataSafe(): boolean {
     if (!this.metadata) return false;
@@ -97,6 +167,14 @@ export class HealthcareError extends Error {
 
   /**
    * Create a new HealthcareError with additional context
+   *
+   * @param context - Additional context string for debugging
+   * @returns New HealthcareError instance with updated context
+   * @example
+   * ```typescript
+   * const error = new HealthcareError(ErrorCode.USER_NOT_FOUND);
+   * const contextualError = error.withContext('UserService.findUser');
+   * ```
    */
   withContext(context: string): HealthcareError {
     return new HealthcareError(
@@ -110,8 +188,16 @@ export class HealthcareError extends Error {
 
   /**
    * Create a new HealthcareError with additional metadata
+   *
+   * @param metadata - Additional metadata to merge with existing metadata
+   * @returns New HealthcareError instance with merged metadata
+   * @example
+   * ```typescript
+   * const error = new HealthcareError(ErrorCode.USER_NOT_FOUND);
+   * const detailedError = error.withMetadata({ userId: '123', operation: 'find' });
+   * ```
    */
-  withMetadata(metadata: Record<string, unknown>): HealthcareError {
+  withMetadata(metadata: ErrorMetadata): HealthcareError {
     return new HealthcareError(
       this.code,
       this.message,

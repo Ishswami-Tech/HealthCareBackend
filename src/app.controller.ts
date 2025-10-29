@@ -101,7 +101,7 @@ export class AppController {
       const host: string =
         this.configService.get<string>("API_URL") || "https://api.ishswami.in";
       const baseUrl = host.endsWith("/") ? host.slice(0, -1) : host;
-      const isProduction = process.env.NODE_ENV === "production";
+      const isProduction = process.env["NODE_ENV"] === "production";
 
       // Get real-time service status from health controller
       const healthData = await this.healthController.getDetailedHealth();
@@ -1083,7 +1083,10 @@ export class AppController {
                             </div>
                             ${Object.entries(service.metrics || {})
                               .map(
-                                ([key, value]: [string, any]) => `
+                                ([key, value]: [
+                                  string,
+                                  string | number | boolean | undefined,
+                                ]) => `
                                 <div class="metric">
                                     <span class="metric-label">${key}</span>
                                     <span class="metric-value">${value ?? "N/A"}</span>

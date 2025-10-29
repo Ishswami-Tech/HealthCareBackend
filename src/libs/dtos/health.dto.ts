@@ -12,7 +12,12 @@ import {
 } from "class-validator";
 import { Transform } from "class-transformer";
 
-// Health status enum
+/**
+ * Health status enumeration
+ * @enum {string} HealthStatus
+ * @description Defines the overall health status of the system
+ * @example HealthStatus.HEALTHY
+ */
 export enum HealthStatus {
   HEALTHY = "healthy",
   UNHEALTHY = "unhealthy",
@@ -20,7 +25,12 @@ export enum HealthStatus {
   MAINTENANCE = "maintenance",
 }
 
-// Service status enum
+/**
+ * Service status enumeration
+ * @enum {string} ServiceStatus
+ * @description Defines the operational status of individual services
+ * @example ServiceStatus.UP
+ */
 export enum ServiceStatus {
   UP = "up",
   DOWN = "down",
@@ -28,8 +38,16 @@ export enum ServiceStatus {
 }
 
 /**
- * Health check response DTO following NestJS best practices
- * Based on AI rules: @nestjs-specific.md and @coding-standards.md
+ * Data Transfer Object for health check responses
+ * @class HealthCheckResponseDto
+ * @description Contains basic health status information for system monitoring
+ * @example
+ * ```typescript
+ * const health = new HealthCheckResponseDto();
+ * health.status = HealthStatus.HEALTHY;
+ * health.service = "Healthcare Backend API";
+ * health.version = "1.0.0";
+ * ```
  */
 export class HealthCheckResponseDto {
   @ApiProperty({
@@ -78,7 +96,16 @@ export class HealthCheckResponseDto {
 }
 
 /**
- * Detailed health check response DTO
+ * Data Transfer Object for detailed health check responses
+ * @class DetailedHealthCheckResponseDto
+ * @description Extends basic health check with detailed service status and metrics
+ * @extends HealthCheckResponseDto
+ * @example
+ * ```typescript
+ * const detailed = new DetailedHealthCheckResponseDto();
+ * detailed.services = { database: { status: "up" } };
+ * detailed.metrics = { uptime: 24, memoryUsage: 512 };
+ * ```
  */
 export class DetailedHealthCheckResponseDto extends HealthCheckResponseDto {
   @ApiProperty({
@@ -106,7 +133,16 @@ export class DetailedHealthCheckResponseDto extends HealthCheckResponseDto {
 }
 
 /**
- * Individual service health DTO
+ * Data Transfer Object for individual service health status
+ * @class ServiceHealthDto
+ * @description Contains health information for a specific service
+ * @example
+ * ```typescript
+ * const service = new ServiceHealthDto();
+ * service.status = ServiceStatus.UP;
+ * service.lastCheck = "2024-01-01T00:00:00.000Z";
+ * service.responseTime = 15;
+ * ```
  */
 export class ServiceHealthDto {
   @ApiProperty({
@@ -142,7 +178,16 @@ export class ServiceHealthDto {
 }
 
 /**
- * System metrics DTO
+ * Data Transfer Object for system metrics
+ * @class SystemMetricsDto
+ * @description Contains performance and usage metrics for the system
+ * @example
+ * ```typescript
+ * const metrics = new SystemMetricsDto();
+ * metrics.uptime = 24;
+ * metrics.memoryUsage = 512;
+ * metrics.cpuUsage = 2.5;
+ * ```
  */
 export class SystemMetricsDto {
   @ApiProperty({
@@ -189,7 +234,15 @@ export class SystemMetricsDto {
 }
 
 /**
- * Health check request DTO
+ * Data Transfer Object for health check requests
+ * @class HealthCheckRequestDto
+ * @description Contains parameters for health check operations
+ * @example
+ * ```typescript
+ * const request = new HealthCheckRequestDto();
+ * request.checkType = "detailed";
+ * request.includeMetrics = true;
+ * ```
  */
 export class HealthCheckRequestDto {
   @ApiPropertyOptional({
@@ -222,7 +275,16 @@ export class HealthCheckRequestDto {
 }
 
 /**
- * Service health update DTO
+ * Data Transfer Object for updating service health status
+ * @class ServiceHealthUpdateDto
+ * @description Contains service name and new health status for updates
+ * @example
+ * ```typescript
+ * const update = new ServiceHealthUpdateDto();
+ * update.serviceName = "database";
+ * update.status = ServiceStatus.UP;
+ * update.reason = "Connection restored";
+ * ```
  */
 export class ServiceHealthUpdateDto {
   @ApiProperty({
@@ -248,7 +310,9 @@ export class ServiceHealthUpdateDto {
   })
   @IsOptional()
   @IsString({ message: "Reason must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   reason?: string;
 
   @ApiPropertyOptional({
@@ -261,7 +325,16 @@ export class ServiceHealthUpdateDto {
 }
 
 /**
- * Health check configuration DTO
+ * Data Transfer Object for health check configuration
+ * @class HealthCheckConfigDto
+ * @description Contains configuration parameters for health check monitoring
+ * @example
+ * ```typescript
+ * const config = new HealthCheckConfigDto();
+ * config.interval = 30000;
+ * config.timeout = 5000;
+ * config.failureThreshold = 3;
+ * ```
  */
 export class HealthCheckConfigDto {
   @ApiProperty({
@@ -315,7 +388,16 @@ export class HealthCheckConfigDto {
 }
 
 /**
- * Health check summary DTO
+ * Data Transfer Object for health check summary
+ * @class HealthCheckSummaryDto
+ * @description Contains summary statistics for overall system health
+ * @example
+ * ```typescript
+ * const summary = new HealthCheckSummaryDto();
+ * summary.overallStatus = HealthStatus.HEALTHY;
+ * summary.totalServices = 5;
+ * summary.healthyServices = 4;
+ * ```
  */
 export class HealthCheckSummaryDto {
   @ApiProperty({

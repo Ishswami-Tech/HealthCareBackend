@@ -42,10 +42,10 @@ export class PluginErrorHandler {
   static validateRequiredFields(
     data: unknown,
     requiredFields: string[],
-    context: ErrorContext,
+    _context: ErrorContext,
   ): void {
     const missingFields = requiredFields.filter(
-      (field) => (data as any)[field] === undefined,
+      (field) => (data as Record<string, unknown>)[field] === undefined,
     );
 
     if (missingFields.length > 0) {
@@ -58,7 +58,7 @@ export class PluginErrorHandler {
   static validateOperation(
     operation: string,
     validOperations: string[],
-    context: ErrorContext,
+    _context: ErrorContext,
   ): void {
     if (!validOperations.includes(operation)) {
       throw new BadRequestException(

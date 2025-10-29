@@ -1,4 +1,4 @@
-import { Module, forwardRef } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
 import { EventEmitterModule } from "@nestjs/event-emitter";
@@ -10,7 +10,7 @@ import { RbacModule } from "../../libs/core/rbac/rbac.module";
 import { QueueModule } from "../../libs/infrastructure/queue";
 import { AuthModule } from "../auth/auth.module";
 import { JwtModule } from "@nestjs/jwt";
-import { RateLimitModule } from "../../libs/utils/rate-limit/rate-limit.module";
+// import { RateLimitModule } from "../../libs/utils/rate-limit/rate-limit.module";
 import { GuardsModule } from "../../libs/core/guards/guards.module";
 // import { CommunicationModule } from '../../libs/communication';
 
@@ -104,7 +104,7 @@ import { SocketModule } from "../../libs/communication/socket/socket.module";
     QueueModule.forRoot(),
     AuthModule,
     JwtModule.register({}),
-    RateLimitModule,
+    // RateLimitModule,
     GuardsModule,
     // Communication Modules
     EmailModule,
@@ -113,11 +113,13 @@ import { SocketModule } from "../../libs/communication/socket/socket.module";
     SocketModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ({
         redis: {
           host: configService.get("REDIS_HOST", "localhost"),
           port: configService.get("REDIS_PORT", 6379),
-          password: configService.get("REDIS_PASSWORD"),
+          ...(configService.get("REDIS_PASSWORD") && {
+            password: configService.get("REDIS_PASSWORD"),
+          }),
           db: configService.get("REDIS_DB", 0),
         },
         defaultJobOptions: {

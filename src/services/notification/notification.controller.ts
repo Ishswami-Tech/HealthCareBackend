@@ -104,14 +104,14 @@ export class NotificationController {
       {
         title: sendPushDto.title,
         body: sendPushDto.body,
-        data: sendPushDto.data,
+        ...(sendPushDto.data && { data: sendPushDto.data }),
       },
     );
 
     return {
       success: result.success,
-      messageId: result.messageId,
-      error: result.error,
+      ...(result.messageId && { messageId: result.messageId }),
+      ...(result.error && { error: result.error }),
     };
   }
 
@@ -133,15 +133,19 @@ export class NotificationController {
       {
         title: sendMultipleDto.title,
         body: sendMultipleDto.body,
-        data: sendMultipleDto.data,
+        ...(sendMultipleDto.data && { data: sendMultipleDto.data }),
       },
     );
 
     return {
       success: result.success,
-      successCount: result.successCount,
-      failureCount: result.failureCount,
-      error: result.error,
+      ...(result.successCount !== undefined && {
+        successCount: result.successCount,
+      }),
+      ...(result.failureCount !== undefined && {
+        failureCount: result.failureCount,
+      }),
+      ...(result.error && { error: result.error }),
     };
   }
 
@@ -162,13 +166,13 @@ export class NotificationController {
     const result = await this.pushService.sendToTopic(sendTopicDto.topic, {
       title: sendTopicDto.title,
       body: sendTopicDto.body,
-      data: sendTopicDto.data,
+      ...(sendTopicDto.data && { data: sendTopicDto.data }),
     });
 
     return {
       success: result.success,
-      messageId: result.messageId,
-      error: result.error,
+      ...(result.messageId && { messageId: result.messageId }),
+      ...(result.error && { error: result.error }),
     };
   }
 
@@ -236,16 +240,16 @@ export class NotificationController {
       to: sendEmailDto.to,
       subject: sendEmailDto.subject,
       body: sendEmailDto.body,
-      isHtml: sendEmailDto.isHtml,
-      replyTo: sendEmailDto.replyTo,
-      cc: sendEmailDto.cc,
-      bcc: sendEmailDto.bcc,
+      ...(sendEmailDto.isHtml !== undefined && { isHtml: sendEmailDto.isHtml }),
+      ...(sendEmailDto.replyTo && { replyTo: sendEmailDto.replyTo }),
+      ...(sendEmailDto.cc && { cc: sendEmailDto.cc }),
+      ...(sendEmailDto.bcc && { bcc: sendEmailDto.bcc }),
     });
 
     return {
       success: result.success,
-      messageId: result.messageId,
-      error: result.error,
+      ...(result.messageId && { messageId: result.messageId }),
+      ...(result.error && { error: result.error }),
     };
   }
 
@@ -482,11 +486,11 @@ export class NotificationController {
 
     // Test health of all services
     const healthStatus = this.notificationService.getServiceHealthStatus();
-    tests.serviceHealth = {
+    tests["serviceHealth"] = {
       success: Object.values(healthStatus).some((status) => status),
-      error: Object.values(healthStatus).every((status) => !status)
-        ? "All services are unhealthy"
-        : undefined,
+      ...(Object.values(healthStatus).every((status) => !status) && {
+        error: "All services are unhealthy",
+      }),
     };
 
     const successfulTests = Object.values(tests).filter(

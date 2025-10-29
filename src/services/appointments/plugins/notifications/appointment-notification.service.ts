@@ -1,13 +1,18 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CacheService } from "../../../../libs/infrastructure/cache";
-import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
+import {
+  LoggingService,
+  LogType,
+  LogLevel,
+} from "../../../../libs/infrastructure/logging/logging.service";
 import { EmailService } from "../../../../libs/communication/messaging/email/email.service";
 import { WhatsAppService } from "../../../../libs/communication/messaging/whatsapp/whatsapp.service";
 import { PushNotificationService } from "../../../../libs/communication/messaging/push/push.service";
 import { SocketService } from "../../../../libs/communication/socket/socket.service";
-import { PrismaService } from "../../../../libs/infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../../../libs/infrastructure/database";
+import { EmailTemplate } from "../../../../libs/core/types/email.types";
 
 export interface NotificationData {
   appointmentId: string;
@@ -71,7 +76,7 @@ export class AppointmentNotificationService {
     private readonly pushService: PushNotificationService,
     private readonly socketService: SocketService,
     private readonly configService: ConfigService,
-    private readonly prismaService: PrismaService,
+    private readonly databaseService: DatabaseService,
   ) {}
 
   /**
@@ -111,8 +116,8 @@ export class AppointmentNotificationService {
 
     // Log the notification attempt
     await this.loggingService.log(
-      "NOTIFICATION_SENT" as any,
-      "INFO" as any,
+      LogType.NOTIFICATION,
+      LogLevel.INFO,
       `Appointment notification ${notificationData.type} sent`,
       "AppointmentNotificationService.sendNotification",
       {
@@ -129,7 +134,7 @@ export class AppointmentNotificationService {
       notificationId,
       sentChannels,
       failedChannels,
-      errors: errors.length > 0 ? errors : undefined,
+      errors: errors.length > 0 ? errors : [],
     };
   }
 
@@ -185,7 +190,7 @@ export class AppointmentNotificationService {
     const sent = 0;
     const failed = 0;
 
-    return { processed, sent, failed };
+    return Promise.resolve({ processed, sent, failed });
   }
 
   /**
@@ -204,28 +209,30 @@ export class AppointmentNotificationService {
       }
 
       // Get templates from database
-      const templates = await this.prismaService.notificationTemplate.findMany({
-        where: {
-          clinicId,
-          isActive: true,
-        },
-        orderBy: {
-          name: "asc",
-        },
-      });
+      const templates = await this.databaseService
+        .getPrismaClient()
+        .notificationTemplate.findMany({
+          where: {
+            clinicId,
+            isActive: true,
+          },
+          orderBy: {
+            name: "asc",
+          },
+        });
 
       const templateList: NotificationTemplate[] = templates.map(
         (template: unknown) => {
           const templateData = template as Record<string, unknown>;
           return {
-            id: templateData.id as string,
-            name: templateData.name as string,
-            type: templateData.type as string,
-            channels: templateData.channels as string[],
-            subject: templateData.subject as string,
-            body: templateData.body as string,
-            variables: templateData.variables as string[],
-            isActive: templateData.isActive as boolean,
+            id: templateData["id"] as string,
+            name: templateData["name"] as string,
+            type: templateData["type"] as string,
+            channels: templateData["channels"] as string[],
+            subject: templateData["subject"] as string,
+            body: templateData["body"] as string,
+            variables: templateData["variables"] as string[],
+            isActive: templateData["isActive"] as boolean,
           };
         },
       );
@@ -269,7 +276,7 @@ export class AppointmentNotificationService {
         break;
 
       case "socket":
-        await this.sendSocketNotification(notificationData, notificationId);
+        this.sendSocketNotification(notificationData, notificationId);
         break;
 
       default:
@@ -295,7 +302,7 @@ export class AppointmentNotificationService {
     await this.emailService.sendEmail({
       to: patientEmail,
       subject,
-      template: "APPOINTMENT_REMINDER" as any,
+      template: EmailTemplate.APPOINTMENT_REMINDER,
       context: {
         patientName: templateData.patientName,
         doctorName: templateData.doctorName,
@@ -378,15 +385,15 @@ export class AppointmentNotificationService {
   /**
    * Send socket notification
    */
-  private async sendSocketNotification(
+  private sendSocketNotification(
     notificationData: NotificationData,
     notificationId: string,
-  ): Promise<void> {
+  ): void {
     const { appointmentId, patientId, clinicId, type, templateData } =
       notificationData;
 
     // Send to patient's personal room
-    await this.socketService.sendToUser(patientId, "appointment_notification", {
+    this.socketService.sendToUser(patientId, "appointment_notification", {
       appointmentId,
       type,
       data: templateData,
@@ -414,11 +421,11 @@ export class AppointmentNotificationService {
   private getEmailSubject(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
     const subjects = {
-      reminder: `Appointment Reminder - ${data.clinicName as string}`,
-      confirmation: `Appointment Confirmed - ${data.clinicName as string}`,
-      cancellation: `Appointment Cancelled - ${data.clinicName as string}`,
-      reschedule: `Appointment Rescheduled - ${data.clinicName as string}`,
-      follow_up: `Follow-up Required - ${data.clinicName as string}`,
+      reminder: `Appointment Reminder - ${data["clinicName"] as string}`,
+      confirmation: `Appointment Confirmed - ${data["clinicName"] as string}`,
+      cancellation: `Appointment Cancelled - ${data["clinicName"] as string}`,
+      reschedule: `Appointment Rescheduled - ${data["clinicName"] as string}`,
+      follow_up: `Follow-up Required - ${data["clinicName"] as string}`,
     };
 
     return (
@@ -434,16 +441,16 @@ export class AppointmentNotificationService {
     const bodies = {
       reminder: `
         <h2>Appointment Reminder</h2>
-        <p>Hi ${data.patientName as string},</p>
-        <p>This is a reminder for your appointment with ${data.doctorName as string} on ${data.appointmentDate as string} at ${data.appointmentTime as string}.</p>
-        <p>Location: ${data.location as string}</p>
+        <p>Hi ${data["patientName"] as string},</p>
+        <p>This is a reminder for your appointment with ${data["doctorName"] as string} on ${data["appointmentDate"] as string} at ${data["appointmentTime"] as string}.</p>
+        <p>Location: ${data["location"] as string}</p>
         <p>Please arrive 15 minutes early.</p>
       `,
       confirmation: `
         <h2>Appointment Confirmed</h2>
-        <p>Hi ${data.patientName as string},</p>
-        <p>Your appointment with ${data.doctorName as string} has been confirmed for ${data.appointmentDate as string} at ${data.appointmentTime as string}.</p>
-        <p>Location: ${data.location as string}</p>
+        <p>Hi ${data["patientName"] as string},</p>
+        <p>Your appointment with ${data["doctorName"] as string} has been confirmed for ${data["appointmentDate"] as string} at ${data["appointmentTime"] as string}.</p>
+        <p>Location: ${data["location"] as string}</p>
       `,
     };
 
@@ -456,7 +463,7 @@ export class AppointmentNotificationService {
   private getPushTitle(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
     const titles = {
-      reminder: `Appointment Reminder - ${data.clinicName as string}`,
+      reminder: `Appointment Reminder - ${data["clinicName"] as string}`,
       confirmation: `Appointment Confirmed`,
       cancellation: `Appointment Cancelled`,
       reschedule: `Appointment Rescheduled`,
@@ -472,8 +479,8 @@ export class AppointmentNotificationService {
   private getPushBody(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
     const bodies = {
-      reminder: `Your appointment with ${data.doctorName as string} is scheduled for ${data.appointmentDate as string} at ${data.appointmentTime as string}`,
-      confirmation: `Your appointment with ${data.doctorName as string} has been confirmed`,
+      reminder: `Your appointment with ${data["doctorName"] as string} is scheduled for ${data["appointmentDate"] as string} at ${data["appointmentTime"] as string}`,
+      confirmation: `Your appointment with ${data["doctorName"] as string} has been confirmed`,
       cancellation: `Your appointment has been cancelled`,
       reschedule: `Your appointment has been rescheduled`,
       follow_up: `Please schedule a follow-up appointment`,

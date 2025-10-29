@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { RoleService } from "./role.service";
 import { PermissionService } from "./permission.service";
-import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../infrastructure/database";
 import { RedisService } from "../../infrastructure/cache/redis/redis.service";
 import {
   LoggingService,
@@ -9,44 +9,73 @@ import {
   LogLevel,
 } from "../../infrastructure/logging/logging.service";
 
+/**
+ * Context for RBAC permission checks
+ * @interface RbacContext
+ * @description Contains all necessary information for permission validation
+ */
 export interface RbacContext {
-  userId: string;
-  clinicId?: string;
-  resource: string;
-  action: string;
-  resourceId?: string; // For ownership checks
-  metadata?: Record<string, unknown>;
+  readonly userId: string;
+  readonly clinicId?: string;
+  readonly resource: string;
+  readonly action: string;
+  readonly resourceId?: string; // For ownership checks
+  readonly metadata?: Record<string, unknown>;
 }
 
+/**
+ * Represents a role assignment to a user
+ * @interface RoleAssignment
+ * @description Defines the structure of a user-role assignment
+ */
 export interface RoleAssignment {
-  userId: string;
-  roleId: string;
-  roleName: string;
-  clinicId?: string;
-  assignedBy: string;
-  assignedAt: Date;
-  expiresAt?: Date;
-  isActive: boolean;
+  readonly userId: string;
+  readonly roleId: string;
+  readonly roleName: string;
+  readonly clinicId?: string;
+  readonly assignedBy: string;
+  readonly assignedAt: Date;
+  readonly expiresAt?: Date;
+  readonly isActive: boolean;
 }
 
+/**
+ * Result of a permission check
+ * @interface PermissionCheck
+ * @description Contains the result and details of a permission validation
+ */
 export interface PermissionCheck {
-  hasPermission: boolean;
-  roles: string[];
-  permissions: string[];
-  reason?: string;
-  metadata?: Record<string, unknown>;
+  readonly hasPermission: boolean;
+  readonly roles: string[];
+  readonly permissions: string[];
+  readonly reason?: string;
+  readonly metadata?: Record<string, unknown>;
 }
 
+/**
+ * Core RBAC service for permission management and validation
+ * @class RbacService
+ * @description Handles permission checks, role assignments, and RBAC operations
+ */
 @Injectable()
 export class RbacService {
   private readonly logger = new Logger(RbacService.name);
   private readonly CACHE_TTL = 3600; // 1 hour
   private readonly CACHE_PREFIX = "rbac:";
 
+  /**
+   * Creates an instance of RbacService
+   * @constructor
+   * @param roleService - Service for role management
+   * @param permissionService - Service for permission management
+   * @param prisma - Prisma database service
+   * @param redis - Redis caching service
+   * @param loggingService - Service for logging security events
+   */
   constructor(
     private readonly roleService: RoleService,
     private readonly permissionService: PermissionService,
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly redis: RedisService,
     private readonly loggingService: LoggingService,
   ) {}
@@ -171,21 +200,30 @@ export class RbacService {
       }
 
       // Check if assignment already exists
-      const existingAssignment = await this.prisma.userRole.findFirst({
-        where: {
-          userId,
-          roleId,
-          clinicId,
-          isActive: true,
-        },
-      });
+      const existingAssignment = (await this.databaseService
+        .getPrismaClient()
+        .findUserRoleAssignmentSafe(userId, roleId, clinicId)) as {
+        id: string;
+        userId: string;
+        roleId: string;
+        clinicId: string | null;
+        assignedBy: string;
+        assignedAt: Date;
+        expiresAt: Date | null;
+        isActive: boolean;
+        revokedAt: Date | null;
+        revokedBy: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
 
       if (existingAssignment) {
         throw new Error("Role already assigned to user");
       }
 
-      const assignment = await this.prisma.userRole.create({
-        data: {
+      const assignment = (await this.databaseService
+        .getPrismaClient()
+        .createUserRoleSafe({
           userId,
           roleId,
           clinicId,
@@ -193,17 +231,29 @@ export class RbacService {
           assignedAt: new Date(),
           expiresAt,
           isActive: true,
-        },
-      });
+        })) as {
+        id: string;
+        userId: string;
+        roleId: string;
+        clinicId: string | null;
+        assignedBy: string;
+        assignedAt: Date;
+        expiresAt: Date | null;
+        isActive: boolean;
+        revokedAt: Date | null;
+        revokedBy: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+      };
 
       const roleAssignment: RoleAssignment = {
         userId: assignment.userId,
         roleId: assignment.roleId,
         roleName: role.name,
-        clinicId: assignment.clinicId || undefined,
+        ...(assignment.clinicId && { clinicId: assignment.clinicId }),
         assignedBy: assignment.assignedBy,
         assignedAt: assignment.assignedAt,
-        expiresAt: assignment.expiresAt || undefined,
+        ...(assignment.expiresAt && { expiresAt: assignment.expiresAt }),
         isActive: assignment.isActive,
       };
 
@@ -245,27 +295,35 @@ export class RbacService {
     revokedBy?: string,
   ): Promise<void> {
     try {
-      const assignment = await this.prisma.userRole.findFirst({
-        where: {
-          userId,
-          roleId,
-          clinicId,
-          isActive: true,
-        },
-      });
+      const assignment = (await this.databaseService
+        .getPrismaClient()
+        .findUserRoleForRevocationSafe(userId, roleId, clinicId)) as {
+        id: string;
+        userId: string;
+        roleId: string;
+        clinicId: string | null;
+        assignedBy: string;
+        assignedAt: Date;
+        expiresAt: Date | null;
+        isActive: boolean;
+        revokedAt: Date | null;
+        revokedBy: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
 
       if (!assignment) {
         throw new Error("Role assignment not found");
       }
 
-      await this.prisma.userRole.update({
-        where: { id: assignment.id },
-        data: {
+      await this.databaseService
+        .getPrismaClient()
+        .updateUserRoleSafe(assignment.id, {
           isActive: false,
           revokedAt: new Date(),
           revokedBy: revokedBy || "SYSTEM",
-        },
-      });
+          updatedAt: new Date(),
+        });
 
       // Clear cache
       await this.clearUserCache(userId, clinicId);
@@ -307,32 +365,34 @@ export class RbacService {
         return cached;
       }
 
-      const assignments = await this.prisma.userRole.findMany({
-        where: {
-          userId,
-          clinicId,
-          isActive: true,
-          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-        },
-        include: {
-          role: true,
-        },
-      });
+      const assignments = (await this.databaseService
+        .getPrismaClient()
+        .findUserRolesSafe(userId, clinicId)) as Array<{
+        id: string;
+        userId: string;
+        roleId: string;
+        clinicId: string | null;
+        assignedBy: string;
+        assignedAt: Date;
+        expiresAt: Date | null;
+        isActive: boolean;
+        revokedAt: Date | null;
+        revokedBy: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        role: { name: string };
+      }>;
 
-      const roles: RoleAssignment[] = assignments.map((assignment: unknown) => {
-        const assign = assignment as Record<string, unknown>;
-        const role = assign.role as Record<string, unknown>;
-        return {
-          userId: assign.userId as string,
-          roleId: assign.roleId as string,
-          roleName: role.name as string,
-          clinicId: (assign.clinicId as string) || undefined,
-          assignedBy: assign.assignedBy as string,
-          assignedAt: assign.assignedAt as Date,
-          expiresAt: (assign.expiresAt as Date) || undefined,
-          isActive: assign.isActive as boolean,
-        };
-      });
+      const roles: RoleAssignment[] = assignments.map((assignment) => ({
+        userId: assignment.userId,
+        roleId: assignment.roleId,
+        roleName: assignment.role.name,
+        ...(assignment.clinicId && { clinicId: assignment.clinicId }),
+        assignedBy: assignment.assignedBy,
+        assignedAt: assignment.assignedAt,
+        ...(assignment.expiresAt && { expiresAt: assignment.expiresAt }),
+        isActive: assignment.isActive,
+      }));
 
       // Cache the result
       await this.redis.set(cacheKey, roles, this.CACHE_TTL);
@@ -363,20 +423,23 @@ export class RbacService {
         return cached;
       }
 
-      const rolePermissions = await this.prisma.rolePermission.findMany({
-        where: {
-          roleId: { in: roleIds },
-          isActive: true,
-        },
-        include: {
-          permission: true,
-        },
-      });
+      const rolePermissions = (await this.databaseService
+        .getPrismaClient()
+        .findRolePermissionsSafe(roleIds)) as Array<{
+        id: string;
+        roleId: string;
+        permissionId: string;
+        isActive: boolean;
+        assignedAt: Date;
+        createdAt: Date;
+        updatedAt: Date;
+        permission: { resource: string; action: string };
+      }>;
 
-      const permissions = rolePermissions.map((rp: unknown): string => {
-        const rpData = rp as Record<string, unknown>;
-        const permission = rpData.permission as Record<string, unknown>;
-        return `${permission.resource}:${permission.action}`;
+      const permissions = rolePermissions.map((rp): string => {
+        const resource = rp.permission.resource;
+        const action = rp.permission.action;
+        return `${resource}:${action}`;
       });
 
       // Remove duplicates
@@ -637,10 +700,18 @@ export class RbacService {
     userId: string,
   ): Promise<boolean> {
     try {
-      const appointment = await this.prisma.appointment.findUnique({
-        where: { id: appointmentId },
-        select: { patientId: true, doctorId: true },
-      });
+      const appointment = (await this.databaseService
+        .getPrismaClient()
+        .findAppointmentByIdSafe(appointmentId)) as {
+        id: string;
+        patientId: string;
+        doctorId: string;
+        clinicId: string;
+        appointmentDate: Date;
+        status: string;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
 
       return appointment
         ? appointment.patientId === userId || appointment.doctorId === userId
@@ -664,7 +735,7 @@ export class RbacService {
   ): Promise<boolean> {
     // Commented out until MedicalRecord model is added to Prisma schema
     // try {
-    //   const record = await this.prisma.medicalRecord.findUnique({
+    //   const record = await this.databaseService.getPrismaClient().medicalRecord.findUnique({
     //     where: { id: recordId },
     //     select: { patientId: true },
     //   });

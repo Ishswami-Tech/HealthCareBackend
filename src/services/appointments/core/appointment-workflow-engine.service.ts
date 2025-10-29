@@ -20,7 +20,7 @@ export class AppointmentWorkflowEngine {
   /**
    * Execute workflow step
    */
-  async executeWorkflowStep(context: WorkflowContext): Promise<WorkflowResult> {
+  executeWorkflowStep(context: WorkflowContext): WorkflowResult {
     try {
       this.logger.log(
         `Executing workflow step for appointment: ${context.appointmentId}`,
@@ -44,37 +44,28 @@ export class AppointmentWorkflowEngine {
   /**
    * Process appointment creation workflow
    */
-  async processCreationWorkflow(
-    context: WorkflowContext,
-  ): Promise<WorkflowResult> {
+  processCreationWorkflow(context: WorkflowContext): WorkflowResult {
     return this.executeWorkflowStep(context);
   }
 
   /**
    * Process appointment update workflow
    */
-  async processUpdateWorkflow(
-    context: WorkflowContext,
-  ): Promise<WorkflowResult> {
+  processUpdateWorkflow(context: WorkflowContext): WorkflowResult {
     return this.executeWorkflowStep(context);
   }
 
   /**
    * Process appointment cancellation workflow
    */
-  async processCancellationWorkflow(
-    context: WorkflowContext,
-  ): Promise<WorkflowResult> {
+  processCancellationWorkflow(context: WorkflowContext): WorkflowResult {
     return this.executeWorkflowStep(context);
   }
 
   /**
    * Initialize workflow for an appointment
    */
-  async initializeWorkflow(
-    appointmentId: string,
-    eventType: string,
-  ): Promise<WorkflowResult> {
+  initializeWorkflow(appointmentId: string, eventType: string): WorkflowResult {
     try {
       this.logger.log(
         `Initializing workflow for appointment ${appointmentId} with event ${eventType}`,
@@ -119,12 +110,12 @@ export class AppointmentWorkflowEngine {
   /**
    * Transition appointment status with workflow validation
    */
-  async transitionStatus(
+  transitionStatus(
     appointmentId: string,
     currentStatus: string,
     newStatus: string,
     userId: string,
-  ): Promise<WorkflowResult> {
+  ): WorkflowResult {
     try {
       if (!this.isValidStatusTransition(currentStatus, newStatus)) {
         return {

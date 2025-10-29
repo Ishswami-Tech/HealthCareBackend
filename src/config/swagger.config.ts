@@ -3,7 +3,7 @@ import developmentConfig from "./environment/development.config";
 import productionConfig from "./environment/production.config";
 
 const getEnvironmentConfig = () => {
-  return process.env.NODE_ENV === "production"
+  return process.env["NODE_ENV"] === "production"
     ? productionConfig()
     : developmentConfig();
 };

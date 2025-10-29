@@ -1,6 +1,6 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "../../libs/infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../libs/infrastructure/database";
 import { CacheService } from "../../libs/infrastructure/cache";
 import {
   HealthCheckResponse,
@@ -24,7 +24,7 @@ export class HealthService {
   private databaseStatus: "healthy" | "unhealthy" = "healthy";
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly config: ConfigService,
     @Optional() private readonly queueService: QueueService,
@@ -99,7 +99,7 @@ export class HealthService {
       status: "healthy",
       timestamp: new Date().toISOString(),
       environment: this.config.get("NODE_ENV", "development"),
-      version: process.env.npm_package_version || "0.0.1",
+      version: process.env["npm_package_version"] || "0.0.1",
       systemMetrics: this.getSystemMetrics(),
       services: {
         api: {
@@ -108,22 +108,42 @@ export class HealthService {
           lastChecked: new Date().toISOString(),
         },
         database: {
-          ...dbHealth,
+          status: dbHealth?.status || "unhealthy",
+          responseTime: dbHealth?.responseTime || 0,
+          lastChecked: dbHealth?.lastChecked || new Date().toISOString(),
           metrics: {
-            queryResponseTime: dbHealth.responseTime,
+            queryResponseTime: dbHealth?.responseTime || 0,
             activeConnections: 1,
             maxConnections: 100,
             connectionUtilization: 1,
           },
         },
         redis: {
-          ...redisHealth,
+          status: redisHealth?.status || "unhealthy",
+          responseTime: redisHealth?.responseTime || 0,
+          lastChecked: redisHealth?.lastChecked || new Date().toISOString(),
           metrics: await this.getRedisMetrics(),
         },
-        queues: queueHealth,
-        logger: loggerHealth,
-        socket: socketHealth,
-        email: emailHealth,
+        queues: queueHealth || {
+          status: "unhealthy",
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        },
+        logger: loggerHealth || {
+          status: "unhealthy",
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        },
+        socket: socketHealth || {
+          status: "unhealthy",
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        },
+        email: emailHealth || {
+          status: "unhealthy",
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        },
       },
     };
 
@@ -136,7 +156,7 @@ export class HealthService {
         loggerHealth,
         socketHealth,
         emailHealth,
-      ].some((service) => service.status === "unhealthy")
+      ].some((service) => service?.status === "unhealthy")
     ) {
       result.status = "degraded";
     }
@@ -239,8 +259,8 @@ export class HealthService {
 
     try {
       // Use a simple raw query that doesn't involve the middleware
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-      await this.prisma.$queryRaw`SELECT 1`;
+
+      await this.databaseService.getPrismaClient().$queryRaw`SELECT 1`;
 
       this.databaseStatus = "healthy";
       this.lastDatabaseCheck = now;
@@ -293,10 +313,10 @@ export class HealthService {
       const info = await this.cacheService.getCacheDebug();
       return {
         connectedClients: 1,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-        usedMemory: (info as any)?.info?.memoryInfo?.usedMemory || 0,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-        totalKeys: (info as any)?.info?.dbSize || 0,
+        usedMemory:
+          (info as { info?: { memoryInfo?: { usedMemory?: number } } })?.info
+            ?.memoryInfo?.usedMemory || 0,
+        totalKeys: (info as { info?: { dbSize?: number } })?.info?.dbSize || 0,
         lastSave: new Date().toISOString(),
       };
     } catch (_error) {

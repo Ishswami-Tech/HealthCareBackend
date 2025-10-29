@@ -28,9 +28,9 @@ export * from "./decorators/roles.decorator";
 export * from "./filters/http-exception.filter";
 
 // Guards
-export * from "./guards/clinic.guard";
+export { ClinicGuard } from "./guards/clinic.guard";
 export * from "./guards/guards.module";
-export * from "./guards/jwt-auth.guard";
+export { JwtAuthGuard } from "./guards/jwt-auth.guard";
 export * from "./rbac/rbac.guard";
 export * from "./guards/roles.guard";
 

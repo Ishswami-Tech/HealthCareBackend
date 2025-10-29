@@ -3,10 +3,20 @@ import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import { WhatsAppConfig } from "./whatsapp.config";
 
+/**
+ * WhatsApp Business API service for sending messages and notifications
+ *
+ * @class WhatsAppService
+ */
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
 
+  /**
+   * Creates an instance of WhatsAppService
+   * @param configService - Configuration service for environment variables
+   * @param whatsAppConfig - WhatsApp configuration service
+   */
   constructor(
     private readonly configService: ConfigService,
     private readonly whatsAppConfig: WhatsAppConfig,
@@ -19,6 +29,14 @@ export class WhatsAppService {
    * @param expiryMinutes - OTP expiry time in minutes
    * @param maxRetries - Maximum number of retry attempts
    * @returns Promise<boolean> - Success status
+   */
+  /**
+   * Sends OTP via WhatsApp template message
+   * @param phoneNumber - Recipient phone number (with country code)
+   * @param otp - OTP code to send
+   * @param expiryMinutes - OTP expiry time in minutes (default: 10)
+   * @param maxRetries - Maximum retry attempts (default: 2)
+   * @returns Promise resolving to true if message was sent successfully
    */
   async sendOTP(
     phoneNumber: string,
@@ -89,6 +107,16 @@ export class WhatsAppService {
    * @param location - Location of appointment
    * @returns Promise<boolean> - Success status
    */
+  /**
+   * Sends appointment reminder via WhatsApp
+   * @param phoneNumber - Recipient phone number (with country code)
+   * @param patientName - Patient name for personalization
+   * @param doctorName - Doctor name
+   * @param appointmentDate - Appointment date
+   * @param appointmentTime - Appointment time
+   * @param location - Appointment location
+   * @returns Promise resolving to true if message was sent successfully
+   */
   async sendAppointmentReminder(
     phoneNumber: string,
     patientName: string,
@@ -145,6 +173,15 @@ export class WhatsAppService {
    * @param medicationDetails - Medication details
    * @param prescriptionUrl - URL to download prescription
    * @returns Promise<boolean> - Success status
+   */
+  /**
+   * Sends prescription notification via WhatsApp
+   * @param phoneNumber - Recipient phone number (with country code)
+   * @param patientName - Patient name for personalization
+   * @param doctorName - Doctor name who prescribed
+   * @param medicationDetails - Details about prescribed medications
+   * @param prescriptionUrl - Optional prescription document URL
+   * @returns Promise resolving to true if message was sent successfully
    */
   async sendPrescriptionNotification(
     phoneNumber: string,
@@ -206,6 +243,12 @@ export class WhatsAppService {
    * @param message - The message to send
    * @returns Promise<boolean> - Success status
    */
+  /**
+   * Sends a custom text message via WhatsApp
+   * @param phoneNumber - Recipient phone number (with country code)
+   * @param message - Message text to send
+   * @returns Promise resolving to true if message was sent successfully
+   */
   async sendCustomMessage(
     phoneNumber: string,
     message: string,
@@ -254,6 +297,14 @@ export class WhatsAppService {
    * @param templateName - The template name
    * @param components - Template components
    * @returns Promise<unknown> - API response
+   */
+  /**
+   * Sends a template message via WhatsApp Business API
+   * @param to - Recipient phone number
+   * @param templateName - Template name to use
+   * @param components - Template components with parameters
+   * @returns Promise resolving to API response
+   * @private
    */
   private async sendTemplateMessage(
     to: string,
@@ -304,6 +355,14 @@ export class WhatsAppService {
    * @param caption - Caption for the document
    * @returns Promise<unknown> - API response
    */
+  /**
+   * Sends a document message via WhatsApp Business API
+   * @param to - Recipient phone number
+   * @param documentUrl - URL of the document to send
+   * @param caption - Document caption
+   * @returns Promise resolving to API response
+   * @private
+   */
   private async sendDocumentMessage(
     to: string,
     documentUrl: string,
@@ -349,6 +408,16 @@ export class WhatsAppService {
    * @param dueDate - Invoice due date
    * @param invoiceUrl - URL to download invoice PDF
    * @returns Promise<boolean> - Success status
+   */
+  /**
+   * Sends invoice notification via WhatsApp
+   * @param phoneNumber - Recipient phone number (with country code)
+   * @param userName - User name for personalization
+   * @param invoiceNumber - Invoice number
+   * @param amount - Invoice amount
+   * @param dueDate - Payment due date
+   * @param invoiceUrl - Invoice document URL
+   * @returns Promise resolving to true if message was sent successfully
    */
   async sendInvoice(
     phoneNumber: string,
@@ -406,6 +475,16 @@ export class WhatsAppService {
    * @param endDate - Subscription end date
    * @returns Promise<boolean> - Success status
    */
+  /**
+   * Sends subscription confirmation via WhatsApp
+   * @param phoneNumber - Recipient phone number (with country code)
+   * @param userName - User name for personalization
+   * @param planName - Subscription plan name
+   * @param amount - Subscription amount
+   * @param startDate - Subscription start date
+   * @param endDate - Subscription end date
+   * @returns Promise resolving to true if message was sent successfully
+   */
   async sendSubscriptionConfirmation(
     phoneNumber: string,
     userName: string,
@@ -453,6 +532,12 @@ export class WhatsAppService {
    * Format phone number to international format
    * @param phoneNumber - The phone number to format
    * @returns string - Formatted phone number
+   */
+  /**
+   * Formats phone number for WhatsApp API
+   * @param phoneNumber - Raw phone number
+   * @returns Formatted phone number with country code
+   * @private
    */
   private formatPhoneNumber(phoneNumber: string): string {
     // Remove any non-digit characters

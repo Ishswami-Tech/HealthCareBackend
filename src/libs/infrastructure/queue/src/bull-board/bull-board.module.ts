@@ -13,7 +13,27 @@ import {
   PANCHAKARMA_QUEUE,
   CHEQUP_QUEUE,
 } from "../queue.constants";
-import { Queue } from "bullmq";
+
+/**
+ * Bull Board Module for Queue Monitoring
+ *
+ * Provides a web-based dashboard for monitoring and managing BullMQ queues.
+ * Includes authentication, middleware configuration, and integration with all
+ * healthcare system queues.
+ *
+ * @module BullBoardModule
+ * @description Enterprise-grade queue monitoring with security and performance features
+ * @example
+ * ```typescript
+ * // Import in your app module
+ * import { BullBoardModule } from './queue/bull-board/bull-board.module';
+ *
+ * @Module({
+ *   imports: [BullBoardModule],
+ * })
+ * export class AppModule {}
+ * ```
+ */
 
 @Module({
   providers: [BullBoardService],
@@ -25,17 +45,19 @@ import { Queue } from "bullmq";
         route: "/queue-dashboard",
         adapter: FastifyAdapter,
         auth: {
-          user: config.get("QUEUE_DASHBOARD_USER", "admin"),
-          password: config.get("QUEUE_DASHBOARD_PASSWORD", "admin"),
+          user: config.get<string>("QUEUE_DASHBOARD_USER", "admin"),
+          password: config.get<string>("QUEUE_DASHBOARD_PASSWORD", "admin"),
         },
         basePath: "/queue-dashboard",
-        middleware: (req: unknown, res: unknown, next: unknown) => {
+        middleware: (req: unknown, _res: unknown, next: unknown) => {
           // Only handle queue-dashboard routes
-          if ((req as any).url.startsWith("/queue-dashboard")) {
-            (next as any)();
+          const request = req as { url: string };
+          const nextFn = next as (value?: string) => void;
+          if (request.url.startsWith("/queue-dashboard")) {
+            nextFn();
           } else {
             // Pass through for non-queue routes
-            (next as any)("route");
+            nextFn("route");
           }
         },
       }),
@@ -72,7 +94,13 @@ import { Queue } from "bullmq";
   ],
 })
 export class BullBoardModule {
-  configure(consumer: MiddlewareConsumer) {
+  /**
+   * Configure middleware for Bull Board routes
+   *
+   * @param consumer - Middleware consumer for route configuration
+   * @description Applies Bull Board middleware only to queue-dashboard routes for security
+   */
+  configure(consumer: MiddlewareConsumer): void {
     // Only apply Bull Board middleware to queue-dashboard routes
     consumer
       .apply()

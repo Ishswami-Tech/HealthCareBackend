@@ -666,9 +666,10 @@ export class ClinicContextService {
     ][now.getDay()];
     const currentTime = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
 
-    const daySchedule = location.operatingHours[dayName];
+    const daySchedule =
+      location.operatingHours[dayName as keyof typeof location.operatingHours];
 
-    return (
+    return !!(
       daySchedule &&
       daySchedule.isOpen &&
       currentTime >= daySchedule.open &&

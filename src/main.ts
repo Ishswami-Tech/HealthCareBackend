@@ -76,7 +76,7 @@ async function configureProductionMiddleware(
   configService: ConfigService,
   logger: Logger,
 ): Promise<void> {
-  logger.log("🔧 Configuring production middleware...");
+  logger.log(" Configuring production middleware...");
 
   // Compression middleware
   await app.register(fastifyCompress as any, {
@@ -97,8 +97,8 @@ async function configureProductionMiddleware(
 
   // Rate limiting middleware
   await app.register(fastifyRateLimit as any, {
-    max: parseInt(process.env.RATE_LIMIT_MAX || "1000", 10),
-    timeWindow: process.env.RATE_LIMIT_WINDOW || "1 minute",
+    max: parseInt(process.env["RATE_LIMIT_MAX"] || "1000", 10),
+    timeWindow: process.env["RATE_LIMIT_WINDOW"] || "1 minute",
     redis: configService.get("REDIS_URL")
       ? {
           host: configService.get("REDIS_HOST"),
@@ -161,15 +161,15 @@ async function configureProductionMiddleware(
     ],
   });
 
-  logger.log("✅ Production middleware configured");
+  logger.log(" Production middleware configured");
 }
 
 /**
  * Production clustering setup for high concurrency
  */
 function setupProductionClustering(): boolean {
-  const isProduction = process.env.NODE_ENV === "production";
-  const enableClustering = process.env.ENABLE_CLUSTERING === "true";
+  const isProduction = process.env["NODE_ENV"] === "production";
+  const enableClustering = process.env["ENABLE_CLUSTERING"] === "true";
 
   if (!isProduction || !enableClustering) {
     return false;
@@ -180,13 +180,13 @@ function setupProductionClustering(): boolean {
 
   if (cluster.isPrimary) {
     console.log(
-      `🎯 Primary process ${process.pid} starting with ${workerCount} workers`,
+      ` Primary process ${process.pid} starting with ${workerCount} workers`,
     );
 
     // Fork workers
     for (let i = 0; i < workerCount; i++) {
       const worker = cluster.fork();
-      console.log(`👷 Worker ${worker.process.pid} started`);
+      console.log(` Worker ${worker.process.pid} started`);
     }
 
     // Handle worker deaths and respawn
@@ -196,18 +196,18 @@ function setupProductionClustering(): boolean {
         const pid = worker.process.pid;
 
         if (signal) {
-          console.log(`⚠️ Worker ${pid} killed by signal: ${signal}`);
+          console.log(` Worker ${pid} killed by signal: ${signal}`);
         } else if (code !== 0 && code !== null) {
-          console.error(`❌ Worker ${pid} exited with error code: ${code}`);
+          console.error(` Worker ${pid} exited with error code: ${code}`);
         } else {
-          console.log(`✅ Worker ${pid} exited successfully`);
+          console.log(` Worker ${pid} exited successfully`);
         }
 
         // Respawn worker if not in shutdown mode
         if (!worker.exitedAfterDisconnect) {
-          console.log("🔄 Respawning worker...");
+          console.log(" Respawning worker...");
           const newWorker = cluster.fork();
-          console.log(`🆕 New worker ${newWorker.process.pid} started`);
+          console.log(` New worker ${newWorker.process.pid} started`);
         }
       },
     );
@@ -227,7 +227,7 @@ function setupProductionClustering(): boolean {
 
       // Wait for workers to finish
       const shutdownTimeout = setTimeout(() => {
-        console.error("🕐 Force killing workers after timeout");
+        console.error(" Force killing workers after timeout");
         workers.forEach((worker) => {
           if (worker && !worker.isDead()) {
             worker.kill("SIGKILL");
@@ -247,7 +247,7 @@ function setupProductionClustering(): boolean {
 
       await Promise.all(exitPromises);
       clearTimeout(shutdownTimeout);
-      console.log("✅ All workers shutdown successfully");
+      console.log(" All workers shutdown successfully");
       process.exit(0);
     };
 
@@ -258,9 +258,9 @@ function setupProductionClustering(): boolean {
   } else {
     // Worker process
     process.title = `healthcare-worker-${cluster.worker?.id}`;
-    process.env.WORKER_ID = cluster.worker?.id?.toString() || "0";
+    process.env["WORKER_ID"] = cluster.worker?.id?.toString() || "0";
     console.log(
-      `🔧 Worker ${process.pid} (ID: ${cluster.worker?.id}) initialized`,
+      ` Worker ${process.pid} (ID: ${cluster.worker?.id}) initialized`,
     );
     return false; // Continue with normal bootstrap
   }
@@ -273,9 +273,10 @@ async function bootstrap() {
   }
 
   // Detect horizontal scaling mode (Docker containers)
-  const isHorizontalScaling = process.env.CLUSTER_MODE === "horizontal";
-  const instanceId = process.env.INSTANCE_ID || process.env.WORKER_ID || "1";
-  const workerId = process.env.WORKER_ID || cluster.worker?.id || instanceId;
+  const isHorizontalScaling = process.env["CLUSTER_MODE"] === "horizontal";
+  const instanceId =
+    process.env["INSTANCE_ID"] || process.env["WORKER_ID"] || "1";
+  const workerId = process.env["WORKER_ID"] || cluster.worker?.id || instanceId;
 
   const logger = new Logger(`Bootstrap-${instanceId}`);
   let app: (NestFastifyApplication & INestApplication) | undefined;
@@ -283,17 +284,15 @@ async function bootstrap() {
 
   try {
     logger.log(
-      `🚀 Starting Healthcare API bootstrap (Instance: ${instanceId}, Worker: ${workerId})...`,
+      ` Starting Healthcare API bootstrap (Instance: ${instanceId}, Worker: ${workerId})...`,
     );
 
     if (isHorizontalScaling) {
-      logger.log(
-        `📊 Horizontal scaling mode detected - Instance ${instanceId}`,
-      );
+      logger.log(` Horizontal scaling mode detected - Instance ${instanceId}`);
       process.title = `healthcare-api-${instanceId}`;
     }
 
-    const environment = process.env.NODE_ENV as Environment;
+    const environment = process.env["NODE_ENV"] as Environment;
     if (!validEnvironments.includes(environment)) {
       throw new Error(
         `Invalid NODE_ENV: ${environment}. Must be one of: ${validEnvironments.join(", ")}`,
@@ -305,7 +304,7 @@ async function bootstrap() {
 
     // Configure Fastify logger based on environment
     const loggerConfig: FastifyLoggerConfig = {
-      level: process.env.NODE_ENV === "production" ? "warn" : "info",
+      level: process.env["NODE_ENV"] === "production" ? "warn" : "info",
       serializers: {
         req: (req: Partial<AuthenticatedRequest>): SerializedRequest => {
           // Skip detailed logging for health check and common endpoints
@@ -327,7 +326,9 @@ async function bootstrap() {
             headers: req.headers as Record<string, unknown>,
           };
         },
-        res: (res: { statusCode?: number }) => ({ statusCode: res.statusCode }),
+        res: (res: { statusCode?: number }) => ({
+          statusCode: res.statusCode || 200,
+        }),
         err: (err: unknown) => ({
           type: "ERROR",
           message: (err as any).message,
@@ -337,7 +338,7 @@ async function bootstrap() {
     };
 
     // Add pretty printing only in development
-    if (process.env.NODE_ENV !== "production") {
+    if (process.env["NODE_ENV"] !== "production") {
       loggerConfig["transport"] = {
         target: "pino-pretty",
         options: {
@@ -385,11 +386,11 @@ async function bootstrap() {
 
         // HTTP/2 support for production
         http2: (environment === "production" &&
-          process.env.ENABLE_HTTP2 === "true") as true,
+          process.env["ENABLE_HTTP2"] === "true") as true,
       }),
       {
         logger:
-          process.env.NODE_ENV === "production"
+          process.env["NODE_ENV"] === "production"
             ? ["error", "warn"]
             : (["error", "warn", "log"] as LogLevel[]),
         bufferLogs: true,
@@ -559,8 +560,8 @@ async function bootstrap() {
               ...(options || {}),
               cors: {
                 origin:
-                  process.env.NODE_ENV === "production"
-                    ? process.env.CORS_ORIGIN?.split(",") || [
+                  process.env["NODE_ENV"] === "production"
+                    ? process.env["CORS_ORIGIN"]?.split(",") || [
                         "https://ishswami.in",
                       ]
                     : "*",
@@ -593,7 +594,7 @@ async function bootstrap() {
                 socket.emit("health", {
                   status: "healthy",
                   timestamp: new Date(),
-                  environment: process.env.NODE_ENV,
+                  environment: process.env["NODE_ENV"],
                 });
               });
 
@@ -608,7 +609,7 @@ async function bootstrap() {
                 socket.emit("welcome", {
                   message: "Connected to WebSocket server",
                   timestamp: new Date().toISOString(),
-                  environment: process.env.NODE_ENV,
+                  environment: process.env["NODE_ENV"],
                 });
 
                 heartbeat = setInterval(() => {
@@ -692,7 +693,7 @@ async function bootstrap() {
     // Enable CORS with specific configuration
     app.enableCors({
       origin:
-        process.env.NODE_ENV === "production"
+        process.env["NODE_ENV"] === "production"
           ? [
               "https://ishswami.in",
               "https://www.ishswami.in",
@@ -740,7 +741,7 @@ async function bootstrap() {
         const origin = request.headers.origin;
         if (origin) {
           const allowedOrigins =
-            process.env.NODE_ENV === "production"
+            process.env["NODE_ENV"] === "production"
               ? [
                   "https://ishswami.in",
                   "https://www.ishswami.in",
@@ -864,7 +865,7 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, swaggerConfig);
 
     // Add environment-specific Swagger setup
-    if (process.env.NODE_ENV === "production") {
+    if (process.env["NODE_ENV"] === "production") {
       // In production, add CORS and security headers for Swagger UI
       await fastifyInstance.register(fastifyHelmet as any, {
         contentSecurityPolicy: {
@@ -887,7 +888,7 @@ async function bootstrap() {
           {
             url: `${apiUrl}${swaggerUrl}/swagger.json`,
             name:
-              process.env.NODE_ENV === "production"
+              process.env["NODE_ENV"] === "production"
                 ? "Production"
                 : "Development",
           },
@@ -896,7 +897,7 @@ async function bootstrap() {
     });
 
     logger.log(
-      `Swagger API documentation configured for ${process.env.NODE_ENV} environment`,
+      `Swagger API documentation configured for ${process.env["NODE_ENV"]} environment`,
     );
 
     // Start the server with improved error handling
@@ -918,10 +919,7 @@ async function bootstrap() {
       logger.log(`- Health Check: ${envConfig.app.baseUrl}/health`);
 
       if (envConfig.app.environment === "development") {
-        const devConfig =
-          envConfig as typeof developmentConfig extends () => infer R
-            ? R
-            : never;
+        const devConfig = envConfig;
         logger.log("Development services:");
         logger.log(`- Redis Commander: ${devConfig.urls.redisCommander}`);
         logger.log(`- Prisma Studio: ${devConfig.urls.prismaStudio}`);
@@ -978,7 +976,7 @@ async function bootstrap() {
                 const prismaService = await app.resolve(PrismaService);
                 if (prismaService) {
                   logger.log("Closing database connections...");
-                  await prismaService.$disconnect();
+                  await prismaService["$disconnect"]();
                 }
               }
             } catch (prismaError) {

@@ -8,6 +8,7 @@ import {
   Put,
   UseGuards,
   Request,
+  NotFoundException,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -47,12 +48,39 @@ export class ClinicLocationController {
   async create(
     @Param("clinicId") clinicId: string,
     @Body() createLocationDto: CreateClinicLocationDto,
-    @Request() req: unknown,
-  ) {
-    return this.locationService.createLocation(
-      clinicId,
-      createLocationDto,
-      (req as any).user.id,
+    @Request() req: { user: { id: string } },
+  ): Promise<{
+    id: string;
+    locationId: string;
+    name: string;
+    address: string;
+    city: string;
+    state: string;
+    country: string;
+    zipCode: string;
+    phone: string;
+    email: string;
+    timezone: string;
+    workingHours: string;
+    isActive: boolean;
+    clinicId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }> {
+    const user = req as { user: { id: string } };
+    return await this.locationService.createClinicLocation(
+      {
+        ...createLocationDto,
+        clinicId,
+        locationId: `LOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        workingHours:
+          typeof createLocationDto.workingHours === "string"
+            ? createLocationDto.workingHours
+            : createLocationDto.workingHours
+              ? JSON.stringify(createLocationDto.workingHours)
+              : "9:00 AM - 5:00 PM",
+      },
+      user.user.id,
     );
   }
 
@@ -64,8 +92,30 @@ export class ClinicLocationController {
     description: "Return all locations for the specified clinic.",
   })
   @ApiParam({ name: "clinicId", description: "ID of the clinic" })
-  async findAll(@Param("clinicId") clinicId: string, @Request() req: unknown) {
-    return this.locationService.getLocations(clinicId, (req as any).user.id);
+  async findAll(
+    @Param("clinicId") clinicId: string,
+    @Request() _req: { user: { id: string } },
+  ): Promise<
+    Array<{
+      id: string;
+      locationId: string;
+      name: string;
+      address: string;
+      city: string;
+      state: string;
+      country: string;
+      zipCode: string;
+      phone: string;
+      email: string;
+      timezone: string;
+      workingHours: string;
+      isActive: boolean;
+      clinicId: string;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  > {
+    return await this.locationService.getLocations(clinicId, false);
   }
 
   @Get(":id")
@@ -77,14 +127,34 @@ export class ClinicLocationController {
   @ApiParam({ name: "id", description: "ID of the location" })
   async findOne(
     @Param("id") id: string,
-    @Param("clinicId") clinicId: string,
-    @Request() req: unknown,
-  ) {
-    return this.locationService.getLocationById(
+    @Param("clinicId") _clinicId: string,
+    @Request() _req: { user: { id: string } },
+  ): Promise<{
+    id: string;
+    locationId: string;
+    name: string;
+    address: string;
+    city: string;
+    state: string;
+    country: string;
+    zipCode: string;
+    phone: string;
+    email: string;
+    timezone: string;
+    workingHours: string;
+    isActive: boolean;
+    clinicId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }> {
+    const location = await this.locationService.getClinicLocationById(
       id,
-      clinicId,
-      (req as any).user.id,
+      false,
     );
+    if (!location) {
+      throw new NotFoundException(`Location with ID ${id} not found`);
+    }
+    return location;
   }
 
   @Put(":id")
@@ -103,13 +173,40 @@ export class ClinicLocationController {
     @Param("id") id: string,
     @Param("clinicId") clinicId: string,
     @Body() updateLocationDto: UpdateClinicLocationDto,
-    @Request() req: unknown,
-  ) {
-    return this.locationService.updateLocation(
+    @Request() req: { user: { id: string } },
+  ): Promise<{
+    id: string;
+    locationId: string;
+    name: string;
+    address: string;
+    city: string;
+    state: string;
+    country: string;
+    zipCode: string;
+    phone: string;
+    email: string;
+    timezone: string;
+    workingHours: string;
+    isActive: boolean;
+    clinicId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }> {
+    const user = req as { user: { id: string } };
+    // Handle workingHours conversion properly
+    const updateData = { ...updateLocationDto };
+    if (updateLocationDto.workingHours) {
+      if (typeof updateLocationDto.workingHours === "string") {
+        updateData.workingHours = JSON.parse(updateLocationDto.workingHours);
+      } else if (typeof updateLocationDto.workingHours === "object") {
+        updateData.workingHours = updateLocationDto.workingHours;
+      }
+    }
+
+    return await this.locationService.updateLocation(
       id,
-      clinicId,
-      updateLocationDto,
-      (req as any).user.id,
+      updateData as any,
+      user.user.id,
     );
   }
 
@@ -127,12 +224,8 @@ export class ClinicLocationController {
   async remove(
     @Param("id") id: string,
     @Param("clinicId") clinicId: string,
-    @Request() req: unknown,
+    @Request() req: { user: { id: string } },
   ) {
-    return this.locationService.deleteLocation(
-      id,
-      clinicId,
-      (req as any).user.id,
-    );
+    return this.locationService.deleteLocation(id, req.user.id);
   }
 }

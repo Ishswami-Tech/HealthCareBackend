@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CacheService } from "../../../../libs/infrastructure/cache/cache.service";
@@ -178,33 +178,47 @@ export class AppointmentAnalyticsService {
       });
 
       const statusMap: Record<string, number> = {};
-      appointmentsByStatus.forEach((item: any) => {
-        statusMap[item.status] = item._count.status;
-      });
+      appointmentsByStatus.forEach(
+        (item: { status: string; _count: { status: number } }) => {
+          statusMap[item.status] = item._count.status;
+        },
+      );
 
       const typeMap: Record<string, number> = {};
-      appointmentsByType.forEach((item: any) => {
-        typeMap[item.type] = item._count.type;
-      });
+      appointmentsByType.forEach(
+        (item: { type: string; _count: { type: number } }) => {
+          typeMap[item.type] = item._count.type;
+        },
+      );
 
       const averageWaitTime =
         completedAppointments.length > 0
-          ? completedAppointments.reduce((sum: number, apt: any) => {
-              if (apt.scheduledTime && apt.actualStartTime) {
-                const waitTime =
-                  (new Date(apt.actualStartTime).getTime() -
-                    new Date(apt.scheduledTime).getTime()) /
-                  (1000 * 60);
-                return sum + Math.max(0, waitTime);
-              }
-              return sum;
-            }, 0) / completedAppointments.length
+          ? completedAppointments.reduce(
+              (
+                sum: number,
+                apt: {
+                  scheduledTime: Date | null;
+                  actualStartTime: Date | null;
+                },
+              ) => {
+                if (apt.scheduledTime && apt.actualStartTime) {
+                  const waitTime =
+                    (new Date(apt.actualStartTime).getTime() -
+                      new Date(apt.scheduledTime).getTime()) /
+                    (1000 * 60);
+                  return sum + Math.max(0, waitTime);
+                }
+                return sum;
+              },
+              0,
+            ) / completedAppointments.length
           : 0;
 
       const patientSatisfaction =
         completedAppointments.length > 0
           ? completedAppointments.reduce(
-              (sum: number, apt: any) => sum + (apt.patientSatisfaction || 0),
+              (sum: number, apt: { patientSatisfaction?: number }) =>
+                sum + (apt.patientSatisfaction || 0),
               0,
             ) / completedAppointments.length
           : 0;
@@ -219,7 +233,8 @@ export class AppointmentAnalyticsService {
         totalAppointments > 0 ? (completedCount / totalAppointments) * 100 : 0;
 
       const revenue = completedAppointments.reduce(
-        (sum: number, apt: any) => sum + (apt.totalCost || 0),
+        (sum: number, apt: { totalCost?: number }) =>
+          sum + (apt.totalCost || 0),
         0,
       );
       const costPerAppointment =
@@ -230,7 +245,8 @@ export class AppointmentAnalyticsService {
       const averageDuration =
         completedAppointments.length > 0
           ? completedAppointments.reduce(
-              (sum: number, apt: any) => sum + (apt.duration || 0),
+              (sum: number, apt: { duration?: number }) =>
+                sum + (apt.duration || 0),
               0,
             ) / completedAppointments.length
           : 0;
@@ -641,10 +657,10 @@ export class AppointmentAnalyticsService {
   ): unknown {
     return {
       keyInsights: [
-        `Total appointments: ${(appointmentMetrics as any).totalAppointments}`,
-        `Completion rate: ${(appointmentMetrics as any).completionRate}%`,
-        `Patient satisfaction: ${(appointmentMetrics as any).patientSatisfaction}/5`,
-        `Revenue: $${(appointmentMetrics as any).revenue}`,
+        `Total appointments: ${(appointmentMetrics as { totalAppointments: number }).totalAppointments}`,
+        `Completion rate: ${(appointmentMetrics as { completionRate: number }).completionRate}%`,
+        `Patient satisfaction: ${(appointmentMetrics as { patientSatisfaction: number }).patientSatisfaction}/5`,
+        `Revenue: $${(appointmentMetrics as { revenue: number }).revenue}`,
       ],
       recommendations: [
         "Focus on reducing no-show rates",

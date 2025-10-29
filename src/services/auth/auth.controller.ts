@@ -19,9 +19,6 @@ import {
   ApiSecurity,
   ApiConsumes,
   ApiProduces,
-  ApiParam,
-  ApiQuery,
-  ApiHeader,
   ApiExtraModels,
 } from "@nestjs/swagger";
 import { AuthService } from "./auth.service";
@@ -1021,7 +1018,7 @@ export class AuthController {
       },
     },
   })
-  async getProfile(
+  getProfile(
     @Request()
     req: Express.Request & {
       user?: {
@@ -1032,23 +1029,21 @@ export class AuthController {
         domain: string;
       };
     },
-  ): Promise<
-    DataResponseDto<{
-      id: string;
-      email: string;
-      role: string;
-      clinicId?: string;
-      domain: string;
-    }>
-  > {
+  ): DataResponseDto<{
+    id: string;
+    email: string;
+    role: string;
+    clinicId?: string;
+    domain: string;
+  }> {
     try {
       // Return user profile from request (already populated by AuthGuard)
       const profile = {
         id: req.user!.id,
         email: req.user!.email,
         role: req.user!.role,
-        clinicId: req.user!.clinicId,
         domain: req.user!.domain,
+        ...(req.user!.clinicId && { clinicId: req.user!.clinicId }),
       };
 
       return new DataResponseDto(profile, "Profile retrieved successfully");
@@ -1103,9 +1098,7 @@ export class AuthController {
       },
     },
   })
-  async getUserSessions(
-    @Request() req: Express.Request,
-  ): Promise<DataResponseDto<never[]>> {
+  getUserSessions(@Request() _req: Express.Request): DataResponseDto<never[]> {
     try {
       // This would typically get user sessions from the session service
       // For now, return a placeholder response

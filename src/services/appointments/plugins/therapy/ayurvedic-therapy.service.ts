@@ -1,10 +1,6 @@
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-} from "@nestjs/common";
-import { PrismaService } from "../../../../libs/infrastructure/database";
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-floating-promises */
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { DatabaseService } from "../../../../libs/infrastructure/database";
 import { CacheService } from "../../../../libs/infrastructure/cache";
 import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
 import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
@@ -89,7 +85,7 @@ export class AyurvedicTherapyService {
   private readonly SESSION_CACHE_TTL = 1800; // 30 minutes
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
   ) {}
@@ -101,23 +97,25 @@ export class AyurvedicTherapyService {
     const startTime = Date.now();
 
     try {
-      const therapy = await this.prisma.ayurvedicTherapy.create({
-        data: {
-          name: data.name,
-          description: data.description,
-          therapyType: data.therapyType,
-          duration: data.duration,
-          estimatedDuration: data.estimatedDuration,
-          clinicId: data.clinicId,
-        },
-      });
+      const therapy = await this.databaseService
+        .getPrismaClient()
+        .ayurvedicTherapy.create({
+          data: {
+            name: data.name,
+            description: data.description,
+            therapyType: data.therapyType,
+            duration: data.duration,
+            estimatedDuration: data.estimatedDuration,
+            clinicId: data.clinicId,
+          },
+        });
 
       // Invalidate cache
       await this.cacheService.invalidateByPattern(
         `therapies:clinic:${data.clinicId}*`,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         "Ayurvedic therapy created successfully",
@@ -132,7 +130,7 @@ export class AyurvedicTherapyService {
 
       return therapy;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create therapy: ${error instanceof Error ? error.message : String(error)}`,
@@ -163,19 +161,21 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const therapies = await this.prisma.ayurvedicTherapy.findMany({
-        where: {
-          clinicId,
-          ...(isActive !== undefined && { isActive }),
-        },
-        include: {
-          sessions: {
-            take: 10,
-            orderBy: { sessionDate: "desc" },
+      const therapies = await this.databaseService
+        .getPrismaClient()
+        .ayurvedicTherapy.findMany({
+          where: {
+            clinicId,
+            ...(isActive !== undefined && { isActive }),
           },
-        },
-        orderBy: { createdAt: "desc" },
-      });
+          include: {
+            sessions: {
+              take: 10,
+              orderBy: { sessionDate: "desc" },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        });
 
       // Cache the result
       await this.cacheService.set(
@@ -229,14 +229,16 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const therapies = await this.prisma.ayurvedicTherapy.findMany({
-        where: {
-          clinicId,
-          therapyType,
-          isActive: true,
-        },
-        orderBy: { name: "asc" },
-      });
+      const therapies = await this.databaseService
+        .getPrismaClient()
+        .ayurvedicTherapy.findMany({
+          where: {
+            clinicId,
+            therapyType,
+            isActive: true,
+          },
+          orderBy: { name: "asc" },
+        });
 
       // Cache the result
       await this.cacheService.set(
@@ -289,15 +291,17 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const therapy = await this.prisma.ayurvedicTherapy.findUnique({
-        where: { id: therapyId },
-        include: {
-          sessions: {
-            orderBy: { sessionDate: "desc" },
-            take: 20,
+      const therapy = await this.databaseService
+        .getPrismaClient()
+        .ayurvedicTherapy.findUnique({
+          where: { id: therapyId },
+          include: {
+            sessions: {
+              orderBy: { sessionDate: "desc" },
+              take: 20,
+            },
           },
-        },
-      });
+        });
 
       if (!therapy) {
         throw new NotFoundException(`Therapy with ID ${therapyId} not found`);
@@ -347,10 +351,12 @@ export class AyurvedicTherapyService {
     const startTime = Date.now();
 
     try {
-      const therapy = await this.prisma.ayurvedicTherapy.update({
-        where: { id: therapyId },
-        data,
-      });
+      const therapy = await this.databaseService
+        .getPrismaClient()
+        .ayurvedicTherapy.update({
+          where: { id: therapyId },
+          data,
+        });
 
       // Invalidate cache
       await this.cacheService.del(`therapy:${therapyId}`);
@@ -392,15 +398,17 @@ export class AyurvedicTherapyService {
     const startTime = Date.now();
 
     try {
-      const therapy = await this.prisma.ayurvedicTherapy.findUnique({
-        where: { id: therapyId },
-      });
+      const therapy = await this.databaseService
+        .getPrismaClient()
+        .ayurvedicTherapy.findUnique({
+          where: { id: therapyId },
+        });
 
       if (!therapy) {
         throw new NotFoundException(`Therapy with ID ${therapyId} not found`);
       }
 
-      await this.prisma.ayurvedicTherapy.delete({
+      await this.databaseService.getPrismaClient().ayurvedicTherapy.delete({
         where: { id: therapyId },
       });
 
@@ -449,9 +457,11 @@ export class AyurvedicTherapyService {
 
     try {
       // Validate therapy exists
-      const therapy = await this.prisma.ayurvedicTherapy.findUnique({
-        where: { id: data.therapyId },
-      });
+      const therapy = await this.databaseService
+        .getPrismaClient()
+        .ayurvedicTherapy.findUnique({
+          where: { id: data.therapyId },
+        });
 
       if (!therapy) {
         throw new NotFoundException(
@@ -459,44 +469,46 @@ export class AyurvedicTherapyService {
         );
       }
 
-      const session = await this.prisma.therapySession.create({
-        data: {
-          therapyId: data.therapyId,
-          appointmentId: data.appointmentId,
-          patientId: data.patientId,
-          doctorId: data.doctorId,
-          clinicId: data.clinicId,
-          sessionDate: data.sessionDate,
-          startTime: data.startTime,
-          notes: data.notes,
-          observations: data.observations as any,
-          status: TherapyStatus.SCHEDULED,
-        },
-        include: {
-          therapy: true,
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const session = await this.databaseService
+        .getPrismaClient()
+        .therapySession.create({
+          data: {
+            therapyId: data.therapyId,
+            appointmentId: data.appointmentId,
+            patientId: data.patientId,
+            doctorId: data.doctorId,
+            clinicId: data.clinicId,
+            sessionDate: data.sessionDate,
+            startTime: data.startTime,
+            notes: data.notes,
+            observations: data.observations as any,
+            status: TherapyStatus.SCHEDULED,
+          },
+          include: {
+            therapy: true,
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
+                },
+              },
+            },
+            doctor: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                  },
                 },
               },
             },
           },
-          doctor: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
-              },
-            },
-          },
-        },
-      });
+        });
 
       // Invalidate cache
       await this.cacheService.invalidateByPattern(
@@ -552,26 +564,28 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const sessions = await this.prisma.therapySession.findMany({
-        where: {
-          patientId,
-          clinicId,
-        },
-        include: {
-          therapy: true,
-          doctor: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
+      const sessions = await this.databaseService
+        .getPrismaClient()
+        .therapySession.findMany({
+          where: {
+            patientId,
+            clinicId,
+          },
+          include: {
+            therapy: true,
+            doctor: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                  },
                 },
               },
             },
           },
-        },
-        orderBy: { sessionDate: "desc" },
-      });
+          orderBy: { sessionDate: "desc" },
+        });
 
       // Cache the result
       await this.cacheService.set(
@@ -646,24 +660,26 @@ export class AyurvedicTherapyService {
         };
       }
 
-      const sessions = await this.prisma.therapySession.findMany({
-        where: whereClause,
-        include: {
-          therapy: true,
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const sessions = await this.databaseService
+        .getPrismaClient()
+        .therapySession.findMany({
+          where: whereClause,
+          include: {
+            therapy: true,
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
                 },
               },
             },
           },
-        },
-        orderBy: { sessionDate: "asc" },
-      });
+          orderBy: { sessionDate: "asc" },
+        });
 
       // Cache the result
       await this.cacheService.set(
@@ -713,37 +729,39 @@ export class AyurvedicTherapyService {
     const startTime = Date.now();
 
     try {
-      const session = await this.prisma.therapySession.update({
-        where: { id: sessionId },
-        data: {
-          ...data,
-          observations: data.observations as any,
-        },
-        include: {
-          therapy: true,
-          patient: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                  phone: true,
+      const session = await this.databaseService
+        .getPrismaClient()
+        .therapySession.update({
+          where: { id: sessionId },
+          data: {
+            ...data,
+            observations: data.observations as any,
+          },
+          include: {
+            therapy: true,
+            patient: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                    phone: true,
+                  },
+                },
+              },
+            },
+            doctor: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                  },
                 },
               },
             },
           },
-          doctor: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  email: true,
-                },
-              },
-            },
-          },
-        },
-      });
+        });
 
       // Invalidate cache
       await this.cacheService.invalidateByPattern(
@@ -806,9 +824,9 @@ export class AyurvedicTherapyService {
     return this.updateTherapySession(sessionId, {
       status: TherapyStatus.COMPLETED,
       endTime: new Date(),
-      notes,
-      observations,
-      nextSessionDate,
+      ...(notes && { notes }),
+      ...(observations && { observations }),
+      ...(nextSessionDate && { nextSessionDate }),
     });
   }
 
@@ -821,7 +839,7 @@ export class AyurvedicTherapyService {
   ): Promise<TherapySession> {
     return this.updateTherapySession(sessionId, {
       status: TherapyStatus.CANCELLED,
-      notes,
+      ...(notes && { notes }),
     });
   }
 
@@ -847,14 +865,16 @@ export class AyurvedicTherapyService {
         whereClause.therapyId = therapyId;
       }
 
-      const sessions = await this.prisma.therapySession.findMany({
-        where: whereClause,
-        select: {
-          status: true,
-          startTime: true,
-          endTime: true,
-        },
-      });
+      const sessions = await this.databaseService
+        .getPrismaClient()
+        .therapySession.findMany({
+          where: whereClause,
+          select: {
+            status: true,
+            startTime: true,
+            endTime: true,
+          },
+        });
 
       type SessionWithStatus = { status: TherapyStatus };
       const sessionsTyped = sessions as SessionWithStatus[];
@@ -933,3 +953,4 @@ export class AyurvedicTherapyService {
     }
   }
 }
+/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-floating-promises */

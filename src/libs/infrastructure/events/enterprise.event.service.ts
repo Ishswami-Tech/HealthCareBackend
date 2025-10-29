@@ -215,7 +215,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         error: {
           code: "EVENT_PROCESSING_ERROR",
           message: (error as Error).message,
-          stack: (error as Error).stack,
+          ...((error as Error).stack && { stack: (error as Error).stack }),
           retryable: true,
         },
         processingTime: Date.now() - startTime,

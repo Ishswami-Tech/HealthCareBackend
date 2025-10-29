@@ -20,13 +20,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   // Production scaling configurations
   private readonly PRODUCTION_CONFIG = {
     maxMemoryPolicy: "allkeys-lru",
-    maxConnections: parseInt(process.env.REDIS_MAX_CONNECTIONS || "100", 10),
+    maxConnections: parseInt(process.env["REDIS_MAX_CONNECTIONS"] || "100", 10),
     connectionTimeout: 5000,
     commandTimeout: 3000,
     retryOnFailover: true,
     enableAutoPipelining: true,
     maxRetriesPerRequest: 3,
-    keyPrefix: process.env.REDIS_KEY_PREFIX || "healthcare:",
+    keyPrefix: process.env["REDIS_KEY_PREFIX"] || "healthcare:",
   };
 
   // Cache strategies for different data types
@@ -99,10 +99,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   private isDevEnvironment(): boolean {
-    const nodeEnv = this.configService.get("NODE_ENV")?.toLowerCase();
-    const appEnv = this.configService.get("APP_ENV")?.toLowerCase();
-    const isDev = this.configService.get("IS_DEV");
-    const devMode = process.env.DEV_MODE === "true";
+    const nodeEnv = this.configService.get<string>("NODE_ENV")?.toLowerCase();
+    const appEnv = this.configService.get<string>("APP_ENV")?.toLowerCase();
+    const isDev = this.configService.get<boolean | string>("IS_DEV");
+    const devMode = process.env["DEV_MODE"] === "true";
     return (
       devMode ||
       nodeEnv !== "production" ||
@@ -145,7 +145,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         keepAlive: 30000,
         family: 4, // IPv4
         // Connection pool settings for high concurrency
-        ...(process.env.NODE_ENV === "production" && {
+        ...(process.env["NODE_ENV"] === "production" && {
           enableOfflineQueue: false, // Fail fast in production
         }),
       });
@@ -217,7 +217,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   // Auto-scaling cache management
   async optimizeMemoryUsage(): Promise<void> {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env["NODE_ENV"] === "production") {
       await this.client.config(
         "SET",
         "maxmemory-policy",
@@ -329,7 +329,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return JSON.parse(result) as T;
       } catch {
         // If parsing fails, return as string
-        return result as any;
+        return result as T;
       }
     } catch (_error) {
       this.logger.error(`Failed to get key ${key}:`, (_error as Error).stack);
@@ -514,7 +514,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.client.lrange(eventKey, -limit, -1),
     );
 
-    return events.map((event) => JSON.parse(event));
+    return events.map((event) => JSON.parse(event) as Record<string, unknown>);
   }
 
   async clearSecurityEvents(identifier: string): Promise<void> {
@@ -534,8 +534,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.client.hgetall(this.STATS_KEY),
     );
     return {
-      hits: parseInt(stats?.hits || "0"),
-      misses: parseInt(stats?.misses || "0"),
+      hits: parseInt(stats?.["hits"] || "0"),
+      misses: parseInt(stats?.["misses"] || "0"),
     };
   }
 
@@ -632,13 +632,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Get default limits if not specified
-    const type = key.split(":")[0];
+    const type = key.split(":")[0] || "api";
     const defaultLimit =
       (this.defaultRateLimits as Record<string, unknown>)[type] ||
       this.defaultRateLimits.api;
     const limitConfig = defaultLimit as Record<string, unknown>;
-    limit = limit || (limitConfig.limit as number);
-    windowSeconds = windowSeconds || (limitConfig.window as number);
+    limit = limit || (limitConfig["limit"] as number);
+    windowSeconds = windowSeconds || (limitConfig["window"] as number);
 
     try {
       const multi = this.client.multi();
@@ -660,7 +660,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       multi.expire(key, windowSeconds);
 
       const results = await multi.exec();
-      const current = results ? parseInt(results[2][1] as string) : 0;
+      const current = results
+        ? parseInt((results[2] as unknown[])?.[1] as string)
+        : 0;
 
       // Check against burst limit if specified, otherwise normal limit
       return current * cost > (options.burst ? burstLimit : limit);
@@ -691,13 +693,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Get default limits if not specified
-    const type = key.split(":")[0];
+    const type = key.split(":")[0] || "api";
     const defaultLimit =
       (this.defaultRateLimits as Record<string, unknown>)[type] ||
       this.defaultRateLimits.api;
     const limitConfig = defaultLimit as Record<string, unknown>;
-    limit = limit || (limitConfig.limit as number);
-    windowSeconds = windowSeconds || (limitConfig.window as number);
+    limit = limit || (limitConfig["limit"] as number);
+    windowSeconds = windowSeconds || (limitConfig["window"] as number);
 
     try {
       const now = Date.now();
@@ -797,8 +799,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const pipeline = this.client.pipeline();
       commands.forEach((cmd) => {
         const command = cmd as Record<string, unknown>;
-        (pipeline as any)[command.command as string](
-          ...(command.args as unknown[]),
+        (pipeline as Record<string, any>)[command["command"] as string](
+          ...(command["args"] as unknown[]),
         );
       });
       return pipeline.exec();
@@ -1249,12 +1251,18 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   ): Promise<T> {
     this.logger.warn("cacheWithSWR is deprecated, please use cache() instead");
     return this.cache(key, fetchFn, {
-      ttl: options.cacheTtl,
-      staleTime: options.staleWhileRevalidateTtl,
-      forceRefresh: options.forceRefresh,
-      enableSwr: options.useSwr,
-      compress: options.compression,
-      priority: options.priority,
+      ...(options.cacheTtl !== undefined && { ttl: options.cacheTtl }),
+      ...(options.staleWhileRevalidateTtl !== undefined && {
+        staleTime: options.staleWhileRevalidateTtl,
+      }),
+      ...(options.forceRefresh !== undefined && {
+        forceRefresh: options.forceRefresh,
+      }),
+      ...(options.useSwr !== undefined && { enableSwr: options.useSwr }),
+      ...(options.compression !== undefined && {
+        compress: options.compression,
+      }),
+      ...(options.priority !== undefined && { priority: options.priority }),
     });
   }
 
@@ -1269,7 +1277,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // Extract operations per second
       const opsPerSecMatch = info.match(/instantaneous_ops_per_sec:(\d+)/);
       if (opsPerSecMatch) {
-        const opsPerSec = parseInt(opsPerSecMatch[1], 10);
+        const opsPerSec = parseInt(opsPerSecMatch[1] || "0", 10);
         // Consider high load if more than 1000 ops/sec
         return opsPerSec > 1000;
       }

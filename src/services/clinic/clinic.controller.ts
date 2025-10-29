@@ -14,8 +14,6 @@ import {
   ValidationPipe,
   UsePipes,
   BadRequestException,
-  NotFoundException,
-  ForbiddenException,
   Query,
   Logger,
 } from "@nestjs/common";
@@ -49,8 +47,6 @@ import {
 import { Public } from "../../libs/core";
 import { AuthenticatedRequest } from "../../libs/core/types/clinic.types";
 import { RbacGuard } from "../../libs/core/rbac/rbac.guard";
-import { ClinicGuard } from "../../libs/core/guards/clinic.guard";
-import { UseInterceptors } from "@nestjs/common";
 
 @ApiTags("Clinics")
 @ApiBearerAuth()
@@ -122,7 +118,43 @@ export class ClinicController {
   async createClinic(
     @Body() createClinicDto: CreateClinicDto,
     @Req() req: AuthenticatedRequest,
-  ) {
+  ): Promise<{
+    id: string;
+    name: string;
+    address: string;
+    phone: string;
+    email: string;
+    subdomain: string;
+    app_name: string;
+    logo?: string;
+    website?: string;
+    description?: string;
+    timezone: string;
+    currency: string;
+    language: string;
+    isActive: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+    mainLocation: {
+      id: string;
+      locationId: string;
+      name: string;
+      address: string;
+      city: string;
+      state: string;
+      country: string;
+      zipCode: string;
+      phone: string;
+      email: string;
+      timezone: string;
+      workingHours: string;
+      isActive: boolean;
+      clinicId: string;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    clinicAdminId: string;
+  }> {
     try {
       const userId = req.user?.sub;
 
@@ -134,10 +166,49 @@ export class ClinicController {
         clinicName: createClinicDto.name,
       });
 
-      const result = await this.clinicService.createClinic({
+      const result = (await this.clinicService.createClinic({
         ...createClinicDto,
         createdBy: userId,
-      });
+        timezone: createClinicDto.timezone || "UTC",
+        currency: createClinicDto.currency || "USD",
+        language: createClinicDto.language || "en",
+      })) as {
+        id: string;
+        name: string;
+        address: string;
+        phone: string;
+        email: string;
+        subdomain: string;
+        app_name: string;
+        logo?: string;
+        website?: string;
+        description?: string;
+        timezone: string;
+        currency: string;
+        language: string;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+        mainLocation: {
+          id: string;
+          locationId: string;
+          name: string;
+          address: string;
+          city: string;
+          state: string;
+          country: string;
+          zipCode: string;
+          phone: string;
+          email: string;
+          timezone: string;
+          workingHours: string;
+          isActive: boolean;
+          clinicId: string;
+          createdAt: Date;
+          updatedAt: Date;
+        };
+        clinicAdminId: string;
+      };
 
       this.logger.log(`Clinic created successfully: ${result.id}`);
       return result;
@@ -211,7 +282,7 @@ export class ClinicController {
       const result = await this.clinicService.getAllClinics(userId);
 
       this.logger.log(
-        `Retrieved ${(result as any)?.length || 0} clinics for user ${userId}`,
+        `Retrieved ${Array.isArray(result) ? result.length : 0} clinics for user ${userId}`,
       );
       return result;
     } catch (_error) {
@@ -272,7 +343,7 @@ export class ClinicController {
 
       this.logger.log(`Getting clinic ${id} for user ${userId}`);
 
-      const result = await this.clinicService.getClinicById(id, userId);
+      const result = await this.clinicService.getClinicById(id);
 
       this.logger.log(`Retrieved clinic ${id} successfully`);
       return result;
@@ -337,11 +408,7 @@ export class ClinicController {
 
       this.logger.log(`Updating clinic ${id} by user ${userId}`);
 
-      const result = await this.clinicService.updateClinic(
-        id,
-        updateClinicDto,
-        userId,
-      );
+      const result = await this.clinicService.updateClinic(id, updateClinicDto);
 
       this.logger.log(`Clinic ${id} updated successfully`);
       return result;
@@ -394,10 +461,10 @@ export class ClinicController {
 
       this.logger.log(`Deleting clinic ${id} by user ${userId}`);
 
-      const result = await this.clinicService.deleteClinic(id, userId);
+      await this.clinicService.deleteClinic(id);
 
       this.logger.log(`Clinic ${id} deleted successfully`);
-      return result;
+      return { message: "Clinic deleted successfully" };
     } catch (_error) {
       this.logger.error(
         `Failed to delete clinic ${id}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
@@ -617,7 +684,7 @@ export class ClinicController {
       const result = await this.clinicService.getClinicPatients(id, userId);
 
       this.logger.log(
-        `Retrieved ${(result as any)?.length || 0} patients for clinic ${id}`,
+        `Retrieved ${Array.isArray(result) ? result.length : 0} patients for clinic ${id}`,
       );
       return result;
     } catch (_error) {
@@ -676,14 +743,15 @@ export class ClinicController {
 
       // First get the clinic by app name to get the clinicId
       const clinic = await this.clinicService.getClinicByAppName(data.appName);
+      const clinicWithId = clinic as { id: string };
 
       const result = await this.clinicService.registerPatientToClinic({
         userId,
-        clinicId: clinic.clinicId,
+        clinicId: clinicWithId.id,
       });
 
       this.logger.log(
-        `Patient ${userId} registered to clinic ${clinic.clinicId} successfully`,
+        `Patient ${userId} registered to clinic ${clinicWithId.id} successfully`,
       );
       return result;
     } catch (_error) {
@@ -733,20 +801,25 @@ export class ClinicController {
 
       // Return only necessary information
       const result = {
-        clinicId: clinic.clinicId,
-        name: clinic.name,
-        locations: await this.clinicService.getActiveLocations(clinic.id),
-        settings: clinic.settings,
+        clinicId: (clinic as { id: string }).id,
+        name: (clinic as { name: string }).name,
+        locations: await this.clinicService.getActiveLocations(
+          (clinic as { id: string }).id,
+        ),
+        settings: (clinic as any).settings || {},
       };
 
       this.logger.log(`App name ${data.appName} validated successfully`);
       return result;
-    } catch (_error) {
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      const errorStack = error instanceof Error ? error.stack : undefined;
       this.logger.error(
-        `Failed to validate app name ${data.appName}: ${(_error as Error).message}`,
-        (_error as Error).stack,
+        `Failed to validate app name ${data.appName}: ${errorMessage}`,
+        errorStack,
       );
-      throw _error;
+      throw error;
     }
   }
 
@@ -804,10 +877,10 @@ export class ClinicController {
         `Associating user ${userId} with clinic by app name: ${data.appName}`,
       );
 
-      const result = await this.clinicService.associateUserWithClinic(
+      const result = await this.clinicService.associateUserWithClinic({
         userId,
-        data.appName,
-      );
+        clinicId: data.appName,
+      });
 
       this.logger.log(
         `User ${userId} associated with clinic ${data.appName} successfully`,
@@ -892,7 +965,7 @@ export class ClinicController {
     status: HttpStatus.UNAUTHORIZED,
     description: "Unauthorized",
   })
-  async testClinicContext(@Req() req: AuthenticatedRequest) {
+  testClinicContext(@Req() req: AuthenticatedRequest) {
     const clinicContext = req.clinicContext;
     const user = req.user;
 

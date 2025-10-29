@@ -86,7 +86,7 @@ async function main() {
         email: "contact@aadesh.com",
         app_name: "aadesh_ayurvedalay",
         db_connection_string:
-          process.env.DATABASE_URL ||
+          process.env["DATABASE_URL"] ||
           "postgresql://postgres:postgres@postgres:5432/userdb?schema=public",
         databaseName: "userdb",
         createdByUser: {
@@ -107,7 +107,7 @@ async function main() {
         email: "contact@vishwamurthi.com",
         app_name: "vishwamurthi_ayurvedalay",
         db_connection_string:
-          process.env.DATABASE_URL ||
+          process.env["DATABASE_URL"] ||
           "postgresql://postgres:postgres@postgres:5432/userdb?schema=public",
         databaseName: "userdb",
         createdByUser: {
@@ -624,7 +624,7 @@ async function main() {
     });
 
     // Create sample data only in development environment
-    if (process.env.NODE_ENV === "development") {
+    if (process.env["NODE_ENV"] === "development") {
       // Create Medicines
       console.log("Creating medicines...");
       const medicines1 = await Promise.all(

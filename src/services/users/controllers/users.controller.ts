@@ -315,13 +315,26 @@ export class UsersController {
       firstName: "placeholder",
       lastName: "placeholder",
       phone: "0000000000",
-      role: updateUserRoleDto.role as unknown as Role,
+      role: updateUserRoleDto.role,
       clinicId: updateUserRoleDto.clinicId,
     };
+    // Handle clinicId properly for exactOptionalPropertyTypes
+    const createUserData = {
+      email: minimalCreateUserDto.email,
+      password: minimalCreateUserDto.password,
+      firstName: minimalCreateUserDto.firstName,
+      lastName: minimalCreateUserDto.lastName,
+      phone: minimalCreateUserDto.phone,
+      role: minimalCreateUserDto.role,
+      ...(minimalCreateUserDto.clinicId && {
+        clinicId: minimalCreateUserDto.clinicId,
+      }),
+    };
+
     return this.usersService.updateUserRole(
       id,
-      updateUserRoleDto.role as unknown as Role,
-      minimalCreateUserDto,
+      updateUserRoleDto.role,
+      createUserData,
     );
   }
 }

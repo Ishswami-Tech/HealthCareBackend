@@ -28,8 +28,10 @@ export const RequireResourcePermission = (
   RequirePermission({
     resource,
     action,
-    clinicId: options?.clinicId,
-    requireOwnership: options?.requireOwnership,
+    ...(options?.clinicId && { clinicId: options.clinicId }),
+    ...(options?.requireOwnership !== undefined && {
+      requireOwnership: options.requireOwnership,
+    }),
     allowSuperAdmin: options?.allowSuperAdmin !== false,
   });
 
@@ -50,8 +52,8 @@ export const RequireAnyPermission = (
   ...permissions: Array<{ resource: string; action: string }>
 ) =>
   RequirePermission({
-    resource: permissions[0].resource,
-    action: permissions[0].action,
+    resource: permissions[0]?.resource || "",
+    action: permissions[0]?.action || "",
   });
 
 // Convenience decorators for common permissions
@@ -185,7 +187,7 @@ export const CanManageVitals = () => RequireResourcePermission("vitals", "*");
  * Role-based decorators
  */
 export const RequireRole = (_role: string) =>
-  RequireResourcePermission("roles", "check", { clinicId: undefined });
+  RequireResourcePermission("roles", "check", {});
 
 export const RequireSuperAdmin = () =>
   RequireResourcePermission("*", "*", { allowSuperAdmin: true });
@@ -224,7 +226,9 @@ export const RequirePatient = () =>
  * Clinic-specific decorators
  */
 export const RequireClinicAccess = (clinicId?: string) =>
-  RequireResourcePermission("clinics", "access", { clinicId });
+  RequireResourcePermission("clinics", "access", {
+    ...(clinicId && { clinicId }),
+  });
 
 export const RequireClinicMembership = () =>
   RequireResourcePermission("clinics", "member");

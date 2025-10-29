@@ -6,26 +6,26 @@ import { Job } from "bullmq";
  */
 export interface IEnterpriseQueueService {
   // Core job management
-  addJob<T = any>(
+  addJob<T = unknown>(
     queueName: string,
     jobType: string,
     data: T,
     options?: EnterpriseJobOptions,
   ): Promise<EnterpriseJob<T>>;
 
-  addBulkJobs<T = any>(
+  addBulkJobs<T = unknown>(
     queueName: string,
     jobs: BulkJobData<T>[],
   ): Promise<EnterpriseJob<T>[]>;
 
-  getJob<T = any>(
+  getJob<T = unknown>(
     jobId: string,
     queueName?: string,
   ): Promise<EnterpriseJob<T> | null>;
   removeJob(jobId: string, queueName?: string): Promise<boolean>;
 
   // Enterprise workflow operations
-  startSaga<T = any>(
+  startSaga<T = unknown>(
     sagaName: string,
     initialData: T,
     options?: SagaOptions,
@@ -34,7 +34,7 @@ export interface IEnterpriseQueueService {
   compensateSaga(sagaId: string, reason?: string): Promise<CompensationResult>;
 
   // Multi-tenant operations
-  addTenantJob<T = any>(
+  addTenantJob<T = unknown>(
     tenantId: string,
     queueName: string,
     jobType: string,
@@ -82,7 +82,7 @@ export interface IEnterpriseQueueService {
 /**
  * Enterprise Job with enhanced metadata and security
  */
-export interface EnterpriseJob<T = any> extends Omit<Job<T>, "data"> {
+export interface EnterpriseJob<T = unknown> extends Omit<Job<T>, "data"> {
   // Enhanced identification
   id: string;
   tenantId: string;
@@ -159,7 +159,7 @@ export interface TenantJobOptions extends EnterpriseJobOptions {
 /**
  * Bulk job data structure
  */
-export interface BulkJobData<T = any> {
+export interface BulkJobData<T = unknown> {
   jobType: string;
   data: T;
   options?: EnterpriseJobOptions;
@@ -168,7 +168,7 @@ export interface BulkJobData<T = any> {
 /**
  * Saga execution context
  */
-export interface SagaExecution<T = any> {
+export interface SagaExecution<T = unknown> {
   sagaId: string;
   sagaName: string;
   status: SagaStatus;
@@ -249,7 +249,7 @@ export interface EnterpriseQueueMetrics {
 /**
  * Encrypted payload structure
  */
-export interface EncryptedPayload<T = any> {
+export interface EncryptedPayload<T = unknown> {
   encrypted: string;
   keyId: string;
   algorithm: EncryptionAlgorithm;

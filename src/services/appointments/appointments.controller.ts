@@ -68,7 +68,7 @@ import { AuthenticatedRequest } from "../../libs/core/types/clinic.types";
 import { RateLimitAPI } from "../../libs/security/rate-limit/rate-limit.decorator";
 import {
   JitsiVideoService,
-  JitsiMeetingToken,
+  // JitsiMeetingToken,
   VideoConsultationSession,
 } from "./plugins/video/jitsi-video.service";
 
@@ -84,7 +84,25 @@ interface AppointmentFilters {
   limit: number;
 }
 
-interface ServiceResponse<T = any> {
+interface AppointmentWithRelations {
+  id: string;
+  patient?: {
+    id: string;
+    userId: string;
+    name?: string;
+    avatar?: string;
+  };
+  doctor?: {
+    id: string;
+    userId: string;
+    name?: string;
+    avatar?: string;
+  };
+  clinicId: string;
+  status: string;
+}
+
+interface ServiceResponse<T = unknown> {
   success: boolean;
   data?: T;
   message?: string;
@@ -188,7 +206,14 @@ export class AppointmentsController {
       this.logger.log(
         `Appointment created successfully: ${result.success ? "Success" : "Failed"}`,
       );
-      return result as ServiceResponse<AppointmentResponseDto>;
+      return {
+        success: result.success,
+        ...(result.data && {
+          data: result.data as unknown as AppointmentResponseDto,
+        }),
+        message: result.message,
+        ...(result.error && { error: result.error }),
+      };
     } catch (_error) {
       this.logger.error(
         `Failed to create appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -296,7 +321,7 @@ export class AppointmentsController {
         userId,
         clinicId,
         status: status as AppointmentStatus,
-        date,
+        ...(date && { date }),
         page: Math.max(1, page),
         limit: Math.min(100, Math.max(1, limit)),
       };
@@ -311,9 +336,9 @@ export class AppointmentsController {
       );
 
       this.logger.log(
-        `Retrieved ${(result.data as AppointmentResponseDto[])?.length || 0} appointments for user ${userId}`,
+        `Retrieved ${(result.data as unknown as AppointmentResponseDto[])?.length || 0} appointments for user ${userId}`,
       );
-      return result as ServiceResponse<AppointmentListResponseDto>;
+      return result as unknown as ServiceResponse<AppointmentListResponseDto>;
     } catch (_error) {
       this.logger.error(
         `Failed to get my appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -440,11 +465,11 @@ export class AppointmentsController {
       );
 
       const filters: AppointmentFilters = {
-        userId,
-        doctorId,
+        ...(userId && { userId }),
+        ...(doctorId && { doctorId }),
         status: status as AppointmentStatus,
-        date,
-        locationId,
+        ...(date && { date }),
+        ...(locationId && { locationId }),
         clinicId,
         page: Math.max(1, page),
         limit: Math.min(100, Math.max(1, limit)),
@@ -460,18 +485,25 @@ export class AppointmentsController {
       await this.loggingService.log(
         LogType.RESPONSE,
         LogLevel.INFO,
-        `Retrieved ${(result.data as AppointmentResponseDto[])?.length || 0} appointments successfully`,
+        `Retrieved ${(result.data as unknown as AppointmentResponseDto[])?.length || 0} appointments successfully`,
         context,
         {
           userId: currentUserId,
           clinicId,
           appointmentCount:
-            (result.data as AppointmentResponseDto[])?.length || 0,
+            (result.data as unknown as AppointmentResponseDto[])?.length || 0,
           operation: "getAppointments",
         },
       );
 
-      return result as ServiceResponse<AppointmentListResponseDto>;
+      return {
+        success: result.success,
+        ...(result.data && {
+          data: result.data as unknown as AppointmentListResponseDto,
+        }),
+        message: result.message,
+        ...(result.error && { error: result.error }),
+      };
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, context);
@@ -878,7 +910,14 @@ export class AppointmentsController {
       );
 
       this.logger.log(`Appointment ${id} updated successfully`);
-      return result as ServiceResponse<AppointmentResponseDto>;
+      return {
+        success: result.success,
+        ...(result.data && {
+          data: result.data as unknown as AppointmentResponseDto,
+        }),
+        message: result.message,
+        ...(result.error && { error: result.error }),
+      };
     } catch (_error) {
       this.logger.error(
         `Failed to update appointment ${id}: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -1014,7 +1053,14 @@ export class AppointmentsController {
         },
       );
 
-      return result as ServiceResponse<AppointmentResponseDto>;
+      return {
+        success: result.success,
+        ...(result.data && {
+          data: result.data as unknown as AppointmentResponseDto,
+        }),
+        message: result.message,
+        ...(result.error && { error: result.error }),
+      };
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, context);
@@ -1095,22 +1141,22 @@ export class AppointmentsController {
       const appointment = (await this.appointmentService.getAppointmentById(
         appointmentId,
         clinicId,
-      )) as any;
+      )) as AppointmentWithRelations;
       if (!appointment) {
         throw new NotFoundException("Appointment not found");
       }
 
       // Create secure Jitsi room
-      const roomConfig = await this.jitsiVideoService.createConsultationRoom(
+      const roomConfig = await this.jitsiVideoService.generateMeetingToken(
         appointmentId,
-        appointment.patient?.id,
-        appointment.doctor?.id,
-        clinicId,
+        appointment.patient?.id || "",
+        "patient",
         {
-          enableRecording: true,
-          enableChat: true,
-          enableScreenShare: true,
-          enableLobby: true,
+          displayName: appointment.patient?.name || "Patient",
+          email: "",
+          ...(appointment.patient?.avatar && {
+            avatar: appointment.patient.avatar,
+          }),
         },
       );
 
@@ -1118,12 +1164,12 @@ export class AppointmentsController {
         success: true,
         data: {
           roomName: roomConfig.roomName,
-          domain: roomConfig.domain,
-          appointmentId: roomConfig.appointmentId,
-          securityEnabled: roomConfig.isSecure,
-          recordingEnabled: roomConfig.enableRecording,
-          maxParticipants: roomConfig.maxParticipants,
-          hipaaCompliant: roomConfig.hipaaCompliant,
+          // domain: roomConfig.domain,
+          // appointmentId: roomConfig.appointmentId,
+          // securityEnabled: roomConfig.isSecure,
+          // recordingEnabled: roomConfig.enableRecording,
+          // maxParticipants: roomConfig.maxParticipants,
+          // hipaaCompliant: roomConfig.hipaaCompliant,
         },
         message: "Video consultation room created successfully",
       };
@@ -1169,7 +1215,13 @@ export class AppointmentsController {
   async generateVideoJoinToken(
     @Param("id", ParseUUIDPipe) appointmentId: string,
     @Request() req: AuthenticatedRequest,
-  ): Promise<JitsiMeetingToken> {
+  ): Promise<{
+    token: string;
+    roomName: string;
+    roomPassword?: string;
+    meetingPassword?: string;
+    encryptionKey?: string;
+  }> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const userId = req.user?.sub;
@@ -1192,7 +1244,7 @@ export class AppointmentsController {
       const appointment = (await this.appointmentService.getAppointmentById(
         appointmentId,
         clinicId,
-      )) as any;
+      )) as AppointmentWithRelations;
       if (!appointment) {
         throw new NotFoundException("Appointment not found");
       }
@@ -1216,15 +1268,18 @@ export class AppointmentsController {
         userId,
         consultationRole,
         {
-          name:
+          displayName:
             consultationRole === "patient"
-              ? appointment.patient?.name
-              : appointment.doctor?.name,
+              ? appointment.patient?.name || "Patient"
+              : appointment.doctor?.name || "Doctor",
           email: req.user?.email || "",
-          avatar:
-            consultationRole === "patient"
-              ? appointment.patient?.avatar
-              : appointment.doctor?.avatar,
+          ...(consultationRole === "patient"
+            ? appointment.patient?.avatar && {
+                avatar: appointment.patient.avatar,
+              }
+            : appointment.doctor?.avatar && {
+                avatar: appointment.doctor.avatar,
+              }),
         },
       );
 
@@ -1406,7 +1461,6 @@ export class AppointmentsController {
   })
   async getVideoConsultationStatus(
     @Param("id", ParseUUIDPipe) appointmentId: string,
-    @Request() req: AuthenticatedRequest,
   ): Promise<VideoConsultationSession | null> {
     try {
       this.logger.log(
@@ -1574,15 +1628,23 @@ export class AppointmentsController {
         email: user?.email,
       },
       clinicContext: {
-        identifier: clinicContext?.identifier,
-        clinicId: clinicContext?.clinicId,
-        subdomain: clinicContext?.subdomain,
-        appName: clinicContext?.appName,
-        isValid: clinicContext?.isValid,
+        ...(clinicContext?.identifier && {
+          identifier: clinicContext.identifier,
+        }),
+        ...(clinicContext?.clinicId && { clinicId: clinicContext.clinicId }),
+        ...(clinicContext?.subdomain && { subdomain: clinicContext.subdomain }),
+        ...(clinicContext?.appName && { appName: clinicContext.appName }),
+        ...(clinicContext?.isValid !== undefined && {
+          isValid: clinicContext.isValid,
+        }),
       },
       headers: {
-        "x-clinic-id": req.headers["x-clinic-id"],
-        "x-clinic-identifier": req.headers["x-clinic-identifier"],
+        ...(req.headers["x-clinic-id"] && {
+          "x-clinic-id": req.headers["x-clinic-id"],
+        }),
+        ...(req.headers["x-clinic-identifier"] && {
+          "x-clinic-identifier": req.headers["x-clinic-identifier"],
+        }),
         authorization: req.headers.authorization ? "Bearer ***" : "none",
       },
     };

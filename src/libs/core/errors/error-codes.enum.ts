@@ -1,6 +1,13 @@
 /**
  * Centralized error codes for the healthcare application
  * Each error code follows the pattern: [MODULE]_[TYPE]_[SPECIFIC]
+ *
+ * @enum {string} ErrorCode
+ * @description Comprehensive error code enumeration for healthcare application
+ * @example
+ * ```typescript
+ * throw new HealthcareError(ErrorCode.USER_NOT_FOUND, 'User not found');
+ * ```
  */
 export enum ErrorCode {
   // Authentication & Authorization Errors

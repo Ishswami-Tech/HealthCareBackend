@@ -10,6 +10,24 @@ import { tap } from "rxjs/operators";
 import { LoggingService } from "./logging.service";
 import { LogType, LogLevel } from "./types/logging.types";
 
+/**
+ * Interface for HTTP request object from NestJS ExecutionContext
+ */
+interface HttpRequest {
+  method: string;
+  url: string;
+  body: unknown;
+  headers: Record<string, string>;
+  ip: string;
+}
+
+/**
+ * Interface for HTTP response object from NestJS ExecutionContext
+ */
+interface HttpResponse {
+  statusCode: number;
+}
+
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(LoggingInterceptor.name);
@@ -25,8 +43,9 @@ export class LoggingInterceptor implements NestInterceptor {
 
   constructor(private readonly loggingService: LoggingService) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const request = context.switchToHttp().getRequest();
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    const httpContext = context.switchToHttp();
+    const request = this.extractRequest(httpContext.getRequest());
     const { method, url, body, headers, ip } = request;
     const userAgent = headers["user-agent"] || "unknown";
     const startTime = Date.now();
@@ -37,8 +56,8 @@ export class LoggingInterceptor implements NestInterceptor {
     }
 
     // Log the incoming request (only in non-production)
-    if (process.env.NODE_ENV !== "production") {
-      this.loggingService.log(
+    if (process.env["NODE_ENV"] !== "production") {
+      void this.loggingService.log(
         LogType.REQUEST,
         LogLevel.INFO,
         `${method} ${url}`,
@@ -55,14 +74,17 @@ export class LoggingInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap({
-        next: (response) => {
+        next: (_response) => {
           const endTime = Date.now();
           const duration = endTime - startTime;
 
           // Only log slow responses or non-200 status codes
-          const statusCode = context.switchToHttp().getResponse().statusCode;
+          const response = this.extractResponse(
+            context.switchToHttp().getResponse(),
+          );
+          const statusCode = response.statusCode;
           if (duration > 1000 || statusCode !== 200) {
-            this.loggingService.log(
+            void this.loggingService.log(
               LogType.RESPONSE,
               LogLevel.INFO,
               `${method} ${url} [${duration}ms] ${statusCode}`,
@@ -81,7 +103,7 @@ export class LoggingInterceptor implements NestInterceptor {
           const duration = endTime - startTime;
 
           // Always log errors
-          this.loggingService.log(
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             `${method} ${url} failed: ${(error as Error).message}`,
@@ -92,8 +114,8 @@ export class LoggingInterceptor implements NestInterceptor {
               duration: `${duration}ms`,
               error: {
                 message: (error as Error).message,
-                code: error.code || "UNKNOWN_ERROR",
-                statusCode: error.status || 500,
+                code: (error as { code?: string }).code || "UNKNOWN_ERROR",
+                statusCode: (error as { status?: number }).status || 500,
               },
             },
           );
@@ -123,5 +145,29 @@ export class LoggingInterceptor implements NestInterceptor {
     });
 
     return sanitized;
+  }
+
+  /**
+   * Safely extract request object from NestJS ExecutionContext
+   */
+  private extractRequest(request: unknown): HttpRequest {
+    const req = request as Record<string, unknown>;
+    return {
+      method: (req["method"] as string) || "UNKNOWN",
+      url: (req["url"] as string) || "/",
+      body: req["body"],
+      headers: (req["headers"] as Record<string, string>) || {},
+      ip: (req["ip"] as string) || "unknown",
+    };
+  }
+
+  /**
+   * Safely extract response object from NestJS ExecutionContext
+   */
+  private extractResponse(response: unknown): HttpResponse {
+    const res = response as Record<string, unknown>;
+    return {
+      statusCode: (res["statusCode"] as number) || 200,
+    };
   }
 }

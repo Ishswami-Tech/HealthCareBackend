@@ -180,7 +180,7 @@ export class AppointmentQueueService {
 
         if (entryIndex !== -1) {
           position = entryIndex + 1;
-          doctorId = key.split(":")[2];
+          doctorId = key.split(":")[2] || "";
           queueKey = key;
           break;
         }
@@ -257,7 +257,9 @@ export class AppointmentQueueService {
         });
 
         if (entryIndex !== -1) {
-          const entryData = JSON.parse(entries[entryIndex]) as QueueEntryData;
+          const entryData = JSON.parse(
+            entries[entryIndex] || "{}",
+          ) as QueueEntryData;
           entryData.status = "CONFIRMED";
           entryData.confirmedAt = new Date().toISOString();
 
@@ -317,7 +319,9 @@ export class AppointmentQueueService {
         throw new Error("Appointment not found in queue");
       }
 
-      const entryData = JSON.parse(entries[entryIndex]) as QueueEntryData;
+      const entryData = JSON.parse(
+        entries[entryIndex] || "{}",
+      ) as QueueEntryData;
       entryData.status = "IN_PROGRESS";
       entryData.startedAt = new Date().toISOString();
       entryData.actualWaitTime = this.calculateActualWaitTime(
@@ -615,7 +619,9 @@ export class AppointmentQueueService {
         });
 
         if (entryIndex !== -1) {
-          const entryData = JSON.parse(entries[entryIndex]) as QueueEntryData;
+          const entryData = JSON.parse(
+            entries[entryIndex] || "{}",
+          ) as QueueEntryData;
           entryData.priority = priority;
           entryData.status = "EMERGENCY";
           entryData.emergencyAt = new Date().toISOString();

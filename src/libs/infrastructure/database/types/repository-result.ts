@@ -442,9 +442,9 @@ export class RepositoryResult<TData, TError = Error> {
   toJSON(): ResultJSON<TData, TError> {
     return {
       success: this._success,
-      data: this._data,
-      error: this._error ? this.serializeError(this._error) : undefined,
-      metadata: this._metadata,
+      ...(this._data !== undefined && { data: this._data }),
+      ...(this._error && { error: this.serializeError(this._error) }),
+      ...(this._metadata && { metadata: this._metadata }),
       timestamp: new Date().toISOString(),
     };
   }
@@ -513,7 +513,9 @@ export class RepositoryResult<TData, TError = Error> {
   ): RepositoryResult<T[], E> {
     const failures = results.filter((r) => r.isFailure);
     if (failures.length > 0) {
-      return RepositoryResult.failure(failures[0].error);
+      return RepositoryResult.failure(
+        (failures[0]?.error as E) || (new Error("Unknown error") as E),
+      );
     }
 
     const data = results.map((r) => r.data);
@@ -535,13 +537,13 @@ export class RepositoryResult<TData, TError = Error> {
     if (
       serialized &&
       typeof serialized === "object" &&
-      (serialized as Record<string, unknown>).name &&
-      (serialized as Record<string, unknown>).message
+      (serialized as Record<string, unknown>)["name"] &&
+      (serialized as Record<string, unknown>)["message"]
     ) {
       const serializedError = serialized as Record<string, unknown>;
-      const error = new Error(serializedError.message as string);
-      error.name = serializedError.name as string;
-      error.stack = serializedError.stack as string;
+      const error = new Error(serializedError["message"] as string);
+      error.name = serializedError["name"] as string;
+      error.stack = serializedError["stack"] as string;
       return error;
     }
     return new Error(String(serialized));

@@ -77,9 +77,15 @@ export class BillingEventsListener {
       // Get payment details to check if it's completed and has an invoice
       const payment = await this.billingService.getPayment(payload.paymentId);
 
-      if (payment.status === "COMPLETED" && payment.invoiceId) {
+      if (
+        (payment as { status: string; invoiceId?: string }).status ===
+          "COMPLETED" &&
+        (payment as { status: string; invoiceId?: string }).invoiceId
+      ) {
         // Send invoice via WhatsApp
-        await this.billingService.sendInvoiceViaWhatsApp(payment.invoiceId);
+        await this.billingService.sendInvoiceViaWhatsApp(
+          (payment as { status: string; invoiceId?: string }).invoiceId!,
+        );
 
         this.logger.log(
           `Invoice sent via WhatsApp for payment ${payload.paymentId}`,

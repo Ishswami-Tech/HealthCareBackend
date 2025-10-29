@@ -13,7 +13,7 @@ export class PaymentAnalyticsProcessor {
   private readonly logger = new Logger(PaymentAnalyticsProcessor.name);
 
   @Process("payment-analytics")
-  async handlePaymentAnalytics(
+  handlePaymentAnalytics(
     job: Job<{
       payment: PaymentData;
       paymentDto: PaymentDto;
@@ -26,7 +26,7 @@ export class PaymentAnalyticsProcessor {
       this.logger.log(`Processing analytics for payment: ${payment.id}`);
 
       // Analytics processing logic will integrate with existing analytics service
-      await this.processPaymentAnalytics(payment, paymentDto, timestamp);
+      this.processPaymentAnalytics(payment, paymentDto, timestamp);
 
       this.logger.log(
         `Analytics processing completed for payment: ${payment.id}`,
@@ -40,7 +40,7 @@ export class PaymentAnalyticsProcessor {
   }
 
   @Process("error-analysis")
-  async handleErrorAnalysis(
+  handleErrorAnalysis(
     job: Job<{
       _error: Error;
       paymentDto: PaymentDto;
@@ -55,7 +55,7 @@ export class PaymentAnalyticsProcessor {
       );
 
       // Error analysis logic
-      await this.processErrorAnalysis(_error, paymentDto, timestamp);
+      this.processErrorAnalysis(_error, paymentDto, timestamp);
 
       this.logger.log(
         `Error analysis completed for user: ${paymentDto.userId}`,
@@ -69,7 +69,7 @@ export class PaymentAnalyticsProcessor {
   }
 
   @Process("performance-metrics")
-  async handlePerformanceMetrics(
+  handlePerformanceMetrics(
     job: Job<{
       metrics: PerformanceMetrics;
       timestamp: Date;
@@ -82,7 +82,7 @@ export class PaymentAnalyticsProcessor {
       this.logger.log(`Processing performance metrics for domain: ${domain}`);
 
       // Performance metrics processing
-      await this.processPerformanceMetrics(metrics, timestamp, domain);
+      this.processPerformanceMetrics(metrics, timestamp, domain);
 
       this.logger.log(`Performance metrics processed for domain: ${domain}`);
     } catch (_error) {
@@ -93,7 +93,7 @@ export class PaymentAnalyticsProcessor {
   }
 
   @Process("fraud-analytics")
-  async handleFraudAnalytics(
+  handleFraudAnalytics(
     job: Job<{
       fraudData: FraudData;
       timestamp: Date;
@@ -108,7 +108,7 @@ export class PaymentAnalyticsProcessor {
       );
 
       // Fraud analytics processing
-      await this.processFraudAnalytics(fraudData, timestamp, riskScore);
+      this.processFraudAnalytics(fraudData, timestamp, riskScore);
 
       this.logger.log(`Fraud analytics processed successfully`);
     } catch (_error) {
@@ -118,11 +118,11 @@ export class PaymentAnalyticsProcessor {
     }
   }
 
-  private async processPaymentAnalytics(
+  private processPaymentAnalytics(
     payment: PaymentData,
     paymentDto: PaymentDto,
     timestamp: Date,
-  ): Promise<void> {
+  ): void {
     // Record payment event for analytics
     const analyticsData = {
       paymentId: payment.id,
@@ -132,8 +132,8 @@ export class PaymentAnalyticsProcessor {
       gateway: payment.gateway,
       status: payment.status,
       timestamp,
-      processingTime: payment.metadata?.processingTime,
-      fraudScore: payment.metadata?.fraudScore,
+      processingTime: payment.metadata?.["processingTime"],
+      fraudScore: payment.metadata?.["fraudScore"],
     };
 
     // Store in analytics database or send to analytics service
@@ -143,11 +143,11 @@ export class PaymentAnalyticsProcessor {
     );
   }
 
-  private async processErrorAnalysis(
+  private processErrorAnalysis(
     _error: Error,
     paymentDto: PaymentDto,
     timestamp: Date,
-  ): Promise<void> {
+  ): void {
     // Analyze error patterns and trends
     const errorData = {
       errorType: _error.name || "UnknownError",
@@ -162,11 +162,11 @@ export class PaymentAnalyticsProcessor {
     this.logger.debug(`Error analysis data recorded`, errorData);
   }
 
-  private async processPerformanceMetrics(
+  private processPerformanceMetrics(
     metrics: PerformanceMetrics,
     timestamp: Date,
     domain: string,
-  ): Promise<void> {
+  ): void {
     // Process performance metrics for monitoring dashboards
     const performanceData = {
       domain,
@@ -185,11 +185,11 @@ export class PaymentAnalyticsProcessor {
     );
   }
 
-  private async processFraudAnalytics(
+  private processFraudAnalytics(
     fraudData: FraudData,
     timestamp: Date,
     riskScore: number,
-  ): Promise<void> {
+  ): void {
     // Process fraud detection analytics
     const fraudAnalytics = {
       timestamp,

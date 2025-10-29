@@ -82,11 +82,11 @@ export class QueueMonitoringService {
   /**
    * Update queue metrics
    */
-  async updateMetrics(
+  updateMetrics(
     queueName: string,
     domain: string,
     metrics: Partial<QueueMetrics>,
-  ): Promise<void> {
+  ): void {
     try {
       const existingMetrics =
         this.metrics.get(queueName) ||
@@ -103,10 +103,10 @@ export class QueueMonitoringService {
       this.performanceHistory.push({ ...updatedMetrics });
 
       // Check for alerts
-      await this.checkAlerts(updatedMetrics);
+      void this.checkAlerts(updatedMetrics);
 
       // Emit metrics update event
-      await this.eventEmitter.emitAsync("queue.metrics.updated", {
+      void this.eventEmitter.emitAsync("queue.metrics.updated", {
         queueName,
         domain,
         metrics: updatedMetrics,
@@ -172,7 +172,7 @@ export class QueueMonitoringService {
   /**
    * Resolve an alert
    */
-  async resolveAlert(alertId: string): Promise<boolean> {
+  resolveAlert(alertId: string): boolean {
     const alert = this.alerts.get(alertId);
     if (!alert) {
       return false;
@@ -182,7 +182,7 @@ export class QueueMonitoringService {
     alert.resolvedAt = new Date();
     this.alerts.set(alertId, alert);
 
-    await this.eventEmitter.emitAsync("queue.alert.resolved", {
+    void this.eventEmitter.emitAsync("queue.alert.resolved", {
       alertId,
       queueName: alert.queueName,
       alert,
@@ -203,7 +203,7 @@ export class QueueMonitoringService {
     endDate: Date,
   ): Promise<QueuePerformanceReport> {
     try {
-      const filteredMetrics = this.performanceHistory.filter(
+      const _filteredMetrics = this.performanceHistory.filter(
         (m) => m.lastActivity >= startDate && m.lastActivity <= endDate,
       );
 
@@ -273,12 +273,14 @@ export class QueueMonitoringService {
    * Start health monitoring
    */
   private startHealthMonitoring(): void {
-    setInterval(async () => {
-      try {
-        await this.performHealthChecks();
-      } catch (_error) {
-        this.logger.error("❌ Health monitoring _error:", _error);
-      }
+    setInterval(() => {
+      (() => {
+        try {
+          this.performHealthChecks();
+        } catch (_error) {
+          this.logger.error("❌ Health monitoring _error:", _error);
+        }
+      })();
     }, this.ALERT_THRESHOLDS.healthCheckInterval);
 
     this.logger.log("🔍 Started queue health monitoring");
@@ -287,7 +289,7 @@ export class QueueMonitoringService {
   /**
    * Perform health checks on all queues
    */
-  private async performHealthChecks(): Promise<void> {
+  private performHealthChecks(): void {
     for (const [queueName, metrics] of Array.from(this.metrics.entries())) {
       try {
         const health = this.calculateHealth(metrics);
@@ -296,7 +298,7 @@ export class QueueMonitoringService {
           const updatedMetrics = { ...metrics, health };
           this.metrics.set(queueName, updatedMetrics);
 
-          await this.eventEmitter.emitAsync("queue.health.changed", {
+          void this.eventEmitter.emitAsync("queue.health.changed", {
             queueName,
             oldHealth: metrics.health,
             newHealth: health,
@@ -319,7 +321,7 @@ export class QueueMonitoringService {
   /**
    * Check for alerts based on metrics
    */
-  private async checkAlerts(metrics: QueueMetrics): Promise<void> {
+  private checkAlerts(metrics: QueueMetrics): void {
     const alerts: QueueAlert[] = [];
 
     // Error rate alert
@@ -395,7 +397,7 @@ export class QueueMonitoringService {
     // Add new alerts
     for (const alert of alerts) {
       this.alerts.set(alert.id, alert);
-      await this.eventEmitter.emitAsync("queue.alert.created", { alert });
+      void this.eventEmitter.emitAsync("queue.alert.created", { alert });
       this.logger.warn(
         `🚨 New alert for queue ${metrics.queueName}: ${alert.message}`,
       );
@@ -478,7 +480,7 @@ export class QueueMonitoringService {
    */
   private generateRecommendations(
     queues: QueueMetrics[],
-    alerts: QueueAlert[],
+    _alerts: QueueAlert[],
   ): string[] {
     const recommendations: string[] = [];
 

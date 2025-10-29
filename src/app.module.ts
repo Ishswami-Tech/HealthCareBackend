@@ -30,7 +30,7 @@ import { EHRModule } from "./services/ehr/ehr.module";
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath:
-        process.env.NODE_ENV === "production"
+        process.env["NODE_ENV"] === "production"
           ? ".env.production"
           : ".env.development",
       load: [configuration],
@@ -46,7 +46,7 @@ import { EHRModule } from "./services/ehr/ehr.module";
         ];
 
         // Development-only services
-        if (process.env.NODE_ENV !== "production") {
+        if (process.env["NODE_ENV"] !== "production") {
           required.push("REDIS_COMMANDER_URL");
           required.push("PRISMA_STUDIO_URL");
           required.push("PGADMIN_URL");
@@ -79,7 +79,7 @@ import { EHRModule } from "./services/ehr/ehr.module";
     ScheduleModule.forRoot(),
     QueueModule.forRoot(),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || "your-secret-key",
+      secret: process.env["JWT_SECRET"] || "your-secret-key",
       signOptions: { expiresIn: "24h" },
     }),
     // Socket modules
