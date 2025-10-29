@@ -30,6 +30,13 @@ import {
   CreateImmunizationDto,
   UpdateImmunizationDto,
 } from "../dto/ehr.dto";
+import type {
+  MedicalHistoryResponse,
+  LabReportResponse,
+  RadiologyReportResponse,
+  SurgicalRecordResponse,
+  ImmunizationResponse,
+} from "../types/ehr.types";
 import { JwtAuthGuard } from "../../../libs/core/guards/jwt-auth.guard";
 import { RolesGuard } from "../../../libs/core/guards/roles.guard";
 import { Roles } from "../../../libs/core/decorators/roles.decorator";
@@ -60,7 +67,9 @@ export class EHRController {
 
   @Get("medical-history/:userId")
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getMedicalHistory(@Param("userId") userId: string): Promise<unknown> {
+  async getMedicalHistory(
+    @Param("userId") userId: string,
+  ): Promise<MedicalHistoryResponse[]> {
     return await this.ehrService.getMedicalHistory(userId);
   }
 
@@ -92,7 +101,9 @@ export class EHRController {
 
   @Get("lab-reports/:userId")
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getLabReports(@Param("userId") userId: string): Promise<unknown> {
+  async getLabReports(
+    @Param("userId") userId: string,
+  ): Promise<LabReportResponse[]> {
     return await this.ehrService.getLabReports(userId);
   }
 
@@ -122,7 +133,9 @@ export class EHRController {
 
   @Get("radiology-reports/:userId")
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getRadiologyReports(@Param("userId") userId: string) {
+  async getRadiologyReports(
+    @Param("userId") userId: string,
+  ): Promise<RadiologyReportResponse[]> {
     return await this.ehrService.getRadiologyReports(userId);
   }
 
@@ -152,7 +165,9 @@ export class EHRController {
 
   @Get("surgical-records/:userId")
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getSurgicalRecords(@Param("userId") userId: string) {
+  async getSurgicalRecords(
+    @Param("userId") userId: string,
+  ): Promise<SurgicalRecordResponse[]> {
     return await this.ehrService.getSurgicalRecords(userId);
   }
 
@@ -278,7 +293,9 @@ export class EHRController {
 
   @Get("immunizations/:userId")
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getImmunizations(@Param("userId") userId: string) {
+  async getImmunizations(
+    @Param("userId") userId: string,
+  ): Promise<ImmunizationResponse[]> {
     return await this.ehrService.getImmunizations(userId);
   }
 

@@ -24,7 +24,7 @@ import configuration from "./config/configuration";
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath:
-        process.env.NODE_ENV === "production"
+        process.env["NODE_ENV"] === "production"
           ? ".env.production"
           : ".env.development",
       load: [configuration],

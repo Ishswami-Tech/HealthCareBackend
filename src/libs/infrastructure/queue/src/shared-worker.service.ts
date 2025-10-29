@@ -53,7 +53,7 @@ import {
 interface RedisConnection {
   host: string;
   port: number;
-  password?: string;
+  password?: string | undefined;
   db: number;
   maxRetriesPerRequest: number | null;
   retryDelayOnFailover: number;
@@ -77,21 +77,20 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly cacheService: CacheService,
   ) {}
 
-  async onModuleInit() {
-    await this.initializeWorkers();
+  onModuleInit() {
+    this.initializeWorkers();
   }
 
   async onModuleDestroy() {
     await this.shutdownWorkers();
   }
 
-  private async initializeWorkers() {
+  private initializeWorkers() {
     try {
       const redisConnection = {
-        host: this.configService.get("redis.host", "localhost"),
-        port: this.configService.get("redis.port", 6379),
-        password: this.configService.get("redis.password"),
-        db: this.configService.get("redis.db", 0),
+        host: this.configService.get<string>("redis.host", "localhost"),
+        port: this.configService.get<number>("redis.port", 6379),
+        db: this.configService.get<number>("redis.db", 0),
         maxRetriesPerRequest: null,
         retryDelayOnFailover: 100,
         connectTimeout: 10000,
@@ -101,6 +100,9 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
         family: 4,
         enableReadyCheck: false,
         retryDelayOnCloseConnection: 500,
+        ...(this.configService.get<string>("redis.password") && {
+          password: this.configService.get<string>("redis.password"),
+        }),
       };
 
       // Define all queues with their configurations
@@ -129,11 +131,7 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // Initialize workers for each queue
       for (const config of queueConfigs) {
-        await this.createWorker(
-          config.name,
-          config.concurrency,
-          redisConnection,
-        );
+        this.createWorker(config.name, config.concurrency, redisConnection);
       }
 
       this.logger.log(
@@ -148,7 +146,7 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async createWorker(
+  private createWorker(
     queueName: string,
     concurrency: number,
     redisConnection: RedisConnection,
@@ -170,22 +168,22 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       );
 
       // Worker event handlers
-      worker.on("completed", async (job) => {
+      worker.on("completed", (job) => {
         this.logger.log(`Job completed: ${job.name} on queue ${queueName}`, {
           jobId: job.id,
           queueName,
         });
       });
 
-      worker.on("failed", async (job, err) => {
+      worker.on("failed", (job, _err) => {
         this.logger.log(`Job failed: ${job?.name} on queue ${queueName}`, {
           jobId: job?.id,
           queueName,
-          _error: err.message,
+          _error: _err.message,
         });
       });
 
-      worker.on("error", async (err) => {
+      worker.on("error", (_err) => {
         this.logger.log(`Worker error on queue ${queueName}`);
       });
 
@@ -247,24 +245,24 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
           );
         default:
           this.logger.warn(`Unknown clinic job action: ${action}`);
-          return {
+          return Promise.resolve({
             success: false,
             message: `Unknown clinic job action: ${action}`,
-          };
+          });
       }
     } catch (_error) {
       this.logger.error(`Error processing clinic job ${action}:`, _error);
-      return {
+      return Promise.resolve({
         success: false,
         message: `Error processing clinic job: ${(_error as Error).message}`,
-      };
+      });
     }
   }
 
-  private async processAppointmentCreated(
+  private processAppointmentCreated(
     data: AppointmentJobData,
-    metadata?: JobMetadata,
-  ): Promise<JobProcessingResult> {
+    _metadata?: JobMetadata,
+  ): JobProcessingResult {
     this.logger.log("Processing appointment creation job", {
       appointmentId: data.appointmentId || data.appointment?.appointmentId,
     });
@@ -275,10 +273,10 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async processAppointmentUpdated(
+  private processAppointmentUpdated(
     data: AppointmentJobData,
-    metadata?: JobMetadata,
-  ): Promise<JobProcessingResult> {
+    _metadata?: JobMetadata,
+  ): JobProcessingResult {
     this.logger.log("Processing appointment update job", {
       appointmentId: data.appointmentId || data.appointment?.appointmentId,
     });
@@ -289,10 +287,10 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async processAppointmentCancelled(
+  private processAppointmentCancelled(
     data: AppointmentJobData,
-    metadata?: JobMetadata,
-  ): Promise<JobProcessingResult> {
+    _metadata?: JobMetadata,
+  ): JobProcessingResult {
     this.logger.log("Processing appointment cancellation job", {
       appointmentId: data.appointmentId || data.appointment?.appointmentId,
     });
@@ -303,10 +301,10 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async processPatientCheckin(
+  private processPatientCheckin(
     data: PatientCheckinData,
-    metadata?: JobMetadata,
-  ): Promise<JobProcessingResult> {
+    _metadata?: JobMetadata,
+  ): JobProcessingResult {
     this.logger.log("Processing patient check-in job", {
       patientId: data.patientId,
       appointmentId: data.appointmentId,
@@ -318,10 +316,10 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async processNotificationSend(
+  private processNotificationSend(
     data: NotificationJobData,
-    metadata?: JobMetadata,
-  ): Promise<JobProcessingResult> {
+    _metadata?: JobMetadata,
+  ): JobProcessingResult {
     this.logger.log("Processing notification send job", {
       notificationType: data.type || data.notification?.type,
     });
@@ -352,7 +350,7 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Public methods for health checks and monitoring
-  async getWorkerStatus(): Promise<Record<string, WorkerStatus>> {
+  getWorkerStatus(): Record<string, WorkerStatus> {
     const status: Record<string, WorkerStatus> = {};
     for (const [queueName, worker] of this.workers) {
       status[queueName] = {
@@ -364,9 +362,9 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     return status;
   }
 
-  async getActiveJobCount() {
+  getActiveJobCount() {
     let totalActive = 0;
-    for (const worker of this.workers.values()) {
+    for (const _worker of this.workers.values()) {
       // Note: BullMQ doesn't expose active job count directly
       // This would need to be implemented with Redis queries
       totalActive += 0; // Placeholder

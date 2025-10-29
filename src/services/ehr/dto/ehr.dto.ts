@@ -3,21 +3,21 @@ import { IsString, IsOptional, IsDateString } from "class-validator";
 // Medical History DTOs
 export class CreateMedicalHistoryDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsOptional()
   @IsString()
   clinicId?: string;
 
   @IsString()
-  condition: string;
+  condition!: string;
 
   @IsOptional()
   @IsString()
   notes?: string;
 
   @IsDateString()
-  date: string;
+  date!: string;
 }
 
 export class UpdateMedicalHistoryDto {
@@ -37,17 +37,17 @@ export class UpdateMedicalHistoryDto {
 // Lab Report DTOs
 export class CreateLabReportDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsOptional()
   @IsString()
   clinicId?: string;
 
   @IsString()
-  testName: string;
+  testName!: string;
 
   @IsString()
-  result: string;
+  result!: string;
 
   @IsOptional()
   @IsString()
@@ -58,7 +58,7 @@ export class CreateLabReportDto {
   normalRange?: string;
 
   @IsDateString()
-  date: string;
+  date!: string;
 }
 
 export class UpdateLabReportDto {
@@ -86,19 +86,19 @@ export class UpdateLabReportDto {
 // Radiology Report DTOs
 export class CreateRadiologyReportDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsString()
-  imageType: string;
+  imageType!: string;
 
   @IsString()
-  findings: string;
+  findings!: string;
 
   @IsString()
-  conclusion: string;
+  conclusion!: string;
 
   @IsDateString()
-  date: string;
+  date!: string;
 }
 
 export class UpdateRadiologyReportDto {
@@ -122,20 +122,20 @@ export class UpdateRadiologyReportDto {
 // Surgical Record DTOs
 export class CreateSurgicalRecordDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsString()
-  surgeryName: string;
+  surgeryName!: string;
 
   @IsString()
-  surgeon: string;
+  surgeon!: string;
 
   @IsOptional()
   @IsString()
   notes?: string;
 
   @IsDateString()
-  date: string;
+  date!: string;
 }
 
 export class UpdateSurgicalRecordDto {
@@ -159,16 +159,16 @@ export class UpdateSurgicalRecordDto {
 // Vital DTOs
 export class CreateVitalDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsString()
-  type: string;
+  type!: string;
 
   @IsString()
-  value: string;
+  value!: string;
 
   @IsDateString()
-  recordedAt: string;
+  recordedAt!: string;
 }
 
 export class UpdateVitalDto {
@@ -188,19 +188,19 @@ export class UpdateVitalDto {
 // Allergy DTOs
 export class CreateAllergyDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsString()
-  allergen: string;
+  allergen!: string;
 
   @IsString()
-  severity: string;
+  severity!: string;
 
   @IsString()
-  reaction: string;
+  reaction!: string;
 
   @IsDateString()
-  diagnosedDate: string;
+  diagnosedDate!: string;
 
   @IsOptional()
   @IsString()
@@ -232,26 +232,26 @@ export class UpdateAllergyDto {
 // Medication DTOs
 export class CreateMedicationDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsString()
-  name: string;
+  name!: string;
 
   @IsString()
-  dosage: string;
+  dosage!: string;
 
   @IsString()
-  frequency: string;
+  frequency!: string;
 
   @IsDateString()
-  startDate: string;
+  startDate!: string;
 
   @IsOptional()
   @IsDateString()
   endDate?: string;
 
   @IsString()
-  prescribedBy: string;
+  prescribedBy!: string;
 
   @IsOptional()
   @IsString()
@@ -299,13 +299,13 @@ export class UpdateMedicationDto {
 // Immunization DTOs
 export class CreateImmunizationDto {
   @IsString()
-  userId: string;
+  userId!: string;
 
   @IsString()
-  vaccineName: string;
+  vaccineName!: string;
 
   @IsDateString()
-  dateAdministered: string;
+  dateAdministered!: string;
 
   @IsOptional()
   @IsDateString()
@@ -358,16 +358,29 @@ export class UpdateImmunizationDto {
   notes?: string;
 }
 
+import type {
+  MedicalHistoryResponse,
+  LabReportResponse,
+  RadiologyReportResponse,
+  SurgicalRecordResponse,
+  VitalResponse,
+  AllergyResponse,
+  MedicationResponse,
+  ImmunizationResponse,
+  FamilyHistoryResponse,
+  LifestyleAssessmentResponse,
+} from "../types/ehr.types";
+
 // Comprehensive Health Record DTOs
 export class HealthRecordSummaryDto {
-  medicalHistory?: Array<Record<string, unknown>>;
-  labReports?: Array<Record<string, unknown>>;
-  radiologyReports?: Array<Record<string, unknown>>;
-  surgicalRecords?: Array<Record<string, unknown>>;
-  vitals?: Array<Record<string, unknown>>;
-  allergies?: Array<Record<string, unknown>>;
-  medications?: Array<Record<string, unknown>>;
-  immunizations?: Array<Record<string, unknown>>;
-  familyHistory?: Array<Record<string, unknown>>;
-  lifestyleAssessment?: Record<string, unknown>;
+  medicalHistory?: MedicalHistoryResponse[];
+  labReports?: LabReportResponse[];
+  radiologyReports?: RadiologyReportResponse[];
+  surgicalRecords?: SurgicalRecordResponse[];
+  vitals?: VitalResponse[];
+  allergies?: AllergyResponse[];
+  medications?: MedicationResponse[];
+  immunizations?: ImmunizationResponse[];
+  familyHistory?: FamilyHistoryResponse[];
+  lifestyleAssessment?: LifestyleAssessmentResponse;
 }

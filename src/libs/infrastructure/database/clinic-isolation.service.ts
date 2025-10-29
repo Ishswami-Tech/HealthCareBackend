@@ -89,7 +89,7 @@ export class ClinicIsolationService implements OnModuleInit {
           subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
           locations: clinic.locations.map(
-            (loc: unknown) => (loc as Record<string, unknown>).id as string,
+            (loc: unknown) => (loc as Record<string, unknown>)["id"] as string,
           ),
           isActive: clinic.isActive,
           features: this.getClinicFeatures(clinic),
@@ -153,7 +153,7 @@ export class ClinicIsolationService implements OnModuleInit {
           subdomain: clinic.subdomain || undefined,
           appName: clinic.app_name,
           locations: clinic.locations.map(
-            (loc: unknown) => (loc as Record<string, unknown>).id as string,
+            (loc: unknown) => (loc as Record<string, unknown>)["id"] as string,
           ),
           isActive: clinic.isActive,
           features: this.getClinicFeatures(clinic),
@@ -193,7 +193,7 @@ export class ClinicIsolationService implements OnModuleInit {
       if (!clinicResult.success) {
         return {
           success: false,
-          error: clinicResult.error,
+          ...(clinicResult.error && { error: clinicResult.error }),
           data: false,
         };
       }
@@ -222,7 +222,7 @@ export class ClinicIsolationService implements OnModuleInit {
           return {
             success: false,
             error: `User ${userId} does not have access to clinic ${clinicId}`,
-            clinicContext: clinicResult.data,
+            ...(clinicResult.data && { clinicContext: clinicResult.data }),
           };
         }
 
@@ -237,7 +237,7 @@ export class ClinicIsolationService implements OnModuleInit {
       return {
         success: true,
         data: true,
-        clinicContext: clinicResult.data,
+        ...(clinicResult.data && { clinicContext: clinicResult.data }),
       };
     } catch (error) {
       this.logger.error(
@@ -339,7 +339,7 @@ export class ClinicIsolationService implements OnModuleInit {
 
       if (!clinicId) {
         // Load from database
-        const location = await this.prismaService.clinicLocation.findUnique({
+        const location = await this.prismaService["clinicLocation"].findUnique({
           where: { id: locationId },
           include: { clinic: true },
         });
@@ -396,7 +396,7 @@ export class ClinicIsolationService implements OnModuleInit {
         return {
           success: true,
           data: result,
-          clinicContext: clinicResult.data,
+          ...(clinicResult.data && { clinicContext: clinicResult.data }),
         };
       } finally {
         // Always clear context after operation
@@ -455,9 +455,9 @@ export class ClinicIsolationService implements OnModuleInit {
 
     // Add conditional features based on clinic settings
     const clinicData = clinic as Record<string, unknown>;
-    if (clinicData.telemedicineEnabled) features.push("telemedicine");
-    if (clinicData.labIntegrationEnabled) features.push("lab_integration");
-    if (clinicData.pharmacyIntegrationEnabled)
+    if (clinicData["telemedicineEnabled"]) features.push("telemedicine");
+    if (clinicData["labIntegrationEnabled"]) features.push("lab_integration");
+    if (clinicData["pharmacyIntegrationEnabled"])
       features.push("pharmacy_integration");
 
     return features;
@@ -466,13 +466,13 @@ export class ClinicIsolationService implements OnModuleInit {
   private getClinicSettings(clinic: unknown): Record<string, unknown> {
     const clinicData = clinic as Record<string, unknown>;
     return {
-      timezone: clinicData.timezone || "UTC",
-      workingHours: clinicData.workingHours || "09:00-17:00",
-      appointmentDuration: clinicData.appointmentDuration || 30,
-      maxAdvanceBooking: clinicData.maxAdvanceBooking || 30,
-      emergencyContact: clinicData.emergencyContact,
+      timezone: clinicData["timezone"] || "UTC",
+      workingHours: clinicData["workingHours"] || "09:00-17:00",
+      appointmentDuration: clinicData["appointmentDuration"] || 30,
+      maxAdvanceBooking: clinicData["maxAdvanceBooking"] || 30,
+      emergencyContact: clinicData["emergencyContact"],
       hipaaCompliance: true,
-      dataRetention: clinicData.dataRetention || "7_years",
+      dataRetention: clinicData["dataRetention"] || "7_years",
     };
   }
 
@@ -541,7 +541,7 @@ export class ClinicIsolationService implements OnModuleInit {
         i < Math.min(entriesToRemove / 3, clinicEntries.length);
         i++
       ) {
-        this.clinicCache.delete(clinicEntries[i]);
+        this.clinicCache.delete(clinicEntries[i] || "");
       }
 
       // Remove from user cache
@@ -551,7 +551,7 @@ export class ClinicIsolationService implements OnModuleInit {
         i < Math.min(entriesToRemove / 3, userEntries.length);
         i++
       ) {
-        this.userClinicCache.delete(userEntries[i]);
+        this.userClinicCache.delete(userEntries[i] || "");
       }
 
       // Remove from location cache
@@ -561,7 +561,7 @@ export class ClinicIsolationService implements OnModuleInit {
         i < Math.min(entriesToRemove / 3, locationEntries.length);
         i++
       ) {
-        this.locationClinicCache.delete(locationEntries[i]);
+        this.locationClinicCache.delete(locationEntries[i] || "");
       }
 
       this.logger.debug(`Cache optimized: removed ${entriesToRemove} entries`);
@@ -606,7 +606,7 @@ export class ClinicIsolationService implements OnModuleInit {
 
         const validUserIds = new Set(
           users.map(
-            (u: unknown) => (u as Record<string, unknown>).id as string,
+            (u: unknown) => (u as Record<string, unknown>)["id"] as string,
           ),
         );
 

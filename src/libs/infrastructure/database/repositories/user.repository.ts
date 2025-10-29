@@ -117,11 +117,11 @@ export class UserRepository extends BaseRepository<
     options: UserSearchOptions,
   ): Promise<RepositoryResult<UserWithProfile[]>> {
     try {
-      const where: any = {};
+      const where: Record<string, unknown> = {};
 
       // Text search across multiple fields
       if (options.searchTerm) {
-        where.OR = [
+        where["OR"] = [
           { firstName: { contains: options.searchTerm, mode: "insensitive" } },
           { lastName: { contains: options.searchTerm, mode: "insensitive" } },
           { email: { contains: options.searchTerm, mode: "insensitive" } },
@@ -131,38 +131,38 @@ export class UserRepository extends BaseRepository<
 
       // Role filter
       if (options.role) {
-        where.role = options.role as any;
+        where["role"] = options.role as any;
       }
 
       // Status filter (based on isVerified field in your schema)
       if (options.status) {
-        where.isVerified = options.status === "active";
+        where["isVerified"] = options.status === "active";
       }
 
       // Date range filter
       if (options.dateRange) {
-        where.createdAt = {
+        where["createdAt"] = {
           gte: options.dateRange.start,
           lte: options.dateRange.end,
         };
       }
 
-      const include: any = {};
+      const include: Record<string, unknown> = {};
 
       if (options.includeProfile) {
-        include.doctor = true; // Include doctor profile if user is a doctor
-        include.patient = true; // Include patient profile if user is a patient
+        include["doctor"] = true; // Include doctor profile if user is a doctor
+        include["patient"] = true; // Include patient profile if user is a patient
       }
 
       if (options.includeAppointments) {
-        include.appointments = {
+        include["appointments"] = {
           take: 10,
           orderBy: { date: "desc" },
         };
       }
 
       if (options.includeMedicalHistory) {
-        include.medicalHistories = {
+        include["medicalHistories"] = {
           take: 5,
           orderBy: { createdAt: "desc" },
         };

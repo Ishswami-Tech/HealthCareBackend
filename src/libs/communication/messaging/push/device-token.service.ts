@@ -1,27 +1,57 @@
 import { Injectable, Logger } from "@nestjs/common";
 
+/**
+ * Device token data interface
+ * @interface DeviceTokenData
+ */
 export interface DeviceTokenData {
-  userId: string;
-  token: string;
-  platform: "ios" | "android" | "web";
-  appVersion?: string;
-  deviceModel?: string;
-  osVersion?: string;
+  /** User ID associated with the device token */
+  readonly userId: string;
+  /** Device token string */
+  readonly token: string;
+  /** Device platform */
+  readonly platform: "ios" | "android" | "web";
+  /** Optional app version */
+  readonly appVersion?: string;
+  /** Optional device model */
+  readonly deviceModel?: string;
+  /** Optional operating system version */
+  readonly osVersion?: string;
+  /** Whether the token is active */
   isActive: boolean;
+  /** Last time the token was used */
   lastUsed?: Date;
 }
 
+/**
+ * Token validation result interface
+ * @interface TokenValidationResult
+ */
 export interface TokenValidationResult {
-  isValid: boolean;
-  error?: string;
-  shouldUpdate?: boolean;
+  /** Whether the token is valid */
+  readonly isValid: boolean;
+  /** Error message if validation failed */
+  readonly error?: string;
+  /** Whether the token should be updated */
+  readonly shouldUpdate?: boolean;
 }
 
+/**
+ * Device token management service
+ * Handles registration, validation, and cleanup of device tokens
+ *
+ * @class DeviceTokenService
+ */
 @Injectable()
 export class DeviceTokenService {
   private readonly logger = new Logger(DeviceTokenService.name);
   private readonly tokenStore = new Map<string, DeviceTokenData>();
 
+  /**
+   * Registers a new device token
+   * @param tokenData - Device token data to register
+   * @returns True if registration was successful
+   */
   registerDeviceToken(tokenData: DeviceTokenData): boolean {
     try {
       this.logger.log("Registering device token", {
@@ -45,6 +75,13 @@ export class DeviceTokenService {
     }
   }
 
+  /**
+   * Updates an existing device token
+   * @param oldToken - Current device token
+   * @param newToken - New device token
+   * @param updates - Optional additional updates to token data
+   * @returns True if update was successful
+   */
   updateDeviceToken(
     oldToken: string,
     newToken: string,
@@ -86,6 +123,11 @@ export class DeviceTokenService {
     }
   }
 
+  /**
+   * Validates a device token
+   * @param token - Device token to validate
+   * @returns Validation result with status and error information
+   */
   validateDeviceToken(token: string): TokenValidationResult {
     try {
       const tokenData = this.tokenStore.get(token);
@@ -135,6 +177,11 @@ export class DeviceTokenService {
     }
   }
 
+  /**
+   * Deactivates a device token
+   * @param token - Device token to deactivate
+   * @returns True if deactivation was successful
+   */
   deactivateDeviceToken(token: string): boolean {
     try {
       const tokenData = this.tokenStore.get(token);
@@ -164,11 +211,16 @@ export class DeviceTokenService {
     }
   }
 
+  /**
+   * Gets all active tokens for a user
+   * @param userId - User ID to get tokens for
+   * @returns Array of active device tokens for the user
+   */
   getUserTokens(userId: string): DeviceTokenData[] {
     try {
       const userTokens: DeviceTokenData[] = [];
 
-      for (const tokenData of this.tokenStore.values()) {
+      for (const tokenData of Array.from(this.tokenStore.values())) {
         if (tokenData.userId === userId && tokenData.isActive) {
           userTokens.push(tokenData);
         }
@@ -184,13 +236,17 @@ export class DeviceTokenService {
     }
   }
 
+  /**
+   * Cleans up inactive and expired tokens
+   * @returns Number of tokens that were cleaned up
+   */
   cleanupInactiveTokens(): number {
     try {
       let cleanedCount = 0;
       const now = Date.now();
       const inactivityThreshold = 90 * 24 * 60 * 60 * 1000; // 90 days in milliseconds
 
-      for (const [token, tokenData] of this.tokenStore.entries()) {
+      for (const [token, tokenData] of Array.from(this.tokenStore.entries())) {
         const lastUsed = tokenData.lastUsed?.getTime() || 0;
         const isInactive = now - lastUsed > inactivityThreshold;
 
@@ -214,11 +270,15 @@ export class DeviceTokenService {
     }
   }
 
+  /**
+   * Gets token statistics
+   * @returns Object containing token statistics by platform and status
+   */
   getTokenStats(): {
-    total: number;
-    active: number;
-    inactive: number;
-    byPlatform: Record<string, number>;
+    readonly total: number;
+    readonly active: number;
+    readonly inactive: number;
+    readonly byPlatform: Record<string, number>;
   } {
     const stats = {
       total: 0,
@@ -227,7 +287,7 @@ export class DeviceTokenService {
       byPlatform: {} as Record<string, number>,
     };
 
-    for (const tokenData of this.tokenStore.values()) {
+    for (const tokenData of Array.from(this.tokenStore.values())) {
       stats.total++;
 
       if (tokenData.isActive) {
@@ -245,6 +305,12 @@ export class DeviceTokenService {
     return stats;
   }
 
+  /**
+   * Masks device token for logging (privacy)
+   * @param token - Device token to mask
+   * @returns Masked token string
+   * @private
+   */
   private maskToken(token: string): string {
     if (!token || token.length < 10) return "INVALID_TOKEN";
     return `${token.substring(0, 8)}...${token.substring(token.length - 4)}`;

@@ -6,52 +6,176 @@ import {
   LogType,
   LogLevel,
 } from "../../infrastructure/logging/logging.service";
-import { PrismaService } from "../../infrastructure/database/prisma/prisma.service";
+import { DatabaseService } from "../../infrastructure/database";
 import { JwtService } from "@nestjs/jwt";
 import * as crypto from "crypto";
 
+/**
+ * Represents session data structure
+ * @interface SessionData
+ * @description Contains all information about a user session
+ * @example
+ * ```typescript
+ * const sessionData: SessionData = {
+ *   sessionId: "abc123...",
+ *   userId: "user-123",
+ *   clinicId: "clinic-456",
+ *   userAgent: "Mozilla/5.0...",
+ *   ipAddress: "192.168.1.1",
+ *   deviceId: "device-789",
+ *   loginTime: new Date(),
+ *   lastActivity: new Date(),
+ *   expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+ *   isActive: true,
+ *   metadata: { source: "web" }
+ * };
+ * ```
+ */
 export interface SessionData {
-  sessionId: string;
-  userId: string;
-  clinicId?: string;
-  userAgent?: string;
-  ipAddress?: string;
-  deviceId?: string;
-  loginTime: Date;
+  /** Unique session identifier */
+  readonly sessionId: string;
+  /** User ID associated with the session */
+  readonly userId: string;
+  /** Optional clinic ID for multi-tenant sessions */
+  readonly clinicId?: string;
+  /** User agent string from the client */
+  readonly userAgent?: string;
+  /** IP address of the client */
+  readonly ipAddress?: string;
+  /** Device identifier for device tracking */
+  readonly deviceId?: string;
+  /** Timestamp when the session was created */
+  readonly loginTime: Date;
+  /** Timestamp of the last activity */
   lastActivity: Date;
+  /** Timestamp when the session expires */
   expiresAt: Date;
+  /** Whether the session is currently active */
   isActive: boolean;
+  /** Additional metadata for the session */
   metadata: Record<string, unknown>;
 }
 
+/**
+ * Configuration for session management
+ * @interface SessionConfig
+ * @description Defines session management behavior and limits
+ * @example
+ * ```typescript
+ * const config: SessionConfig = {
+ *   maxSessionsPerUser: 5,
+ *   sessionTimeout: 86400, // 24 hours
+ *   extendOnActivity: true,
+ *   secureCookies: true,
+ *   sameSite: "strict",
+ *   distributed: true,
+ *   partitions: 16
+ * };
+ * ```
+ */
 export interface SessionConfig {
-  maxSessionsPerUser: number;
-  sessionTimeout: number; // in seconds
-  extendOnActivity: boolean;
-  secureCookies: boolean;
-  sameSite: "strict" | "lax" | "none";
-  distributed: boolean;
-  partitions: number;
+  /** Maximum number of concurrent sessions per user */
+  readonly maxSessionsPerUser: number;
+  /** Session timeout in seconds */
+  readonly sessionTimeout: number;
+  /** Whether to extend session on activity */
+  readonly extendOnActivity: boolean;
+  /** Whether to use secure cookies */
+  readonly secureCookies: boolean;
+  /** SameSite cookie attribute */
+  readonly sameSite: "strict" | "lax" | "none";
+  /** Whether to use distributed session storage */
+  readonly distributed: boolean;
+  /** Number of partitions for distributed storage */
+  readonly partitions: number;
 }
 
+/**
+ * Data transfer object for creating a new session
+ * @interface CreateSessionDto
+ * @description Contains the data needed to create a new user session
+ * @example
+ * ```typescript
+ * const createSessionDto: CreateSessionDto = {
+ *   userId: "user-123",
+ *   clinicId: "clinic-456",
+ *   userAgent: "Mozilla/5.0...",
+ *   ipAddress: "192.168.1.1",
+ *   deviceId: "device-789",
+ *   metadata: { source: "web" }
+ * };
+ * ```
+ */
 export interface CreateSessionDto {
-  userId: string;
-  clinicId?: string;
-  userAgent?: string;
-  ipAddress?: string;
-  deviceId?: string;
-  metadata?: Record<string, unknown>;
+  /** User ID for the session */
+  readonly userId: string;
+  /** Optional clinic ID for multi-tenant sessions */
+  readonly clinicId?: string;
+  /** User agent string from the client */
+  readonly userAgent?: string;
+  /** IP address of the client */
+  readonly ipAddress?: string;
+  /** Device identifier for device tracking */
+  readonly deviceId?: string;
+  /** Additional metadata for the session */
+  readonly metadata?: Record<string, unknown>;
 }
 
+/**
+ * Summary statistics for session management
+ * @interface SessionSummary
+ * @description Contains aggregated session statistics and metrics
+ * @example
+ * ```typescript
+ * const summary: SessionSummary = {
+ *   totalSessions: 1000,
+ *   activeSessions: 750,
+ *   expiredSessions: 250,
+ *   sessionsPerUser: { "user-1": 2, "user-2": 1 },
+ *   sessionsPerClinic: { "clinic-1": 500, "clinic-2": 250 },
+ *   recentActivity: [sessionData1, sessionData2]
+ * };
+ * ```
+ */
 export interface SessionSummary {
-  totalSessions: number;
-  activeSessions: number;
-  expiredSessions: number;
-  sessionsPerUser: Record<string, number>;
-  sessionsPerClinic: Record<string, number>;
-  recentActivity: SessionData[];
+  /** Total number of sessions */
+  readonly totalSessions: number;
+  /** Number of currently active sessions */
+  readonly activeSessions: number;
+  /** Number of expired sessions */
+  readonly expiredSessions: number;
+  /** Sessions count per user ID */
+  readonly sessionsPerUser: Record<string, number>;
+  /** Sessions count per clinic ID */
+  readonly sessionsPerClinic: Record<string, number>;
+  /** Most recent session activities */
+  readonly recentActivity: SessionData[];
 }
 
+/**
+ * Session Management Service for Healthcare Backend
+ * @class SessionManagementService
+ * @description Provides comprehensive session management for 1M+ users with distributed storage,
+ * security monitoring, and automatic cleanup. Supports multi-tenant sessions, device tracking,
+ * and suspicious activity detection.
+ * @implements OnModuleInit
+ * @example
+ * ```typescript
+ * // Create a new session
+ * const session = await sessionService.createSession({
+ *   userId: "user-123",
+ *   clinicId: "clinic-456",
+ *   userAgent: "Mozilla/5.0...",
+ *   ipAddress: "192.168.1.1"
+ * });
+ *
+ * // Get session data
+ * const sessionData = await sessionService.getSession(session.sessionId);
+ *
+ * // Update session activity
+ * await sessionService.updateSessionActivity(session.sessionId, { page: "dashboard" });
+ * ```
+ */
 @Injectable()
 export class SessionManagementService implements OnModuleInit {
   private readonly logger = new Logger(SessionManagementService.name);
@@ -61,32 +185,44 @@ export class SessionManagementService implements OnModuleInit {
   private readonly USER_SESSIONS_PREFIX = "user_sessions:";
   private readonly BLACKLIST_PREFIX = "blacklist:";
 
+  /**
+   * Creates an instance of SessionManagementService
+   * @constructor
+   * @param configService - Configuration service for environment variables
+   * @param redis - Redis service for distributed session storage
+   * @param logging - Logging service for security and audit logs
+   * @param prisma - Prisma service for database operations
+   * @param jwtService - JWT service for token operations
+   */
   constructor(
     private readonly configService: ConfigService,
     private readonly redis: RedisService,
     private readonly logging: LoggingService,
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
   ) {
     this.initializeConfig();
   }
 
-  async onModuleInit() {
-    await this.initialize();
+  onModuleInit() {
+    this.initialize();
   }
 
   /**
    * Initialize session management service
+   * @description Sets up cleanup jobs, monitoring, and logging for session management
+   * @returns void
+   * @throws Error if initialization fails
    */
-  async initialize(): Promise<void> {
+  initialize(): void {
     try {
       this.logger.log("Initializing Session Management Service for 1M+ users");
 
       // Setup cleanup intervals
-      await this.setupCleanupJobs();
+      this.setupCleanupJobs();
 
       // Initialize session monitoring
-      await this.setupSessionMonitoring();
+      this.setupSessionMonitoring();
 
       this.logger.log("Session Management Service initialized successfully", {
         maxSessionsPerUser: this.config.maxSessionsPerUser,
@@ -105,6 +241,19 @@ export class SessionManagementService implements OnModuleInit {
 
   /**
    * Create new session
+   * @description Creates a new user session with distributed storage and security monitoring
+   * @param createSessionDto - Data for creating the session
+   * @returns Promise<SessionData> - The created session data
+   * @throws Error if session creation fails
+   * @example
+   * ```typescript
+   * const session = await sessionService.createSession({
+   *   userId: "user-123",
+   *   clinicId: "clinic-456",
+   *   userAgent: "Mozilla/5.0...",
+   *   ipAddress: "192.168.1.1"
+   * });
+   * ```
    */
   async createSession(
     createSessionDto: CreateSessionDto,
@@ -119,10 +268,18 @@ export class SessionManagementService implements OnModuleInit {
       const sessionData: SessionData = {
         sessionId,
         userId: createSessionDto.userId,
-        clinicId: createSessionDto.clinicId,
-        userAgent: createSessionDto.userAgent,
-        ipAddress: createSessionDto.ipAddress,
-        deviceId: createSessionDto.deviceId,
+        ...(createSessionDto.clinicId
+          ? { clinicId: createSessionDto.clinicId }
+          : {}),
+        ...(createSessionDto.userAgent
+          ? { userAgent: createSessionDto.userAgent }
+          : {}),
+        ...(createSessionDto.ipAddress
+          ? { ipAddress: createSessionDto.ipAddress }
+          : {}),
+        ...(createSessionDto.deviceId
+          ? { deviceId: createSessionDto.deviceId }
+          : {}),
         loginTime: now,
         lastActivity: now,
         expiresAt,
@@ -166,6 +323,16 @@ export class SessionManagementService implements OnModuleInit {
 
   /**
    * Get session by ID
+   * @description Retrieves session data by session ID with expiration and blacklist checks
+   * @param sessionId - The session ID to retrieve
+   * @returns Promise<SessionData | null> - Session data or null if not found/expired
+   * @example
+   * ```typescript
+   * const session = await sessionService.getSession("session-123");
+   * if (session) {
+   *   console.log(`User ${session.userId} is active`);
+   * }
+   * ```
    */
   async getSession(sessionId: string): Promise<SessionData | null> {
     try {
@@ -199,6 +366,17 @@ export class SessionManagementService implements OnModuleInit {
 
   /**
    * Update session activity
+   * @description Updates session activity timestamp and optionally extends session expiration
+   * @param sessionId - The session ID to update
+   * @param metadata - Optional metadata to add to the session
+   * @returns Promise<boolean> - True if update was successful, false otherwise
+   * @example
+   * ```typescript
+   * const updated = await sessionService.updateSessionActivity("session-123", {
+   *   lastPage: "dashboard",
+   *   action: "view"
+   * });
+   * ```
    */
   async updateSessionActivity(
     sessionId: string,
@@ -222,9 +400,11 @@ export class SessionManagementService implements OnModuleInit {
 
       // Update metadata
       if (metadata) {
-        (session as { metadata?: unknown }).metadata = {
-          ...((session as { metadata?: unknown }).metadata || {}),
-          ...(metadata || {}),
+        const currentMetadata =
+          (session as { metadata?: Record<string, unknown> }).metadata || {};
+        (session as { metadata?: Record<string, unknown> }).metadata = {
+          ...currentMetadata,
+          ...metadata,
         };
       }
 
@@ -400,13 +580,13 @@ export class SessionManagementService implements OnModuleInit {
       const keys = await this.redis.keys(pattern);
       const now = new Date();
 
-      const summary: SessionSummary = {
+      const summary = {
         totalSessions: 0,
         activeSessions: 0,
         expiredSessions: 0,
-        sessionsPerUser: {},
-        sessionsPerClinic: {},
-        recentActivity: [],
+        sessionsPerUser: {} as Record<string, number>,
+        sessionsPerClinic: {} as Record<string, number>,
+        recentActivity: [] as SessionData[],
       };
 
       const recentSessions: SessionData[] = [];
@@ -444,7 +624,7 @@ export class SessionManagementService implements OnModuleInit {
         )
         .slice(0, 10);
 
-      return summary;
+      return summary as SessionSummary;
     } catch (_error) {
       this.logger.error(
         "Failed to get session statistics",
@@ -680,35 +860,34 @@ export class SessionManagementService implements OnModuleInit {
   private setupCleanupJobs(): void {
     // Cleanup expired sessions every hour
     setInterval(
-      async () => {
-        try {
-          await this.cleanupExpiredSessions();
-        } catch (_error) {
+      () => {
+        void this.cleanupExpiredSessions().catch((_error) => {
           this.logger.error(
             "Session cleanup job failed",
             (_error as Error).stack,
           );
-        }
+        });
       },
       60 * 60 * 1000,
     );
 
     // Check for suspicious sessions every 30 minutes
     setInterval(
-      async () => {
-        try {
-          const { suspicious } = await this.detectSuspiciousSessions();
-          if (suspicious.length > 0) {
-            this.logger.warn(
-              `Detected ${suspicious.length} suspicious sessions`,
+      () => {
+        void this.detectSuspiciousSessions()
+          .then(({ suspicious }) => {
+            if (suspicious.length > 0) {
+              this.logger.warn(
+                `Detected ${suspicious.length} suspicious sessions`,
+              );
+            }
+          })
+          .catch((_error) => {
+            this.logger.error(
+              "Suspicious session detection failed",
+              (_error as Error).stack,
             );
-          }
-        } catch (_error) {
-          this.logger.error(
-            "Suspicious session detection failed",
-            (_error as Error).stack,
-          );
-        }
+          });
       },
       30 * 60 * 1000,
     );
@@ -717,22 +896,23 @@ export class SessionManagementService implements OnModuleInit {
   private setupSessionMonitoring(): void {
     // Log session statistics every 10 minutes
     setInterval(
-      async () => {
-        try {
-          const stats = await this.getSessionStatistics();
-          this.logger.log("Session Statistics", {
-            totalSessions: stats.totalSessions,
-            activeSessions: stats.activeSessions,
-            expiredSessions: stats.expiredSessions,
-            uniqueUsers: Object.keys(stats.sessionsPerUser).length,
-            uniqueClinics: Object.keys(stats.sessionsPerClinic).length,
+      () => {
+        void this.getSessionStatistics()
+          .then((stats) => {
+            this.logger.log("Session Statistics", {
+              totalSessions: stats.totalSessions,
+              activeSessions: stats.activeSessions,
+              expiredSessions: stats.expiredSessions,
+              uniqueUsers: Object.keys(stats.sessionsPerUser).length,
+              uniqueClinics: Object.keys(stats.sessionsPerClinic).length,
+            });
+          })
+          .catch((_error) => {
+            this.logger.error(
+              "Session monitoring failed",
+              (_error as Error).stack,
+            );
           });
-        } catch (_error) {
-          this.logger.error(
-            "Session monitoring failed",
-            (_error as Error).stack,
-          );
-        }
       },
       10 * 60 * 1000,
     );
@@ -752,7 +932,7 @@ export class SessionManagementService implements OnModuleInit {
     return suspiciousPatterns.some((pattern) => pattern.test(userAgent));
   }
 
-  private detectRapidLocationChange(session: SessionData): Promise<boolean> {
+  private detectRapidLocationChange(_session: SessionData): Promise<boolean> {
     // This would implement geolocation checking logic
     // For now, return false as placeholder
     return Promise.resolve(false);

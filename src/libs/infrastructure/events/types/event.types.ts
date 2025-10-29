@@ -223,7 +223,7 @@ export interface SystemEvent extends EnterpriseEventPayload {
   serviceHealth?: "HEALTHY" | "DEGRADED" | "UNHEALTHY" | "CRITICAL";
 }
 
-export interface EventResult<T = any> {
+export interface EventResult<T = unknown> {
   success: boolean;
   eventId: string;
   result?: T;

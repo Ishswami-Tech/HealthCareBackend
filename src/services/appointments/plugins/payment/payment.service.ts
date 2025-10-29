@@ -43,7 +43,7 @@ export class PaymentService {
     private readonly loggingService: LoggingService,
   ) {}
 
-  async processPayment(paymentId: string): Promise<unknown> {
+  processPayment(paymentId: string): unknown {
     const startTime = Date.now();
 
     try {
@@ -56,7 +56,7 @@ export class PaymentService {
         processedAt: new Date().toISOString(),
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         "Payment processed successfully",
@@ -66,7 +66,7 @@ export class PaymentService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process payment: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -80,7 +80,7 @@ export class PaymentService {
     }
   }
 
-  async refundPayment(refundData: RefundData): Promise<unknown> {
+  refundPayment(refundData: RefundData): unknown {
     const startTime = Date.now();
 
     try {
@@ -94,7 +94,7 @@ export class PaymentService {
         refundedAt: new Date().toISOString(),
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         "Payment refunded successfully",
@@ -107,7 +107,7 @@ export class PaymentService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to refund payment: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -150,7 +150,7 @@ export class PaymentService {
         this.PAYMENT_CACHE_TTL,
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Payment status retrieved successfully",
@@ -160,7 +160,7 @@ export class PaymentService {
 
       return status;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get payment status: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -174,7 +174,7 @@ export class PaymentService {
     }
   }
 
-  async processSubscriptionPayment(subscriptionId: string): Promise<unknown> {
+  processSubscriptionPayment(subscriptionId: string): unknown {
     const startTime = Date.now();
 
     try {
@@ -187,7 +187,7 @@ export class PaymentService {
         processedAt: new Date().toISOString(),
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         "Subscription payment processed successfully",
@@ -197,7 +197,7 @@ export class PaymentService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process subscription payment: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -211,7 +211,7 @@ export class PaymentService {
     }
   }
 
-  async cancelSubscription(subscriptionId: string): Promise<unknown> {
+  cancelSubscription(subscriptionId: string): unknown {
     const startTime = Date.now();
 
     try {
@@ -223,7 +223,7 @@ export class PaymentService {
         cancelledAt: new Date().toISOString(),
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         "Subscription cancelled successfully",
@@ -233,7 +233,7 @@ export class PaymentService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to cancel subscription: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -247,7 +247,7 @@ export class PaymentService {
     }
   }
 
-  async processInsuranceClaim(claimData: unknown): Promise<unknown> {
+  processInsuranceClaim(claimData: unknown): unknown {
     const startTime = Date.now();
 
     try {
@@ -259,7 +259,7 @@ export class PaymentService {
         submittedAt: new Date().toISOString(),
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         "Insurance claim processed successfully",
@@ -269,7 +269,7 @@ export class PaymentService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process insurance claim: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -283,7 +283,7 @@ export class PaymentService {
     }
   }
 
-  async processDesignerPayout(payoutData: PayoutData): Promise<unknown> {
+  processDesignerPayout(payoutData: PayoutData): unknown {
     const startTime = Date.now();
 
     try {
@@ -297,7 +297,7 @@ export class PaymentService {
         processedAt: new Date().toISOString(),
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         "Designer payout processed successfully",
@@ -310,7 +310,7 @@ export class PaymentService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process designer payout: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -324,7 +324,7 @@ export class PaymentService {
     }
   }
 
-  async generateReceipt(paymentId: string): Promise<unknown> {
+  generateReceipt(paymentId: string): unknown {
     const startTime = Date.now();
 
     try {
@@ -339,7 +339,7 @@ export class PaymentService {
         downloadUrl: `https://receipts.example.com/${paymentId}.pdf`,
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Receipt generated successfully",
@@ -349,7 +349,7 @@ export class PaymentService {
 
       return receipt;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to generate receipt: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -363,8 +363,8 @@ export class PaymentService {
     }
   }
 
-  async getPaymentAnalytics(analyticsParams: unknown): Promise<unknown> {
-    const params = analyticsParams as any;
+  getPaymentAnalytics(analyticsParams: unknown): unknown {
+    const params = analyticsParams as Record<string, unknown>;
     const startTime = Date.now();
 
     try {
@@ -375,11 +375,11 @@ export class PaymentService {
         totalAmount: 50000.0,
         averageAmount: 50.0,
         currency: "USD",
-        period: params.period || "month",
+        period: params["period"] || "month",
         generatedAt: new Date().toISOString(),
       };
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         "Payment analytics retrieved successfully",
@@ -389,7 +389,7 @@ export class PaymentService {
 
       return analytics;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get payment analytics: ${_error instanceof Error ? _error.message : String(_error)}`,

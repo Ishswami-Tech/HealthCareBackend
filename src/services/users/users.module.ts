@@ -3,7 +3,7 @@ import { UsersService } from "./users.service";
 import { UsersController } from "./controllers/users.controller";
 import { PrismaModule } from "../../libs/infrastructure/database/prisma/prisma.module";
 import { GuardsModule } from "../../libs/core/guards/guards.module";
-import { RateLimitModule } from "../../libs/utils/rate-limit/rate-limit.module";
+import { RateLimitModule } from "../../libs/security/rate-limit/rate-limit.module";
 import { EventsModule } from "../../libs/infrastructure/events/events.module";
 import { RbacModule } from "../../libs/core/rbac/rbac.module";
 import { AuthModule } from "../auth/auth.module";

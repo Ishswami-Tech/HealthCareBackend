@@ -1,17 +1,47 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { HttpStatus } from "@nestjs/common";
 import { ErrorCode } from "./error-codes.enum";
-import { HealthcareError } from "./healthcare-error.class";
+import { HealthcareError, ErrorMetadata } from "./healthcare-error.class";
 
 /**
  * Centralized Healthcare Error Service
  * Handles all error creation, logging, and management for the healthcare application
+ *
+ * @class HealthcareErrorsService
+ * @description Service for creating and managing healthcare-specific errors
+ * @example
+ * ```typescript
+ * @Injectable()
+ * export class UserService {
+ *   constructor(private readonly errors: HealthcareErrorsService) {}
+ *
+ *   async findUser(userId: string) {
+ *     if (!userId) {
+ *       throw this.errors.userNotFound(userId, 'UserService.findUser');
+ *     }
+ *     // ... rest of implementation
+ *   }
+ * }
+ * ```
  */
 @Injectable()
 export class HealthcareErrorsService {
   private readonly logger = new Logger(HealthcareErrorsService.name);
 
   // Authentication & Authorization Errors
+
+  /**
+   * Creates an error for invalid login credentials
+   *
+   * @param context - Optional context for debugging
+   * @returns HealthcareError with AUTH_INVALID_CREDENTIALS code
+   * @example
+   * ```typescript
+   * if (!isValidCredentials(email, password)) {
+   *   throw this.errors.invalidCredentials('AuthService.login');
+   * }
+   * ```
+   */
   invalidCredentials(context?: string): HealthcareError {
     return this.createError(
       ErrorCode.AUTH_INVALID_CREDENTIALS,
@@ -20,6 +50,18 @@ export class HealthcareErrorsService {
     );
   }
 
+  /**
+   * Creates an error for expired authentication token
+   *
+   * @param context - Optional context for debugging
+   * @returns HealthcareError with AUTH_TOKEN_EXPIRED code
+   * @example
+   * ```typescript
+   * if (token.isExpired()) {
+   *   throw this.errors.tokenExpired('AuthGuard.validateToken');
+   * }
+   * ```
+   */
   tokenExpired(context?: string): HealthcareError {
     return this.createError(
       ErrorCode.AUTH_TOKEN_EXPIRED,
@@ -28,6 +70,18 @@ export class HealthcareErrorsService {
     );
   }
 
+  /**
+   * Creates an error for insufficient user permissions
+   *
+   * @param context - Optional context for debugging
+   * @returns HealthcareError with AUTH_INSUFFICIENT_PERMISSIONS code
+   * @example
+   * ```typescript
+   * if (!user.hasPermission('appointments:write')) {
+   *   throw this.errors.insufficientPermissions('AppointmentController.create');
+   * }
+   * ```
+   */
   insufficientPermissions(context?: string): HealthcareError {
     return this.createError(
       ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
@@ -53,6 +107,21 @@ export class HealthcareErrorsService {
   }
 
   // User Management Errors
+
+  /**
+   * Creates an error for user not found
+   *
+   * @param userId - Optional user ID for metadata
+   * @param context - Optional context for debugging
+   * @returns HealthcareError with USER_NOT_FOUND code
+   * @example
+   * ```typescript
+   * const user = await this.userRepository.findById(userId);
+   * if (!user) {
+   *   throw this.errors.userNotFound(userId, 'UserService.findUser');
+   * }
+   * ```
+   */
   userNotFound(userId?: string, context?: string): HealthcareError {
     return this.createError(
       ErrorCode.USER_NOT_FOUND,
@@ -471,11 +540,23 @@ export class HealthcareErrorsService {
   }
 
   // Private helper methods
+
+  /**
+   * Creates a HealthcareError with the specified parameters
+   *
+   * @param code - The error code
+   * @param statusCode - HTTP status code
+   * @param context - Optional context
+   * @param metadata - Optional metadata
+   * @param customMessage - Optional custom message
+   * @returns New HealthcareError instance
+   * @private
+   */
   private createError(
     code: ErrorCode,
     statusCode: HttpStatus,
     context?: string,
-    metadata?: Record<string, unknown>,
+    metadata?: ErrorMetadata,
     customMessage?: string,
   ): HealthcareError {
     return new HealthcareError(
@@ -487,6 +568,13 @@ export class HealthcareErrorsService {
     );
   }
 
+  /**
+   * Determines if an error is critical and should be logged as ERROR level
+   *
+   * @param error - The HealthcareError to check
+   * @returns True if the error is critical
+   * @private
+   */
   private isCriticalError(error: HealthcareError): boolean {
     const criticalCodes = [
       ErrorCode.INTERNAL_SERVER_ERROR,
@@ -503,6 +591,13 @@ export class HealthcareErrorsService {
     );
   }
 
+  /**
+   * Determines if an error is a warning and should be logged as WARN level
+   *
+   * @param error - The HealthcareError to check
+   * @returns True if the error is a warning
+   * @private
+   */
   private isWarningError(error: HealthcareError): boolean {
     const warningCodes = [
       ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,

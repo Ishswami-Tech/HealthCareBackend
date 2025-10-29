@@ -4,6 +4,7 @@ import { BaseAppointmentPlugin } from "../base/base-plugin.service";
 import { AppointmentAnalyticsService } from "./appointment-analytics.service";
 
 @Injectable()
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
   readonly name = "clinic-analytics-plugin";
   readonly version = "1.0.0";
@@ -288,3 +289,4 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
     };
   }
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */

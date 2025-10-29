@@ -5,35 +5,102 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 
-// Type definitions for request objects
+/**
+ * NestJS request interface with clinic-specific properties
+ * @interface NestJSRequest
+ */
 interface NestJSRequest {
-  headers: {
-    authorization?: string;
-    "x-clinic-id"?: string;
-    [key: string]: string | undefined;
+  /** Request headers */
+  readonly headers: {
+    /** Authorization header */
+    readonly authorization?: string;
+    /** Clinic ID header */
+    readonly "x-clinic-id"?: string;
+    /** Additional headers */
+    readonly [key: string]: string | undefined;
   };
-  body?: {
-    clinicId?: string;
-    [key: string]: unknown;
+  /** Request body */
+  readonly body?: {
+    /** Clinic ID in body */
+    readonly clinicId?: string;
+    /** Additional body properties */
+    readonly [key: string]: unknown;
   };
-  query?: {
-    clinicId?: string;
-    [key: string]: string | string[] | undefined;
+  /** Query parameters */
+  readonly query?: {
+    /** Clinic ID in query */
+    readonly clinicId?: string;
+    /** Additional query parameters */
+    readonly [key: string]: string | string[] | undefined;
   };
 }
 
+/**
+ * JWT payload interface with clinic information
+ * @interface JWTPayload
+ */
 interface JWTPayload {
-  clinicId?: string;
-  [key: string]: unknown;
+  /** Clinic ID from JWT */
+  readonly clinicId?: string;
+  /** Additional JWT payload properties */
+  readonly [key: string]: unknown;
 }
 
-export const CLINIC_KEY = "clinic";
-export const Clinic = () => SetMetadata(CLINIC_KEY, true);
+/**
+ * Clinic decorator metadata key
+ */
+export const CLINIC_KEY = "clinic" as const;
 
+/**
+ * Clinic decorator for marking routes that require clinic context
+ *
+ * This decorator marks a route handler as requiring clinic context.
+ * It should be used in conjunction with clinic guards to ensure
+ * proper clinic-based access control.
+ *
+ * @returns Decorator function that sets clinic metadata
+ *
+ * @example
+ * ```typescript
+ * @Controller('appointments')
+ * @Clinic()
+ * export class AppointmentsController {
+ *   @Get()
+ *   async getAppointments(@ClinicId() clinicId: string) {
+ *     // clinicId is automatically extracted from request
+ *   }
+ * }
+ * ```
+ */
+export const Clinic = (): MethodDecorator & ClassDecorator =>
+  SetMetadata(CLINIC_KEY, true);
+
+/**
+ * Clinic ID parameter decorator
+ *
+ * Extracts clinic ID from various sources in the request with the following priority:
+ * 1. JWT token payload (from Authorization header)
+ * 2. X-Clinic-ID header
+ * 3. Request body clinicId field
+ * 4. Query parameter clinicId
+ *
+ * @param data - Optional decorator data (unused)
+ * @param ctx - Execution context
+ * @returns Clinic ID string
+ * @throws BadRequestException if clinic ID is not found in any source
+ *
+ * @example
+ * ```typescript
+ * @Get('appointments')
+ * async getAppointments(@ClinicId() clinicId: string) {
+ *   // clinicId is automatically extracted from request
+ *   return this.appointmentsService.findByClinic(clinicId);
+ * }
+ * ```
+ */
 export const ClinicId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string => {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-    const request = ctx.switchToHttp().getRequest() as NestJSRequest;
+    const request = ctx.switchToHttp().getRequest<NestJSRequest>();
 
     // Priority 1: Check Authorization header for clinic context
     const authHeader = request.headers?.authorization;
@@ -47,7 +114,7 @@ export const ClinicId = createParamDecorator(
         const tokenParts = token.split(".");
         if (tokenParts.length === 3) {
           const payload = JSON.parse(
-            Buffer.from(tokenParts[1], "base64").toString(),
+            Buffer.from(tokenParts[1] as string, "base64").toString(),
           ) as JWTPayload;
           if (payload.clinicId && typeof payload.clinicId === "string") {
             return payload.clinicId;
@@ -82,10 +149,30 @@ export const ClinicId = createParamDecorator(
   },
 );
 
+/**
+ * Optional clinic ID parameter decorator
+ *
+ * Extracts clinic ID from various sources in the request with the same priority
+ * as ClinicId, but returns undefined instead of throwing an exception if not found.
+ *
+ * @param data - Optional decorator data (unused)
+ * @param ctx - Execution context
+ * @returns Clinic ID string or undefined if not found
+ *
+ * @example
+ * ```typescript
+ * @Get('appointments')
+ * async getAppointments(@OptionalClinicId() clinicId?: string) {
+ *   if (clinicId) {
+ *     return this.appointmentsService.findByClinic(clinicId);
+ *   }
+ *   return this.appointmentsService.findAll();
+ * }
+ * ```
+ */
 export const OptionalClinicId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string | undefined => {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-    const request = ctx.switchToHttp().getRequest() as NestJSRequest;
+    const request = ctx.switchToHttp().getRequest<NestJSRequest>();
 
     // Priority 1: Check Authorization header for clinic context
     const authHeader = request.headers?.authorization;
@@ -99,7 +186,7 @@ export const OptionalClinicId = createParamDecorator(
         const tokenParts = token.split(".");
         if (tokenParts.length === 3) {
           const payload = JSON.parse(
-            Buffer.from(tokenParts[1], "base64").toString(),
+            Buffer.from(tokenParts[1] as string, "base64").toString(),
           ) as JWTPayload;
           if (payload.clinicId && typeof payload.clinicId === "string") {
             return payload.clinicId;

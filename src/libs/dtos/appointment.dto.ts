@@ -15,7 +15,12 @@ import {
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 
-// Appointment status enum
+/**
+ * Appointment status enumeration
+ * @enum {string} AppointmentStatus
+ * @description Defines the possible states of an appointment in the system
+ * @example AppointmentStatus.SCHEDULED
+ */
 export enum AppointmentStatus {
   SCHEDULED = "SCHEDULED",
   CONFIRMED = "CONFIRMED",
@@ -26,7 +31,12 @@ export enum AppointmentStatus {
   RESCHEDULED = "RESCHEDULED",
 }
 
-// Appointment type enum
+/**
+ * Appointment type enumeration
+ * @enum {string} AppointmentType
+ * @description Defines the different types of appointments available
+ * @example AppointmentType.CONSULTATION
+ */
 export enum AppointmentType {
   CONSULTATION = "CONSULTATION",
   FOLLOW_UP = "FOLLOW_UP",
@@ -38,7 +48,12 @@ export enum AppointmentType {
   SURGERY = "SURGERY",
 }
 
-// Priority enum
+/**
+ * Appointment priority enumeration
+ * @enum {string} AppointmentPriority
+ * @description Defines the priority levels for appointments
+ * @example AppointmentPriority.HIGH
+ */
 export enum AppointmentPriority {
   LOW = "LOW",
   MEDIUM = "MEDIUM",
@@ -47,8 +62,16 @@ export enum AppointmentPriority {
 }
 
 /**
- * Base appointment DTO following NestJS best practices
- * Based on AI rules: @nestjs-specific.md and @coding-standards.md
+ * Data Transfer Object for creating new appointments
+ * @class CreateAppointmentDto
+ * @description Contains all required fields for appointment creation with validation
+ * @example
+ * ```typescript
+ * const appointment = new CreateAppointmentDto();
+ * appointment.patientId = "patient-uuid-123";
+ * appointment.doctorId = "doctor-uuid-123";
+ * appointment.appointmentDate = "2024-01-15T10:00:00.000Z";
+ * ```
  */
 export class CreateAppointmentDto {
   @ApiProperty({
@@ -122,7 +145,9 @@ export class CreateAppointmentDto {
   })
   @IsOptional()
   @IsString({ message: "Notes must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   notes?: string;
 
   @ApiPropertyOptional({
@@ -144,7 +169,15 @@ export class CreateAppointmentDto {
 }
 
 /**
- * Appointment update DTO - all fields optional
+ * Data Transfer Object for updating existing appointments
+ * @class UpdateAppointmentDto
+ * @description Contains optional fields for appointment updates with validation
+ * @example
+ * ```typescript
+ * const update = new UpdateAppointmentDto();
+ * update.status = AppointmentStatus.CONFIRMED;
+ * update.notes = "Updated appointment notes";
+ * ```
  */
 export class UpdateAppointmentDto {
   @ApiPropertyOptional({
@@ -191,9 +224,9 @@ export class UpdateAppointmentDto {
   })
   @IsOptional()
   @IsString({ message: "Notes must be a string" })
-  @Transform(({ value }) => value?.trim())
-  notes?: string;
-
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   @ApiPropertyOptional({
     example: "doctor-uuid-456",
     description: "New doctor ID for the appointment",
@@ -212,7 +245,15 @@ export class UpdateAppointmentDto {
 }
 
 /**
- * Appointment response DTO - excludes sensitive information
+ * Data Transfer Object for appointment responses
+ * @class AppointmentResponseDto
+ * @description Contains appointment data for API responses, excluding sensitive information
+ * @example
+ * ```typescript
+ * const response = new AppointmentResponseDto();
+ * response.id = "appointment-uuid-123";
+ * response.status = AppointmentStatus.SCHEDULED;
+ * ```
  */
 export class AppointmentResponseDto {
   @ApiProperty({
@@ -322,7 +363,15 @@ export class AppointmentResponseDto {
 }
 
 /**
- * Appointment search/filter DTO
+ * Data Transfer Object for appointment search and filtering
+ * @class AppointmentSearchDto
+ * @description Contains optional fields for searching and filtering appointments
+ * @example
+ * ```typescript
+ * const search = new AppointmentSearchDto();
+ * search.patientId = "patient-uuid-123";
+ * search.status = AppointmentStatus.SCHEDULED;
+ * ```
  */
 export class AppointmentSearchDto {
   @ApiPropertyOptional({
@@ -407,7 +456,15 @@ export class AppointmentSearchDto {
 }
 
 /**
- * Bulk appointment creation DTO
+ * Data Transfer Object for bulk appointment creation
+ * @class BulkCreateAppointmentsDto
+ * @description Contains array of appointments and notification settings for bulk creation
+ * @example
+ * ```typescript
+ * const bulk = new BulkCreateAppointmentsDto();
+ * bulk.appointments = [appointment1, appointment2];
+ * bulk.sendNotifications = true;
+ * ```
  */
 export class BulkCreateAppointmentsDto {
   @ApiProperty({
@@ -430,16 +487,24 @@ export class BulkCreateAppointmentsDto {
 }
 
 /**
- * Appointment cancellation DTO
+ * Data Transfer Object for appointment cancellation
+ * @class CancelAppointmentDto
+ * @description Contains reason and notification settings for appointment cancellation
+ * @example
+ * ```typescript
+ * const cancel = new CancelAppointmentDto();
+ * cancel.reason = "Patient requested cancellation";
+ * cancel.sendNotification = true;
+ * ```
  */
 export class CancelAppointmentDto {
   @ApiProperty({
     example: "Patient requested cancellation",
     description: "Reason for appointment cancellation",
   })
-  @IsString({ message: "Cancellation reason must be a string" })
-  @IsNotEmpty({ message: "Cancellation reason is required" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   reason!: string;
 
   @ApiPropertyOptional({
@@ -453,7 +518,15 @@ export class CancelAppointmentDto {
 }
 
 /**
- * Appointment reschedule DTO
+ * Data Transfer Object for appointment rescheduling
+ * @class RescheduleAppointmentDto
+ * @description Contains new date and reason for appointment rescheduling
+ * @example
+ * ```typescript
+ * const reschedule = new RescheduleAppointmentDto();
+ * reschedule.newAppointmentDate = "2024-01-16T10:00:00.000Z";
+ * reschedule.reason = "Patient requested reschedule";
+ * ```
  */
 export class RescheduleAppointmentDto {
   @ApiProperty({
@@ -473,7 +546,9 @@ export class RescheduleAppointmentDto {
   })
   @IsOptional()
   @IsString({ message: "Reschedule reason must be a string" })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }): string =>
+    typeof value === "string" ? value.trim() : (value as string),
+  )
   reason?: string;
 
   @ApiPropertyOptional({

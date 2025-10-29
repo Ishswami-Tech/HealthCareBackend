@@ -66,17 +66,17 @@ export class QueueStatusGateway
 
   constructor(private readonly queueService: QueueService) {}
 
-  afterInit(server: Server) {
+  afterInit(_server: Server) {
     this.logger.log("🚀 Queue Status Gateway initialized");
-    this.startMetricsStreaming();
+    void this.startMetricsStreaming();
   }
 
-  async handleConnection(client: Socket) {
+  handleConnection(client: Socket) {
     try {
       const tenantId = this.extractTenantId(client);
       const userId = this.extractUserId(client);
 
-      await this.validateClientAccess(client, tenantId);
+      this.validateClientAccess(client, tenantId);
 
       // Create session
       const session: ClientSession = {
@@ -100,13 +100,13 @@ export class QueueStatusGateway
       this.connectionMetrics.activeConnections++;
       this.connectionMetrics.totalConnections++;
 
-      client.join(`tenant:${tenantId}`);
+      void client.join(`tenant:${tenantId}`);
 
       this.logger.log(
         `✅ Client connected: ${client.id} (tenant: ${tenantId}, user: ${userId})`,
       );
 
-      await this.sendInitialStatus(client, tenantId);
+      void this.sendInitialStatus(client, tenantId);
     } catch (_error) {
       this.logger.error(`❌ Connection failed for ${client.id}:`, _error);
       client.emit("connection_error", {
@@ -116,7 +116,7 @@ export class QueueStatusGateway
     }
   }
 
-  async handleDisconnect(client: Socket) {
+  handleDisconnect(client: Socket) {
     const session = this.connectedClients.get(client.id);
     if (session) {
       // Clean up subscriptions
@@ -149,7 +149,7 @@ export class QueueStatusGateway
   }
 
   @SubscribeMessage("subscribe_queue")
-  async handleSubscribeQueue(
+  handleSubscribeQueue(
     @MessageBody() data: { queueName: string; filters?: QueueFilters },
     @ConnectedSocket() client: Socket,
   ) {
@@ -157,9 +157,12 @@ export class QueueStatusGateway
       const session = this.connectedClients.get(client.id);
       if (!session) throw new Error("Session not found");
 
-      const { queueName, filters } = data as any;
+      const { queueName, filters } = data as {
+        queueName: string;
+        filters: QueueFilters;
+      };
 
-      await this.validateQueueAccess(session.tenantId, queueName);
+      void this.validateQueueAccess(session.tenantId, queueName);
 
       if (!this.queueSubscriptions.has(queueName)) {
         this.queueSubscriptions.set(queueName, new Set());
@@ -168,7 +171,7 @@ export class QueueStatusGateway
       session.subscribedQueues.add(queueName);
 
       // Send current queue status
-      const queueStatus = await this.queueService.getQueueStatus(queueName);
+      const queueStatus = this.queueService.getQueueStatus(queueName);
       client.emit("queue_status", {
         queueName,
         status: queueStatus,
@@ -202,8 +205,11 @@ export class QueueStatusGateway
       const session = this.connectedClients.get(client.id);
       if (!session) throw new Error("Session not found");
 
-      const { queueNames, detailed = false } = data as any;
-      const accessibleQueues = await this.getAccessibleQueues(
+      const { queueNames, detailed = false } = data as {
+        queueNames: string[];
+        detailed?: boolean;
+      };
+      const accessibleQueues = this.getAccessibleQueues(
         session.tenantId,
         queueNames,
       );
@@ -235,7 +241,7 @@ export class QueueStatusGateway
   }
 
   // Broadcast methods
-  async broadcastQueueMetrics(queueName: string, metrics: unknown) {
+  broadcastQueueMetrics(queueName: string, metrics: unknown) {
     const updateData = {
       queueName,
       metrics,
@@ -256,17 +262,17 @@ export class QueueStatusGateway
   }
 
   // Helper methods
-  private async startMetricsStreaming() {
-    this.metricsStreamInterval = setInterval(async () => {
+  private startMetricsStreaming() {
+    this.metricsStreamInterval = setInterval(() => {
       try {
-        const allStatuses = await this.queueService.getAllQueueStatuses();
+        const allStatuses = this.queueService.getAllQueueStatuses();
 
         for (const [queueName, status] of Object.entries(allStatuses)) {
           const subscribers = this.queueSubscriptions.get(queueName);
           if (subscribers && subscribers.size > 0) {
-            await this.broadcastQueueMetrics(
+            this.broadcastQueueMetrics(
               queueName,
-              (status as any).metrics,
+              (status as { metrics: unknown }).metrics,
             );
           }
         }
@@ -283,7 +289,7 @@ export class QueueStatusGateway
 
   private extractTenantId(client: Socket): string {
     return (
-      (client.handshake.query.tenantId as string) ||
+      (client.handshake.query["tenantId"] as string) ||
       (client.handshake.headers["x-tenant-id"] as string) ||
       "default"
     );
@@ -291,37 +297,31 @@ export class QueueStatusGateway
 
   private extractUserId(client: Socket): string {
     return (
-      (client.handshake.query.userId as string) ||
+      (client.handshake.query["userId"] as string) ||
       (client.handshake.headers["x-user-id"] as string) ||
       "anonymous"
     );
   }
 
-  private async validateClientAccess(
-    client: Socket,
-    tenantId: string,
-  ): Promise<void> {
-    const token = client.handshake.auth.token;
+  private validateClientAccess(client: Socket, tenantId: string): void {
+    const token = client.handshake.auth["token"] as string | undefined;
     if (!token && tenantId !== "default") {
       throw new Error("Authentication required for tenant access");
     }
   }
 
-  private async validateQueueAccess(
-    tenantId: string,
-    queueName: string,
-  ): Promise<void> {
-    const accessibleQueues = await this.getAccessibleQueues(tenantId);
+  private validateQueueAccess(tenantId: string, queueName: string): void {
+    const accessibleQueues = this.getAccessibleQueues(tenantId);
     if (!accessibleQueues.includes(queueName)) {
       throw new Error(`Access denied to queue: ${queueName}`);
     }
   }
 
-  private async getAccessibleQueues(
+  private getAccessibleQueues(
     tenantId: string,
     requestedQueues?: string[],
-  ): Promise<string[]> {
-    const allStatuses = await this.queueService.getAllQueueStatuses();
+  ): string[] {
+    const allStatuses = this.queueService.getAllQueueStatuses();
     const allQueues = Object.keys(allStatuses);
 
     if (tenantId === "admin") {
@@ -346,10 +346,10 @@ export class QueueStatusGateway
       : healthcareQueues;
   }
 
-  private async sendInitialStatus(client: Socket, tenantId: string) {
+  private sendInitialStatus(client: Socket, tenantId: string) {
     try {
-      const accessibleQueues = await this.getAccessibleQueues(tenantId);
-      const queueStatuses = await this.queueService.getAllQueueStatuses();
+      const accessibleQueues = this.getAccessibleQueues(tenantId);
+      const queueStatuses = this.queueService.getAllQueueStatuses();
 
       const filteredStatuses = Object.fromEntries(
         Object.entries(queueStatuses).filter(([queueName]) =>

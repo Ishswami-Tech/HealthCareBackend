@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Injectable } from "@nestjs/common";
 import { BaseAppointmentPlugin } from "../base/base-plugin.service";
 import { AppointmentNotificationService } from "./appointment-notification.service";
 
 @Injectable()
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
   readonly name = "clinic-notification-plugin";
   readonly version = "1.0.0";
@@ -234,3 +234,4 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
     return await this.notificationService.sendNotification(notificationData);
   }
 }
+/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */

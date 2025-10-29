@@ -84,7 +84,7 @@ export class NotificationService {
             {
               title: notificationData.title,
               body: notificationData.body,
-              data: notificationData.data,
+              ...(notificationData.data && { data: notificationData.data }),
             },
           );
 
@@ -107,7 +107,9 @@ export class NotificationService {
                   {
                     title: notificationData.title,
                     body: notificationData.body,
-                    data: notificationData.data,
+                    ...(notificationData.data && {
+                      data: notificationData.data,
+                    }),
                   },
                   "android", // Default to Android, could be made configurable
                 );
@@ -258,11 +260,15 @@ export class NotificationService {
           : NotificationType.EMAIL,
         title: "Appointment Reminder",
         body: `Your appointment with ${appointmentData.doctorName} is scheduled for ${appointmentData.date} at ${appointmentData.time}`,
-        deviceToken: appointmentData.deviceToken,
+        ...(appointmentData.deviceToken && {
+          deviceToken: appointmentData.deviceToken,
+        }),
         email: appointmentData.to,
         data: {
           type: "appointment_reminder",
-          appointmentId: appointmentData.appointmentId || "",
+          ...(appointmentData.appointmentId && {
+            appointmentId: appointmentData.appointmentId,
+          }),
           doctorName: appointmentData.doctorName,
           date: appointmentData.date,
           time: appointmentData.time,
@@ -279,7 +285,9 @@ export class NotificationService {
           date: appointmentData.date,
           time: appointmentData.time,
           location: appointmentData.location,
-          appointmentId: appointmentData.appointmentId,
+          ...(appointmentData.appointmentId && {
+            appointmentId: appointmentData.appointmentId,
+          }),
         },
       );
 
@@ -298,8 +306,10 @@ export class NotificationService {
 
       return {
         success: emailResult.success || unifiedResult.success,
-        messageId:
-          emailResult.messageId || unifiedResult.results[0]?.result?.messageId,
+        ...(emailResult.messageId && { messageId: emailResult.messageId }),
+        ...(unifiedResult.results[0]?.result?.messageId && {
+          messageId: unifiedResult.results[0].result.messageId,
+        }),
         metadata: {
           emailResult,
           pushResult: unifiedResult,
@@ -335,7 +345,9 @@ export class NotificationService {
           : NotificationType.EMAIL,
         title: "Prescription Ready",
         body: `Your prescription ${prescriptionData.prescriptionId} is ready for pickup`,
-        deviceToken: prescriptionData.deviceToken,
+        ...(prescriptionData.deviceToken && {
+          deviceToken: prescriptionData.deviceToken,
+        }),
         email: prescriptionData.to,
         data: {
           type: "prescription_ready",
@@ -353,7 +365,9 @@ export class NotificationService {
           doctorName: prescriptionData.doctorName,
           prescriptionId: prescriptionData.prescriptionId,
           medications: prescriptionData.medications,
-          pickupInstructions: prescriptionData.pickupInstructions,
+          ...(prescriptionData.pickupInstructions && {
+            pickupInstructions: prescriptionData.pickupInstructions,
+          }),
         },
       );
 
@@ -371,8 +385,10 @@ export class NotificationService {
 
       return {
         success: emailResult.success || unifiedResult.success,
-        messageId:
-          emailResult.messageId || unifiedResult.results[0]?.result?.messageId,
+        ...(emailResult.messageId && { messageId: emailResult.messageId }),
+        ...(unifiedResult.results[0]?.result?.messageId && {
+          messageId: unifiedResult.results[0].result.messageId,
+        }),
         metadata: {
           emailResult,
           pushResult: unifiedResult,
@@ -410,7 +426,7 @@ export class NotificationService {
         content: chatData.content,
         timestamp: chatData.timestamp,
         type: chatData.type,
-        metadata: (chatData as { metadata?: Record<string, unknown> }).metadata,
+        ...(chatData.metadata && { metadata: chatData.metadata }),
       });
 
       // Emit event for chat message backup
@@ -424,8 +440,8 @@ export class NotificationService {
 
       return {
         success: result.success,
-        messageId: result.messageId,
-        error: result.error,
+        ...(result.messageId && { messageId: result.messageId }),
+        ...(result.error && { error: result.error }),
       };
     } catch (_error) {
       this.logger.error("Failed to backup chat message", {

@@ -8,7 +8,7 @@ export class PaymentNotificationsProcessor {
   private readonly logger = new Logger(PaymentNotificationsProcessor.name);
 
   @Process("payment-notification")
-  async handlePaymentNotification(
+  handlePaymentNotification(
     job: Job<{
       payment: PaymentData;
       status: string;
@@ -23,7 +23,7 @@ export class PaymentNotificationsProcessor {
       );
 
       // Notification processing logic will integrate with existing communication service
-      await this.processPaymentNotification(payment, status);
+      this.processPaymentNotification(payment, status);
 
       this.logger.log(`Payment notification sent successfully: ${payment.id}`);
     } catch (_error) {
@@ -71,7 +71,7 @@ export class PaymentNotificationsProcessor {
   }
 
   @Process("alert-notification")
-  async handleAlertNotification(
+  handleAlertNotification(
     job: Job<{
       alertType: "security" | "performance" | "system" | "compliance";
       severity: "low" | "medium" | "high" | "critical";
@@ -85,7 +85,7 @@ export class PaymentNotificationsProcessor {
       this.logger.log(`Sending alert notification: ${alertType} - ${severity}`);
 
       // Alert processing logic
-      await this.processAlert(alertType, severity, message, details);
+      this.processAlert(alertType, severity, message, details);
 
       this.logger.log(`Alert notification sent successfully: ${alertType}`);
     } catch (_error) {
@@ -96,10 +96,10 @@ export class PaymentNotificationsProcessor {
     }
   }
 
-  private async processPaymentNotification(
+  private processPaymentNotification(
     payment: PaymentData,
     status: string,
-  ): Promise<void> {
+  ): void {
     // Integrate with existing communication service
     this.logger.debug(
       `Processing payment notification for ${payment.id} with status ${status}`,
@@ -142,12 +142,12 @@ export class PaymentNotificationsProcessor {
     }
   }
 
-  private async processAlert(
+  private processAlert(
     alertType: string,
     severity: string,
     message: string,
-    details: unknown,
-  ): Promise<void> {
+    _details: unknown,
+  ): void {
     // Integrate with existing alerting infrastructure
     this.logger.debug(
       `Processing alert: ${alertType} - ${severity}: ${message}`,

@@ -1,25 +1,21 @@
 import { Processor, Process } from "@nestjs/bull";
 import { Logger } from "@nestjs/common";
 import { Job } from "bull";
-import {
-  PaymentData,
-  PaymentDto,
-  PaymentJobData,
-} from "../types/queue-job.types";
+import { PaymentData, PaymentDto } from "../types/queue-job.types";
 
 @Processor("payment-processing")
 export class PaymentProcessingProcessor {
   private readonly logger = new Logger(PaymentProcessingProcessor.name);
 
   @Process("domain-processing")
-  async handleDomainProcessing(
+  handleDomainProcessing(
     job: Job<{
       payment: PaymentData;
       paymentDto: PaymentDto;
       domain: string;
     }>,
   ) {
-    const { payment, paymentDto, domain } = job.data;
+    const { payment, domain } = job.data;
 
     try {
       this.logger.log(
@@ -39,7 +35,7 @@ export class PaymentProcessingProcessor {
   }
 
   @Process("subscription-processing")
-  async handleSubscriptionProcessing(
+  handleSubscriptionProcessing(
     job: Job<{
       payment: PaymentData;
       timestamp: Date;
@@ -64,7 +60,7 @@ export class PaymentProcessingProcessor {
   }
 
   @Process("manual-review")
-  async handleManualReview(
+  handleManualReview(
     job: Job<{
       paymentDto: PaymentDto;
       fraudScore: number;
@@ -92,7 +88,7 @@ export class PaymentProcessingProcessor {
   }
 
   @Process("payment-reconciliation")
-  async handlePaymentReconciliation(
+  handlePaymentReconciliation(
     job: Job<{
       paymentIds: string[];
       reconciliationType: "daily" | "weekly" | "monthly";
