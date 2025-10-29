@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  namespace: healthcare-backend
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: cluster-init
+        image: redis:7-alpine
+        env:
+        - name: REPLICAS
+          value: "6"
+        command: ["/bin/sh","-lc"]
+        args:
+        - |
+          set -e
+          echo "Waiting for redis pods..."
+          # wait for last pod DNS to resolve (statefulset ready)
+          until getent hosts redis-$(($REPLICAS-1)).redis-headless >/dev/null 2>&1; do sleep 2; done
+          sleep 5
+          NODES=""
+          i=0
+          while [ $i -lt $REPLICAS ]; do
+            NODES="$NODES redis-$i.redis-headless:6379"
+            i=$((i+1))
+          done
+          echo "Cluster nodes: $NODES"
+          # Check if cluster already formed
+          if redis-cli -h redis-0.redis-headless -p 6379 cluster info 2>/dev/null | grep -qi "cluster_state:ok"; then
+            echo "Cluster already formed. Exiting."
+            exit 0
+          fi
+          yes yes | redis-cli --cluster create $NODES --cluster-replicas 1 || true
+          # Verify
+          redis-cli -h redis-0.redis-headless -p 6379 cluster info

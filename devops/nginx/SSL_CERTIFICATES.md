@@ -14,18 +14,18 @@ The system uses Let's Encrypt certificates for securing HTTPS connections. The c
 
 Certificates are automatically renewed through:
 
-1. **Daily Cron Job**: A cron job runs every day at 3:00 AM to check and renew certificates approaching expiration:
+1. Daily Cron Job: A cron job runs every day at 3:00 AM to check and renew certificates approaching expiration:
    ```
    0 3 * * * certbot renew --quiet --post-hook 'systemctl reload nginx'
    ```
 
-2. **Deployment Check**: During each deployment, the system:
+2. Deployment Check: During each deployment, the system:
    - Checks if certificates exist
    - Verifies the expiration date
    - Attempts renewal if less than 30 days remain
    - Reloads Nginx after successful renewal
 
-3. **Initial Setup**: If certificates don't exist when deploying, the system:
+3. Initial Setup: If certificates don't exist when deploying, the system:
    - Installs Certbot if needed
    - Generates new certificates for `api.ishswami.in`
    - Sets up the auto-renewal cron job
@@ -40,7 +40,7 @@ If Let's Encrypt certificate generation fails, the system creates self-signed ce
 ## Manual Renewal
 
 To manually renew certificates:
-```bash
+```
 sudo certbot renew
 sudo systemctl reload nginx
 ```
@@ -48,14 +48,12 @@ sudo systemctl reload nginx
 ## Certificate Status Check
 
 To check certificate status:
-```bash
+```
 sudo certbot certificates
 ```
 
-## Benefits of This Approach
+## Notes
 
-1. **Zero Downtime**: Certificate renewal happens without service interruption
-2. **Redundancy**: Multiple renewal checks ensure certificates never expire
-3. **Fallback Protection**: Self-signed certificates provide a backup if Let's Encrypt fails
-4. **Automated**: No manual intervention required for normal operation
-5. **Consistent**: Certificates persist across deployments 
+- Ensure DNS for `api.ishswami.in` and `ishswami.in` points to your server IP (82.208.20.16).
+- Use Cloudflare in Full (Strict) mode for end-to-end TLS.
+

@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-restore
+  namespace: healthcare-backend
+  annotations:
+    restore.runbook: "See devops/README.md (Backups & Restore)"
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: healthcare-api-sa
+      containers:
+      - name: restore
+        image: curlimages/curl:8.10.1
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Restoring latest base backup..."
+          if [ ! -x /wal-g-bin/wal-g ]; then echo "wal-g binary missing"; exit 1; fi
+          rm -rf /var/lib/postgresql/data/pgdata/* || true
+          /wal-g-bin/wal-g backup-fetch /var/lib/postgresql/data/pgdata LATEST
+          echo "restore_command = 'wal-g wal-fetch %f %p'" >> /var/lib/postgresql/data/pgdata/recovery.conf
+          echo "Recovery files prepared. Scale up postgres and it will replay WAL."
+        envFrom:
+        - secretRef:
+            name: wal-g-secrets
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: wal-g-bin
+          mountPath: /wal-g-bin
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-storage-postgres-0
+      - name: wal-g-bin
+        emptyDir: {}

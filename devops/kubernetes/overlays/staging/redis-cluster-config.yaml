@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: healthcare-backend-staging
+data:
+  redis.conf: |
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+    tcp-keepalive 300
+    daemonize no
+    supervised no
+    databases 16
+    # Snapshotting
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dir /data
+    # Limits
+    maxclients 10000
+    maxmemory 2gb
+    maxmemory-policy allkeys-lru
+    # AOF
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    # Cluster
+    cluster-enabled yes
+    cluster-config-file /data/nodes.conf
+    cluster-node-timeout 5000
+    cluster-allow-reads-when-down yes
+    # Logging
+    loglevel notice
