@@ -55,7 +55,7 @@ kubectl get all,hpa,vpa,pdb -n healthcare-backend
 
 ### Local Development
 ```bash
-# Using Docker Compose (fastest)
+# Using Docker Compose (fastest, deprecated for production)
 make start              # Start all services
 make dev                # Start dev server with hot-reload
 
@@ -73,6 +73,11 @@ make k8s-local-access   # Access at localhost:8088
 - **Queue Dashboard**: http://localhost:8088/queue-dashboard
 - **Metrics**: http://localhost:8088/metrics (Prometheus format)
 - **Prisma Studio**: http://localhost:5555
+
+## Dockerless CI/CD (containerd)
+
+- Use `.github/workflows/deploy-k8s.yml` to build with Buildah/Podman (no Docker daemon), push to GHCR, and deploy via `kubectl` with Kustomize overlays.
+- Prefer Kubernetes + containerd for all production deployments. Docker Compose is for local use only.
 
 ## 🏥 Key Features
 
@@ -110,7 +115,7 @@ make k8s-local-access   # Access at localhost:8088
 - **[Quick Start - 1M Users](QUICK_START_1M_USERS.md)** - 5-minute production deployment
 - **[Production Optimization](PRODUCTION_OPTIMIZATION_1M_USERS.md)** - Complete optimization guide
 - **[Deployment Strategy](DEPLOYMENT_STRATEGY.md)** - Docker vs Kubernetes decision guide
-- **[Kubernetes Guide](devops/kubernetes/README.md)** - Complete K8s documentation
+- **[DevOps Guide](devops/README.md)** - Kubernetes + Docker documentation
 - **[Local Kubernetes](devops/kubernetes/LOCAL_KUBERNETES.md)** - Run K8s on your laptop
 - **[Enterprise Checklist](devops/ENTERPRISE_CHECKLIST.md)** - Production readiness (98/100)
 

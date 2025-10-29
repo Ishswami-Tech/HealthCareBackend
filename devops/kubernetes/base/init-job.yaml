@@ -1,0 +1,262 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: healthcare-db-migration
+  namespace: healthcare-backend
+  labels:
+    app: healthcare
+    component: migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600  # Clean up after 10 minutes
+  backoffLimit: 3  # Retry up to 3 times
+  template:
+    metadata:
+      name: db-migration
+      labels:
+        app: healthcare
+        component: migration
+    spec:
+      serviceAccountName: healthcare-api-sa
+      restartPolicy: Never
+      initContainers:
+      # Wait for PostgreSQL to be ready
+      - name: wait-for-postgres
+        image: postgres:16-alpine
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for PostgreSQL to be ready..."
+          until pg_isready -h postgres -p 5432 -U postgres; do
+            echo "PostgreSQL is not ready yet. Waiting..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: postgres-password
+      # Wait for Redis to be ready
+      - name: wait-for-redis
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for Redis to be ready..."
+          until redis-cli -h redis ping | grep -q PONG; do
+            echo "Redis is not ready yet. Waiting..."
+            sleep 2
+          done
+          echo "Redis is ready!"
+      containers:
+      - name: migration
+        image: your-registry/healthcare-api:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        - -c
+        - |
+          # Prefer dedicated migration URL if provided
+          if [ -n "$MIGRATION_DATABASE_URL" ]; then
+            export DATABASE_URL="$MIGRATION_DATABASE_URL"
+          fi
+          echo "========================================="
+          echo "Starting Database Migration & Seeding"
+          echo "========================================="
+          echo ""
+
+          # Generate Prisma Client
+          echo "📦 Generating Prisma Client..."
+          npm run prisma:generate
+          if [ $? -eq 0 ]; then
+            echo "✅ Prisma Client generated successfully"
+          else
+            echo "❌ Prisma Client generation failed"
+            exit 1
+          fi
+          echo ""
+
+          # Run migrations
+          echo "🔄 Running database migrations..."
+          npm run prisma:migrate
+          if [ $? -eq 0 ]; then
+            echo "✅ Database migrations completed successfully"
+          else
+            echo "❌ Database migrations failed"
+            exit 1
+          fi
+          echo ""
+
+          # Optimize database
+          echo "⚡ Optimizing database..."
+          npm run prisma:optimize || echo "⚠️  Database optimization skipped (optional)"
+          npm run db:analyze || echo "⚠️  Database analysis skipped (optional)"
+          echo ""
+
+          # Seed database (only if SEED_DATABASE=true)
+          if [ "$SEED_DATABASE" = "true" ]; then
+            echo "🌱 Seeding database..."
+            npm run seed:prod
+            if [ $? -eq 0 ]; then
+              echo "✅ Database seeding completed successfully"
+            else
+              echo "⚠️  Database seeding failed (non-critical)"
+            fi
+          else
+            echo "⏭️  Database seeding skipped (SEED_DATABASE not set to true)"
+          fi
+          echo ""
+
+          echo "========================================="
+          echo "✅ Migration & Seeding Complete!"
+          echo "========================================="
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: database-url
+        - name: MIGRATION_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: database-migration-url
+              optional: true
+        - name: REDIS_HOST
+          value: "redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: SEED_DATABASE
+          value: "false"  # Set to "true" for initial deployment
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+# CronJob for periodic database optimization
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: healthcare-db-optimize
+  namespace: healthcare-backend
+  labels:
+    app: healthcare
+    component: maintenance
+spec:
+  schedule: "0 2 * * 0"  # Run every Sunday at 2 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+      template:
+        metadata:
+          labels:
+            app: healthcare
+            component: maintenance
+        spec:
+          serviceAccountName: healthcare-api-sa
+          restartPolicy: Never
+          containers:
+          - name: optimize
+            image: postgres:16-alpine
+            command:
+            - sh
+            - -c
+            - |
+              echo "Starting database optimization..."
+
+              # Vacuum and analyze
+              psql "$DATABASE_URL" -c "VACUUM ANALYZE;" && \
+              echo "✅ VACUUM ANALYZE completed"
+
+              # Reindex
+              psql "$DATABASE_URL" -c "REINDEX DATABASE userdb;" && \
+              echo "✅ REINDEX completed"
+
+              # Update statistics
+              psql "$DATABASE_URL" -c "ANALYZE;" && \
+              echo "✅ Statistics updated"
+
+              echo "Database optimization complete!"
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: healthcare-secrets
+                  key: database-url
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+---
+# CronJob for cache cleanup
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: healthcare-cache-cleanup
+  namespace: healthcare-backend
+  labels:
+    app: healthcare
+    component: maintenance
+spec:
+  schedule: "0 3 * * *"  # Run every day at 3 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+      template:
+        metadata:
+          labels:
+            app: healthcare
+            component: maintenance
+        spec:
+          serviceAccountName: healthcare-api-sa
+          restartPolicy: Never
+          containers:
+          - name: cleanup
+            image: redis:7-alpine
+            command:
+            - sh
+            - -c
+            - |
+              echo "Starting cache cleanup..."
+
+              # Remove expired keys
+              redis-cli -h redis --scan --pattern "*:expired:*" | xargs -L 100 redis-cli -h redis DEL
+
+              # Clean up old session data
+              redis-cli -h redis --scan --pattern "healthcare:session:*" | \
+                while read key; do
+                  ttl=$(redis-cli -h redis TTL "$key")
+                  if [ "$ttl" -lt 0 ]; then
+                    redis-cli -h redis DEL "$key"
+                  fi
+                done
+
+              echo "Cache cleanup complete!"
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "256Mi"
+                cpu: "250m"
