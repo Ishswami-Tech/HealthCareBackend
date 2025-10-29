@@ -186,7 +186,9 @@ k8s-local-start:
 ## k8s-local-build: Build and load local image
 k8s-local-build:
 	@echo "$(BLUE)Building local Kubernetes image...$(NC)"
-	docker build -t healthcare-api:local -f devops/docker/Dockerfile .
+	@command -v nerdctl >/dev/null 2>&1 && \
+	  nerdctl build -t healthcare-api:local -f devops/docker/Dockerfile . || \
+	  docker build -t healthcare-api:local -f devops/docker/Dockerfile .
 	@echo "$(GREEN)✓ Image built successfully$(NC)"
 
 ## k8s-local-deploy: Deploy to local Kubernetes
@@ -214,6 +216,23 @@ k8s-local-access:
 	@echo "$(YELLOW)Press Ctrl+C to stop$(NC)"
 	kubectl port-forward -n healthcare-backend svc/healthcare-api 8088:8088
 
+## k8s-prod-deploy: Deploy to production overlay
+k8s-prod-deploy:
+	@echo "$(BLUE)Deploying to Kubernetes (production overlay)...$(NC)"
+	kubectl apply -k devops/kubernetes/overlays/production/
+
+## k8s-set-image: Set image for deployments in production namespace
+# Usage: make k8s-set-image IMAGE=ghcr.io/owner/healthcare-api:TAG
+k8s-set-image:
+	@if [ -z "$(IMAGE)" ]; then echo "$(RED)IMAGE is required (e.g., IMAGE=ghcr.io/org/healthcare-api:tag)$(NC)"; exit 1; fi
+	kubectl -n healthcare-backend set image deployment/healthcare-api api=$(IMAGE)
+	- kubectl -n healthcare-backend set image deployment/healthcare-worker worker=$(IMAGE)
+
+## k8s-rollout-status: Wait for rollout of API and Worker
+k8s-rollout-status:
+	kubectl rollout status deploy/healthcare-api -n healthcare-backend --timeout=300s
+	- kubectl rollout status deploy/healthcare-worker -n healthcare-backend --timeout=300s
+
 ## k8s-local-status: Check local Kubernetes status
 k8s-local-status:
 	@echo "$(BLUE)Local Kubernetes Status:$(NC)"
@@ -228,6 +247,21 @@ k8s-local-status:
 ## k8s-local-logs: View API logs
 k8s-local-logs:
 	kubectl logs -f -l app=healthcare-api -n healthcare-backend
+
+## k8s-secrets-validate: Validate required secrets and keys
+k8s-secrets-validate:
+	@bash devops/kubernetes/scripts/validate-secrets.sh
+
+## k8s-secrets-apply: Apply healthcare and WAL-G secrets from env vars
+# Required env: DB_URL, DB_MIGRATION_URL, POSTGRES_USER, POSTGRES_PASSWORD, REDIS_PASSWORD, JWT_SECRET
+# And: WALG_S3_PREFIX, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, WALG_S3_ENDPOINT
+k8s-secrets-apply:
+	@bash devops/kubernetes/scripts/apply-healthcare-secrets.sh
+	@bash devops/kubernetes/scripts/apply-walg-secrets.sh
+
+## k8s-walg-backup: Trigger immediate WAL-G base backup and prune
+k8s-walg-backup:
+	@bash devops/kubernetes/scripts/trigger-walg-backup.sh
 
 ## k8s-local-shell: Shell into API pod
 k8s-local-shell:

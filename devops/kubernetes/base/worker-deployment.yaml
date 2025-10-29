@@ -1,11 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: healthcare-api
+  name: healthcare-worker
   namespace: healthcare-backend
   labels:
-    app: healthcare-api
-    component: backend
+    app: healthcare-worker
+    component: worker
 spec:
   replicas: 3
   strategy:
@@ -15,21 +15,21 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app: healthcare-api
+      app: healthcare-worker
   template:
     metadata:
       labels:
-        app: healthcare-api
-        component: backend
+        app: healthcare-worker
+        component: worker
     spec:
-      serviceAccountName: healthcare-api-sa  # RBAC security
+      serviceAccountName: healthcare-worker-sa
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
       containers:
-      - name: api
-        image: your-registry/healthcare-api:latest
+      - name: worker
+        image: your-registry/healthcare-worker:latest
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false
@@ -38,15 +38,15 @@ spec:
             drop: ["ALL"]
           seccompProfile:
             type: RuntimeDefault
-        ports:
-        - containerPort: 8088
-          name: http
-          protocol: TCP
         env:
         - name: NODE_ENV
           value: "production"
-        - name: PORT
-          value: "8088"
+        - name: APP_MODE
+          value: "worker"
+        - name: WORKER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
@@ -61,11 +61,49 @@ spec:
             secretKeyRef:
               name: healthcare-secrets
               key: redis-password
+              optional: true
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: jwt-secret
+        # BullMQ Worker Configuration
+        - name: BULL_WORKER_CONCURRENCY
+          value: "5"
+        - name: BULL_MAX_JOBS_PER_WORKER
+          value: "100"
+        # Email Service
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: aws-region
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: aws-access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: aws-secret-access-key
+        # Firebase for notifications
+        - name: FIREBASE_PROJECT_ID
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: firebase-project-id
+        - name: FIREBASE_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: firebase-private-key
+        - name: FIREBASE_CLIENT_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: firebase-client-email
         resources:
           requests:
             memory: "1Gi"
@@ -74,32 +112,26 @@ spec:
             memory: "2Gi"
             cpu: "2000m"
         livenessProbe:
-          httpGet:
-            path: /health
-            port: 8088
+          exec:
+            command:
+            - node
+            - -e
+            - "process.exit(0)"
           initialDelaySeconds: 30
-          periodSeconds: 10
+          periodSeconds: 30
           timeoutSeconds: 5
-          successThreshold: 1
           failureThreshold: 3
         readinessProbe:
-          httpGet:
-            path: /health
-            port: 8088
+          exec:
+            command:
+            - sh
+            - -c
+            - |
+              node -e "(async () => { try { const Redis = require('ioredis'); const client = new Redis({ host: process.env.REDIS_HOST || 'redis', port: parseInt(process.env.REDIS_PORT || '6379'), password: process.env.REDIS_PASSWORD }); await client.ping(); process.exit(0); } catch (e) { process.exit(1); } })();"
           initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 3
-          successThreshold: 1
-          failureThreshold: 3
-        startupProbe:
-          httpGet:
-            path: /health
-            port: 8088
-          initialDelaySeconds: 0
           periodSeconds: 10
-          timeoutSeconds: 3
-          successThreshold: 1
-          failureThreshold: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
         volumeMounts:
         - name: logs
           mountPath: /app/logs
@@ -111,33 +143,33 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: healthcare-api
+  name: healthcare-worker
   namespace: healthcare-backend
   labels:
-    app: healthcare-api
+    app: healthcare-worker
 spec:
   type: ClusterIP
+  clusterIP: None  # Headless service for workers
   selector:
-    app: healthcare-api
+    app: healthcare-worker
   ports:
-  - port: 8088
-    targetPort: 8088
+  - port: 9229
+    targetPort: 9229
     protocol: TCP
-    name: http
-  sessionAffinity: None
+    name: debug
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: healthcare-api-hpa
+  name: healthcare-worker-hpa
   namespace: healthcare-backend
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: healthcare-api
-  minReplicas: 10  # Production baseline for 1M users
-  maxReplicas: 500  # Support for 1M+ concurrent users (2000 users per pod)
+    name: healthcare-worker
+  minReplicas: 3  # Minimum workers for production
+  maxReplicas: 50  # Scale based on queue load
   metrics:
   # CPU-based scaling
   - type: Resource
@@ -161,16 +193,16 @@ spec:
         value: 50  # Scale down max 50% at a time
         periodSeconds: 60
       - type: Pods
-        value: 2  # Or remove max 2 pods at a time
+        value: 2  # Or remove max 2 workers at a time
         periodSeconds: 60
       selectPolicy: Min  # Use the more conservative policy
     scaleUp:
-      stabilizationWindowSeconds: 30  # Quick scale up for traffic spikes
+      stabilizationWindowSeconds: 30  # Quick scale up for queue backlog
       policies:
       - type: Percent
-        value: 100  # Double the pods
+        value: 100  # Double the workers
         periodSeconds: 30
       - type: Pods
-        value: 5  # Or add max 5 pods at a time
+        value: 5  # Or add max 5 workers at a time
         periodSeconds: 30
       selectPolicy: Max  # Use the more aggressive policy
