@@ -23,10 +23,13 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
-import { ClinicLocationService } from '../services/clinic-location.service';
-import { CreateClinicLocationDto } from '../dto/create-clinic-location.dto';
-import { UpdateClinicLocationDto } from '../dto/update-clinic-location.dto';
-import type { ClinicLocationUpdateInput } from '@core/types/clinic.types';
+import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
+import { CreateClinicLocationDto } from '@services/clinic/dto/create-clinic-location.dto';
+import { UpdateClinicLocationDto } from '@services/clinic/dto/update-clinic-location.dto';
+import type {
+  ClinicLocationUpdateInput,
+  ClinicLocationResponseDto,
+} from '@core/types/clinic.types';
 
 @ApiTags('Clinic Locations')
 @ApiBearerAuth()
@@ -50,24 +53,7 @@ export class ClinicLocationController {
     @Param('clinicId') clinicId: string,
     @Body() createLocationDto: CreateClinicLocationDto,
     @Request() req: { user?: { id?: string; sub?: string } }
-  ): Promise<{
-    id: string;
-    locationId: string;
-    name: string;
-    address: string;
-    city: string;
-    state: string;
-    country: string;
-    zipCode: string;
-    phone: string;
-    email: string;
-    timezone: string;
-    workingHours: string;
-    isActive: boolean;
-    clinicId: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }> {
+  ): Promise<ClinicLocationResponseDto> {
     const userId = req.user?.id || req.user?.sub || 'system';
     return await this.locationService.createClinicLocation(
       {
@@ -96,26 +82,7 @@ export class ClinicLocationController {
   async findAll(
     @Param('clinicId') clinicId: string,
     @Request() _req: { user: { id: string } }
-  ): Promise<
-    Array<{
-      id: string;
-      locationId: string;
-      name: string;
-      address: string;
-      city: string;
-      state: string;
-      country: string;
-      zipCode: string;
-      phone: string;
-      email: string;
-      timezone: string;
-      workingHours: string;
-      isActive: boolean;
-      clinicId: string;
-      createdAt: Date;
-      updatedAt: Date;
-    }>
-  > {
+  ): Promise<ClinicLocationResponseDto[]> {
     return await this.locationService.getLocations(clinicId, false);
   }
 
@@ -130,24 +97,7 @@ export class ClinicLocationController {
     @Param('id') id: string,
     @Param('clinicId') _clinicId: string,
     @Request() _req: { user: { id: string } }
-  ): Promise<{
-    id: string;
-    locationId: string;
-    name: string;
-    address: string;
-    city: string;
-    state: string;
-    country: string;
-    zipCode: string;
-    phone: string;
-    email: string;
-    timezone: string;
-    workingHours: string;
-    isActive: boolean;
-    clinicId: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }> {
+  ): Promise<ClinicLocationResponseDto> {
     const location = await this.locationService.getClinicLocationById(id, false);
     if (!location) {
       throw new NotFoundException(`Location with ID ${id} not found`);
@@ -172,41 +122,24 @@ export class ClinicLocationController {
     @Param('clinicId') clinicId: string,
     @Body() updateLocationDto: UpdateClinicLocationDto,
     @Request() req: { user?: { id?: string; sub?: string } }
-  ): Promise<{
-    id: string;
-    locationId: string;
-    name: string;
-    address: string;
-    city: string;
-    state: string;
-    country: string;
-    zipCode: string;
-    phone: string;
-    email: string;
-    timezone: string;
-    workingHours: string;
-    isActive: boolean;
-    clinicId: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }> {
+  ): Promise<ClinicLocationResponseDto> {
     const userId = req.user?.id || req.user?.sub || 'system';
     // Handle workingHours conversion properly - convert object to JSON string for ClinicLocationUpdateInput
     const updateData: ClinicLocationUpdateInput = {
-      ...(updateLocationDto.name && { name: updateLocationDto.name }),
-      ...(updateLocationDto.address && { address: updateLocationDto.address }),
-      ...(updateLocationDto.city && { city: updateLocationDto.city }),
-      ...(updateLocationDto.state && { state: updateLocationDto.state }),
-      ...(updateLocationDto.country && { country: updateLocationDto.country }),
-      ...(updateLocationDto.zipCode && { zipCode: updateLocationDto.zipCode }),
-      ...(updateLocationDto.phone && { phone: updateLocationDto.phone }),
-      ...(updateLocationDto.email && { email: updateLocationDto.email }),
-      ...(updateLocationDto.timezone && { timezone: updateLocationDto.timezone }),
+      ...(updateLocationDto.name !== undefined && { name: updateLocationDto.name }),
+      ...(updateLocationDto.address !== undefined && { address: updateLocationDto.address }),
+      ...(updateLocationDto.city !== undefined && { city: updateLocationDto.city }),
+      ...(updateLocationDto.state !== undefined && { state: updateLocationDto.state }),
+      ...(updateLocationDto.country !== undefined && { country: updateLocationDto.country }),
+      ...(updateLocationDto.zipCode !== undefined && { zipCode: updateLocationDto.zipCode }),
+      ...(updateLocationDto.phone !== undefined && { phone: updateLocationDto.phone }),
+      ...(updateLocationDto.email !== undefined && { email: updateLocationDto.email }),
+      ...(updateLocationDto.timezone !== undefined && { timezone: updateLocationDto.timezone }),
       ...(updateLocationDto.isActive !== undefined && { isActive: updateLocationDto.isActive }),
       ...(updateLocationDto.latitude !== undefined && { latitude: updateLocationDto.latitude }),
       ...(updateLocationDto.longitude !== undefined && { longitude: updateLocationDto.longitude }),
-      ...(updateLocationDto.settings && { settings: updateLocationDto.settings }),
-      ...(updateLocationDto.workingHours && {
+      ...(updateLocationDto.settings !== undefined && { settings: updateLocationDto.settings }),
+      ...(updateLocationDto.workingHours !== undefined && {
         workingHours:
           typeof updateLocationDto.workingHours === 'string'
             ? updateLocationDto.workingHours
@@ -232,8 +165,8 @@ export class ClinicLocationController {
     @Param('id') id: string,
     @Param('clinicId') clinicId: string,
     @Request() req: { user?: { id?: string; sub?: string } }
-  ) {
+  ): Promise<void> {
     const userId = req.user?.id || req.user?.sub || 'system';
-    return this.locationService.deleteLocation(id, userId);
+    await this.locationService.deleteLocation(id, userId);
   }
 }

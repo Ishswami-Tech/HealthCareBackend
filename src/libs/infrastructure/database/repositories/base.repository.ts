@@ -5,7 +5,7 @@ import { RepositoryResult } from '@core/types/database.types';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
-import { HealthcareDatabaseClient } from '../clients/healthcare-database.client';
+import { HealthcareDatabaseClient } from '@infrastructure/database/clients/healthcare-database.client';
 
 // Re-export for backward compatibility
 export { RepositoryResult };

@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { EHRService } from '../ehr.service';
+import { EHRService } from '@services/ehr/ehr.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { Roles } from '@core/decorators/roles.decorator';
