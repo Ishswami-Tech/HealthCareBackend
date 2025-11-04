@@ -3,7 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SocketService } from '@communication/socket/socket.service';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
-import type { DeviceInfo } from '@core/types/appointment.types';
+// DeviceInfo type not used in this file
 import { LogType, LogLevel } from '@core/types';
 
 export interface ConsultationEvent {
@@ -674,14 +674,14 @@ export class VideoConsultationTracker {
    */
   private initializeEventListeners(): void {
     // Listen for socket connection events
-    this.eventEmitter.on('socket.user.connected', async (data: { userId: string }) => {
+    this.eventEmitter.on('socket.user.connected', (data: { userId: string }) => {
       // Update user's last seen for active consultations
-      await this.updateUserLastSeen(data.userId);
+      void this.updateUserLastSeen(data.userId);
     });
 
-    this.eventEmitter.on('socket.user.disconnected', async (data: { userId: string }) => {
+    this.eventEmitter.on('socket.user.disconnected', (data: { userId: string }) => {
       // Handle user disconnection for active consultations
-      await this.handleUserDisconnection(data.userId);
+      void this.handleUserDisconnection(data.userId);
     });
   }
 
@@ -689,8 +689,8 @@ export class VideoConsultationTracker {
    * Start heartbeat monitoring for active consultations
    */
   private startHeartbeatMonitoring(): void {
-    setInterval(async () => {
-      await this.checkActiveConsultations();
+    setInterval(() => {
+      void this.checkActiveConsultations();
     }, this.HEARTBEAT_INTERVAL);
   }
 
@@ -723,14 +723,14 @@ export class VideoConsultationTracker {
   /**
    * Update user's last seen timestamp
    */
-  private async updateUserLastSeen(userId: string): Promise<void> {
+  private async updateUserLastSeen(_userId: string): Promise<void> {
     // This would update the last seen timestamp for the user in active consultations
   }
 
   /**
    * Handle user disconnection
    */
-  private async handleUserDisconnection(userId: string): Promise<void> {
+  private async handleUserDisconnection(_userId: string): Promise<void> {
     // This would handle user disconnection for active consultations
   }
 }

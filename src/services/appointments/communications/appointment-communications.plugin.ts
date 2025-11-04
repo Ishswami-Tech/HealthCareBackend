@@ -1,6 +1,27 @@
 import { Injectable } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '../plugins/base/base-plugin.service';
 import { AppointmentCommunicationsService } from './appointment-communications.service';
+import type { QueueUpdateMessage, AppointmentStatusMessage } from '@core/types/appointment.types';
+
+interface SimpleNotificationData {
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'success' | 'error';
+  appointmentId?: string;
+}
+
+interface CommunicationsPluginData {
+  operation: string;
+  clinicId?: string;
+  doctorId?: string;
+  queueData?: QueueUpdateMessage;
+  appointmentId?: string;
+  userId?: string;
+  statusData?: AppointmentStatusMessage;
+  patientId?: string;
+  callData?: unknown;
+  notificationData?: SimpleNotificationData;
+}
 
 @Injectable()
 export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
@@ -19,7 +40,7 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = data as CommunicationsPluginData;
     this.logPluginAction('Processing appointment communications operation', {
       operation: pluginData.operation,
     });
@@ -27,6 +48,9 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
     // Delegate to communications service - proper separation of concerns
     switch (pluginData.operation) {
       case 'sendQueueUpdate':
+        if (!pluginData.clinicId || !pluginData.doctorId || !pluginData.queueData) {
+          throw new Error('Missing required fields for sendQueueUpdate');
+        }
         return await this.communicationsService.sendQueueUpdate(
           pluginData.clinicId,
           pluginData.doctorId,
@@ -34,6 +58,14 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
         );
 
       case 'sendAppointmentStatusUpdate':
+        if (
+          !pluginData.appointmentId ||
+          !pluginData.clinicId ||
+          !pluginData.userId ||
+          !pluginData.statusData
+        ) {
+          throw new Error('Missing required fields for sendAppointmentStatusUpdate');
+        }
         return await this.communicationsService.sendAppointmentStatusUpdate(
           pluginData.appointmentId,
           pluginData.clinicId,
@@ -42,6 +74,15 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
         );
 
       case 'sendVideoCallNotification':
+        if (
+          !pluginData.appointmentId ||
+          !pluginData.clinicId ||
+          !pluginData.patientId ||
+          !pluginData.doctorId ||
+          !pluginData.callData
+        ) {
+          throw new Error('Missing required fields for sendVideoCallNotification');
+        }
         return await this.communicationsService.sendVideoCallNotification(
           pluginData.appointmentId,
           pluginData.clinicId,
@@ -50,17 +91,33 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
           pluginData.callData
         );
 
-      case 'sendNotification':
+      case 'sendNotification': {
+        if (!pluginData.userId || !pluginData.clinicId || !pluginData.notificationData) {
+          throw new Error('Missing required fields for sendNotification');
+        }
+        const notificationData = pluginData.notificationData;
+        if (!notificationData.title || !notificationData.message || !notificationData.type) {
+          throw new Error(
+            'Invalid notificationData: missing required fields (title, message, type)'
+          );
+        }
         return await this.communicationsService.sendNotification(
           pluginData.userId,
           pluginData.clinicId,
-          pluginData.notificationData
+          notificationData
         );
+      }
 
       case 'getActiveConnections':
+        if (!pluginData.clinicId) {
+          throw new Error('Missing required field clinicId for getActiveConnections');
+        }
         return await this.communicationsService.getActiveConnections(pluginData.clinicId);
 
       case 'joinAppointmentRoom':
+        if (!pluginData.userId || !pluginData.appointmentId || !pluginData.clinicId) {
+          throw new Error('Missing required fields for joinAppointmentRoom');
+        }
         return await this.communicationsService.joinAppointmentRoom(
           pluginData.userId,
           pluginData.appointmentId,
@@ -68,6 +125,9 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
         );
 
       case 'leaveAppointmentRoom':
+        if (!pluginData.userId || !pluginData.appointmentId) {
+          throw new Error('Missing required fields for leaveAppointmentRoom');
+        }
         return await this.communicationsService.leaveAppointmentRoom(
           pluginData.userId,
           pluginData.appointmentId
@@ -81,10 +141,10 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
+  validate(data: unknown): Promise<boolean> {
+    const pluginData = data as CommunicationsPluginData;
     // Validate that required fields are present for each operation
-    const requiredFields = {
+    const requiredFields: Record<string, string[]> = {
       sendQueueUpdate: ['clinicId', 'doctorId', 'queueData'],
       sendAppointmentStatusUpdate: ['appointmentId', 'clinicId', 'userId', 'statusData'],
       sendVideoCallNotification: ['appointmentId', 'clinicId', 'patientId', 'doctorId', 'callData'],
@@ -95,14 +155,20 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
     };
 
     const operation = pluginData.operation;
-    const fields = (requiredFields as any)[operation];
+    const fields = requiredFields[operation];
 
     if (!fields) {
       this.logPluginError('Invalid operation', { operation });
-      return false;
+      return Promise.resolve(false);
     }
 
-    const isValid = fields.every((field: unknown) => pluginData[field as string] !== undefined);
+    const isValid = fields.every((field: unknown) => {
+      const fieldName = field as string;
+      return (
+        fieldName in pluginData &&
+        pluginData[fieldName as keyof CommunicationsPluginData] !== undefined
+      );
+    });
     if (!isValid) {
       this.logPluginError('Missing required fields', {
         operation,
@@ -110,6 +176,6 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
       });
     }
 
-    return isValid;
+    return Promise.resolve(isValid);
   }
 }

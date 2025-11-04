@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { SocketService } from '@communication/socket/socket.service';
-import type { SocketEventData } from '@communication/socket/socket.service';
+// SocketEventData type not used in this file
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -396,7 +396,7 @@ export class AppointmentCommunicationsService {
       // Cache the room membership
       const cacheKey = `room:${roomId}:members`;
       const members = await this.cacheService.get(cacheKey);
-      const memberList = members ? JSON.parse(members as string) : [];
+      const memberList = members ? (JSON.parse(members as string) as string[]) : [];
 
       if (!memberList.includes(userId)) {
         memberList.push(userId);
@@ -455,7 +455,7 @@ export class AppointmentCommunicationsService {
       const cacheKey = `room:${roomId}:members`;
       const members = await this.cacheService.get(cacheKey);
       if (members) {
-        const memberList = JSON.parse(members as string);
+        const memberList = JSON.parse(members as string) as string[];
         const updatedList = memberList.filter((id: string) => id !== userId);
         await this.cacheService.set(cacheKey, JSON.stringify(updatedList), this.CACHE_TTL);
       }

@@ -564,8 +564,8 @@ export class JitsiVideoService {
   private generateJitsiToken(
     userId: string,
     userRole: 'patient' | 'doctor',
-    userInfo: { displayName: string; email: string; avatar?: string },
-    roomConfig: JitsiRoomConfig
+    _userInfo: { displayName: string; email: string; avatar?: string },
+    _roomConfig: JitsiRoomConfig
   ): string {
     // This would generate a JWT token for Jitsi Meet
     // For now, return a placeholder

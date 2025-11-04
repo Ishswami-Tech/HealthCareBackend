@@ -45,7 +45,7 @@ class WorkerModule {}
 async function bootstrap() {
   let app: INestApplication | null = null;
   let logService: LoggingService | null = null;
-  
+
   try {
     app = await NestFactory.create(WorkerModule, {
       logger: ['error', 'warn'],
@@ -64,21 +64,23 @@ async function bootstrap() {
 
       if (logService) {
         await logService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Healthcare Worker initialized successfully',
-        'WorkerBootstrap',
-        {
-          serviceName: configService.get('SERVICE_NAME', 'clinic'),
-          redisHost: configService.get('REDIS_HOST', 'localhost'),
-          redisPort: configService.get('REDIS_PORT', 6379),
-        }
-      );
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Healthcare Worker initialized successfully',
+          'WorkerBootstrap',
+          {
+            serviceName: configService.get('SERVICE_NAME', 'clinic'),
+            redisHost: configService.get('REDIS_HOST', 'localhost'),
+            redisPort: configService.get('REDIS_PORT', 6379),
+          }
+        );
       }
     } catch {
       // Fallback to console.error/warn if LoggingService fails
       console.error('✅ Healthcare Worker initialized successfully');
-      console.error(`🔄 Processing queues for ${configService.get('SERVICE_NAME', 'clinic')} domain`);
+      console.error(
+        `🔄 Processing queues for ${configService.get('SERVICE_NAME', 'clinic')} domain`
+      );
       console.error(
         `📊 Redis Connection: ${configService.get('REDIS_HOST', 'localhost')}:${configService.get('REDIS_PORT', 6379)}`
       );
@@ -100,7 +102,7 @@ async function bootstrap() {
       }
       try {
         if (app) {
-        await app.close();
+          await app.close();
         }
         process.exit(0);
       } catch (error) {
@@ -169,12 +171,12 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', error => {
   console.error('🚨 Uncaught Exception:', error);
   process.exit(1);
 });
 
-bootstrap().catch((error) => {
+bootstrap().catch(error => {
   console.error('🚨 Bootstrap failed:', error);
   process.exit(1);
 });

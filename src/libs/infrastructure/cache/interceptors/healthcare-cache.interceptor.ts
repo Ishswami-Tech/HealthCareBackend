@@ -41,7 +41,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
 
     const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
-    const _response = context.switchToHttp().getResponse();
+    const _response = context.switchToHttp().getResponse<{ statusCode?: number }>();
 
     // Handle cache read operations
     if (cacheOptions && request.method === 'GET') {
@@ -120,7 +120,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
               stack: error instanceof Error ? error.stack : undefined,
             }
           );
-          return throwError(() => error);
+          return throwError(() => error as Error) as Observable<unknown>;
         })
       );
     } catch (error) {
@@ -185,7 +185,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
             );
           }
         );
-        return throwError(() => error);
+        return throwError(() => error as Error) as Observable<unknown>;
       })
     );
   }

@@ -62,16 +62,32 @@ export class AppointmentFollowUpService {
     );
 
     try {
+      // Validate and cast followUpType to valid type
+      const validFollowUpType: FollowUpPlan['followUpType'] =
+        followUpType === 'routine' ||
+        followUpType === 'urgent' ||
+        followUpType === 'specialist' ||
+        followUpType === 'therapy' ||
+        followUpType === 'surgery'
+          ? followUpType
+          : 'routine';
+
+      // Validate and cast priority to valid type
+      const validPriority: FollowUpPlan['priority'] =
+        priority === 'low' || priority === 'normal' || priority === 'high' || priority === 'urgent'
+          ? priority
+          : 'normal';
+
       const followUpPlan: FollowUpPlan = {
         id: followUpId,
         appointmentId,
         patientId,
         doctorId,
         clinicId,
-        followUpType: followUpType as any,
+        followUpType: validFollowUpType,
         scheduledFor,
         status: 'scheduled',
-        priority: priority as any,
+        priority: validPriority,
         instructions,
         medications: medications || [],
         tests: tests || [],
@@ -131,7 +147,7 @@ export class AppointmentFollowUpService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return cached as any;
+        return cached as FollowUpPlan[];
       }
 
       // Get follow-up plans from database using executeHealthcareRead
@@ -171,24 +187,76 @@ export class AppointmentFollowUpService {
         });
       });
 
-      const followUpList: FollowUpPlan[] = followUps.map((followUp: any) => ({
-        id: followUp.id,
-        appointmentId: followUp.appointmentId,
-        patientId: followUp.patientId,
-        doctorId: followUp.doctorId,
-        clinicId: followUp.clinicId,
-        followUpType: followUp.followUpType,
-        scheduledFor: followUp.scheduledFor,
-        status: followUp.status,
-        priority: followUp.priority,
-        instructions: followUp.instructions,
-        medications: followUp.medications || [],
-        tests: followUp.tests || [],
-        restrictions: followUp.restrictions || [],
-        notes: followUp.notes,
-        createdAt: followUp.createdAt,
-        updatedAt: followUp.updatedAt,
-      }));
+      // Define interface for database row structure
+      interface FollowUpRow {
+        id: string;
+        appointmentId: string;
+        patientId: string;
+        doctorId: string;
+        clinicId: string;
+        followUpType: string;
+        scheduledFor: Date;
+        status: string;
+        priority: string;
+        instructions: string;
+        medications?: string[] | null;
+        tests?: string[] | null;
+        restrictions?: string[] | null;
+        notes?: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+      }
+
+      const followUpList: FollowUpPlan[] = followUps.map((followUp: unknown) => {
+        const row = followUp as FollowUpRow;
+
+        // Validate and cast followUpType
+        const validFollowUpType: FollowUpPlan['followUpType'] =
+          row.followUpType === 'routine' ||
+          row.followUpType === 'urgent' ||
+          row.followUpType === 'specialist' ||
+          row.followUpType === 'therapy' ||
+          row.followUpType === 'surgery'
+            ? row.followUpType
+            : 'routine';
+
+        // Validate and cast priority
+        const validPriority: FollowUpPlan['priority'] =
+          row.priority === 'low' ||
+          row.priority === 'normal' ||
+          row.priority === 'high' ||
+          row.priority === 'urgent'
+            ? row.priority
+            : 'normal';
+
+        // Validate and cast status
+        const validStatus: FollowUpPlan['status'] =
+          row.status === 'scheduled' ||
+          row.status === 'completed' ||
+          row.status === 'cancelled' ||
+          row.status === 'overdue'
+            ? row.status
+            : 'scheduled';
+
+        return {
+          id: row.id,
+          appointmentId: row.appointmentId,
+          patientId: row.patientId,
+          doctorId: row.doctorId,
+          clinicId: row.clinicId,
+          followUpType: validFollowUpType,
+          scheduledFor: row.scheduledFor,
+          status: validStatus,
+          priority: validPriority,
+          instructions: row.instructions,
+          medications: row.medications || [],
+          tests: row.tests || [],
+          restrictions: row.restrictions || [],
+          notes: row.notes || '',
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+      });
 
       await this.cacheService.set(cacheKey, followUpList, this.FOLLOWUP_CACHE_TTL);
       return followUpList;
@@ -229,10 +297,11 @@ export class AppointmentFollowUpService {
         return false;
       }
 
-      const updatedFollowUp = {
-        ...followUp,
+      const followUpPlan = followUp as FollowUpPlan;
+      const updatedFollowUp: FollowUpPlan = {
+        ...followUpPlan,
         status,
-        notes: notes || (followUp as any).notes,
+        notes: notes || followUpPlan.notes || '',
         updatedAt: new Date(),
       };
 
@@ -268,7 +337,7 @@ export class AppointmentFollowUpService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return cached as any;
+        return cached as FollowUpTemplate[];
       }
 
       // Mock follow-up templates
@@ -377,7 +446,7 @@ export class AppointmentFollowUpService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return cached as any;
+        return cached as FollowUpPlan[];
       }
 
       // Mock overdue follow-ups

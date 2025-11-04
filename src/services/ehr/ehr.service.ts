@@ -1,23 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import {
-  MedicalHistoryRecord,
-  LabReportRecord,
-  VitalRecord,
   AllergyRecord,
   MedicationRecord,
-  ImmunizationRecord,
-  RadiologyReportRecord,
-  ClinicAnalytics,
-  PatientSummary,
-  SearchResultItem,
-  CriticalAlert,
+  MedicalHistoryRecord,
   ClinicEHRRecordFilters,
   GetClinicRecordsByFilterResult,
-  GetClinicEHRAnalyticsResult,
-  GetClinicPatientsSummaryResult,
-  SearchClinicRecordsResult,
-  GetClinicCriticalAlertsResult,
 } from '@core/types/ehr.types';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
@@ -1575,7 +1563,7 @@ export class EHRService {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         // Use executeHealthcareRead for optimized query
-        const labReportRecords = await this.databaseService.executeHealthcareRead(async client => {
+        await this.databaseService.executeHealthcareRead(async client => {
           return await client.labReport.findMany({
             where,
             include: { user: { select: USER_SELECT_FIELDS } },
@@ -1590,7 +1578,7 @@ export class EHRService {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         // Use executeHealthcareRead for optimized query
-        const vitalRecords = await this.databaseService.executeHealthcareRead(async client => {
+        await this.databaseService.executeHealthcareRead(async client => {
           return await client.vital.findMany({
             where,
             include: { user: { select: USER_SELECT_FIELDS } },

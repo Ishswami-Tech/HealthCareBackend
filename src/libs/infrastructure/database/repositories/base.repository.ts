@@ -6,7 +6,6 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
 import { HealthcareDatabaseClient } from '../clients/healthcare-database.client';
-import type { PrismaTransactionClient } from '@core/types/database.types';
 
 // Re-export for backward compatibility
 export { RepositoryResult };
@@ -242,7 +241,7 @@ export abstract class BaseRepository<
       let entity: TEntity;
       if (this.databaseService) {
         entity = await this.databaseService.executeHealthcareWrite(
-          async client => {
+          async _client => {
             const delegate = this.prismaDelegate as PrismaDelegate;
             return (await delegate.create({
               data,
@@ -439,7 +438,7 @@ export abstract class BaseRepository<
             async () => {
               // Use HealthcareDatabaseClient for optimization layers
               if (this.databaseService) {
-                return await this.databaseService.executeHealthcareRead(async client => {
+                return await this.databaseService.executeHealthcareRead(async _client => {
                   const delegate = this.prismaDelegate as PrismaDelegate;
                   return (await delegate.findUnique({
                     where: { id },
@@ -477,7 +476,7 @@ export abstract class BaseRepository<
       // If not from cache, query database
       if (!entity && !cacheHit) {
         if (this.databaseService) {
-          entity = await this.databaseService.executeHealthcareRead(async client => {
+          entity = await this.databaseService.executeHealthcareRead(async _client => {
             const delegate = this.prismaDelegate as PrismaDelegate;
             return (await delegate.findUnique({
               where: { id },
@@ -683,7 +682,7 @@ export abstract class BaseRepository<
             async () => {
               // Use HealthcareDatabaseClient for optimization layers
               if (this.databaseService) {
-                return await this.databaseService.executeHealthcareRead(async client => {
+                return await this.databaseService.executeHealthcareRead(async _client => {
                   const delegate = this.prismaDelegate as PrismaDelegate;
                   return (await delegate.findMany(
                     this.buildQueryOptions(options, context) as Record<string, unknown>
@@ -717,7 +716,7 @@ export abstract class BaseRepository<
       // If not from cache, query database
       if (!cacheHit) {
         if (this.databaseService) {
-          entities = await this.databaseService.executeHealthcareRead(async client => {
+          entities = await this.databaseService.executeHealthcareRead(async _client => {
             const delegate = this.prismaDelegate as PrismaDelegate;
             return (await delegate.findMany(
               this.buildQueryOptions(options, context) as Record<string, unknown>
@@ -811,7 +810,7 @@ export abstract class BaseRepository<
 
               if (this.databaseService) {
                 const [entitiesResult, totalResult] = await Promise.all([
-                  this.databaseService.executeHealthcareRead(async client => {
+                  this.databaseService.executeHealthcareRead(async _client => {
                     const delegate = this.prismaDelegate as PrismaDelegate;
                     return (await delegate.findMany({
                       ...(this.buildQueryOptions(options, context) || {}),
@@ -819,7 +818,7 @@ export abstract class BaseRepository<
                       take: limit,
                     } as Record<string, unknown>)) as unknown as TEntity[];
                   }),
-                  this.databaseService.executeHealthcareRead(async client => {
+                  this.databaseService.executeHealthcareRead(async _client => {
                     const delegate = this.prismaDelegate as PrismaDelegate;
                     return (await delegate.count({
                       where: options?.where,
@@ -891,7 +890,7 @@ export abstract class BaseRepository<
 
         if (this.databaseService) {
           const [entitiesResult, totalResult] = await Promise.all([
-            this.databaseService.executeHealthcareRead(async client => {
+            this.databaseService.executeHealthcareRead(async _client => {
               const delegate = this.prismaDelegate as PrismaDelegate;
               return (await delegate.findMany({
                 ...(this.buildQueryOptions(options, context) || {}),
@@ -899,7 +898,7 @@ export abstract class BaseRepository<
                 take: limit,
               } as Record<string, unknown>)) as unknown as TEntity[];
             }),
-            this.databaseService.executeHealthcareRead(async client => {
+            this.databaseService.executeHealthcareRead(async _client => {
               const delegate = this.prismaDelegate as PrismaDelegate;
               return (await delegate.count({
                 where: options?.where,
@@ -1019,7 +1018,7 @@ export abstract class BaseRepository<
       // Get existing entity for audit trail
       let existingEntity: TEntity | null = null;
       if (this.databaseService) {
-        existingEntity = await this.databaseService.executeHealthcareRead(async client => {
+        existingEntity = await this.databaseService.executeHealthcareRead(async _client => {
           const delegate = this.prismaDelegate as PrismaDelegate;
           return (await delegate.findUnique({
             where: { id },
@@ -1050,7 +1049,7 @@ export abstract class BaseRepository<
       let entity: TEntity;
       if (this.databaseService) {
         entity = await this.databaseService.executeHealthcareWrite(
-          async client => {
+          async _client => {
             const delegate = this.prismaDelegate as PrismaDelegate;
             return (await delegate.update({
               where: { id },
@@ -1173,7 +1172,7 @@ export abstract class BaseRepository<
       let result: { count: number };
       if (this.databaseService) {
         result = await this.databaseService.executeHealthcareWrite(
-          async client => {
+          async _client => {
             const delegate = this.prismaDelegate as PrismaDelegate;
             return (await delegate.updateMany({
               where,
@@ -1279,7 +1278,7 @@ export abstract class BaseRepository<
         if (softDelete) {
           // Soft delete - update isActive and deletedAt fields
           entity = await this.databaseService.executeHealthcareWrite(
-            async client => {
+            async _client => {
               const delegate = this.prismaDelegate as PrismaDelegate;
               return (await delegate.update({
                 where: { id },
@@ -1302,7 +1301,7 @@ export abstract class BaseRepository<
         } else {
           // Hard delete
           entity = await this.databaseService.executeHealthcareWrite(
-            async client => {
+            async _client => {
               const delegate = this.prismaDelegate as PrismaDelegate;
               return (await delegate.delete({
                 where: { id },

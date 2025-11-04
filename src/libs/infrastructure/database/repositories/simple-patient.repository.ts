@@ -4,8 +4,8 @@ import { ClinicIsolationService } from '@infrastructure/database/clinic-isolatio
 import { RepositoryResult } from '@core/types/database.types';
 import type { PatientWithUser, PatientWithUserOrNull } from '@core/types/database.types';
 import { CacheService } from '@infrastructure/cache';
-import { HealthcareDatabaseClient } from '../clients/healthcare-database.client';
 import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import type { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 
 /**
@@ -144,8 +144,8 @@ export class SimplePatientRepository {
             }
           } catch (cacheError) {
             void this.loggingService?.log(
-              'DATABASE' as any,
-              'WARN' as any,
+              LogType.DATABASE,
+              LogLevel.WARN,
               `Cache lookup failed, falling back to database: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
               'SimplePatientRepository'
             );
@@ -162,7 +162,7 @@ export class SimplePatientRepository {
           const patientDelegate = prismaClient.patient;
 
           const [data, totalResult] = await Promise.all([
-            databaseClient.executeHealthcareRead(async client => {
+            databaseClient.executeHealthcareRead(async _client => {
               return await patientDelegate.findMany({
                 where: whereClause,
                 include,
@@ -171,7 +171,7 @@ export class SimplePatientRepository {
                 take: limit,
               } as never);
             }),
-            databaseClient.executeHealthcareRead(async client => {
+            databaseClient.executeHealthcareRead(async _client => {
               return await patientDelegate.count({ where: whereClause } as never);
             }),
           ]);
@@ -257,8 +257,8 @@ export class SimplePatientRepository {
             }
           } catch (cacheError) {
             void this.loggingService?.log(
-              'DATABASE' as any,
-              'WARN' as any,
+              LogType.DATABASE,
+              LogLevel.WARN,
               `Cache lookup failed, falling back to database: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
               'SimplePatientRepository'
             );
@@ -273,7 +273,7 @@ export class SimplePatientRepository {
             }
           ).getInternalPrismaClient();
           const patientDelegate = prismaClient.patient;
-          patient = (await databaseClient.executeHealthcareRead(async client => {
+          patient = (await databaseClient.executeHealthcareRead(async _client => {
             return await patientDelegate.findFirst({
               where: {
                 id: patientId,

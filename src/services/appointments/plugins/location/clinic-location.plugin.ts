@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '../base/base-plugin.service';
 import { AppointmentLocationService } from './appointment-location.service';
 
+interface LocationPluginData {
+  operation: string;
+  locationId?: string;
+}
+
 @Injectable()
 export class ClinicLocationPlugin extends BaseAppointmentPlugin {
   readonly name = 'clinic-location-plugin';
@@ -13,7 +18,7 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = data as LocationPluginData;
     this.logPluginAction('Processing clinic location operation', {
       operation: pluginData.operation,
     });
@@ -24,18 +29,30 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
         return await this.locationService.getAllLocations('clinic');
 
       case 'getLocationById':
+        if (!pluginData.locationId) {
+          throw new Error('Missing required field locationId for getLocationById');
+        }
         return await this.locationService.getLocationById(pluginData.locationId, 'clinic');
 
       case 'getDoctorsByLocation':
+        if (!pluginData.locationId) {
+          throw new Error('Missing required field locationId for getDoctorsByLocation');
+        }
         return await this.locationService.getDoctorsByLocation(pluginData.locationId, 'clinic');
 
       case 'getLocationStats':
+        if (!pluginData.locationId) {
+          throw new Error('Missing required field locationId for getLocationStats');
+        }
         return await this.locationService.getLocationStats(pluginData.locationId, 'clinic');
 
       case 'invalidateLocationsCache':
         return await this.locationService.invalidateLocationsCache('clinic');
 
       case 'invalidateDoctorsCache':
+        if (!pluginData.locationId) {
+          throw new Error('Missing required field locationId for invalidateDoctorsCache');
+        }
         return await this.locationService.invalidateDoctorsCache(pluginData.locationId, 'clinic');
 
       default:
@@ -46,10 +63,10 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
+  validate(data: unknown): Promise<boolean> {
+    const pluginData = data as LocationPluginData;
     // Validate that required fields are present for each operation
-    const requiredFields = {
+    const requiredFields: Record<string, string[]> = {
       getLocationById: ['locationId'],
       getDoctorsByLocation: ['locationId'],
       getLocationStats: ['locationId'],
@@ -57,14 +74,19 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
     };
 
     const operation = pluginData.operation;
-    const fields = (requiredFields as any)[operation];
+    const fields = requiredFields[operation];
 
     if (!fields) {
       // Operations without required fields are valid
-      return true;
+      return Promise.resolve(true);
     }
 
-    const isValid = fields.every((field: unknown) => pluginData[field as string] !== undefined);
+    const isValid = fields.every((field: unknown) => {
+      const fieldName = field as string;
+      return (
+        fieldName in pluginData && pluginData[fieldName as keyof LocationPluginData] !== undefined
+      );
+    });
     if (!isValid) {
       this.logPluginError('Missing required fields', {
         operation,
@@ -72,6 +94,6 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
       });
     }
 
-    return isValid;
+    return Promise.resolve(isValid);
   }
 }

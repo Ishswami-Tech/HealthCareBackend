@@ -1,5 +1,4 @@
 // Simple DTO without decorators to avoid TypeScript compatibility issues
-import { CreateClinicLocationDto } from './create-clinic-location.dto';
 
 export class UpdateClinicLocationDto {
   name?: string;

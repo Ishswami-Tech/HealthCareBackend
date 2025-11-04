@@ -85,7 +85,7 @@ export class AppointmentReminderService {
       );
 
       // Schedule the actual reminder execution
-      await this.scheduleReminderExecution(reminderData);
+      void this.scheduleReminderExecution(reminderData);
 
       return {
         success: true,
@@ -215,16 +215,60 @@ export class AppointmentReminderService {
         } as never);
       });
 
-      const ruleList: ReminderRule[] = rules.map((rule: any) => ({
-        id: rule.id,
-        clinicId: rule.clinicId,
-        reminderType: rule.reminderType,
-        hoursBefore: rule.hoursBefore,
-        isActive: rule.isActive,
-        channels: rule.channels,
-        template: rule.template,
-        conditions: rule.conditions,
-      }));
+      interface ReminderRuleRow {
+        id: string;
+        clinicId: string;
+        reminderType: string;
+        hoursBefore: number;
+        isActive: boolean;
+        channels: string[];
+        template: string;
+        conditions: unknown;
+      }
+
+      type ReminderConditions = {
+        appointmentType?: string[];
+        priority?: string[];
+        patientAge?: { min: number; max: number };
+      };
+
+      const ruleList: ReminderRule[] = (rules as ReminderRuleRow[]).map((rule: ReminderRuleRow) => {
+        let conditions: ReminderConditions | undefined;
+        if (rule.conditions && typeof rule.conditions === 'object' && rule.conditions !== null) {
+          const cond = rule.conditions as Record<string, unknown>;
+          conditions = {};
+          if (Array.isArray(cond['appointmentType'])) {
+            conditions.appointmentType = cond['appointmentType'] as string[];
+          }
+          if (Array.isArray(cond['priority'])) {
+            conditions.priority = cond['priority'] as string[];
+          }
+          if (
+            cond['patientAge'] &&
+            typeof cond['patientAge'] === 'object' &&
+            cond['patientAge'] !== null
+          ) {
+            const age = cond['patientAge'] as Record<string, unknown>;
+            if (typeof age['min'] === 'number' && typeof age['max'] === 'number') {
+              conditions.patientAge = {
+                min: age['min'],
+                max: age['max'],
+              };
+            }
+          }
+        }
+
+        return {
+          id: rule.id,
+          clinicId: rule.clinicId,
+          reminderType: rule.reminderType,
+          hoursBefore: rule.hoursBefore,
+          isActive: rule.isActive,
+          channels: rule.channels,
+          template: rule.template,
+          ...(conditions && { conditions }),
+        };
+      });
 
       await this.cacheService.set(cacheKey, ruleList, this.RULE_CACHE_TTL);
       return ruleList;
@@ -271,10 +315,9 @@ export class AppointmentReminderService {
   /**
    * Get reminder statistics
    */
-  async getReminderStats(
-    clinicId: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    dateRange: { from: Date; to: Date }
+  getReminderStats(
+    _clinicId: string,
+    _dateRange: { from: Date; to: Date }
   ): Promise<{
     totalScheduled: number;
     totalSent: number;
@@ -288,11 +331,15 @@ export class AppointmentReminderService {
     const totalScheduled = 0;
     const totalSent = 0;
     const totalFailed = 0;
-    const sentReminders: Array<{ scheduledFor: Date; sentAt: Date }> = [];
+    interface SentReminder {
+      scheduledFor: Date;
+      sentAt: Date;
+    }
+    const sentReminders: SentReminder[] = [];
 
     const averageResponseTime =
       sentReminders.length > 0
-        ? sentReminders.reduce((sum: any, reminder: any) => {
+        ? sentReminders.reduce((sum, reminder) => {
             if (reminder.scheduledFor && reminder.sentAt) {
               const responseTime =
                 (new Date(reminder.sentAt).getTime() - new Date(reminder.scheduledFor).getTime()) /
@@ -305,19 +352,19 @@ export class AppointmentReminderService {
 
     const successRate = totalScheduled > 0 ? (totalSent / totalScheduled) * 100 : 0;
 
-    return {
+    return Promise.resolve({
       totalScheduled,
       totalSent,
       totalFailed,
       successRate: Math.round(successRate * 10) / 10,
       averageResponseTime: Math.round(averageResponseTime * 10) / 10,
-    };
+    });
   }
 
   /**
    * Schedule reminder execution
    */
-  private async scheduleReminderExecution(reminder: ReminderSchedule): Promise<void> {
+  private scheduleReminderExecution(reminder: ReminderSchedule): void {
     // In a real implementation, this would use a job queue like BullMQ
     // For now, we'll just log the scheduling
     this.logger.log(`Scheduled reminder execution for ${reminder.scheduledFor.toISOString()}`, {

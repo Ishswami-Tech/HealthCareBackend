@@ -85,17 +85,31 @@ export class AppointmentResourceService {
         } as never);
       });
 
-      const resourceList: Resource[] = resources.map((resource: unknown) => ({
-        id: (resource as any).id,
-        name: (resource as any).name,
-        type: (resource as any).type as 'room' | 'equipment' | 'vehicle' | 'other',
-        clinicId: (resource as any).clinicId,
-        capacity: (resource as any).capacity,
-        features: [], // This could be stored in database as JSON
-        isActive: (resource as any).isActive,
-        createdAt: (resource as any).createdAt,
-        updatedAt: (resource as any).updatedAt,
-      }));
+      interface ResourceRow {
+        id: string;
+        name: string;
+        type: 'room' | 'equipment' | 'vehicle' | 'other';
+        clinicId: string;
+        capacity: number;
+        isActive: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+      }
+
+      const resourceList: Resource[] = resources.map((resource: unknown) => {
+        const row = resource as ResourceRow;
+        return {
+          id: row.id,
+          name: row.name,
+          type: row.type,
+          clinicId: row.clinicId,
+          capacity: row.capacity,
+          features: [], // This could be stored in database as JSON
+          isActive: row.isActive,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+      });
 
       // Type filtering is now handled in the query, so no need to filter here
       const filteredResources = resourceList;
@@ -269,17 +283,43 @@ export class AppointmentResourceService {
         } as never);
       });
 
-      const bookingList: ResourceBooking[] = bookings.map((booking: unknown) => ({
-        id: (booking as any).id,
-        resourceId: (booking as any).resourceId,
-        appointmentId: (booking as any).appointmentId,
-        startTime: (booking as any).startTime,
-        endTime: (booking as any).endTime,
-        status: (booking as any).status,
-        notes: `Appointment with ${(booking as any).appointment?.patient?.user?.name || 'Unknown Patient'}`,
-        createdAt: (booking as any).createdAt,
-        updatedAt: (booking as any).updatedAt,
-      }));
+      interface BookingRow {
+        id: string;
+        resourceId: string;
+        appointmentId: string;
+        startTime: Date;
+        endTime: Date;
+        status: string;
+        appointment?: {
+          patient?: {
+            user?: {
+              name?: string;
+            };
+          };
+        };
+        createdAt: Date;
+        updatedAt: Date;
+      }
+
+      const bookingList: ResourceBooking[] = bookings.map((booking: unknown) => {
+        const row = booking as BookingRow;
+        const statusValue = row.status;
+        const validStatus: 'booked' | 'confirmed' | 'cancelled' =
+          statusValue === 'booked' || statusValue === 'confirmed' || statusValue === 'cancelled'
+            ? statusValue
+            : 'booked';
+        return {
+          id: row.id,
+          resourceId: row.resourceId,
+          appointmentId: row.appointmentId,
+          startTime: row.startTime,
+          endTime: row.endTime,
+          status: validStatus,
+          notes: `Appointment with ${row.appointment?.patient?.user?.name || 'Unknown Patient'}`,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+      });
 
       // Filter by time range if provided
       const filteredBookings =
@@ -320,7 +360,7 @@ export class AppointmentResourceService {
       );
 
       // Filter out the original resource
-      return alternatives.filter(resource => (resource as any).id !== resourceId);
+      return alternatives.filter(resource => resource.id !== resourceId);
     } catch (_error) {
       this.logger.error(`Failed to get alternative resources`, {
         resourceId,

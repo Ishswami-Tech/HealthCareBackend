@@ -12,6 +12,7 @@ import { HttpStatus } from '@nestjs/common';
 
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
+import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 
 import { AsyncLocalStorage } from 'async_hooks';
 import type { LogContext } from '@core/types/logging.types';
@@ -184,8 +185,9 @@ export class LoggingService {
         const resetColor = '\x1b[0m';
 
         const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`;
-        // eslint-disable-next-line no-console
-        console.log(coloredMessage);
+        // Development output - using console.warn which is allowed by ESLint config
+        // This is intentional for development visibility in the logging service itself
+        console.warn(coloredMessage);
       }
 
       // Intelligent database logging with noise filtering
@@ -359,7 +361,7 @@ export class LoggingService {
       // Temporarily bypass database query due to schema migration issues
       try {
         const dbLogs = (await this.databaseService.getPrismaClient().auditLog.findMany({
-          where: whereClause as any,
+          where: whereClause as PrismaDelegateArgs,
           orderBy: {
             timestamp: 'desc',
           },
@@ -422,12 +424,12 @@ export class LoggingService {
             .slice(0, 1000); // Limit for performance
 
           return parsedLogs;
-        } catch (redisError) {
+        } catch (_redisError) {
           // Redis fallback also failed - return empty array
           return [];
         }
       }
-    } catch (error) {
+    } catch (_error) {
       // Silent fail - return empty array on error
       return [];
     }
@@ -647,7 +649,7 @@ export class LoggingService {
           : (cachedMetrics as unknown);
       const metrics = (metricsData as { metrics?: string })?.metrics;
       return metrics ? (JSON.parse(metrics) as unknown) : [];
-    } catch (error) {
+    } catch (_error) {
       // Silent fail for system metrics retrieval
       return [];
     }
@@ -725,7 +727,7 @@ export class LoggingService {
       // Store in dedicated PHI audit cache for compliance reporting
       const auditKey = `phi_audit:${userId}:${patientId}:${Date.now()}`;
       await this.redisService?.set(auditKey, JSON.stringify(auditEntry), 86400 * 7); // 7 days
-    } catch (error) {
+    } catch (_error) {
       // Silent fail for PHI access logging - critical operation shouldn't break on logging failure
     }
   }

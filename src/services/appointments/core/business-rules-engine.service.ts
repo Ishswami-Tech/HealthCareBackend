@@ -7,6 +7,7 @@ import type {
   RuleEvaluationContext,
   RuleEvaluationResult,
 } from '@core/types/appointment.types';
+import type { RuleAction, RuleCondition } from '@core/types/common.types';
 
 @Injectable()
 export class BusinessRulesEngine {
@@ -34,14 +35,19 @@ export class BusinessRulesEngine {
           result.appliedRules.push(rule.name);
           if (Array.isArray(rule.actions) && rule.actions.length > 0) {
             // Convert RuleAction[] to Record<string, unknown>[] for result.actions
-            result.actions.push(
-              ...rule.actions.map(action => ({
-                type: action.type,
-                message: action.message,
-                severity: action.severity,
-                ...(action.parameters && { parameters: action.parameters }),
-              }))
-            );
+            const actionsArray = rule.actions as readonly RuleAction[];
+            const mappedActions: Array<{
+              type: string;
+              message: string;
+              severity: string;
+              parameters?: unknown;
+            }> = actionsArray.map((action: RuleAction) => ({
+              type: action.type,
+              message: action.message,
+              severity: action.severity,
+              ...(action.parameters && { parameters: action.parameters }),
+            }));
+            result.actions.push(...mappedActions);
           }
         } else {
           result.passed = false;
@@ -157,13 +163,29 @@ export class BusinessRulesEngine {
       }
 
       // Check first condition for time validation
-      const firstCondition = rule.conditions[0];
+      const firstConditionRaw: unknown = rule.conditions[0];
+      // Type guard to safely check if firstConditionRaw is a RuleCondition
+      const isRuleCondition = (obj: unknown): obj is RuleCondition =>
+        obj !== null &&
+        typeof obj === 'object' &&
+        'field' in obj &&
+        'value' in obj &&
+        typeof (obj as { field: unknown }).field === 'string';
+      const firstCondition: RuleCondition | undefined = isRuleCondition(firstConditionRaw)
+        ? firstConditionRaw
+        : undefined;
       if (firstCondition && firstCondition.field === 'time_validation') {
         // Extract working hours from condition value or context
-        const workingHours = (firstCondition.value as Record<string, unknown>) || {};
-        const bufferMinutes = (firstCondition.value as Record<string, unknown>)?.[
-          'bufferMinutes'
-        ] as number | undefined;
+        const conditionValueRaw: unknown = firstCondition.value;
+        const conditionValue =
+          conditionValueRaw && typeof conditionValueRaw === 'object'
+            ? (conditionValueRaw as Record<string, unknown>)
+            : undefined;
+        const workingHours = conditionValue || {};
+        const bufferMinutes =
+          conditionValue && 'bufferMinutes' in conditionValue
+            ? (conditionValue['bufferMinutes'] as number | undefined)
+            : undefined;
         const appointmentTime = new Date(
           (context.appointment as Record<string, unknown>)?.['date'] as string
         );
@@ -171,8 +193,12 @@ export class BusinessRulesEngine {
         const minute = appointmentTime.getMinutes();
         const appointmentMinutes = hour * 60 + minute;
 
-        const startMinutes = this.timeToMinutes(workingHours['start'] as string);
-        const endMinutes = this.timeToMinutes(workingHours['end'] as string);
+        const startMinutes = this.timeToMinutes(
+          (workingHours['start'] as string | undefined) || '09:00'
+        );
+        const endMinutes = this.timeToMinutes(
+          (workingHours['end'] as string | undefined) || '17:00'
+        );
         const buffer = (bufferMinutes as number) || 0;
 
         return (
@@ -182,18 +208,41 @@ export class BusinessRulesEngine {
 
       // Conflict check rule
       if (firstCondition && firstCondition.field === 'conflict_check') {
-        const { doctorId, date, time } = context.appointment as Record<string, unknown>;
+        const appointmentDataRaw = context.appointment;
+        const appointmentData =
+          appointmentDataRaw && typeof appointmentDataRaw === 'object'
+            ? (appointmentDataRaw as Record<string, unknown>)
+            : {};
+        const doctorId =
+          'doctorId' in appointmentData
+            ? (appointmentData['doctorId'] as string | undefined)
+            : undefined;
+        const date =
+          'date' in appointmentData ? (appointmentData['date'] as string | undefined) : undefined;
+        const time =
+          'time' in appointmentData ? (appointmentData['time'] as string | undefined) : undefined;
         if (!doctorId || !date || !time) return false;
 
         // Check for existing appointments using executeHealthcareRead with client parameter
         const existingAppointments = await this.databaseService.executeHealthcareRead(
-          async client => {
-            return await client.appointment.findMany({
+          async _client => {
+            const prismaClient = _client as unknown as {
+              appointment: {
+                findMany: (args: {
+                  where: {
+                    doctorId: string;
+                    date: Date;
+                    status: { in: readonly string[] };
+                  };
+                }) => Promise<unknown[]>;
+              };
+            };
+            return await prismaClient.appointment.findMany({
               where: {
-                doctorId: doctorId as string,
-                date: new Date(date as string),
+                doctorId: doctorId,
+                date: new Date(date),
                 status: {
-                  in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
+                  in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'] as readonly string[],
                 },
               },
             });
@@ -205,32 +254,43 @@ export class BusinessRulesEngine {
 
       // Capacity check rule
       if (firstCondition && firstCondition.field === 'capacity_check') {
-        const { locationId, date, time } = context.appointment as Record<string, unknown>;
+        const appointmentDataRaw = context.appointment;
+        const appointmentData =
+          appointmentDataRaw && typeof appointmentDataRaw === 'object'
+            ? (appointmentDataRaw as Record<string, unknown>)
+            : {};
+        const locationId =
+          'locationId' in appointmentData
+            ? (appointmentData['locationId'] as string | undefined)
+            : undefined;
+        const date =
+          'date' in appointmentData ? (appointmentData['date'] as string | undefined) : undefined;
+        const time =
+          'time' in appointmentData ? (appointmentData['time'] as string | undefined) : undefined;
         if (!locationId || !date || !time) return false;
 
         // Get location using executeHealthcareRead with client parameter
-        const location = await this.databaseService.executeHealthcareRead(async client => {
-          return await (
-            client as unknown as {
-              clinicLocation: {
-                findUnique: <T>(
-                  args: T
-                ) => Promise<{ id: string; capacity?: number | null } | null>;
-              };
-            }
-          ).clinicLocation.findUnique({
-            where: { id: locationId as string },
-          } as never);
+        const location = await this.databaseService.executeHealthcareRead(async _client => {
+          const prismaClient = _client as unknown as {
+            clinicLocation: {
+              findUnique: (args: {
+                where: { id: string };
+              }) => Promise<{ id: string; capacity?: number | null } | null>;
+            };
+          };
+          return await prismaClient.clinicLocation.findUnique({
+            where: { id: locationId },
+          });
         });
 
         if (!location) return false;
 
         // Count appointments using DatabaseService safe method
         const currentBookings = await this.databaseService.countAppointmentsSafe({
-          locationId: locationId as string,
-          date: new Date(date as string),
+          locationId: locationId,
+          date: new Date(date),
           status: {
-            in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
+            in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'] as readonly string[],
           },
         } as never);
 

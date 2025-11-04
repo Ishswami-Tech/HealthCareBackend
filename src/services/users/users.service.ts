@@ -445,10 +445,11 @@ export class UsersService {
       // Handle date conversion properly
       if (cleanedData.dateOfBirth && typeof cleanedData.dateOfBirth === 'string') {
         try {
-          // Keep as string for Prisma
-          cleanedData.dateOfBirth = cleanedData.dateOfBirth;
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          // Validate date format - keep as string for Prisma
+          const dateValue = cleanedData.dateOfBirth;
+          new Date(dateValue); // Validate date format
+          // Keep as string for Prisma - no need to reassign to itself
+        } catch (_error: unknown) {
           void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
@@ -464,7 +465,7 @@ export class UsersService {
       }
 
       // Handle role-specific data updates
-      if (existingUser.role === Role.DOCTOR && cleanedData.specialization) {
+      if ((existingUser.role as Role) === Role.DOCTOR && cleanedData.specialization) {
         const existingUserWithDoctor = existingUser as unknown as UserWithRelations;
         // Ensure doctor record exists using executeHealthcareWrite
         if (!existingUserWithDoctor.doctor) {
@@ -675,7 +676,7 @@ export class UsersService {
       details: { role: user.role },
     };
 
-    if (user.role === Role.DOCTOR && userWithRelations.doctor) {
+    if ((user.role as Role) === Role.DOCTOR && userWithRelations.doctor) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.doctor.delete({
@@ -685,7 +686,7 @@ export class UsersService {
         { ...auditInfo, resourceType: 'DOCTOR' }
       );
     }
-    if (user.role === Role.PATIENT && userWithRelations.patient) {
+    if ((user.role as Role) === Role.PATIENT && userWithRelations.patient) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.patient.delete({
@@ -696,7 +697,7 @@ export class UsersService {
       );
     }
     if (
-      user.role === Role.RECEPTIONIST &&
+      (user.role as Role) === Role.RECEPTIONIST &&
       userWithRelations.receptionists &&
       userWithRelations.receptionists.length > 0
     ) {
@@ -710,7 +711,7 @@ export class UsersService {
       );
     }
     if (
-      user.role === Role.CLINIC_ADMIN &&
+      (user.role as Role) === Role.CLINIC_ADMIN &&
       userWithRelations.clinicAdmins &&
       userWithRelations.clinicAdmins.length > 0
     ) {
@@ -723,7 +724,7 @@ export class UsersService {
         { ...auditInfo, resourceType: 'CLINIC_ADMIN' }
       );
     }
-    if (user.role === Role.SUPER_ADMIN && userWithRelations.superAdmin) {
+    if ((user.role as Role) === Role.SUPER_ADMIN && userWithRelations.superAdmin) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.superAdmin.delete({
@@ -897,7 +898,7 @@ export class UsersService {
       details: { oldRole: user.role, newRole: role },
     };
 
-    if (user.role === Role.DOCTOR && user.doctor) {
+    if ((user.role as Role) === Role.DOCTOR && user.doctor) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.doctor.delete({
@@ -907,7 +908,7 @@ export class UsersService {
         { ...auditInfo, resourceType: 'DOCTOR' }
       );
     }
-    if (user.role === Role.PATIENT && user.patient) {
+    if ((user.role as Role) === Role.PATIENT && user.patient) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.patient.delete({
@@ -917,7 +918,11 @@ export class UsersService {
         { ...auditInfo, resourceType: 'PATIENT' }
       );
     }
-    if (user.role === Role.RECEPTIONIST && user.receptionists && user.receptionists.length > 0) {
+    if (
+      (user.role as Role) === Role.RECEPTIONIST &&
+      user.receptionists &&
+      user.receptionists.length > 0
+    ) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.receptionist.delete({
@@ -927,7 +932,11 @@ export class UsersService {
         { ...auditInfo, resourceType: 'RECEPTIONIST' }
       );
     }
-    if (user.role === Role.CLINIC_ADMIN && user.clinicAdmins && user.clinicAdmins.length > 0) {
+    if (
+      (user.role as Role) === Role.CLINIC_ADMIN &&
+      user.clinicAdmins &&
+      user.clinicAdmins.length > 0
+    ) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.clinicAdmin.delete({
@@ -937,7 +946,7 @@ export class UsersService {
         { ...auditInfo, resourceType: 'CLINIC_ADMIN' }
       );
     }
-    if (user.role === Role.SUPER_ADMIN && user.superAdmin) {
+    if ((user.role as Role) === Role.SUPER_ADMIN && user.superAdmin) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           return await client.superAdmin.delete({

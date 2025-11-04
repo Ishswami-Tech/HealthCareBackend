@@ -3,12 +3,8 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '
 import { EnterprisePluginManager } from '@core/plugin-interface';
 import { PluginConfigService } from './config/plugin-config.service';
 import { PluginHealthService } from './health/plugin-health.service';
-import type {
-  PluginInfo,
-  PluginOperationResult,
-  DomainHealthInfo,
-  BasePlugin,
-} from '@core/types';
+import type { PluginOperationResult, BasePlugin } from '@core/types';
+import type { PluginConfig } from './config/plugin-config.service';
 
 @ApiTags('Appointment Plugins')
 @Controller('api/appointments/plugins')
@@ -241,7 +237,7 @@ export class AppointmentPluginController {
       const duration = Date.now() - startTime;
       this.logger.log(`Batch plugin operations executed in ${duration}ms`);
 
-      const typedResults = results as PluginOperationResult[];
+      const typedResults = results;
 
       return {
         success: true,
@@ -274,15 +270,15 @@ export class AppointmentPluginController {
     try {
       const registry = this.enterprisePluginManager.getEnterpriseRegistry();
       const pluginInfo = registry.getPluginInfo();
-      const domains = [...new Set(pluginInfo.map((p) => p.domain))];
+      const domains = [...new Set(pluginInfo.map(p => p.domain))];
       const healthSummary = await this.pluginHealthService.getPluginHealthSummary();
 
       const health = {
         status: healthSummary.overallStatus,
         totalPlugins: pluginInfo.length,
-        domains: domains.map((domain) => ({
+        domains: domains.map(domain => ({
           domain,
-          plugins: pluginInfo.filter((p) => p.domain === domain).length,
+          plugins: pluginInfo.filter(p => p.domain === domain).length,
           features: registry.getDomainFeatures(domain),
         })),
         healthSummary,
@@ -422,17 +418,16 @@ export class AppointmentPluginController {
     try {
       const configs = await this.pluginConfigService.getAllPluginConfigs();
 
-      const duration = Date.now() - startTime;
-      this.logger.log(`Plugin configurations retrieved in ${duration}ms`);
+      const _duration = Date.now() - startTime;
+      this.logger.log(`Plugin configurations retrieved in ${_duration}ms`);
 
       return {
         configs,
         total: Object.keys(configs).length,
         retrievedAt: new Date().toISOString(),
-        duration,
       };
     } catch (_error) {
-      const duration = Date.now() - startTime;
+      const _duration = Date.now() - startTime;
       const errorMessage = _error instanceof Error ? _error.message : String(_error);
       const _errorStack = _error instanceof Error ? _error.stack : '';
       this.logger.error(`Failed to get plugin configurations: ${errorMessage}`, _errorStack);
@@ -464,18 +459,17 @@ export class AppointmentPluginController {
         };
       }
 
-      const duration = Date.now() - startTime;
-      this.logger.log(`Plugin configuration retrieved for ${pluginName} in ${duration}ms`);
+      const _duration = Date.now() - startTime;
+      this.logger.log(`Plugin configuration retrieved for ${pluginName} in ${_duration}ms`);
 
       return {
         success: true,
         pluginName,
         config,
         retrievedAt: new Date().toISOString(),
-        duration,
       };
     } catch (_error) {
-      const duration = Date.now() - startTime;
+      const _duration = Date.now() - startTime;
       const errorMessage = _error instanceof Error ? _error.message : String(_error);
       const _errorStack = _error instanceof Error ? _error.stack : '';
       this.logger.error(`Failed to get plugin configuration: ${errorMessage}`, _errorStack);
@@ -497,23 +491,47 @@ export class AppointmentPluginController {
     const startTime = Date.now();
 
     try {
-      const success = await this.pluginConfigService.updatePluginConfig(pluginName, config as any);
+      const pluginConfig = this.validatePluginConfig(config);
+      const success = await this.pluginConfigService.updatePluginConfig(pluginName, pluginConfig);
 
-      const duration = Date.now() - startTime;
-      this.logger.log(`Plugin configuration updated for ${pluginName} in ${duration}ms`);
+      const _duration = Date.now() - startTime;
+      this.logger.log(`Plugin configuration updated for ${pluginName} in ${_duration}ms`);
 
       return {
         success,
         pluginName,
         updatedAt: new Date().toISOString(),
-        duration,
       };
     } catch (_error) {
-      const duration = Date.now() - startTime;
+      const _duration = Date.now() - startTime;
       const errorMessage = _error instanceof Error ? _error.message : String(_error);
       const _errorStack = _error instanceof Error ? _error.stack : '';
       this.logger.error(`Failed to update plugin configuration: ${errorMessage}`, _errorStack);
       throw _error;
     }
+  }
+
+  private validatePluginConfig(config: unknown): Partial<PluginConfig> {
+    if (typeof config !== 'object' || config === null) {
+      throw new Error('Invalid plugin config: must be an object');
+    }
+    const record = config as Record<string, unknown>;
+    const validated: Partial<PluginConfig> = {};
+    if (typeof record['enabled'] === 'boolean') {
+      validated.enabled = record['enabled'];
+    }
+    if (typeof record['priority'] === 'number') {
+      validated.priority = record['priority'];
+    }
+    if (typeof record['settings'] === 'object' && record['settings'] !== null) {
+      validated.settings = record['settings'] as Record<string, unknown>;
+    }
+    if (Array.isArray(record['features'])) {
+      validated.features = record['features'] as string[];
+    }
+    if (typeof record['domain'] === 'string') {
+      validated.domain = record['domain'];
+    }
+    return validated;
   }
 }
