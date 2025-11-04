@@ -86,7 +86,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
       for (const plugin of plugins) {
         try {
           await this.registry.register(plugin);
-          await this.registerPluginInfo(plugin);
+          this.registerPluginInfo(plugin);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           await this.loggingService.log(
@@ -167,7 +167,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
    *
    * @private
    */
-  private async registerPluginInfo(plugin: BasePlugin): Promise<void> {
+  private registerPluginInfo(plugin: BasePlugin): void {
     // Extract primary feature from plugin features
     const primaryFeature = plugin.features[0] || 'unknown';
 
@@ -182,4 +182,3 @@ export class AppointmentPluginInitializer implements OnModuleInit {
     this.registry.registerPluginInfo(pluginInfo);
   }
 }
-

@@ -113,12 +113,12 @@ export class AppointmentConfirmationService {
       }
 
       // Process check-in
-      const checkInResult = await this.performCheckIn(appointmentId, domain);
+      await this.performCheckIn(appointmentId, domain);
 
       // Invalidate QR cache
       await this.cacheService.del(`qr:checkin:${appointmentId}:${domain}`);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Check-in processed successfully',
@@ -134,7 +134,7 @@ export class AppointmentConfirmationService {
         message: 'Check-in successful',
       };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process check-in: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -171,7 +171,7 @@ export class AppointmentConfirmationService {
         this.CONFIRMATION_CACHE_TTL
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Appointment confirmed successfully',
@@ -181,7 +181,7 @@ export class AppointmentConfirmationService {
 
       return confirmationResult;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to confirm appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -207,10 +207,7 @@ export class AppointmentConfirmationService {
       // Mark appointment as completed
       const completionResult = await this.performCompletion(appointmentId, doctorId, domain);
 
-      // Invalidate confirmation cache
-      await this.cacheService.del(`confirmation:${appointmentId}:${domain}`);
-
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Appointment marked as completed',
@@ -225,7 +222,7 @@ export class AppointmentConfirmationService {
 
       return completionResult;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to mark appointment completed: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -279,7 +276,7 @@ export class AppointmentConfirmationService {
       // Cache the QR code
       await this.cacheService.set(cacheKey, JSON.stringify(result), this.QR_CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Confirmation QR generated successfully',
@@ -289,7 +286,7 @@ export class AppointmentConfirmationService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to generate confirmation QR: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -324,9 +321,9 @@ export class AppointmentConfirmationService {
       }
 
       // Verify appointment exists and belongs to clinic
-      const appointment = await this.verifyAppointment(decodedData.appointmentId, clinicId, domain);
+      await this.verifyAppointment(decodedData.appointmentId, clinicId, domain);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Appointment QR verified successfully',
@@ -348,7 +345,7 @@ export class AppointmentConfirmationService {
         type: decodedData.type,
       };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to verify appointment QR: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -373,7 +370,7 @@ export class AppointmentConfirmationService {
 
       await Promise.all(patterns.map(pattern => this.cacheService.invalidateByPattern(pattern)));
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'QR cache invalidated successfully',
@@ -383,7 +380,7 @@ export class AppointmentConfirmationService {
 
       return { success: true, message: 'QR cache invalidated' };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to invalidate QR cache: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -424,63 +421,64 @@ export class AppointmentConfirmationService {
       );
       let decrypted = decipher.update(encrypted, 'hex', 'utf8');
       decrypted = decrypted + decipher.final('utf8');
-      return JSON.parse(decrypted);
+      const parsed = JSON.parse(decrypted) as QRCodeData;
+      return parsed;
     } catch (_error) {
       this.logger.error('Failed to decrypt QR data:', _error);
       return null;
     }
   }
 
-  private async performCheckIn(appointmentId: string, domain: string): Promise<unknown> {
+  private performCheckIn(_appointmentId: string, _domain: string): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
-    return {
+    return Promise.resolve({
       success: true,
-      appointmentId,
-      domain,
+      appointmentId: _appointmentId,
+      domain: _domain,
       checkedInAt: new Date().toISOString(),
-    };
+    });
   }
 
-  private async performConfirmation(appointmentId: string, domain: string): Promise<unknown> {
+  private performConfirmation(_appointmentId: string, _domain: string): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
-    return {
+    return Promise.resolve({
       success: true,
-      appointmentId,
-      domain,
+      appointmentId: _appointmentId,
+      domain: _domain,
       confirmedAt: new Date().toISOString(),
-    };
+    });
   }
 
-  private async performCompletion(
-    appointmentId: string,
-    doctorId: string,
-    domain: string
+  private performCompletion(
+    _appointmentId: string,
+    _doctorId: string,
+    _domain: string
   ): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
-    return {
+    return Promise.resolve({
       success: true,
-      appointmentId,
-      doctorId,
-      domain,
+      appointmentId: _appointmentId,
+      doctorId: _doctorId,
+      domain: _domain,
       completedAt: new Date().toISOString(),
-    };
+    });
   }
 
-  private async verifyAppointment(
-    appointmentId: string,
-    clinicId: string,
-    domain: string
+  private verifyAppointment(
+    _appointmentId: string,
+    _clinicId: string,
+    _domain: string
   ): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return a placeholder implementation
-    return {
-      id: appointmentId,
-      clinicId,
-      domain,
+    return Promise.resolve({
+      id: _appointmentId,
+      clinicId: _clinicId,
+      domain: _domain,
       status: 'CONFIRMED',
-    };
+    });
   }
 }

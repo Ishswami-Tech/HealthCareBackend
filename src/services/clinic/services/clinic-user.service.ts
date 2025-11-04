@@ -75,7 +75,7 @@ export class ClinicUserService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic user created: ${clinicUser.id}`,
@@ -103,7 +103,7 @@ export class ClinicUserService {
           : undefined,
       } as ClinicUserResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create clinic user: ${(error as Error).message}`,
@@ -176,7 +176,7 @@ export class ClinicUserService {
           : undefined,
       })) as ClinicUserResponseDto[];
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic users: ${(error as Error).message}`,
@@ -266,7 +266,7 @@ export class ClinicUserService {
           : undefined,
       })) as ClinicUserResponseDto[];
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic users by role: ${(error as Error).message}`,
@@ -340,7 +340,7 @@ export class ClinicUserService {
           : undefined,
       } as ClinicUserResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic user: ${(error as Error).message}`,
@@ -414,7 +414,7 @@ export class ClinicUserService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic user updated: ${clinicUser.id}`,
@@ -442,7 +442,7 @@ export class ClinicUserService {
           : undefined,
       } as ClinicUserResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update clinic user: ${(error as Error).message}`,
@@ -477,7 +477,7 @@ export class ClinicUserService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic user deactivated: ${id}`,
@@ -485,7 +485,7 @@ export class ClinicUserService {
         { clinicUserId: id }
       );
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete clinic user: ${(error as Error).message}`,
@@ -510,7 +510,7 @@ export class ClinicUserService {
 
       return count;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic user count: ${(error as Error).message}`,

@@ -36,6 +36,7 @@ import {
 } from './queue.constants';
 import { Queue, Worker, Job } from 'bullmq';
 import { DatabaseModule, DatabaseService } from '@infrastructure/database';
+import type { JobData } from '@core/types/queue.types';
 
 @Module({})
 export class QueueModule {
@@ -220,35 +221,42 @@ export class QueueModule {
                     workers.push(
                       new Worker(
                         queueName,
-                        async (job: Job<any, any, string>) => {
-                          try {
-                            switch (job.name) {
-                              case 'create':
-                                return queueProcessor.processCreateJob(job);
-                              case 'update':
-                                return queueProcessor.processUpdateJob(job);
-                              case 'confirm':
-                                return queueProcessor.processConfirmJob(job);
-                              case 'complete':
-                                return queueProcessor.processCompleteJob(job);
-                              case 'notify':
-                                return queueProcessor.processNotifyJob(job);
-                              case 'process':
-                                // Generic job processing - delegate to appropriate method based on job data
-                                return queueProcessor.processCreateJob(job);
-                              default:
-                                throw new HealthcareError(
-                                  ErrorCode.QUEUE_OPERATION_FAILED,
-                                  `Unknown job type: ${job.name}`,
-                                  undefined,
-                                  { jobType: job.name },
-                                  'QueueModule'
-                                );
-                            }
-                          } catch (_error) {
-                            // Enhanced error handling for 1M users
-                            // Error will be handled by the worker's error handler
-                            throw _error;
+                        async (job: Job<JobData, unknown, string>) => {
+                          const typedJob = job;
+                          switch (job.name) {
+                            case 'create':
+                              return await Promise.resolve(
+                                queueProcessor.processCreateJob(typedJob)
+                              );
+                            case 'update':
+                              return await Promise.resolve(
+                                queueProcessor.processUpdateJob(typedJob)
+                              );
+                            case 'confirm':
+                              return await Promise.resolve(
+                                queueProcessor.processConfirmJob(typedJob)
+                              );
+                            case 'complete':
+                              return await Promise.resolve(
+                                queueProcessor.processCompleteJob(typedJob)
+                              );
+                            case 'notify':
+                              return await Promise.resolve(
+                                queueProcessor.processNotifyJob(typedJob)
+                              );
+                            case 'process':
+                              // Generic job processing - delegate to appropriate method based on job data
+                              return await Promise.resolve(
+                                queueProcessor.processCreateJob(typedJob)
+                              );
+                            default:
+                              throw new HealthcareError(
+                                ErrorCode.QUEUE_OPERATION_FAILED,
+                                `Unknown job type: ${job.name}`,
+                                undefined,
+                                { jobType: job.name },
+                                'QueueModule'
+                              );
                           }
                         },
                         {

@@ -7,15 +7,12 @@ import { AppointmentType, AppointmentStatus } from '@core/types/enums.types';
 import type { AppointmentBase, Doctor, PatientBase, Clinic } from '@core/types/database.types';
 import type { ClinicLocation } from '@core/types/clinic.types';
 import type {
-  DeviceInfo,
   CheckInData,
   CheckInResult,
   AppointmentQueuePosition,
   CheckInAppointment,
   CheckedInAppointmentsResponse,
-  QueueStatsResponse,
   LocationQueueResponse,
-  AppointmentWithRelationsController,
 } from '@core/types/appointment.types';
 type Appointment = AppointmentBase;
 type Patient = PatientBase;
@@ -479,7 +476,7 @@ export class CheckInService {
 
   private validateAppointmentForClinic(
     appointmentId: string,
-    clinicId: string
+    _clinicId: string
   ): Promise<CheckInAppointment> {
     // This would integrate with the actual appointment service
     // For now, return mock data
@@ -494,7 +491,7 @@ export class CheckInService {
     });
   }
 
-  private getExistingCheckIn(appointmentId: string): Promise<CheckInResult | null> {
+  private getExistingCheckIn(_appointmentId: string): Promise<CheckInResult | null> {
     // This would check if appointment is already checked in
     // For now, return null (not checked in)
     return Promise.resolve(null);
@@ -515,7 +512,7 @@ export class CheckInService {
     appointmentId: string,
     doctorId: string,
     locationId: string,
-    domain: string
+    _domain: string
   ): Promise<AppointmentQueuePosition> {
     // This would integrate with the actual queue service
     // For now, return mock queue position
@@ -539,12 +536,12 @@ export class CheckInService {
     );
   }
 
-  private performConsultationStart(appointmentId: string, clinicId: string): Promise<unknown> {
+  private performConsultationStart(_appointmentId: string, _clinicId: string): Promise<unknown> {
     // This would integrate with the actual consultation service
     // For now, return mock result
     return Promise.resolve({
       success: true,
-      appointmentId,
+      appointmentId: _appointmentId,
       consultationStartedAt: new Date().toISOString(),
       message: 'Consultation started',
     });

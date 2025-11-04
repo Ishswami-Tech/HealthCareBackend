@@ -3,7 +3,7 @@ import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { TherapyType, TherapyDuration, TherapyStatus } from '@core/types/enums.types';
+import { TherapyType, TherapyStatus } from '@core/types/enums.types';
 import type {
   AyurvedicTherapy,
   TherapySession,
@@ -106,7 +106,7 @@ export class AyurvedicTherapyService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as AyurvedicTherapy[];
       }
 
       // Use executeHealthcareRead for optimized query
@@ -177,7 +177,7 @@ export class AyurvedicTherapyService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as AyurvedicTherapy[];
       }
 
       // Use executeHealthcareRead for optimized query
@@ -242,7 +242,7 @@ export class AyurvedicTherapyService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as AyurvedicTherapy;
       }
 
       // Use executeHealthcareRead for optimized query
@@ -569,7 +569,7 @@ export class AyurvedicTherapyService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as TherapySession[];
       }
 
       // Use executeHealthcareRead for optimized query
@@ -651,10 +651,19 @@ export class AyurvedicTherapyService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as TherapySession[];
       }
 
-      const whereClause: any = {
+      interface WhereClause {
+        doctorId: string;
+        clinicId: string;
+        sessionDate?: {
+          gte: Date;
+          lte: Date;
+        };
+      }
+
+      const whereClause: WhereClause = {
         doctorId,
         clinicId,
       };
@@ -894,7 +903,12 @@ export class AyurvedicTherapyService {
     const startTime = Date.now();
 
     try {
-      const whereClause: any = { clinicId };
+      interface StatsWhereClause {
+        clinicId: string;
+        therapyId?: string;
+      }
+
+      const whereClause: StatsWhereClause = { clinicId };
       if (therapyId) {
         whereClause.therapyId = therapyId;
       }
@@ -942,10 +956,10 @@ export class AyurvedicTherapyService {
         endTime: Date;
         startTime: Date;
       };
-      const completedSessions = sessions.filter(
-        (s): s is SessionWithTimes =>
-          s.status === TherapyStatus.COMPLETED && !!s.endTime && !!s.startTime
-      );
+      const completedSessions = sessions.filter((s): s is SessionWithTimes => {
+        const sessionStatus = s.status as TherapyStatus;
+        return sessionStatus === TherapyStatus.COMPLETED && !!s.endTime && !!s.startTime;
+      });
 
       if (completedSessions.length > 0) {
         const totalDuration = completedSessions.reduce((sum: number, session: SessionWithTimes) => {

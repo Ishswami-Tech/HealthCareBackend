@@ -1,6 +1,35 @@
 import { Injectable } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '../base/base-plugin.service';
 import { AppointmentAnalyticsService } from './appointment-analytics.service';
+import type { AnalyticsFilter } from '@core/types/appointment.types';
+
+interface AnalyticsPluginData {
+  operation: string;
+  clinicId?: string;
+  doctorId?: string;
+  dateRange?: { from: Date; to: Date };
+  filters?: Partial<AnalyticsFilter>;
+  reportType?: string;
+}
+
+interface AppointmentMetricsData {
+  totalAppointments?: number;
+  completionRate?: number;
+  revenue?: number;
+  queueEfficiency?: number;
+  averageWaitTime?: number;
+  averageDuration?: number;
+  noShowRate?: number;
+  costPerAppointment?: number;
+  [key: string]: unknown;
+}
+
+interface SatisfactionAnalyticsData {
+  overallRating?: number;
+  ratingDistribution?: Record<string, unknown>;
+  feedbackCategories?: Record<string, unknown>;
+  [key: string]: unknown;
+}
 
 @Injectable()
 export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
@@ -19,49 +48,77 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = this.validatePluginData(data);
     this.logPluginAction('Processing clinic analytics operation', {
       operation: pluginData.operation,
     });
 
     switch (pluginData.operation) {
-      case 'getAppointmentMetrics':
+      case 'getAppointmentMetrics': {
+        if (!pluginData.clinicId || !pluginData.dateRange) {
+          throw new Error('Missing required fields: clinicId, dateRange');
+        }
         return await this.analyticsService.getAppointmentMetrics(
           pluginData.clinicId,
           pluginData.dateRange,
           pluginData.filters
         );
+      }
 
-      case 'getDoctorMetrics':
+      case 'getDoctorMetrics': {
+        if (!pluginData.doctorId || !pluginData.dateRange) {
+          throw new Error('Missing required fields: doctorId, dateRange');
+        }
         return await this.analyticsService.getDoctorMetrics(
           pluginData.doctorId,
           pluginData.dateRange
         );
+      }
 
-      case 'getClinicMetrics':
+      case 'getClinicMetrics': {
+        if (!pluginData.clinicId || !pluginData.dateRange) {
+          throw new Error('Missing required fields: clinicId, dateRange');
+        }
         return await this.analyticsService.getClinicMetrics(
           pluginData.clinicId,
           pluginData.dateRange
         );
+      }
 
-      case 'getTimeSlotAnalytics':
+      case 'getTimeSlotAnalytics': {
+        if (!pluginData.clinicId || !pluginData.dateRange) {
+          throw new Error('Missing required fields: clinicId, dateRange');
+        }
         return await this.analyticsService.getTimeSlotAnalytics(
           pluginData.clinicId,
           pluginData.dateRange
         );
+      }
 
-      case 'getPatientSatisfactionAnalytics':
+      case 'getPatientSatisfactionAnalytics': {
+        if (!pluginData.clinicId || !pluginData.dateRange) {
+          throw new Error('Missing required fields: clinicId, dateRange');
+        }
         return await this.analyticsService.getPatientSatisfactionAnalytics(
           pluginData.clinicId,
           pluginData.dateRange
         );
+      }
 
-      case 'generateAnalyticsReport':
+      case 'generateAnalyticsReport': {
+        if (!pluginData.clinicId || !pluginData.dateRange || !pluginData.reportType) {
+          throw new Error('Missing required fields: clinicId, dateRange, reportType');
+        }
+        const reportType = pluginData.reportType as 'detailed' | 'summary' | 'executive';
+        if (!['detailed', 'summary', 'executive'].includes(reportType)) {
+          throw new Error('Invalid reportType. Must be one of: detailed, summary, executive');
+        }
         return await this.analyticsService.generateAnalyticsReport(
           pluginData.clinicId,
           pluginData.dateRange,
-          pluginData.reportType
+          reportType
         );
+      }
 
       case 'getDashboardMetrics':
         return await this.getDashboardMetrics(data);
@@ -83,47 +140,65 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
     }
   }
 
-  validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
-    const requiredFields = {
-      getAppointmentMetrics: ['clinicId', 'dateRange'],
-      getDoctorMetrics: ['doctorId', 'dateRange'],
-      getClinicMetrics: ['clinicId', 'dateRange'],
-      getTimeSlotAnalytics: ['clinicId', 'dateRange'],
-      getPatientSatisfactionAnalytics: ['clinicId', 'dateRange'],
-      generateAnalyticsReport: ['clinicId', 'dateRange', 'reportType'],
-      getDashboardMetrics: ['clinicId', 'dateRange'],
-      getRevenueAnalytics: ['clinicId', 'dateRange'],
-      getEfficiencyAnalytics: ['clinicId', 'dateRange'],
-      getPatientAnalytics: ['clinicId', 'dateRange'],
-    };
-
-    const operation = pluginData.operation;
-    const required = requiredFields[operation as keyof typeof requiredFields];
-
-    if (!required) {
-      this.logPluginError('Unknown operation for validation', { operation });
-      return Promise.resolve(false);
+  private validatePluginData(data: unknown): AnalyticsPluginData {
+    if (typeof data !== 'object' || data === null) {
+      throw new Error('Invalid plugin data: must be an object');
     }
+    const record = data as Record<string, unknown>;
+    if (typeof record['operation'] !== 'string') {
+      throw new Error('Invalid plugin data: operation must be a string');
+    }
+    return record as unknown as AnalyticsPluginData;
+  }
 
-    for (const field of required) {
-      if (!pluginData[field]) {
-        this.logPluginError(`Missing required field: ${field}`, {
-          operation,
-          field,
-        });
+  validate(data: unknown): Promise<boolean> {
+    try {
+      const pluginData = this.validatePluginData(data);
+      const requiredFields: Record<string, string[]> = {
+        getAppointmentMetrics: ['clinicId', 'dateRange'],
+        getDoctorMetrics: ['doctorId', 'dateRange'],
+        getClinicMetrics: ['clinicId', 'dateRange'],
+        getTimeSlotAnalytics: ['clinicId', 'dateRange'],
+        getPatientSatisfactionAnalytics: ['clinicId', 'dateRange'],
+        generateAnalyticsReport: ['clinicId', 'dateRange', 'reportType'],
+        getDashboardMetrics: ['clinicId', 'dateRange'],
+        getRevenueAnalytics: ['clinicId', 'dateRange'],
+        getEfficiencyAnalytics: ['clinicId', 'dateRange'],
+        getPatientAnalytics: ['clinicId', 'dateRange'],
+      };
+
+      const operation = pluginData.operation;
+      const required = requiredFields[operation];
+
+      if (!required) {
+        this.logPluginError('Unknown operation for validation', { operation });
         return Promise.resolve(false);
       }
-    }
 
-    return Promise.resolve(true);
+      for (const field of required) {
+        if (!pluginData[field as keyof AnalyticsPluginData]) {
+          this.logPluginError(`Missing required field: ${field}`, {
+            operation,
+            field,
+          });
+          return Promise.resolve(false);
+        }
+      }
+
+      return Promise.resolve(true);
+    } catch {
+      return Promise.resolve(false);
+    }
   }
 
   /**
    * Get dashboard metrics
    */
   private async getDashboardMetrics(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = this.validatePluginData(data);
+    if (!pluginData.clinicId || !pluginData.dateRange) {
+      throw new Error('Missing required fields: clinicId, dateRange');
+    }
     const [appointmentMetrics, clinicMetrics, satisfactionAnalytics] = await Promise.all([
       this.analyticsService.getAppointmentMetrics(pluginData.clinicId, pluginData.dateRange),
       this.analyticsService.getClinicMetrics(pluginData.clinicId, pluginData.dateRange),
@@ -133,6 +208,9 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
       ),
     ]);
 
+    const appointmentData = appointmentMetrics.data as AppointmentMetricsData;
+    const satisfactionData = satisfactionAnalytics.data as SatisfactionAnalyticsData;
+
     return {
       success: true,
       data: {
@@ -140,10 +218,10 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
         clinic: clinicMetrics.data,
         satisfaction: satisfactionAnalytics.data,
         summary: {
-          totalAppointments: (appointmentMetrics.data as any)?.totalAppointments || 0,
-          completionRate: (appointmentMetrics.data as any)?.completionRate || 0,
-          patientSatisfaction: (satisfactionAnalytics.data as any)?.overallRating || 0,
-          revenue: (appointmentMetrics.data as any)?.revenue || 0,
+          totalAppointments: appointmentData?.totalAppointments ?? 0,
+          completionRate: appointmentData?.completionRate ?? 0,
+          patientSatisfaction: satisfactionData?.overallRating ?? 0,
+          revenue: appointmentData?.revenue ?? 0,
         },
       },
       generatedAt: new Date(),
@@ -154,15 +232,20 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
    * Get revenue analytics
    */
   private async getRevenueAnalytics(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = this.validatePluginData(data);
+    if (!pluginData.clinicId || !pluginData.dateRange) {
+      throw new Error('Missing required fields: clinicId, dateRange');
+    }
     const appointmentMetrics = await this.analyticsService.getAppointmentMetrics(
       pluginData.clinicId,
       pluginData.dateRange
     );
 
+    const appointmentData = appointmentMetrics.data as AppointmentMetricsData;
+
     const revenueData = {
-      totalRevenue: (appointmentMetrics.data as any)?.revenue || 0,
-      costPerAppointment: (appointmentMetrics.data as any)?.costPerAppointment || 0,
+      totalRevenue: appointmentData?.revenue ?? 0,
+      costPerAppointment: appointmentData?.costPerAppointment ?? 0,
       revenueByType: {
         GENERAL_CONSULTATION: 25000,
         FOLLOW_UP: 15000,
@@ -171,7 +254,7 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
         SURGERY: 2000,
       },
       revenueByStatus: {
-        COMPLETED: (appointmentMetrics.data as any)?.revenue || 0,
+        COMPLETED: appointmentData?.revenue ?? 0,
         CANCELLED: 0,
         NO_SHOW: 0,
       },
@@ -193,18 +276,23 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
    * Get efficiency analytics
    */
   private async getEfficiencyAnalytics(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = this.validatePluginData(data);
+    if (!pluginData.clinicId || !pluginData.dateRange) {
+      throw new Error('Missing required fields: clinicId, dateRange');
+    }
     const [appointmentMetrics, timeSlotAnalytics] = await Promise.all([
       this.analyticsService.getAppointmentMetrics(pluginData.clinicId, pluginData.dateRange),
       this.analyticsService.getTimeSlotAnalytics(pluginData.clinicId, pluginData.dateRange),
     ]);
 
+    const appointmentData = appointmentMetrics.data as AppointmentMetricsData;
+
     const efficiencyData = {
-      queueEfficiency: (appointmentMetrics.data as any)?.queueEfficiency || 0,
-      averageWaitTime: (appointmentMetrics.data as any)?.averageWaitTime || 0,
-      averageDuration: (appointmentMetrics.data as any)?.averageDuration || 0,
-      noShowRate: (appointmentMetrics.data as any)?.noShowRate || 0,
-      completionRate: (appointmentMetrics.data as any)?.completionRate || 0,
+      queueEfficiency: appointmentData?.queueEfficiency ?? 0,
+      averageWaitTime: appointmentData?.averageWaitTime ?? 0,
+      averageDuration: appointmentData?.averageDuration ?? 0,
+      noShowRate: appointmentData?.noShowRate ?? 0,
+      completionRate: appointmentData?.completionRate ?? 0,
       timeSlotEfficiency: timeSlotAnalytics.data || [],
       recommendations: [
         'Optimize appointment scheduling',
@@ -225,7 +313,10 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
    * Get patient analytics
    */
   private async getPatientAnalytics(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = this.validatePluginData(data);
+    if (!pluginData.clinicId || !pluginData.dateRange) {
+      throw new Error('Missing required fields: clinicId, dateRange');
+    }
     const [satisfactionAnalytics] = await Promise.all([
       this.analyticsService.getPatientSatisfactionAnalytics(
         pluginData.clinicId,
@@ -234,13 +325,15 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
       this.analyticsService.getAppointmentMetrics(pluginData.clinicId, pluginData.dateRange),
     ]);
 
+    const satisfactionData = satisfactionAnalytics.data as SatisfactionAnalyticsData;
+
     const patientData = {
       totalPatients: 150,
       newPatients: 25,
       returningPatients: 125,
-      patientSatisfaction: (satisfactionAnalytics.data as any)?.overallRating || 0,
-      satisfactionBreakdown: (satisfactionAnalytics.data as any)?.ratingDistribution || {},
-      feedbackCategories: (satisfactionAnalytics.data as any)?.feedbackCategories || {},
+      patientSatisfaction: satisfactionData?.overallRating ?? 0,
+      satisfactionBreakdown: satisfactionData?.ratingDistribution ?? {},
+      feedbackCategories: satisfactionData?.feedbackCategories ?? {},
       patientRetention: 85,
       averageAppointmentsPerPatient: 2.5,
       patientDemographics: {

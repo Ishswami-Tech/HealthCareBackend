@@ -376,8 +376,9 @@ export const CacheConditions = {
    * Only cache successful responses (2xx status codes)
    */
   onSuccess: (context: ExecutionContext, _result: unknown) => {
-    const response = context.switchToHttp().getResponse();
-    return response.statusCode >= 200 && response.statusCode < 300;
+    const response = context.switchToHttp().getResponse<{ statusCode?: number }>();
+    const statusCode = response.statusCode ?? 200;
+    return statusCode >= 200 && statusCode < 300;
   },
 
   /**

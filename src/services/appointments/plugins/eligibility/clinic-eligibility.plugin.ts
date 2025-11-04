@@ -3,6 +3,7 @@ import { BaseAppointmentPlugin } from '../base/base-plugin.service';
 import { AppointmentEligibilityService } from './appointment-eligibility.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import type { EligibilityCriteria } from '@core/types/appointment.types';
 
 @Injectable()
 export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
@@ -37,8 +38,13 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
-    const { operation, ...params } = data as any;
+    interface PluginData {
+      operation: string;
+      [key: string]: unknown;
+    }
+
+    const pluginData = data as PluginData;
+    const { operation, ...params } = pluginData;
 
     void this.loggingService.log(
       LogType.BUSINESS,
@@ -47,8 +53,8 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
       'ClinicEligibilityPlugin',
       {
         operation,
-        patientId: params.patientId,
-        clinicId: params.clinicId,
+        patientId: params['patientId'] as string,
+        clinicId: params['clinicId'] as string,
       }
     );
 
@@ -56,22 +62,24 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
       switch (operation) {
         case 'checkEligibility':
           return await this.eligibilityService.checkEligibility(
-            params.patientId,
-            params.appointmentType,
-            params.clinicId,
-            params.requestedDate
+            params['patientId'] as string,
+            params['appointmentType'] as string,
+            params['clinicId'] as string,
+            params['requestedDate'] as Date
           );
 
         case 'getEligibilityCriteria':
-          return await this.eligibilityService.getEligibilityCriteria(params.clinicId);
+          return await this.eligibilityService.getEligibilityCriteria(params['clinicId'] as string);
 
         case 'createEligibilityCriteria':
-          return await this.eligibilityService.createEligibilityCriteria(params.criteriaData);
+          return await this.eligibilityService.createEligibilityCriteria(
+            params['criteriaData'] as Omit<EligibilityCriteria, 'id' | 'createdAt' | 'updatedAt'>
+          );
 
         case 'getEligibilityHistory':
           return await this.eligibilityService.getEligibilityHistory(
-            params.patientId,
-            params.clinicId
+            params['patientId'] as string,
+            params['clinicId'] as string
           );
 
         case 'updateEligibilityCriteria':
@@ -100,37 +108,48 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
     }
   }
 
-  async validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
-    const { operation, ...params } = data as any;
+  validate(data: unknown): Promise<boolean> {
+    interface PluginData {
+      operation: string;
+      [key: string]: unknown;
+    }
+
+    const pluginData = data as PluginData;
+    const { operation, ...params } = pluginData;
 
     // Validate required parameters based on operation
     switch (operation) {
       case 'checkEligibility':
-        return !!(
-          params.patientId &&
-          params.appointmentType &&
-          params.clinicId &&
-          params.requestedDate
+        return Promise.resolve(
+          !!(
+            params['patientId'] &&
+            params['appointmentType'] &&
+            params['clinicId'] &&
+            params['requestedDate']
+          )
         );
 
       case 'getEligibilityCriteria':
-        return !!params.clinicId;
+        return Promise.resolve(!!params['clinicId']);
 
-      case 'createEligibilityCriteria':
-        return !!(params.criteriaData && params.criteriaData.name && params.criteriaData.clinicId);
+      case 'createEligibilityCriteria': {
+        const criteriaData = params['criteriaData'] as
+          | { name?: unknown; clinicId?: unknown }
+          | undefined;
+        return Promise.resolve(!!(criteriaData && criteriaData.name && criteriaData.clinicId));
+      }
 
       case 'getEligibilityHistory':
-        return !!(params.patientId && params.clinicId);
+        return Promise.resolve(!!(params['patientId'] && params['clinicId']));
 
       case 'updateEligibilityCriteria':
-        return !!(params.criteriaId && params.updateData);
+        return Promise.resolve(!!(params['criteriaId'] && params['updateData']));
 
       case 'deleteEligibilityCriteria':
-        return !!params.criteriaId;
+        return Promise.resolve(!!params['criteriaId']);
 
       default:
-        return false;
+        return Promise.resolve(false);
     }
   }
 

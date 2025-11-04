@@ -31,9 +31,6 @@ import { PaymentStatus, PaymentMethod, Language } from '@core/types';
 import type {
   AppointmentContext,
   AppointmentResult,
-  ConflictDetails,
-  AlternativeSlot,
-  AuditTrailEntry,
   AppointmentMetricsData,
 } from '@core/types/appointment.types';
 
@@ -50,6 +47,7 @@ import type {
   Doctor,
   Clinic,
 } from '@core/types/database.types';
+import type { AppointmentUpdateInput } from '@core/types/input.types';
 
 export type AppointmentData = Appointment;
 export type PatientData = Patient;
@@ -438,9 +436,11 @@ export class CoreAppointmentService {
         updateData['date'] =
           typeof updateDto.date === 'string' ? new Date(updateDto.date) : updateDto.date;
       }
+      // Cast to AppointmentUpdateInput - the Record<string, unknown> is compatible
+      // since AppointmentUpdateInput has all optional properties
       const updatedAppointment = (await this.databaseService.updateAppointmentSafe(
         appointmentId,
-        updateData as any
+        updateData as unknown as AppointmentUpdateInput
       )) as AppointmentData;
 
       // Cast for AppointmentResult compatibility
@@ -947,7 +947,7 @@ export class CoreAppointmentService {
   async getDoctorAvailability(
     doctorId: string,
     date: string,
-    context?: AppointmentContext
+    _context?: AppointmentContext
   ): Promise<unknown> {
     try {
       const _startDate = new Date(date);

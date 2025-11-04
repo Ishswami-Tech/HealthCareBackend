@@ -76,7 +76,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     await this.createEventIndices();
 
     // Initialize metrics
-    await this.resetMetrics();
+    this.resetMetrics();
 
     void this.loggingService.log(
       LogType.SYSTEM,
@@ -107,20 +107,24 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
   }
 
   private setupPerformanceMonitoring() {
-    this.performanceInterval = setInterval(async () => {
-      await this.collectPerformanceMetrics();
+    this.performanceInterval = setInterval(() => {
+      this.collectPerformanceMetrics();
     }, 30000); // Every 30 seconds
 
-    this.cleanupInterval = setInterval(async () => {
-      await this.cleanupExpiredEvents();
+    this.cleanupInterval = setInterval(() => {
+      void (async () => {
+        await this.cleanupExpiredEvents();
+      })();
     }, 300000); // Every 5 minutes
   }
 
   private setupEventBuffering() {
-    this.bufferFlushInterval = setInterval(async () => {
-      if (this.eventBuffer.length > 0) {
-        await this.flushEventBuffer();
-      }
+    this.bufferFlushInterval = setInterval(() => {
+      void (async () => {
+        if (this.eventBuffer.length > 0) {
+          await this.flushEventBuffer();
+        }
+      })();
     }, 5000); // Flush buffer every 5 seconds
   }
 
@@ -416,9 +420,10 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
         try {
           const eventData = await this.redisService.get(`event:${eventId}`);
           if (eventData) {
-            events.push(JSON.parse(eventData));
+            const parsedEvent = JSON.parse(eventData) as EnterpriseEventPayload;
+            events.push(parsedEvent);
           }
-        } catch (error) {
+        } catch (_error) {
           // Skip corrupted events
           continue;
         }
@@ -540,7 +545,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     return ttls[priority] || 7200;
   }
 
-  private handleEventFailure(error: unknown) {
+  private handleEventFailure(_error: unknown) {
     this.failedEvents++;
     this.failureCount++;
     this.lastFailureTime = Date.now();
@@ -668,7 +673,7 @@ export class EnterpriseEventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async resetMetrics() {
+  private resetMetrics(): void {
     this.processedEvents = 0;
     this.failedEvents = 0;
     this.totalProcessingTime = 0;

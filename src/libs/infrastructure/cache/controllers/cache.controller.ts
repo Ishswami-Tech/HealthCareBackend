@@ -26,7 +26,6 @@ import {
   type CacheConfigUpdate,
   type BenchmarkResults,
   type CacheMetrics,
-  type CacheHealth,
   LogLevel,
   LogType,
 } from '@core/types';

@@ -9,7 +9,6 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type {
   ServiceInfo,
-  ServiceMetrics,
   DashboardLogEntry,
   LoggingServiceLogEntry,
   DashboardData,

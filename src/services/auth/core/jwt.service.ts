@@ -228,7 +228,15 @@ export class JwtAuthService {
       }
 
       // Verify with JWT service
-      const payload = await this.jwtService.verifyAsync(token);
+      // jwtService.verifyAsync returns unknown, we need to type assert it
+      const payloadRaw: unknown = await this.jwtService.verifyAsync(token);
+      const payload =
+        payloadRaw && typeof payloadRaw === 'object' && payloadRaw !== null
+          ? (payloadRaw as TokenPayload)
+          : null;
+      if (!payload) {
+        throw new Error('Invalid token payload');
+      }
 
       // Cache verified token
       await this.cacheTokenPayload(token, payload);

@@ -4,7 +4,6 @@ import { DatabaseService } from '@infrastructure/database';
 import { CreateUserDto, UpdateUserDto } from '@dtos/user.dto';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
-import { HealthcareDatabaseClient } from '../clients/healthcare-database.client';
 import { LogType, LogLevel } from '@core/types';
 import type { User, UserWithProfile, UserSearchOptions, UserBase } from '@core/types';
 // Type-safe Prisma operation helpers

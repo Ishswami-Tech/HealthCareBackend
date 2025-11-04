@@ -138,16 +138,30 @@ export class AppointmentEligibilityService {
         } as never);
       });
 
-      const criteriaList: EligibilityCriteria[] = criteria.map((criterion: any) => ({
-        id: criterion.id,
-        name: criterion.name,
-        description: criterion.description,
-        conditions: criterion.conditions,
-        isActive: criterion.isActive,
-        clinicId: criterion.clinicId,
-        createdAt: criterion.createdAt,
-        updatedAt: criterion.updatedAt,
-      }));
+      interface EligibilityCriteriaRow {
+        id: string;
+        name: string;
+        description: string;
+        conditions: unknown;
+        isActive: boolean;
+        clinicId: string;
+        createdAt: Date;
+        updatedAt: Date;
+      }
+
+      const criteriaList: EligibilityCriteria[] = criteria.map((criterion: unknown) => {
+        const row = criterion as EligibilityCriteriaRow;
+        return {
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          conditions: row.conditions as EligibilityCriteria['conditions'],
+          isActive: row.isActive,
+          clinicId: row.clinicId,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+      });
 
       await this.cacheService.set(cacheKey, criteriaList, this.ELIGIBILITY_CACHE_TTL);
       return criteriaList;
@@ -351,7 +365,7 @@ export class AppointmentEligibilityService {
   /**
    * Evaluate single criterion
    */
-  private async evaluateCriterion(
+  private evaluateCriterion(
     criterion: EligibilityCriteria,
     patient: unknown,
     appointmentType: string,
@@ -362,7 +376,15 @@ export class AppointmentEligibilityService {
     restrictions: string[];
     recommendations: string[];
   }> {
-    const patientData = patient as any;
+    // Define interface for patient data structure
+    interface PatientData {
+      age?: number;
+      insuranceType?: string;
+      medicalHistory?: string[];
+      [key: string]: unknown;
+    }
+
+    const patientData = patient as PatientData;
     const result = {
       eligible: true,
       reasons: [] as string[],
@@ -373,7 +395,7 @@ export class AppointmentEligibilityService {
     const { conditions } = criterion;
 
     // Check age range
-    if (conditions.ageRange) {
+    if (conditions.ageRange && patientData.age !== undefined) {
       if (patientData.age < conditions.ageRange.min || patientData.age > conditions.ageRange.max) {
         result.eligible = false;
         result.reasons.push(
@@ -383,7 +405,11 @@ export class AppointmentEligibilityService {
     }
 
     // Check insurance type
-    if (conditions.insuranceTypes && conditions.insuranceTypes.length > 0) {
+    if (
+      conditions.insuranceTypes &&
+      conditions.insuranceTypes.length > 0 &&
+      patientData.insuranceType
+    ) {
       if (!conditions.insuranceTypes.includes(patientData.insuranceType)) {
         result.eligible = false;
         result.reasons.push(
@@ -422,9 +448,13 @@ export class AppointmentEligibilityService {
     }
 
     // Check medical history
-    if (conditions.medicalHistory && conditions.medicalHistory.length > 0) {
+    if (
+      conditions.medicalHistory &&
+      conditions.medicalHistory.length > 0 &&
+      patientData.medicalHistory
+    ) {
       const hasRequiredHistory = conditions.medicalHistory.some(condition =>
-        patientData.medicalHistory.includes(condition)
+        patientData.medicalHistory?.includes(condition)
       );
 
       if (!hasRequiredHistory) {
@@ -433,7 +463,7 @@ export class AppointmentEligibilityService {
       }
     }
 
-    return result;
+    return Promise.resolve(result);
   }
 
   /**
@@ -469,15 +499,28 @@ export class AppointmentEligibilityService {
         } as never);
       });
 
-      const historyList: EligibilityCheck[] = history.map((check: any) => ({
-        patientId: check.patientId,
-        appointmentType: check.appointmentType,
-        clinicId: check.clinicId,
-        requestedDate: check.requestedDate,
-        criteria: check.criteria,
-        result: check.result,
-        checkedAt: check.checkedAt,
-      }));
+      interface EligibilityCheckRow {
+        patientId: string;
+        appointmentType: string;
+        clinicId: string;
+        requestedDate: Date;
+        criteria: EligibilityCriteria[];
+        result: EligibilityCheck['result'];
+        checkedAt: Date;
+      }
+
+      const historyList: EligibilityCheck[] = history.map((check: unknown) => {
+        const row = check as EligibilityCheckRow;
+        return {
+          patientId: row.patientId,
+          appointmentType: row.appointmentType,
+          clinicId: row.clinicId,
+          requestedDate: row.requestedDate,
+          criteria: row.criteria,
+          result: row.result,
+          checkedAt: row.checkedAt,
+        };
+      });
 
       await this.cacheService.set(cacheKey, historyList, this.ELIGIBILITY_CACHE_TTL);
       return historyList;
@@ -502,7 +545,7 @@ export class AppointmentEligibilityService {
    */
   private async invalidateEligibilityCache(clinicId: string): Promise<void> {
     try {
-      const pattern = `eligibility_criteria:${clinicId}*`;
+      const _pattern = `eligibility_criteria:${clinicId}*`;
       // This is a simplified implementation - in production you'd want to use Redis SCAN
       await this.loggingService.log(
         LogType.SYSTEM,

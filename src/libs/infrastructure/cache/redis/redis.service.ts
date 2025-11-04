@@ -121,8 +121,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   private initializeClient(): void {
     try {
-      const redisHost = this.configService.get('redis.host') || 'redis';
-      const redisPort = this.configService.get('redis.port') || 6379;
+      const redisHost = this.configService.get<string>('redis.host') || 'redis';
+      const redisPort = this.configService.get<number>('redis.port') || 6379;
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -856,8 +856,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         Array.isArray(results) &&
         results[2] &&
         Array.isArray(results[2]) &&
-        results[2][1]
-          ? parseInt(String(results[2][1]), 10)
+        results[2][1] !== undefined &&
+        results[2][1] !== null
+          ? parseInt(
+              typeof results[2][1] === 'string' || typeof results[2][1] === 'number'
+                ? String(results[2][1])
+                : '0',
+              10
+            )
           : 0;
 
       // Check against burst limit if specified, otherwise normal limit
@@ -1214,7 +1220,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Use pipelining to reduce round-trips to Redis
-      const [isRevalidating, cachedData, remainingTtlRaw] = await this.retryOperation(async () => {
+      const pipelineResults = await this.retryOperation(async () => {
         const pipeline = this.client.pipeline();
         pipeline.get(revalidationKey);
         pipeline.get(key);
@@ -1222,6 +1228,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         const results = await pipeline.exec();
         return results?.map(result => result[1]) || [];
       });
+      const isRevalidating = pipelineResults[0] as string | null | undefined;
+      const cachedData = pipelineResults[1] as string | null | undefined;
+      const remainingTtlRaw = pipelineResults[2] as number | null | undefined;
 
       // Convert TTL to number
       const remainingTtl = typeof remainingTtlRaw === 'number' ? remainingTtlRaw : 0;
@@ -1312,9 +1321,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Return cached data immediately
-      return compress
-        ? await this.getDecompressed<T>(cachedData as string)
-        : JSON.parse(cachedData as string);
+      return compress ? await this.getDecompressed<T>(cachedData) : (JSON.parse(cachedData) as T);
     } catch (_error) {
       void this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Cache error', 'RedisService', {
         key,
@@ -1705,7 +1712,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    */
   private getDecompressed<T>(data: string): T {
     if (!data.startsWith('compressed:')) {
-      return JSON.parse(data);
+      return JSON.parse(data) as T;
     }
 
     try {
@@ -1714,7 +1721,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const decompressed = Buffer.from(data, 'base64').toString();
       const jsonString = decompressed.substring('compressed:'.length);
 
-      return JSON.parse(jsonString);
+      return JSON.parse(jsonString) as T;
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -1727,7 +1734,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       );
       // Attempt to parse as if it wasn't compressed
-      return JSON.parse(data);
+      return JSON.parse(data) as T;
     }
   }
 
@@ -1787,7 +1794,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (cachedData) {
       await this.incrementCacheStats('hits');
       try {
-        return JSON.parse(cachedData);
+        return JSON.parse(cachedData) as T;
       } catch (_error) {
         void this.loggingService.log(
           LogType.CACHE,

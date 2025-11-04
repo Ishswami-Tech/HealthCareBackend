@@ -124,12 +124,12 @@ import { SocketModule } from '@communication/socket/socket.module';
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         redis: {
-          host: configService.get('REDIS_HOST', 'localhost'),
-          port: configService.get('REDIS_PORT', 6379),
-          ...(configService.get('REDIS_PASSWORD') && {
-            password: configService.get('REDIS_PASSWORD'),
+          host: configService.get<string>('REDIS_HOST') || 'localhost',
+          port: configService.get<number>('REDIS_PORT') || 6379,
+          ...(configService.get<string>('REDIS_PASSWORD') && {
+            password: configService.get<string>('REDIS_PASSWORD') as string,
           }),
-          db: configService.get('REDIS_DB', 0),
+          db: configService.get<number>('REDIS_DB') || 0,
         },
         defaultJobOptions: {
           removeOnComplete: 1000,

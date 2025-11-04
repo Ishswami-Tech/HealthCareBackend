@@ -20,16 +20,12 @@ import { LoggingService } from '@infrastructure/logging';
 import { PluginError, PluginTimeoutError } from './plugin.interface';
 import { EnterprisePluginRegistry } from './plugin.registry';
 import type {
-  BasePlugin,
   PluginManager,
-  PluginContext,
-  PluginHealth,
-  PluginConfig,
-  PluginMetrics,
-  PluginInfo,
   PluginOperationResult,
   EnterprisePluginMetrics,
   PluginHealthStatus,
+  PluginContext,
+  PluginHealth,
 } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
 
@@ -108,15 +104,17 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       // Logging failure in initialization - use void to mark as intentionally ignored
       // This is a bootstrap scenario where LoggingService might not be fully available
       const errorMessage = error instanceof Error ? error.message : String(error);
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to initialize plugin manager: ${errorMessage}`,
-        'EnterprisePluginManager',
-        { error: errorMessage }
-      ).catch(() => {
-        // Silent fail - LoggingService unavailable during bootstrap
-      });
+      void this.loggingService
+        .log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Failed to initialize plugin manager: ${errorMessage}`,
+          'EnterprisePluginManager',
+          { error: errorMessage }
+        )
+        .catch(() => {
+          // Silent fail - LoggingService unavailable during bootstrap
+        });
     }
   }
 
@@ -143,15 +141,17 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       // Logging failure in destruction - use void to mark as intentionally ignored
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to destroy plugin manager: ${errorMessage}`,
-        'EnterprisePluginManager',
-        { error: errorMessage }
-      ).catch(() => {
-        // Silent fail - LoggingService unavailable during shutdown
-      });
+      void this.loggingService
+        .log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Failed to destroy plugin manager: ${errorMessage}`,
+          'EnterprisePluginManager',
+          { error: errorMessage }
+        )
+        .catch(() => {
+          // Silent fail - LoggingService unavailable during shutdown
+        });
     }
   }
 
@@ -165,9 +165,11 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
 
     try {
       const plugins = this.registry.getAllPlugins();
-      const initPromises = plugins.map(async (plugin) => {
+      // Capture context in const to ensure type safety
+      const pluginContext: PluginContext = context;
+      const initPromises = plugins.map(async plugin => {
         try {
-          await plugin.initialize(context);
+          await plugin.initialize(pluginContext);
           this.initializePluginMetrics(plugin.name);
 
           await this.loggingService.log(
@@ -331,8 +333,8 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
 
     try {
       // Execute all plugins in parallel
-      const executionPromises = plugins.map((plugin) =>
-        this.executePlugin(plugin.name, operation, data).catch((error) => {
+      const executionPromises = plugins.map(plugin =>
+        this.executePlugin(plugin.name, operation, data).catch(error => {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
             error: errorMessage,
@@ -356,7 +358,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
         }
       );
 
-      return results.map((result) => {
+      return results.map(result => {
         if (result.status === 'fulfilled') {
           return result.value;
         }
@@ -395,9 +397,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
    * @param pluginName - Optional plugin name, if not provided returns all plugin health statuses
    * @returns Plugin health status or map of all plugin health statuses
    */
-  async getPluginHealth(
-    pluginName?: string
-  ): Promise<PluginHealth | Record<string, PluginHealth>> {
+  async getPluginHealth(pluginName?: string): Promise<PluginHealth | Record<string, PluginHealth>> {
     if (pluginName) {
       const plugin = this.registry.getPlugin(pluginName);
       if (!plugin) {
@@ -409,24 +409,26 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
         );
       }
 
-      return await plugin.getHealth();
+      const health: PluginHealth = await plugin.getHealth();
+      return health;
     }
 
     // Return all plugin health statuses
     const plugins = this.registry.getAllPlugins();
     const healthMap: Record<string, PluginHealth> = {};
 
-    const healthPromises = plugins.map(async (plugin) => {
+    const healthPromises = plugins.map(async plugin => {
       try {
-        const health = await plugin.getHealth();
+        const health: PluginHealth = await plugin.getHealth();
         healthMap[plugin.name] = health;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        healthMap[plugin.name] = {
+        const errorHealth: PluginHealth = {
           isHealthy: false,
           lastCheck: new Date(),
           errors: [errorMessage],
         };
+        healthMap[plugin.name] = errorHealth;
       }
     });
 
@@ -443,8 +445,8 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
 
     try {
       const plugins = this.registry.getAllPlugins();
-      const destroyPromises = plugins.map((plugin) =>
-        plugin.destroy().catch((error) => {
+      const destroyPromises = plugins.map(plugin =>
+        plugin.destroy().catch(error => {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return this.loggingService.log(
             LogType.ERROR,
@@ -496,7 +498,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
     feature: string,
     operation: string,
     data: unknown,
-    context?: PluginContext
+    _context?: unknown
   ): Promise<PluginOperationResult> {
     const startTime = Date.now();
     const pluginName = `${domain}.${feature}`;
@@ -547,17 +549,21 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
    * @param pluginName - Optional plugin name
    * @returns Plugin metrics or map of all plugin metrics
    */
-  getPluginMetrics(pluginName?: string): EnterprisePluginMetrics | Record<string, EnterprisePluginMetrics> {
+  getPluginMetrics(
+    pluginName?: string
+  ): EnterprisePluginMetrics | Record<string, EnterprisePluginMetrics> {
     if (pluginName) {
       const metrics = this.pluginMetrics.get(pluginName);
-      return metrics ? { ...metrics } : {
-        totalOperations: 0,
-        successfulOperations: 0,
-        failedOperations: 0,
-        totalExecutionTime: 0,
-        averageExecutionTime: 0,
-        lastOperation: null,
-      };
+      return metrics
+        ? { ...metrics }
+        : {
+            totalOperations: 0,
+            successfulOperations: 0,
+            failedOperations: 0,
+            totalExecutionTime: 0,
+            averageExecutionTime: 0,
+            lastOperation: null,
+          };
     }
 
     // Convert mutable to readonly for return
@@ -575,7 +581,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
    */
   getPluginHealthStatus(): PluginHealthStatus[] {
     // Convert mutable to readonly for return
-    return Array.from(this.pluginHealthStatus.values()).map((status) => ({ ...status }));
+    return Array.from(this.pluginHealthStatus.values()).map(status => ({ ...status }));
   }
 
   /**
@@ -592,7 +598,11 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
    *
    * @private
    */
-  private createTimeoutPromise(pluginName: string, operation: string, timeout: number): Promise<never> {
+  private createTimeoutPromise(
+    pluginName: string,
+    operation: string,
+    timeout: number
+  ): Promise<never> {
     return new Promise((_, reject) => {
       setTimeout(() => {
         reject(new PluginTimeoutError(pluginName, operation, timeout));
@@ -739,4 +749,3 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
     }
   }
 }
-

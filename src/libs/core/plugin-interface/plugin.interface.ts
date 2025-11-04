@@ -134,4 +134,3 @@ export class PluginValidationError extends PluginError {
     this.name = 'PluginValidationError';
   }
 }
-

@@ -132,19 +132,43 @@ export class AppointmentWaitlistService {
         }
       );
 
-      const waitlistEntries: WaitlistEntry[] = waitlistEntriesFromDb.map((entry: unknown) => ({
-        id: (entry as any).id,
-        patientId: (entry as any).patientId,
-        doctorId: (entry as any).doctorId,
-        clinicId: (entry as any).clinicId,
-        preferredDate: (entry as any).requestedDate,
-        preferredTime: '10:00', // Default time, could be stored in database
-        priority: (entry as any).priority === 1 ? 'high' : 'normal',
-        reason: (entry as any).notes || 'No reason provided',
-        status: (entry as any).status,
-        createdAt: (entry as any).createdAt,
-        updatedAt: (entry as any).updatedAt,
-      }));
+      interface WaitlistEntryRow {
+        id: string;
+        patientId: string;
+        doctorId: string;
+        clinicId: string;
+        requestedDate: Date;
+        priority: number;
+        notes?: string | null;
+        status: string;
+        createdAt: Date;
+        updatedAt: Date;
+      }
+
+      const waitlistEntries: WaitlistEntry[] = waitlistEntriesFromDb.map((entry: unknown) => {
+        const row = entry as WaitlistEntryRow;
+        const statusValue = row.status;
+        const validStatus: 'waiting' | 'notified' | 'scheduled' | 'cancelled' =
+          statusValue === 'waiting' ||
+          statusValue === 'notified' ||
+          statusValue === 'scheduled' ||
+          statusValue === 'cancelled'
+            ? statusValue
+            : 'waiting';
+        return {
+          id: row.id,
+          patientId: row.patientId,
+          doctorId: row.doctorId,
+          clinicId: row.clinicId,
+          preferredDate: row.requestedDate,
+          preferredTime: '10:00', // Default time, could be stored in database
+          priority: row.priority === 1 ? 'high' : 'normal',
+          reason: row.notes || 'No reason provided',
+          status: validStatus,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+      });
 
       await this.cacheService.set(cacheKey, waitlistEntries, this.WAITLIST_CACHE_TTL);
       return waitlistEntries;
@@ -308,14 +332,21 @@ export class AppointmentWaitlistService {
       // Check if the requested time is within working hours
       if (time && location?.workingHours) {
         const requestedHour = parseInt(time.split(':')[0] || '0');
-        const workingHours = (typeof location.workingHours === 'string'
-          ? JSON.parse(location.workingHours)
-          : location.workingHours) || {
-          start: '09:00',
-          end: '17:00',
-        };
-        const startHour = parseInt(workingHours.start.split(':')[0]);
-        const endHour = parseInt(workingHours.end.split(':')[0]);
+        const workingHoursObj: unknown =
+          typeof location.workingHours === 'string'
+            ? JSON.parse(location.workingHours)
+            : location.workingHours;
+        const defaultWorkingHours = { start: '09:00', end: '17:00' };
+        const workingHoursRaw =
+          workingHoursObj &&
+          typeof workingHoursObj === 'object' &&
+          'start' in workingHoursObj &&
+          'end' in workingHoursObj
+            ? (workingHoursObj as { start: string; end: string })
+            : defaultWorkingHours;
+        const workingHours = workingHoursRaw;
+        const startHour = parseInt(workingHours.start.split(':')[0] || '0');
+        const endHour = parseInt(workingHours.end.split(':')[0] || '0');
 
         if (requestedHour < startHour || requestedHour >= endHour) {
           return false;

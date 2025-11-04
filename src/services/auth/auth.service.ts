@@ -22,20 +22,10 @@ import {
   RequestOtpDto,
   VerifyOtpRequestDto,
 } from '@dtos/auth.dto';
-import { Role } from '@core/types/enums.types';
-import type { Gender } from '@dtos/user.dto';
 import type { AuthTokens, TokenPayload, UserProfile } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
-import type { UserCreateInput, UserUpdateInput, UserWhereInput } from '@core/types/input.types';
-import type { UserWithPassword, UserCreateData } from '@core/types/user.types';
-// UserWithPassword and UserCreateData types are handled internally by DatabaseService
-// No direct import needed as they're part of database operations
-// UserWhereInput, UserCreateInput, UserUpdateInput are Prisma-specific input types
-// These are used internally via DatabaseService.executeHealthcareRead/Write
-// No direct import needed as they're handled by DatabaseService methods
-// Types should be imported from @types, but UserCreateInput, UserUpdateInput, UserWhereInput
-// are Prisma-specific input types. These will need to be accessed via databaseService methods
-// For now, keeping direct Prisma access for input types only (temporary until we create DTOs)
+import type { UserWhereInput, UserCreateInput, UserUpdateInput } from '@core/types/input.types';
+import type { UserWithPassword } from '@core/types/user.types';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 

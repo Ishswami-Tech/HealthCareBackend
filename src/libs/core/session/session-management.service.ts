@@ -654,25 +654,29 @@ export class SessionManagementService implements OnModuleInit {
   private setupCleanupJobs(): void {
     // Cleanup expired sessions every hour
     setInterval(
-      async () => {
-        await this.cleanupExpiredSessions();
+      () => {
+        void (async () => {
+          await this.cleanupExpiredSessions();
+        })();
       },
       60 * 60 * 1000
     );
 
     // Check for suspicious sessions every 30 minutes
     setInterval(
-      async () => {
-        const { suspicious } = await this.detectSuspiciousSessions();
-        if (suspicious.length > 0) {
-          await this.loggingService.log(
-            LogType.SECURITY,
-            LogLevel.WARN,
-            `Detected ${suspicious.length} suspicious sessions`,
-            'SessionManagementService',
-            { suspiciousCount: suspicious.length }
-          );
-        }
+      () => {
+        void (async () => {
+          const { suspicious } = await this.detectSuspiciousSessions();
+          if (suspicious.length > 0) {
+            await this.loggingService.log(
+              LogType.SECURITY,
+              LogLevel.WARN,
+              `Detected ${suspicious.length} suspicious sessions`,
+              'SessionManagementService',
+              { suspiciousCount: suspicious.length }
+            );
+          }
+        })();
       },
       30 * 60 * 1000
     );

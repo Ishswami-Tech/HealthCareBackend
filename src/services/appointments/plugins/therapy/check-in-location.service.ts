@@ -108,7 +108,7 @@ export class CheckInLocationService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as CheckInLocation[];
       }
 
       // Use executeHealthcareRead for optimized query with caching
@@ -176,7 +176,7 @@ export class CheckInLocationService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as CheckInLocation;
       }
 
       // Use executeHealthcareRead for optimized query
@@ -658,7 +658,15 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      const whereClause: any = { locationId };
+      interface WhereClause {
+        locationId: string;
+        checkedInAt?: {
+          gte: Date;
+          lte: Date;
+        };
+      }
+
+      const whereClause: WhereClause = { locationId };
 
       if (startDate && endDate) {
         whereClause.checkedInAt = {
@@ -745,7 +753,15 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      const whereClause: any = { locationId };
+      interface StatsWhereClause {
+        locationId: string;
+        checkedInAt?: {
+          gte: Date;
+          lte: Date;
+        };
+      }
+
+      const whereClause: StatsWhereClause = { locationId };
 
       if (date) {
         const startOfDay = new Date(date);

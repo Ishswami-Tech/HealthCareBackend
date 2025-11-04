@@ -63,33 +63,33 @@ import type { AppointmentWithRelations } from '@core/types/database.types';
  *
  * Plugin System - Hybrid Approach (Optimized for 10M+ Users):
  * ============================================================
- * 
+ *
  * HOT-PATH PLUGINS (Direct Injection):
  * - ClinicQueuePlugin: Queue operations (very frequent)
  * - ClinicCheckInPlugin: Check-in operations (very frequent)
  * - ClinicNotificationPlugin: Notifications (every appointment action)
  * - ClinicConfirmationPlugin: Confirmations (common)
  * - ClinicLocationPlugin: Location queries (moderate frequency)
- * 
+ *
  * Performance Benefits:
  * - Direct injection eliminates registry lookup overhead (~0.1ms per call)
  * - Full TypeScript type safety with IDE autocomplete
  * - Zero overhead for hot-path operations
  * - Critical for 10M+ concurrent users - handles 80% of traffic
- * 
+ *
  * REGISTRY-BASED PLUGINS (Less Frequent):
  * - ClinicAnalyticsPlugin: Analytics (batch/background jobs)
  * - ClinicReminderPlugin: Reminders (scheduled jobs)
  * - ClinicVideoPlugin: Video consultations (medium-low frequency)
  * - ClinicPaymentPlugin: Payment processing (only when needed)
  * - Others: Lower frequency operations
- * 
+ *
  * Registry Benefits:
  * - Cross-service plugin discovery
  * - Dynamic plugin loading
  * - Feature flags and conditional plugins
  * - Health monitoring and metrics
- * 
+ *
  * All plugins are automatically registered via AppointmentPluginInitializer
  * on module startup, ensuring both direct and registry access work seamlessly.
  */
@@ -115,11 +115,11 @@ export class AppointmentsService {
     // Performance: Direct access eliminates registry lookup overhead (~0.1ms saved per call)
     // Type Safety: Full TypeScript support with IDE autocomplete
     // Scale: Critical for 10M+ concurrent users - these plugins handle 80% of traffic
-    private readonly clinicQueuePlugin: ClinicQueuePlugin,           // Hot path: Queue operations (very frequent)
-    private readonly clinicCheckInPlugin: ClinicCheckInPlugin,       // Hot path: Check-in operations (very frequent)
+    private readonly clinicQueuePlugin: ClinicQueuePlugin, // Hot path: Queue operations (very frequent)
+    private readonly clinicCheckInPlugin: ClinicCheckInPlugin, // Hot path: Check-in operations (very frequent)
     private readonly clinicNotificationPlugin: ClinicNotificationPlugin, // Hot path: Notifications (every appointment action)
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin, // Hot path: Confirmations (common)
-    private readonly clinicLocationPlugin: ClinicLocationPlugin,     // Medium: Location queries (moderate frequency)
+    private readonly clinicLocationPlugin: ClinicLocationPlugin, // Medium: Location queries (moderate frequency)
 
     // Infrastructure Services
     private readonly loggingService: LoggingService,
@@ -230,7 +230,10 @@ export class AppointmentsService {
           'AppointmentsService.createAppointment',
           {
             appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
-            error: notificationError instanceof Error ? notificationError.message : String(notificationError),
+            error:
+              notificationError instanceof Error
+                ? notificationError.message
+                : String(notificationError),
           }
         );
       }
@@ -361,7 +364,10 @@ export class AppointmentsService {
           'AppointmentsService.updateAppointment',
           {
             appointmentId,
-            error: notificationError instanceof Error ? notificationError.message : String(notificationError),
+            error:
+              notificationError instanceof Error
+                ? notificationError.message
+                : String(notificationError),
           }
         );
       }
@@ -442,7 +448,10 @@ export class AppointmentsService {
           'AppointmentsService.cancelAppointment',
           {
             appointmentId,
-            error: notificationError instanceof Error ? notificationError.message : String(notificationError),
+            error:
+              notificationError instanceof Error
+                ? notificationError.message
+                : String(notificationError),
           }
         );
       }
@@ -485,7 +494,7 @@ export class AppointmentsService {
 
   /**
    * Process appointment check-in through plugins
-   * 
+   *
    * Performance: Uses direct plugin injection for hot-path optimization (10M+ users scale)
    * Direct injection eliminates registry lookup overhead (~0.1ms per call)
    */
@@ -493,7 +502,7 @@ export class AppointmentsService {
     checkInDto: ProcessCheckInDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    _role: string = 'USER'
   ): Promise<unknown> {
     try {
       // Hot path: Direct plugin injection for performance (10M+ users scale)
@@ -544,7 +553,7 @@ export class AppointmentsService {
 
   /**
    * Complete appointment through plugins
-   * 
+   *
    * Performance: Uses direct plugin injection for hot-path optimization (10M+ users scale)
    */
   async completeAppointment(
@@ -552,7 +561,7 @@ export class AppointmentsService {
     completeDto: CompleteAppointmentDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    _role: string = 'USER'
   ): Promise<unknown> {
     try {
       // Hot path: Direct plugin injection for performance
@@ -606,7 +615,7 @@ export class AppointmentsService {
 
   /**
    * Start consultation through plugins
-   * 
+   *
    * Performance: Uses direct plugin injection for hot-path optimization (10M+ users scale)
    */
   async startConsultation(
@@ -614,7 +623,7 @@ export class AppointmentsService {
     startDto: StartConsultationDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    _role: string = 'USER'
   ): Promise<unknown> {
     try {
       // Hot path: Direct plugin injection for performance
@@ -665,7 +674,7 @@ export class AppointmentsService {
 
   /**
    * Get queue information through plugins
-   * 
+   *
    * Performance: Uses direct plugin injection for hot-path optimization (10M+ users scale)
    * Queue operations are extremely frequent in high-traffic scenarios
    */
@@ -674,7 +683,7 @@ export class AppointmentsService {
     date: string,
     clinicId: string,
     userId: string,
-    role: string = 'USER'
+    _role: string = 'USER'
   ): Promise<unknown> {
     try {
       // Hot path: Direct plugin injection for performance (very frequent operation)
@@ -714,14 +723,14 @@ export class AppointmentsService {
 
   /**
    * Get location information through plugins
-   * 
+   *
    * Performance: Uses direct plugin injection for medium-frequency operations
    */
   async getLocationInfo(
     locationId: string,
     clinicId: string,
     userId: string,
-    role: string = 'USER'
+    _role: string = 'USER'
   ): Promise<unknown> {
     try {
       // Medium frequency: Direct plugin injection for performance
@@ -880,13 +889,13 @@ export class AppointmentsService {
 
   /**
    * Execute plugin operation (Registry-based)
-   * 
+   *
    * Use this for:
    * - Less frequent plugins (analytics, reminders, video, etc.)
    * - Cross-service plugin discovery
    * - Dynamic plugin loading
    * - Feature flags and conditional plugins
-   * 
+   *
    * For hot-path plugins, use direct injection instead for better performance.
    */
   async executePluginOperation(
@@ -914,7 +923,7 @@ export class AppointmentsService {
     date: string,
     clinicId: string,
     userId: string,
-    role: string = 'USER'
+    _role: string = 'USER'
   ): Promise<unknown> {
     const cacheKey = `appointments:availability:${doctorId}:${date}`;
 

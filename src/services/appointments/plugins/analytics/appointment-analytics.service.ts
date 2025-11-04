@@ -140,7 +140,7 @@ export class AppointmentAnalyticsService {
       const patientSatisfaction = 0; // Patient satisfaction would need to come from a separate Review/Feedback table
 
       const noShowCount = statusMap['NO_SHOW'] || 0;
-      const cancelledCount = statusMap['CANCELLED'] || 0;
+      const _cancelledCount = statusMap['CANCELLED'] || 0;
       const completedCount = statusMap['COMPLETED'] || 0;
       const noShowRate = totalAppointments > 0 ? (noShowCount / totalAppointments) * 100 : 0;
       const completionRate = totalAppointments > 0 ? (completedCount / totalAppointments) * 100 : 0;
@@ -590,11 +590,7 @@ export class AppointmentAnalyticsService {
   /**
    * Generate report summary
    */
-  private generateReportSummary(
-    appointmentMetrics: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    clinicMetrics: unknown
-  ): unknown {
+  private generateReportSummary(appointmentMetrics: unknown, _clinicMetrics: unknown): unknown {
     return {
       keyInsights: [
         `Total appointments: ${(appointmentMetrics as { totalAppointments: number }).totalAppointments}`,

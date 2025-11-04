@@ -68,7 +68,7 @@ export class ClinicService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic created: ${clinic.id}`,
@@ -78,7 +78,7 @@ export class ClinicService {
 
       return clinic as ClinicResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create clinic: ${(error as Error).message}`,
@@ -122,7 +122,7 @@ export class ClinicService {
 
       return clinic as ClinicResponseDto | null;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic by subdomain: ${(error as Error).message}`,
@@ -163,7 +163,7 @@ export class ClinicService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic updated: ${clinic.id}`,
@@ -173,7 +173,7 @@ export class ClinicService {
 
       return clinic as ClinicResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update clinic: ${(error as Error).message}`,
@@ -197,7 +197,7 @@ export class ClinicService {
 
       return count;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic count: ${(error as Error).message}`,
@@ -237,7 +237,7 @@ export class ClinicService {
         totalAppointments,
       };
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic stats: ${(error as Error).message}`,
@@ -264,7 +264,7 @@ export class ClinicService {
       });
       return clinics as ClinicResponseDto[];
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinics: ${(error as Error).message}`,
@@ -293,7 +293,7 @@ export class ClinicService {
       if (!clinic) throw new Error('Clinic not found');
       return clinic as ClinicResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic: ${(error as Error).message}`,
@@ -321,7 +321,7 @@ export class ClinicService {
           details: { clinicId: id },
         }
       );
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic deleted: ${id}`,
@@ -329,7 +329,7 @@ export class ClinicService {
         { clinicId: id }
       );
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete clinic: ${(error as Error).message}`,
@@ -357,7 +357,7 @@ export class ClinicService {
       if (!clinic) throw new Error('Clinic not found');
       return clinic as ClinicResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic by app name: ${(error as Error).message}`,
@@ -383,7 +383,7 @@ export class ClinicService {
       });
       return doctors;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic doctors: ${(error as Error).message}`,
@@ -420,7 +420,7 @@ export class ClinicService {
       });
       return patients;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic patients: ${(error as Error).message}`,
@@ -441,7 +441,7 @@ export class ClinicService {
       });
       return locations;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get active locations: ${(error as Error).message}`,
@@ -483,7 +483,7 @@ export class ClinicService {
       );
       return admin;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to assign clinic admin: ${(error as Error).message}`,
@@ -524,7 +524,7 @@ export class ClinicService {
       );
       return patient;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to register patient to clinic: ${(error as Error).message}`,
@@ -562,7 +562,7 @@ export class ClinicService {
         associated: true,
       };
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to associate user with clinic: ${(error as Error).message}`,
@@ -595,7 +595,7 @@ export class ClinicService {
 
       return await this.getClinicById(userRole.clinicId);
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get current user clinic: ${(error as Error).message}`,

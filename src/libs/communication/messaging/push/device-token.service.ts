@@ -66,7 +66,7 @@ export class DeviceTokenService {
    * @param tokenData - Device token data to register
    * @returns True if registration was successful
    */
-  async registerDeviceToken(tokenData: DeviceTokenData): Promise<boolean> {
+  registerDeviceToken(tokenData: DeviceTokenData): Promise<boolean> {
     try {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -115,7 +115,7 @@ export class DeviceTokenService {
         }
       }
 
-      return true;
+      return Promise.resolve(true);
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -127,7 +127,7 @@ export class DeviceTokenService {
           userId: tokenData.userId,
         }
       );
-      return false;
+      return Promise.resolve(false);
     }
   }
 
@@ -138,7 +138,7 @@ export class DeviceTokenService {
    * @param updates - Optional additional updates to token data
    * @returns True if update was successful
    */
-  async updateDeviceToken(
+  updateDeviceToken(
     oldToken: string,
     newToken: string,
     updates?: Partial<DeviceTokenData>
@@ -155,7 +155,7 @@ export class DeviceTokenService {
             oldToken: this.maskToken(oldToken),
           }
         );
-        return false;
+        return Promise.resolve(false);
       }
 
       const updatedData: DeviceTokenData = {
@@ -205,7 +205,7 @@ export class DeviceTokenService {
         }
       );
 
-      return true;
+      return Promise.resolve(true);
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -218,7 +218,7 @@ export class DeviceTokenService {
           newToken: this.maskToken(newToken),
         }
       );
-      return false;
+      return Promise.resolve(false);
     }
   }
 
@@ -287,7 +287,7 @@ export class DeviceTokenService {
    * @param token - Device token to deactivate
    * @returns True if deactivation was successful
    */
-  async deactivateDeviceToken(token: string): Promise<boolean> {
+  deactivateDeviceToken(token: string): Promise<boolean> {
     try {
       const tokenData = this.tokenStore.get(token);
 
@@ -301,7 +301,7 @@ export class DeviceTokenService {
             token: this.maskToken(token),
           }
         );
-        return false;
+        return Promise.resolve(false);
       }
 
       tokenData.isActive = false;
@@ -343,7 +343,7 @@ export class DeviceTokenService {
         }
       );
 
-      return true;
+      return Promise.resolve(true);
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -355,7 +355,7 @@ export class DeviceTokenService {
           token: this.maskToken(token),
         }
       );
-      return false;
+      return Promise.resolve(false);
     }
   }
 

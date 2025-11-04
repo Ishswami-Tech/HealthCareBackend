@@ -2,8 +2,6 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { HealthcareError } from '@core/errors';
-import { ErrorCode } from '@core/errors/error-codes.enum';
 
 import type { AppointmentQueueStats } from '@core/types';
 import type {

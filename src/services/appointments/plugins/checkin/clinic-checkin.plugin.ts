@@ -1,6 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '../base/base-plugin.service';
 import { CheckInService } from './check-in.service';
+import type { CheckInData } from '@core/types/appointment.types';
+
+interface CheckInPluginData {
+  operation: string;
+  appointmentId?: string;
+  userId?: string;
+  clinicId?: string;
+  doctorId?: string;
+  appointmentOrder?: string[];
+  therapyType?: string;
+  checkInData?: CheckInData;
+}
 
 @Injectable()
 export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
@@ -13,7 +25,7 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = data as CheckInPluginData;
     this.logPluginAction('Processing clinic check-in operation', {
       operation: pluginData.operation,
     });
@@ -21,46 +33,73 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     // Delegate to existing check-in service - no functionality change
     switch (pluginData.operation) {
       case 'checkIn':
+        if (!pluginData.appointmentId || !pluginData.userId) {
+          throw new Error('Missing required fields for checkIn');
+        }
         return await this.checkInService.checkIn(pluginData.appointmentId, pluginData.userId);
 
       case 'getCheckedInAppointments':
+        if (!pluginData.clinicId) {
+          throw new Error('Missing required field clinicId for getCheckedInAppointments');
+        }
         return await this.checkInService.getCheckedInAppointments(pluginData.clinicId);
 
       case 'processCheckIn':
+        if (!pluginData.appointmentId || !pluginData.clinicId) {
+          throw new Error('Missing required fields for processCheckIn');
+        }
         return await this.checkInService.processCheckIn(
           pluginData.appointmentId,
           pluginData.clinicId
         );
 
       case 'getPatientQueuePosition':
+        if (!pluginData.appointmentId || !pluginData.clinicId) {
+          throw new Error('Missing required fields for getPatientQueuePosition');
+        }
         return await this.checkInService.getPatientQueuePosition(
           pluginData.appointmentId,
           pluginData.clinicId
         );
 
       case 'startConsultation':
+        if (!pluginData.appointmentId || !pluginData.clinicId) {
+          throw new Error('Missing required fields for startConsultation');
+        }
         return await this.checkInService.startConsultation(
           pluginData.appointmentId,
           pluginData.clinicId
         );
 
       case 'getDoctorActiveQueue':
+        if (!pluginData.doctorId || !pluginData.clinicId) {
+          throw new Error('Missing required fields for getDoctorActiveQueue');
+        }
         return await this.checkInService.getDoctorActiveQueue(
           pluginData.doctorId,
           pluginData.clinicId
         );
 
       case 'reorderQueue':
+        if (!pluginData.clinicId || !pluginData.appointmentOrder) {
+          throw new Error('Missing required fields for reorderQueue');
+        }
         return await this.checkInService.reorderQueue(
           pluginData.clinicId,
           pluginData.appointmentOrder
         );
 
       case 'getLocationQueue':
+        if (!pluginData.clinicId) {
+          throw new Error('Missing required field clinicId for getLocationQueue');
+        }
         return await this.checkInService.getLocationQueue(pluginData.clinicId);
 
       // NEW AYURVEDIC OPERATIONS
       case 'processAyurvedicCheckIn':
+        if (!pluginData.appointmentId || !pluginData.clinicId || !pluginData.checkInData) {
+          throw new Error('Missing required fields for processAyurvedicCheckIn');
+        }
         return await this.checkInService.processAyurvedicCheckIn(
           pluginData.appointmentId,
           pluginData.clinicId,
@@ -68,6 +107,9 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
         );
 
       case 'getTherapyQueue':
+        if (!pluginData.therapyType || !pluginData.clinicId) {
+          throw new Error('Missing required fields for getTherapyQueue');
+        }
         return await this.checkInService.getTherapyQueue(
           pluginData.therapyType,
           pluginData.clinicId
@@ -82,9 +124,9 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
   }
 
   validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
+    const pluginData = data as CheckInPluginData;
     // Validate that required fields are present for each operation
-    const requiredFields = {
+    const requiredFields: Record<string, string[]> = {
       checkIn: ['appointmentId', 'userId'],
       getCheckedInAppointments: ['clinicId'],
       processCheckIn: ['appointmentId', 'clinicId'],
@@ -99,14 +141,19 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     };
 
     const operation = pluginData.operation;
-    const fields = (requiredFields as any)[operation];
+    const fields = requiredFields[operation];
 
     if (!fields) {
       this.logPluginError('Invalid operation', { operation });
       return Promise.resolve(false);
     }
 
-    const isValid = fields.every((field: unknown) => pluginData[field as string] !== undefined);
+    const isValid = fields.every((field: unknown) => {
+      const fieldName = field as string;
+      return (
+        fieldName in pluginData && pluginData[fieldName as keyof CheckInPluginData] !== undefined
+      );
+    });
     if (!isValid) {
       this.logPluginError('Missing required fields', {
         operation,
@@ -114,6 +161,6 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       });
     }
 
-    return isValid;
+    return Promise.resolve(isValid);
   }
 }

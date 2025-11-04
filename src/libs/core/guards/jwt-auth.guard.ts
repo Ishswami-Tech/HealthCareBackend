@@ -14,12 +14,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
 import { JwtAuthService } from '@services/auth/core/jwt.service';
 import * as crypto from 'crypto';
-import type {
-  JwtGuardUser as User,
-  JwtRequestHeaders,
-  FastifyRequestWithUser,
-  JwtPayload,
-} from '@core/types/guard.types';
+import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types';
 import type { RedisSessionData as SessionData, LockoutStatus } from '@core/types/session.types';
 // Rate limiting service intentionally not injected here; rate limits enforced at gateway/middleware level
 
