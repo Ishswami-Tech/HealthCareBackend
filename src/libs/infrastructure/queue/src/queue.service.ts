@@ -48,7 +48,6 @@ import {
 import type {
   DetailedQueueMetrics,
   QueueHealthStatus,
-  QueueMetrics,
   JobData,
   QueueFilters,
   ClientSession,

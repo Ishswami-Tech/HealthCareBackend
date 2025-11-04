@@ -20,8 +20,6 @@ import { PluginError, PluginValidationError } from './plugin.interface';
 import type {
   BasePlugin,
   PluginRegistry,
-  PluginContext,
-  PluginHealth,
   PluginInfo,
   EnterprisePluginRegistry as IEnterprisePluginRegistry,
 } from '@core/types';
@@ -39,7 +37,9 @@ import { LogType, LogLevel } from '@core/types';
  * @description Generic plugin registry for all services
  */
 @Injectable()
-export class EnterprisePluginRegistry implements PluginRegistry, IEnterprisePluginRegistry, OnModuleInit, OnModuleDestroy {
+export class EnterprisePluginRegistry
+  implements PluginRegistry, IEnterprisePluginRegistry, OnModuleInit, OnModuleDestroy
+{
   private readonly plugins = new Map<string, BasePlugin>();
   private readonly pluginInfo = new Map<string, PluginInfo>();
   private readonly featureIndex = new Map<string, Set<string>>(); // feature -> Set<pluginName>
@@ -75,7 +75,7 @@ export class EnterprisePluginRegistry implements PluginRegistry, IEnterprisePlug
     try {
       // Destroy all plugins gracefully
       const destroyPromises = Array.from(this.plugins.values()).map(plugin => {
-        return plugin.destroy().catch((error) => {
+        return plugin.destroy().catch(error => {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return this.loggingService.log(
             LogType.ERROR,
@@ -120,11 +120,9 @@ export class EnterprisePluginRegistry implements PluginRegistry, IEnterprisePlug
     try {
       // Validate plugin
       if (!plugin.name || !plugin.version || !plugin.features) {
-        throw new PluginValidationError(
-          plugin.name || 'unknown',
-          'register',
-          ['Plugin must have name, version, and features']
-        );
+        throw new PluginValidationError(plugin.name || 'unknown', 'register', [
+          'Plugin must have name, version, and features',
+        ]);
       }
 
       // Check if plugin already exists
@@ -395,4 +393,3 @@ export class EnterprisePluginRegistry implements PluginRegistry, IEnterprisePlug
     return false;
   }
 }
-

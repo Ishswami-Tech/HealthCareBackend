@@ -431,4 +431,3 @@ export interface DomainHealthInfo {
   readonly plugins: number;
   readonly features: BasePlugin[];
 }
-

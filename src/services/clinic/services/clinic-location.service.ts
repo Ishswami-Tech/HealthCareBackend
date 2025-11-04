@@ -42,7 +42,7 @@ export class ClinicLocationService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic location created: ${clinicLocation.id}`,
@@ -52,7 +52,7 @@ export class ClinicLocationService {
 
       return clinicLocation as ClinicLocationResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create clinic location: ${(error as Error).message}`,
@@ -121,7 +121,7 @@ export class ClinicLocationService {
 
       return locations as ClinicLocationResponseDto[];
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get locations: ${(error as Error).message}`,
@@ -187,7 +187,7 @@ export class ClinicLocationService {
 
       return location as ClinicLocationResponseDto | null;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic location: ${(error as Error).message}`,
@@ -227,7 +227,7 @@ export class ClinicLocationService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic location updated: ${location.id}`,
@@ -237,7 +237,7 @@ export class ClinicLocationService {
 
       return location as ClinicLocationResponseDto;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update clinic location: ${(error as Error).message}`,
@@ -272,7 +272,7 @@ export class ClinicLocationService {
         }
       );
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic location deactivated: ${id}`,
@@ -280,7 +280,7 @@ export class ClinicLocationService {
         { locationId: id }
       );
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete clinic location: ${(error as Error).message}`,
@@ -305,7 +305,7 @@ export class ClinicLocationService {
 
       return count;
     } catch (error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location count: ${(error as Error).message}`,

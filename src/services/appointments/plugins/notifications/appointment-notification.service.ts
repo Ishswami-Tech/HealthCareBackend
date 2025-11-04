@@ -190,9 +190,9 @@ export class AppointmentNotificationService {
       // Get templates from database
       // Note: notificationTemplate model doesn't exist in Prisma schema
       // Using Notification model or returning mock templates for now
-      const templates = await this.databaseService.executeHealthcareRead(async client => {
+      const templates = await this.databaseService.executeHealthcareRead(_client => {
         // Return empty array or mock templates until notificationTemplate model is added
-        return [] as unknown[];
+        return Promise.resolve([] as unknown[]);
       });
 
       const templateList: NotificationTemplate[] = templates.map((template: unknown) => {
@@ -233,9 +233,6 @@ export class AppointmentNotificationService {
     notificationData: NotificationData,
     notificationId: string
   ): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { templateData, type } = notificationData;
-
     switch (channel) {
       case 'email':
         await this.sendEmailNotification(notificationData, notificationId);
@@ -384,7 +381,7 @@ export class AppointmentNotificationService {
     const { appointmentId, patientId, clinicId, type, templateData } = notificationData;
 
     // Send to patient's personal room
-    this.socketService.sendToUser(patientId, 'appointment_notification', {
+    void this.socketService.sendToUser(patientId, 'appointment_notification', {
       appointmentId,
       type,
       data: templateData,
@@ -392,7 +389,7 @@ export class AppointmentNotificationService {
     });
 
     // Send to clinic room for staff
-    this.socketService.sendToRoom(`clinic_${clinicId}`, 'appointment_update', {
+    void this.socketService.sendToRoom(`clinic_${clinicId}`, 'appointment_update', {
       appointmentId,
       patientId,
       type,

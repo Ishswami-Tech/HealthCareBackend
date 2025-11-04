@@ -4,7 +4,7 @@ import { DatabaseService } from '@infrastructure/database';
 import { EmailService } from '@communication/messaging/email/email.service';
 import { EmailTemplate } from '@core/types/common.types';
 import type { SocialAuthProvider, SocialUser, SocialAuthResult } from '@core/types/auth.types';
-import type { UserCreateInput, UserUpdateInput, UserWhereInput } from '@core/types/input.types';
+import type { UserCreateInput, UserUpdateInput } from '@core/types/input.types';
 
 @Injectable()
 export class SocialAuthService {

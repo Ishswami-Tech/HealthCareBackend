@@ -42,7 +42,6 @@ import { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { UpdateClinicDto } from './dto/update-clinic.dto';
 import { ClinicListResponseDto, AppNameInlineDto } from './dto/clinic-response.dto';
-import type { ClinicResponseDto } from '@core/types/clinic.types';
 import { Public } from '@core/decorators/public.decorator';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';

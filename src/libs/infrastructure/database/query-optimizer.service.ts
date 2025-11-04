@@ -60,7 +60,7 @@ export class HealthcareQueryOptimizerService {
    * @param context - Optional context about the query (execution time, type, etc.)
    * @returns Promise resolving to optimization recommendations and optimized query
    */
-  async optimizeQuery(
+  optimizeQuery(
     query: string,
     context?: {
       executionTime?: number;
@@ -124,7 +124,7 @@ export class HealthcareQueryOptimizerService {
         );
       }
 
-      return optimizedQuery;
+      return Promise.resolve(optimizedQuery);
     } catch (error) {
       const optimizationTime = Date.now() - startTime;
       this.updateMetrics(optimizationTime);
@@ -139,7 +139,7 @@ export class HealthcareQueryOptimizerService {
           query: query.substring(0, 200),
         }
       );
-      return query; // Return original query if optimization fails
+      return Promise.resolve(query); // Return original query if optimization fails
     }
   }
 
@@ -148,7 +148,7 @@ export class HealthcareQueryOptimizerService {
    */
   private analyzeQuery(
     query: string,
-    context?: { queryType?: string; tableName?: string; clinicId?: string }
+    _context?: { queryType?: string; tableName?: string; clinicId?: string }
   ): {
     hasSelectStar: boolean;
     hasWhereClause: boolean;
@@ -265,7 +265,7 @@ export class HealthcareQueryOptimizerService {
   private applyOptimizations(
     query: string,
     analysis: ReturnType<typeof this.analyzeQuery>,
-    recommendations: ReturnType<typeof this.generateRecommendations>
+    _recommendations: ReturnType<typeof this.generateRecommendations>
   ): string {
     let optimized = query;
 

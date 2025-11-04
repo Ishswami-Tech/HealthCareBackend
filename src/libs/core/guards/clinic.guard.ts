@@ -3,20 +3,8 @@ import { Reflector } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import {
-  ClinicIsolationService,
-  ClinicContext,
-} from '@infrastructure/database/clinic-isolation.service';
-import type {
-  AuthenticatedUser,
-  ClinicRequestHeaders,
-  ClinicQueryParams,
-  ClinicRouteParams,
-  ClinicRequestBody,
-  ClinicRequestContext,
-  ClinicRequest,
-  ClinicValidationResult,
-} from '@core/types/guard.types';
+import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
+import type { ClinicRequest, ClinicValidationResult } from '@core/types/guard.types';
 
 /**
  * Clinic Guard for Healthcare Applications

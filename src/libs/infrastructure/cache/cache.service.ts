@@ -432,7 +432,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     // Start predictive cache warming
     setInterval(() => {
-      this.performPredictiveCaching();
+      void this.performPredictiveCaching();
     }, 300000); // Run every 5 minutes
 
     void this.loggingService.log(

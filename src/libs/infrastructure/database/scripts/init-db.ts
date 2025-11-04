@@ -23,8 +23,6 @@ export async function initDatabase() {
 
       // If not set or doesn't exist, try to find it
       const isDocker = fs.existsSync('/.dockerenv');
-      const isProduction = process.env['NODE_ENV'] === 'production';
-      const isWindows = process.platform === 'win32';
 
       // Find the first path that exists
       const possiblePaths = [
@@ -42,7 +40,7 @@ export async function initDatabase() {
             logger.log(`Found Prisma schema at: ${schemaPath}`);
             break;
           }
-        } catch (err) {
+        } catch (_err) {
           // Continue to next path
         }
       }
@@ -138,7 +136,7 @@ if (require.main === module) {
       console.error(e);
       process.exit(1);
     })
-    .finally(async () => {
+    .finally(() => {
       // No need to disconnect as the process will exit
     });
 }

@@ -3,7 +3,6 @@ import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import type { AuditInfo } from '@core/types/database.types';
 import { QueueStatus, TherapyType } from '@core/types/enums.types';
 import type {
   TherapyQueue,
@@ -126,7 +125,7 @@ export class TherapyQueueService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as TherapyQueue[];
       }
 
       // Use executeHealthcareRead with client parameter
@@ -205,7 +204,7 @@ export class TherapyQueueService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as TherapyQueue;
       }
 
       // Use executeHealthcareRead with client parameter
@@ -735,7 +734,7 @@ export class TherapyQueueService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as TherapyQueueStats;
       }
 
       // Use executeHealthcareRead with client parameter

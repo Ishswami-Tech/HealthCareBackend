@@ -1,14 +1,22 @@
+/* eslint-disable no-console */
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { SwaggerModule } from '@nestjs/swagger';
-import { ValidationPipe, Logger, LogLevel, INestApplication, VersioningType } from '@nestjs/common';
+import fastify from 'fastify';
+import {
+  ValidationPipe,
+  Logger,
+  LogLevel,
+  INestApplication,
+  VersioningType,
+  RequestMethod,
+} from '@nestjs/common';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from '@core/filters/http-exception.filter';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyCompress from '@fastify/compress';
 import fastifyMultipart from '@fastify/multipart';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { swaggerConfig, swaggerCustomOptions } from './config/swagger.config';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel as AppLogLevel } from '@core/types';
@@ -26,7 +34,6 @@ import {
   SerializedRequest,
   SocketConnection,
   WorkerProcess,
-  FastifyLoggerConfig,
 } from '@core/types';
 import type { RedisClient } from '@core/types/common.types';
 
@@ -60,6 +67,23 @@ function setupConsoleRedirect(loggingService: LoggingService) {
 const validEnvironments = ['development', 'production'] as const;
 type Environment = (typeof validEnvironments)[number];
 
+// Type helpers for Fastify plugin compatibility with NestJS FastifyAdapter
+// These handle type incompatibilities between third-party Fastify plugins and NestJS types
+type FastifyPlugin = Parameters<NestFastifyApplication['register']>[0];
+type FastifyPluginOptions = Parameters<NestFastifyApplication['register']>[1];
+
+// Helper function to safely register Fastify plugins with proper typing
+async function registerFastifyPlugin<T extends FastifyPluginOptions>(
+  app: NestFastifyApplication,
+  plugin: unknown,
+  options: T
+): Promise<void> {
+  // Type assertion is required due to third-party plugin type incompatibilities
+  // We use unknown -> FastifyPlugin instead of any for better type safety
+  // Ignore return value as plugins register themselves with the app
+  await app.register(plugin as FastifyPlugin, options);
+}
+
 /**
  * Configure production middleware for high performance and security
  */
@@ -71,10 +95,8 @@ async function configureProductionMiddleware(
   logger.log(' Configuring production middleware...');
 
   // Compression middleware
-  // Note: Type assertion required due to Fastify plugin type incompatibilities
-  // with NestJS FastifyAdapter. This is a known limitation of third-party types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await app.register(fastifyCompress as unknown as any, {
+  // Type-safe plugin registration using helper function
+  await registerFastifyPlugin(app, fastifyCompress, {
     global: true,
     threshold: 1024,
     encodings: ['gzip', 'deflate', 'br'],
@@ -91,20 +113,24 @@ async function configureProductionMiddleware(
   });
 
   // Rate limiting middleware
-  // Note: Type assertion required due to Fastify plugin type incompatibilities
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await app.register(fastifyRateLimit as any, {
+  // Type-safe plugin registration using helper function
+  await registerFastifyPlugin(app, fastifyRateLimit, {
     max: parseInt(process.env['RATE_LIMIT_MAX'] || '1000', 10),
     timeWindow: process.env['RATE_LIMIT_WINDOW'] || '1 minute',
     redis: configService.get('REDIS_URL')
       ? {
-          host: configService.get('REDIS_HOST'),
-          port: configService.get('REDIS_PORT'),
-          password: configService.get('REDIS_PASSWORD'),
+          host: configService.get<string>('REDIS_HOST') || 'localhost',
+          port: configService.get<number>('REDIS_PORT') || 6379,
+          ...(configService.get<string>('REDIS_PASSWORD') && {
+            password: configService.get<string>('REDIS_PASSWORD'),
+          }),
         }
       : undefined,
     keyGenerator: (request: Partial<AuthenticatedRequest>) => {
-      return `${request.ip}:${request.headers?.['user-agent'] || 'unknown'}`;
+      const ip = request.ip || 'unknown';
+      const userAgent = request.headers?.['user-agent'];
+      const userAgentStr = typeof userAgent === 'string' ? userAgent : 'unknown';
+      return `${ip}:${userAgentStr}`;
     },
     errorResponseBuilder: (request: Partial<AuthenticatedRequest>, context: RateLimitContext) => {
       return {
@@ -123,9 +149,8 @@ async function configureProductionMiddleware(
   });
 
   // Multipart form data handling
-  // Note: Type assertion required due to Fastify plugin type incompatibilities
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await app.register(fastifyMultipart as any, {
+  // Type-safe plugin registration using helper function
+  await registerFastifyPlugin(app, fastifyMultipart, {
     limits: {
       fieldNameSize: 100,
       fieldSize: 1000000, // 1MB
@@ -149,7 +174,7 @@ async function configureProductionMiddleware(
 
   // Set global prefix
   app.setGlobalPrefix('api/v1', {
-    exclude: ['health', 'metrics', 'docs', { path: 'docs/(.*)', method: 'GET' as any }],
+    exclude: ['health', 'metrics', 'docs', { path: 'docs/(.*)', method: RequestMethod.GET }],
   });
 
   logger.log(' Production middleware configured');
@@ -170,12 +195,15 @@ function setupProductionClustering(): boolean {
   const workerCount = Math.max(1, numCPUs - 1);
 
   if (cluster.isPrimary) {
-    console.log(` Primary process ${process.pid} starting with ${workerCount} workers`);
+    // Cluster logging is acceptable in production for process management
+
+    console.warn(` Primary process ${process.pid} starting with ${workerCount} workers`);
 
     // Fork workers
     for (let i = 0; i < workerCount; i++) {
       const worker = cluster.fork();
-      console.log(` Worker ${worker.process.pid} started`);
+
+      console.warn(` Worker ${worker.process.pid} started`);
     }
 
     // Handle worker deaths and respawn
@@ -183,24 +211,25 @@ function setupProductionClustering(): boolean {
       const pid = worker.process.pid;
 
       if (signal) {
-        console.log(` Worker ${pid} killed by signal: ${signal}`);
+        console.warn(` Worker ${pid} killed by signal: ${signal}`);
       } else if (code !== 0 && code !== null) {
         console.error(` Worker ${pid} exited with error code: ${code}`);
       } else {
-        console.log(` Worker ${pid} exited successfully`);
+        console.warn(` Worker ${pid} exited successfully`);
       }
 
       // Respawn worker if not in shutdown mode
       if (!worker.exitedAfterDisconnect) {
-        console.log(' Respawning worker...');
+        console.warn(' Respawning worker...');
         const newWorker = cluster.fork();
-        console.log(` New worker ${newWorker.process.pid} started`);
+
+        console.warn(` New worker ${newWorker.process.pid} started`);
       }
     });
 
     // Graceful shutdown for cluster
     const shutdownCluster = async (signal: string) => {
-      console.log(`${signal} received, shutting down cluster gracefully...`);
+      console.warn(`${signal} received, shutting down cluster gracefully...`);
 
       const workers = Object.values(cluster.workers || {});
 
@@ -233,19 +262,25 @@ function setupProductionClustering(): boolean {
 
       await Promise.all(exitPromises);
       clearTimeout(shutdownTimeout);
-      console.log(' All workers shutdown successfully');
+
+      console.warn(' All workers shutdown successfully');
       process.exit(0);
     };
 
-    process.on('SIGTERM', () => shutdownCluster('SIGTERM'));
-    process.on('SIGINT', () => shutdownCluster('SIGINT'));
+    process.on('SIGTERM', () => {
+      void shutdownCluster('SIGTERM');
+    });
+    process.on('SIGINT', () => {
+      void shutdownCluster('SIGINT');
+    });
 
     return true; // This is the master process
   } else {
     // Worker process
     process.title = `healthcare-worker-${cluster.worker?.id}`;
     process.env['WORKER_ID'] = cluster.worker?.id?.toString() || '0';
-    console.log(` Worker ${process.pid} (ID: ${cluster.worker?.id}) initialized`);
+
+    console.warn(` Worker ${process.pid} (ID: ${cluster.worker?.id}) initialized`);
     return false; // Continue with normal bootstrap
   }
 }
@@ -285,37 +320,50 @@ async function bootstrap() {
     const envConfig = environment === 'production' ? productionConfig() : developmentConfig();
 
     // Configure Fastify logger based on environment
-    const loggerConfig: FastifyLoggerConfig = {
+    // Using Record<string, unknown> for logger config to handle Fastify type incompatibilities
+    const loggerConfig: Record<string, unknown> = {
       level: process.env['NODE_ENV'] === 'production' ? 'warn' : 'info',
       serializers: {
-        req: (req: Partial<AuthenticatedRequest>): SerializedRequest => {
+        req: (req: unknown): SerializedRequest => {
+          // Type-safe access to request properties
+          const request = req as {
+            url?: string;
+            method?: string;
+            headers?: Record<string, unknown>;
+          };
           // Skip detailed logging for health check and common endpoints
           if (
-            req.url === '/health' ||
-            req.url === '/api-health' ||
-            req.url?.includes('socket.io') ||
-            req.url?.includes('/logs/')
+            request.url === '/health' ||
+            request.url === '/api-health' ||
+            request.url?.includes('socket.io') ||
+            request.url?.includes('/logs/')
           ) {
             return {
-              method: req.method || 'GET',
-              url: req.url || '',
+              method: request.method || 'GET',
+              url: request.url || '',
               skip: true,
             };
           }
           return {
-            method: req.method || 'GET',
-            url: req.url || '',
-            headers: req.headers as Record<string, unknown>,
+            method: request.method || 'GET',
+            url: request.url || '',
+            headers: request.headers || {},
           };
         },
-        res: (res: { statusCode?: number }) => ({
-          statusCode: res.statusCode || 200,
-        }),
-        err: (err: unknown) => ({
-          type: 'ERROR',
-          message: (err as any).message,
-          stack: (err as any).stack || 'No stack trace',
-        }),
+        res: (res: unknown) => {
+          const response = res as { statusCode?: number };
+          return {
+            statusCode: response.statusCode || 200,
+          };
+        },
+        err: (err: unknown) => {
+          const error = err as { message?: string; stack?: string };
+          return {
+            type: 'ERROR',
+            message: error.message || 'Unknown error',
+            stack: error.stack || 'No stack trace',
+          };
+        },
       },
     };
 
@@ -333,45 +381,50 @@ async function bootstrap() {
     }
 
     // Production optimized Fastify adapter with horizontal scaling support
+    // Type assertion for FastifyAdapter options due to complex type requirements
+    // FastifyAdapter has strict type requirements that don't perfectly match our logger config
+    // Using Record<string, unknown> for type safety when dealing with third-party type incompatibilities
+    const fastifyAdapterOptions: Record<string, unknown> = {
+      logger: loggerConfig,
+      disableRequestLogging: true,
+      requestIdLogLabel: 'requestId',
+      requestIdHeader: 'x-request-id',
+      trustProxy: envConfig.security.trustProxy === 1,
+
+      // Production performance optimizations
+      bodyLimit: environment === 'production' ? 50 * 1024 * 1024 : 10 * 1024 * 1024, // 50MB in prod
+      keepAliveTimeout: environment === 'production' ? 65000 : 5000,
+      maxParamLength: 500,
+      connectionTimeout: environment === 'production' ? 60000 : 30000,
+      requestTimeout: environment === 'production' ? 30000 : 10000,
+
+      // Horizontal scaling optimizations
+      ...(isHorizontalScaling && {
+        serverFactory: (handler: unknown, opts: Record<string, unknown>) => {
+          // Enhanced server configuration for load balanced instances
+          const server = fastify({
+            ...(opts || {}),
+            ignoreTrailingSlash: true,
+            caseSensitive: false,
+            // Optimize for high concurrency across instances
+            pluginTimeout: 30000,
+            requestIdHeader: `x-request-id-${instanceId}`,
+          });
+          return server;
+        },
+      }),
+
+      // HTTP/2 support for production
+      ...(environment === 'production' && process.env['ENABLE_HTTP2'] === 'true'
+        ? ({ http2: true } as { http2: true })
+        : {}),
+    };
+
     app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
-      new FastifyAdapter({
-        // Note: loggerConfig type assertion needed due to FastifyAdapter logger type expectations
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        logger: loggerConfig as any,
-        disableRequestLogging: true,
-        requestIdLogLabel: 'requestId',
-        requestIdHeader: 'x-request-id',
-        trustProxy: envConfig.security.trustProxy === 1,
-
-        // Production performance optimizations
-        bodyLimit: environment === 'production' ? 50 * 1024 * 1024 : 10 * 1024 * 1024, // 50MB in prod
-        keepAliveTimeout: environment === 'production' ? 65000 : 5000,
-        maxParamLength: 500,
-        connectionTimeout: environment === 'production' ? 60000 : 30000,
-        requestTimeout: environment === 'production' ? 30000 : 10000,
-
-        // Horizontal scaling optimizations
-        ...(isHorizontalScaling && {
-          serverFactory: (handler: unknown, opts: Record<string, unknown>) => {
-            // Enhanced server configuration for load balanced instances
-            const server = require('fastify')({
-              ...(opts || {}),
-              ignoreTrailingSlash: true,
-              caseSensitive: false,
-              // Optimize for high concurrency across instances
-              pluginTimeout: 30000,
-              requestIdHeader: `x-request-id-${instanceId}`,
-            });
-            return server;
-          },
-        }),
-
-        // HTTP/2 support for production
-        ...(environment === 'production' && process.env['ENABLE_HTTP2'] === 'true'
-          ? ({ http2: true } as { http2: true })
-          : {}),
-      }),
+      new FastifyAdapter(
+        fastifyAdapterOptions as unknown as ConstructorParameters<typeof FastifyAdapter>[0]
+      ),
       {
         logger:
           process.env['NODE_ENV'] === 'production'
@@ -386,7 +439,6 @@ async function bootstrap() {
     const configService = app.get(ConfigService);
     loggingService = app.get(LoggingService);
     logger.log('Core services initialized');
-    const eventEmitter = new EventEmitter2();
 
     // Set up console redirection to the logging service
     if (loggingService) {
@@ -415,7 +467,7 @@ async function bootstrap() {
           }));
 
           if (loggingService) {
-            loggingService.log(
+            void loggingService.log(
               LogType.ERROR,
               AppLogLevel.ERROR,
               'Validation failed',
@@ -455,9 +507,12 @@ async function bootstrap() {
       const { createClient } = await import('redis');
 
       // Redis client configuration with improved error handling
+      const redisHost = configService.get<string>('REDIS_HOST') || '127.0.0.1';
+      const redisPort = configService.get<string>('REDIS_PORT') || '6379';
+      const redisPassword = configService.get<string>('REDIS_PASSWORD');
       const redisConfig = {
-        url: `redis://${configService.get('REDIS_HOST', '127.0.0.1').trim()}:${configService.get('REDIS_PORT', '6379').trim()}`,
-        password: configService.get('REDIS_PASSWORD'),
+        url: `redis://${String(redisHost).trim()}:${String(redisPort).trim()}`,
+        ...(redisPassword && { password: redisPassword }),
         retryStrategy: (times: number) => {
           const maxRetries = 5;
           if (times > maxRetries) {
@@ -472,11 +527,12 @@ async function bootstrap() {
       };
 
       try {
-        // Type assertion needed due to Redis client type incompatibility
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pubClient = createClient(redisConfig) as any as RedisClient;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        subClient = (pubClient as any).duplicate() as RedisClient;
+        // Type assertion for Redis client - using unknown for type safety
+        // Redis client types don't perfectly align with our RedisClient type
+        pubClient = createClient(redisConfig) as unknown as RedisClient;
+        subClient = (
+          pubClient as unknown as { duplicate: () => unknown }
+        ).duplicate() as RedisClient;
 
         // Enhanced Redis connection event handling
         const handleRedisError = async (client: string, err: Error) => {
@@ -488,7 +544,7 @@ async function bootstrap() {
               'Redis',
               { client, _error: err.message, stack: err.stack }
             );
-          } catch (logError) {
+          } catch (_logError) {
             // If logging service fails, use original console
             originalConsole.error(`Redis ${client} Client Error:`, err);
           }
@@ -503,19 +559,27 @@ async function bootstrap() {
               'Redis',
               { client }
             );
-          } catch (logError) {
+          } catch (_logError) {
             originalConsole.log(`Redis ${client} Client Connected`);
           }
         };
 
         // Set up event handlers
         if (pubClient) {
-          pubClient.on('error', (err: unknown) => handleRedisError('Pub', err as Error));
-          pubClient.on('connect', () => handleRedisConnect('Pub'));
+          pubClient.on('error', (err: unknown) => {
+            void handleRedisError('Pub', err as Error);
+          });
+          pubClient.on('connect', () => {
+            void handleRedisConnect('Pub');
+          });
         }
         if (subClient) {
-          subClient.on('error', (err: unknown) => handleRedisError('Sub', err as Error));
-          subClient.on('connect', () => handleRedisConnect('Sub'));
+          subClient.on('error', (err: unknown) => {
+            void handleRedisError('Sub', err as Error);
+          });
+          subClient.on('connect', () => {
+            void handleRedisConnect('Sub');
+          });
         }
 
         // Connect with timeout
@@ -546,13 +610,16 @@ async function bootstrap() {
             this.adapterConstructor = createAdapter(pubClient, subClient);
           }
 
-          createIOServer(port: number, options?: Record<string, unknown>) {
-            const server = super.createIOServer(port, {
+          createIOServer(port: number, options?: Record<string, unknown>): unknown {
+            // super.createIOServer returns unknown, we need to type assert it
+            const serverRaw: unknown = super.createIOServer(port, {
               ...(options || {}),
               cors: {
                 origin:
                   process.env['NODE_ENV'] === 'production'
-                    ? process.env['CORS_ORIGIN']?.split(',') || ['https://ishswami.in']
+                    ? (process.env['CORS_ORIGIN']?.split(',') as string[]) || [
+                        'https://ishswami.in',
+                      ]
                     : '*',
                 methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
                 credentials: true,
@@ -569,70 +636,87 @@ async function bootstrap() {
               allowUpgrades: true,
               cookie: false,
             });
+            // Type assertion for Socket.IO server - super.createIOServer returns unknown
+            const server = serverRaw as {
+              adapter?: (adapter: unknown) => void;
+              of?: (path: string) => {
+                on?: (event: string, handler: (socket: SocketConnection) => void) => void;
+              } | null;
+            };
 
-            server.adapter(this.adapterConstructor);
+            // Type-safe adapter assignment
+            const serverWithAdapter = server;
+            if (serverWithAdapter && typeof serverWithAdapter.adapter === 'function') {
+              serverWithAdapter.adapter(this.adapterConstructor);
+            }
 
-            // Health check endpoint
-            server.of('/health').on('connection', (socket: SocketConnection) => {
-              socket.emit('health', {
-                status: 'healthy',
-                timestamp: new Date(),
-                environment: process.env['NODE_ENV'],
-              });
-            });
-
-            // Test namespace with improved error handling
-            server.of('/test').on('connection', (socket: SocketConnection) => {
-              logger.log('Client connected to test namespace');
-
-              let heartbeat: NodeJS.Timeout;
-
-              // Send a welcome message and start heartbeat
-              const startHeartbeat = () => {
-                socket.emit('welcome', {
-                  message: 'Connected to WebSocket server',
-                  timestamp: new Date().toISOString(),
+            // Health check endpoint - type-safe namespace access
+            const healthNamespace = server.of?.('/health');
+            if (healthNamespace && typeof healthNamespace.on === 'function') {
+              healthNamespace.on('connection', (socket: SocketConnection) => {
+                socket.emit('health', {
+                  status: 'healthy',
+                  timestamp: new Date(),
                   environment: process.env['NODE_ENV'],
                 });
-
-                heartbeat = setInterval(() => {
-                  socket.emit('heartbeat', {
-                    timestamp: new Date().toISOString(),
-                  });
-                }, 30000); // 30 second heartbeat
-              };
-
-              startHeartbeat();
-
-              // Handle disconnection
-              socket.on('disconnect', () => {
-                clearInterval(heartbeat);
-                logger.log('Client disconnected from test namespace');
               });
+            }
 
-              // Echo messages with error handling
-              socket.on('message', (data: unknown) => {
-                try {
-                  socket.emit('echo', {
-                    original: data,
-                    timestamp: new Date().toISOString(),
-                    processed: true,
-                  });
-                } catch (_error) {
-                  logger.error('Error processing socket message:', _error);
-                  socket.emit('_error', {
-                    message: 'Failed to process message',
-                    timestamp: new Date().toISOString(),
-                  });
-                }
-              });
+            // Test namespace with improved error handling - type-safe namespace access
+            const testNamespace = server.of?.('/test');
+            if (testNamespace && typeof testNamespace.on === 'function') {
+              testNamespace.on('connection', (socket: SocketConnection) => {
+                logger.log('Client connected to test namespace');
 
-              // Handle errors
-              socket.on('error', (_error: unknown) => {
-                logger.error('Socket _error:', _error);
-                clearInterval(heartbeat);
+                let heartbeat: NodeJS.Timeout;
+
+                // Send a welcome message and start heartbeat
+                const startHeartbeat = () => {
+                  socket.emit('welcome', {
+                    message: 'Connected to WebSocket server',
+                    timestamp: new Date().toISOString(),
+                    environment: process.env['NODE_ENV'],
+                  });
+
+                  heartbeat = setInterval(() => {
+                    socket.emit('heartbeat', {
+                      timestamp: new Date().toISOString(),
+                    });
+                  }, 30000); // 30 second heartbeat
+                };
+
+                startHeartbeat();
+
+                // Handle disconnection
+                socket.on('disconnect', () => {
+                  clearInterval(heartbeat);
+                  logger.log('Client disconnected from test namespace');
+                });
+
+                // Echo messages with error handling
+                socket.on('message', (data: unknown) => {
+                  try {
+                    socket.emit('echo', {
+                      original: data,
+                      timestamp: new Date().toISOString(),
+                      processed: true,
+                    });
+                  } catch (_error) {
+                    logger.error('Error processing socket message:', _error);
+                    socket.emit('_error', {
+                      message: 'Failed to process message',
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                });
+
+                // Handle errors
+                socket.on('error', (_error: unknown) => {
+                  logger.error('Socket _error:', _error);
+                  clearInterval(heartbeat);
+                });
               });
-            });
+            }
 
             return server;
           }
@@ -775,12 +859,11 @@ async function bootstrap() {
     });
 
     // Configure Fastify security headers
-    // Note: Type assertion required due to Fastify plugin type incompatibilities
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await app.register(fastifyHelmet as any, {
+    // Type-safe plugin registration using helper function
+    await registerFastifyPlugin(app, fastifyHelmet, {
       contentSecurityPolicy: {
         directives: {
-          defaultSrc: ["'self'"],
+          defaultSrc: ["'self'"] as readonly string[],
           scriptSrc: [
             "'self'",
             "'unsafe-inline'",
@@ -788,9 +871,13 @@ async function bootstrap() {
             'https://accounts.google.com',
             'https://apis.google.com',
             'https://www.googleapis.com',
-          ],
-          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-          imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
+          ] as readonly string[],
+          styleSrc: [
+            "'self'",
+            "'unsafe-inline'",
+            'https://fonts.googleapis.com',
+          ] as readonly string[],
+          imgSrc: ["'self'", 'data:', 'https:', 'blob:'] as readonly string[],
           connectSrc: [
             "'self'",
             'http://localhost:3000',
@@ -801,13 +888,17 @@ async function bootstrap() {
             'https://accounts.google.com',
             'https://oauth2.googleapis.com',
             'https://www.googleapis.com',
-          ],
-          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-          frameSrc: ["'self'", 'https://accounts.google.com'],
-          objectSrc: ["'none'"],
-          baseUri: ["'self'"],
-          formAction: ["'self'", 'https://accounts.google.com', 'http://localhost:3000'],
-          frameAncestors: ["'none'"],
+          ] as readonly string[],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'] as readonly string[],
+          frameSrc: ["'self'", 'https://accounts.google.com'] as readonly string[],
+          objectSrc: ["'none'"] as readonly string[],
+          baseUri: ["'self'"] as readonly string[],
+          formAction: [
+            "'self'",
+            'https://accounts.google.com',
+            'http://localhost:3000',
+          ] as readonly string[],
+          frameAncestors: ["'none'"] as readonly string[],
         },
       },
       crossOriginEmbedderPolicy: false,
@@ -816,24 +907,27 @@ async function bootstrap() {
     });
 
     // Configure Swagger with environment variables
-    const port = configService.get('PORT') || configService.get('VIRTUAL_PORT') || 8088;
-    const virtualHost = configService.get('VIRTUAL_HOST') || 'localhost';
-    const apiUrl = configService.get('API_URL');
-    const swaggerUrl = configService.get('SWAGGER_URL') || '/docs';
-    const bullBoardUrl = configService.get('BULL_BOARD_URL') || '/queue-dashboard';
-    const socketUrl = configService.get('SOCKET_URL') || '/socket.io';
-    const redisCommanderUrl = configService.get('REDIS_COMMANDER_URL');
-    const prismaStudioUrl = configService.get('PRISMA_STUDIO_URL');
-    const loggerUrl = configService.get('LOGGER_URL') || '/logger';
+    // ConfigService.get<T>() returns T | undefined, using generic type parameter for type safety
+    const _port =
+      configService.get<number | string>('PORT') ||
+      configService.get<number | string>('VIRTUAL_PORT') ||
+      8088;
+    const _virtualHost = configService.get<string>('VIRTUAL_HOST') || 'localhost';
+    const apiUrl = configService.get<string>('API_URL');
+    const swaggerUrl = configService.get<string>('SWAGGER_URL') || '/docs';
+    const _bullBoardUrl = configService.get<string>('BULL_BOARD_URL') || '/queue-dashboard';
+    const _socketUrl = configService.get<string>('SOCKET_URL') || '/socket.io';
+    const _redisCommanderUrl = configService.get<string>('REDIS_COMMANDER_URL');
+    const _prismaStudioUrl = configService.get<string>('PRISMA_STUDIO_URL');
+    const _loggerUrl = configService.get<string>('LOGGER_URL') || '/logger';
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);
 
     // Add environment-specific Swagger setup
     if (process.env['NODE_ENV'] === 'production') {
       // In production, add CORS and security headers for Swagger UI
-      // Note: Type assertion required due to Fastify plugin type incompatibilities
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await fastifyInstance.register(fastifyHelmet as unknown as any, {
+      // Type-safe plugin registration - using unknown for type safety
+      await fastifyInstance.register(fastifyHelmet as unknown as FastifyPlugin, {
         contentSecurityPolicy: {
           directives: {
             defaultSrc: ["'self'"],
@@ -845,14 +939,15 @@ async function bootstrap() {
       });
     }
 
-    SwaggerModule.setup(swaggerUrl.replace('/', ''), app, document, {
+    const swaggerPath = typeof swaggerUrl === 'string' ? swaggerUrl.replace('/', '') : 'docs';
+    SwaggerModule.setup(swaggerPath, app, document, {
       ...swaggerCustomOptions,
       swaggerOptions: {
         ...swaggerCustomOptions.swaggerOptions,
         // Set the default server based on environment
         urls: [
           {
-            url: `${apiUrl}${swaggerUrl}/swagger.json`,
+            url: `${String(apiUrl || '')}${String(swaggerUrl || '/docs')}/swagger.json`,
             name: process.env['NODE_ENV'] === 'production' ? 'Production' : 'Development',
           },
         ],
@@ -889,80 +984,82 @@ async function bootstrap() {
       const signals = ['SIGTERM', 'SIGINT'];
 
       signals.forEach(signal => {
-        process.on(signal, async () => {
-          logger.log(`Received ${signal}, starting graceful shutdown...`);
+        process.on(signal, () => {
+          void (async () => {
+            logger.log(`Received ${signal}, starting graceful shutdown...`);
 
-          const shutdownTimeout = setTimeout(() => {
-            logger.error('Shutdown timed out, forcing exit');
-            process.exit(1);
-          }, 10000);
+            const shutdownTimeout = setTimeout(() => {
+              logger.error('Shutdown timed out, forcing exit');
+              process.exit(1);
+            }, 10000);
 
-          try {
-            // Close WebSocket connections gracefully
-            if (customWebSocketAdapter && app) {
-              logger.log('Closing WebSocket connections...');
-              try {
-                const httpServer = app.getHttpServer();
-                if (httpServer && typeof httpServer.close === 'function') {
-                  await new Promise<void>(resolve => {
-                    const timeout = setTimeout(() => {
-                      logger.warn('WebSocket server close timeout, continuing...');
-                      resolve();
-                    }, 3000);
-
-                    httpServer.close(err => {
-                      clearTimeout(timeout);
-                      if (err) {
-                        logger.warn('Error closing WebSocket server:', err);
-                      } else {
-                        logger.log('WebSocket server closed successfully');
-                      }
-                      resolve();
-                    });
-                  });
-                }
-                customWebSocketAdapter = null;
-              } catch (wsError) {
-                logger.warn('Error during WebSocket cleanup:', wsError);
-              }
-            }
-
-            // Close database connections
             try {
-              if (app) {
-                const databaseService = await app.resolve(DatabaseService);
-                if (databaseService) {
-                  logger.log('Closing database connections...');
-                  await databaseService.disconnect();
+              // Close WebSocket connections gracefully
+              if (customWebSocketAdapter && app) {
+                logger.log('Closing WebSocket connections...');
+                try {
+                  const httpServer = app.getHttpServer();
+                  if (httpServer && typeof httpServer.close === 'function') {
+                    await new Promise<void>(resolve => {
+                      const timeout = setTimeout(() => {
+                        logger.warn('WebSocket server close timeout, continuing...');
+                        resolve();
+                      }, 3000);
+
+                      httpServer.close(err => {
+                        clearTimeout(timeout);
+                        if (err) {
+                          logger.warn('Error closing WebSocket server:', err);
+                        } else {
+                          logger.log('WebSocket server closed successfully');
+                        }
+                        resolve();
+                      });
+                    });
+                  }
+                  customWebSocketAdapter = null;
+                } catch (wsError) {
+                  logger.warn('Error during WebSocket cleanup:', wsError);
                 }
               }
-            } catch (databaseError) {
-              logger.warn('Error closing database connections:', databaseError);
-            }
 
-            // Close Redis connections
-            if (pubClient) {
-              logger.log('Closing Redis pub connection...');
-              await pubClient.quit();
-            }
-            if (subClient) {
-              logger.log('Closing Redis sub connection...');
-              await subClient.quit();
-            }
+              // Close database connections
+              try {
+                if (app) {
+                  const databaseService = await app.resolve(DatabaseService);
+                  if (databaseService) {
+                    logger.log('Closing database connections...');
+                    await databaseService.disconnect();
+                  }
+                }
+              } catch (databaseError) {
+                logger.warn('Error closing database connections:', databaseError);
+              }
 
-            // Close the app
-            if (app) {
-              await app.close();
-            }
+              // Close Redis connections
+              if (pubClient) {
+                logger.log('Closing Redis pub connection...');
+                await pubClient.quit();
+              }
+              if (subClient) {
+                logger.log('Closing Redis sub connection...');
+                await subClient.quit();
+              }
 
-            clearTimeout(shutdownTimeout);
-            logger.log('Application shut down successfully');
-            process.exit(0);
-          } catch (_error) {
-            clearTimeout(shutdownTimeout);
-            logger.error('Error during shutdown:', _error);
-            process.exit(1);
-          }
+              // Close the app
+              if (app) {
+                await app.close();
+              }
+
+              clearTimeout(shutdownTimeout);
+              logger.log('Application shut down successfully');
+              process.exit(0);
+            } catch (_error) {
+              clearTimeout(shutdownTimeout);
+              logger.error('Error during shutdown:', _error);
+              process.exit(1);
+            }
+          })();
         });
       });
     } catch (listenError) {
@@ -979,39 +1076,45 @@ async function bootstrap() {
     }
 
     // Enhanced error handling for uncaught exceptions
-    process.on('uncaughtException', async _error => {
-      try {
-        await loggingService?.log(
-          LogType.ERROR,
-          AppLogLevel.ERROR,
-          `Uncaught Exception: ${_error.message}`,
-          'Process',
-          { _error: _error.stack }
-        );
-      } catch (logError) {
-        console.error('Failed to log uncaught exception:', logError);
-        console.error('Original _error:', _error);
-      }
-      process.exit(1);
+    process.on('uncaughtException', _error => {
+      void (async () => {
+        try {
+          await loggingService?.log(
+            LogType.ERROR,
+            AppLogLevel.ERROR,
+            `Uncaught Exception: ${_error.message}`,
+            'Process',
+            { _error: _error.stack }
+          );
+        } catch (logError) {
+          console.error('Failed to log uncaught exception:', logError);
+
+          console.error('Original _error:', _error);
+        }
+        process.exit(1);
+      })();
     });
 
     // Enhanced error handling for unhandled rejections
-    process.on('unhandledRejection', async (reason, promise) => {
-      try {
-        await loggingService?.log(
-          LogType.ERROR,
-          AppLogLevel.ERROR,
-          'Unhandled Rejection',
-          'Process',
-          {
-            reason: reason instanceof Error ? reason.stack : reason,
-            promise: promise,
-          }
-        );
-      } catch (logError) {
-        console.error('Failed to log unhandled rejection:', logError);
-        console.error('Original rejection:', reason);
-      }
+    process.on('unhandledRejection', (reason, promise) => {
+      void (async () => {
+        try {
+          await loggingService?.log(
+            LogType.ERROR,
+            AppLogLevel.ERROR,
+            'Unhandled Rejection',
+            'Process',
+            {
+              reason: reason instanceof Error ? reason.stack : reason,
+              promise: promise,
+            }
+          );
+        } catch (logError) {
+          console.error('Failed to log unhandled rejection:', logError);
+
+          console.error('Original rejection:', reason);
+        }
+      })();
     });
   } catch (_error) {
     if (loggingService) {

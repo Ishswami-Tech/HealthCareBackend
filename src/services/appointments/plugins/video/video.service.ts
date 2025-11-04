@@ -33,12 +33,7 @@ export class VideoService {
 
     try {
       // Validate appointment exists and belongs to participants
-      const appointment = await this.validateAppointment(
-        appointmentId,
-        patientId,
-        doctorId,
-        clinicId
-      );
+      await this.validateAppointment(appointmentId, patientId, doctorId, clinicId);
 
       // Generate unique meeting URL
       const meetingUrl = await this.generateMeetingUrl(appointmentId);
@@ -70,7 +65,7 @@ export class VideoService {
       const cacheKey = `videocall:${videoCall.id}`;
       await this.cacheService.set(cacheKey, JSON.stringify(videoCall), this.VIDEO_CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Video call created successfully',
@@ -86,7 +81,7 @@ export class VideoService {
 
       return videoCall;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create video call: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -128,7 +123,7 @@ export class VideoService {
       // Generate join token
       const joinToken = await this.generateJoinToken(callId, userId);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'User joined video call successfully',
@@ -143,7 +138,7 @@ export class VideoService {
         settings: videoCall.settings,
       };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to join video call: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -180,7 +175,7 @@ export class VideoService {
       videoCall.recordingUrl = `https://recordings.example.com/${recordingId}`;
       await this.updateVideoCall(videoCall);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Recording started successfully',
@@ -195,7 +190,7 @@ export class VideoService {
         message: 'Recording started',
       };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to start recording: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -228,7 +223,7 @@ export class VideoService {
       // Stop recording (placeholder implementation)
       const recordingResult = await this.finalizeRecording(callId);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Recording stopped successfully',
@@ -243,7 +238,7 @@ export class VideoService {
         message: 'Recording stopped',
       };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to stop recording: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -289,7 +284,7 @@ export class VideoService {
         await this.stopRecording(callId, userId);
       }
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Video call ended successfully',
@@ -309,7 +304,7 @@ export class VideoService {
         message: 'Video call ended',
       };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to end video call: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -342,7 +337,7 @@ export class VideoService {
       // Upload and share image (placeholder implementation)
       const imageUrl = await this.uploadMedicalImage(imageData, callId, userId);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Medical image shared successfully',
@@ -356,7 +351,7 @@ export class VideoService {
         message: 'Medical image shared',
       };
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to share medical image: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -381,7 +376,7 @@ export class VideoService {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string);
+        return JSON.parse(cached as string) as VideoCall | null;
       }
 
       // Get video call history from database (placeholder implementation)
@@ -398,7 +393,7 @@ export class VideoService {
       // Cache the result
       await this.cacheService.set(cacheKey, JSON.stringify(result), this.VIDEO_CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Video call history retrieved successfully',
@@ -413,7 +408,7 @@ export class VideoService {
 
       return result;
     } catch (_error) {
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get video call history: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -431,7 +426,7 @@ export class VideoService {
   // getVirtualFittingHistory method removed - healthcare application only
 
   // Helper methods (placeholder implementations that would integrate with actual services)
-  private async validateAppointment(
+  private validateAppointment(
     appointmentId: string,
     patientId: string,
     doctorId: string,
@@ -439,33 +434,34 @@ export class VideoService {
   ): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return mock data
-    return {
+    return Promise.resolve({
       id: appointmentId,
       patientId,
       doctorId,
       clinicId,
       status: 'CONFIRMED',
-    };
+    });
   }
 
   // validateFashionAppointment method removed - healthcare application only
 
-  private async generateMeetingUrl(appointmentId: string): Promise<string> {
+  private generateMeetingUrl(appointmentId: string): Promise<string> {
     // This would integrate with actual video service (Zoom, Teams, etc.)
     // For now, return mock URL
-    return `https://meet.example.com/${appointmentId}-${Date.now()}`;
+    return Promise.resolve(`https://meet.example.com/${appointmentId}-${Date.now()}`);
   }
 
-  private async generateJoinToken(callId: string, userId: string): Promise<string> {
+  private generateJoinToken(callId: string, userId: string): Promise<string> {
     // This would integrate with actual video service
     // For now, return mock token
-    return `token-${callId}-${userId}-${Date.now()}`;
+    return Promise.resolve(`token-${callId}-${userId}-${Date.now()}`);
   }
 
-  private async storeVideoCall(videoCall: VideoCall): Promise<void> {
+  private storeVideoCall(videoCall: VideoCall): Promise<void> {
     // This would integrate with the actual database
     // For now, just log
     this.logger.log(`Stored video call: ${videoCall.id}`);
+    return Promise.resolve();
   }
 
   private async getVideoCall(callId: string): Promise<VideoCall | null> {
@@ -473,7 +469,7 @@ export class VideoService {
     const cacheKey = `videocall:${callId}`;
     const cached = await this.cacheService.get(cacheKey);
     if (cached) {
-      return JSON.parse(cached as string);
+      return JSON.parse(cached as string) as VideoCall;
     }
 
     // This would integrate with the actual database
@@ -508,37 +504,35 @@ export class VideoService {
     this.logger.log(`Updated video call: ${videoCall.id}`);
   }
 
-  private async initiateRecording(callId: string): Promise<string> {
+  private initiateRecording(callId: string): Promise<string> {
     // This would integrate with actual video service
     // For now, return mock recording ID
-    return `rec-${callId}-${Date.now()}`;
+    return Promise.resolve(`rec-${callId}-${Date.now()}`);
   }
 
-  private async finalizeRecording(callId: string): Promise<unknown> {
+  private finalizeRecording(callId: string): Promise<unknown> {
     // This would integrate with actual video service
     // For now, return mock result
-    return {
+    return Promise.resolve({
       duration: 1800, // 30 minutes
       url: `https://recordings.example.com/${callId}`,
-    };
+    });
   }
 
-  private async uploadMedicalImage(
-    imageData: unknown,
-    callId: string,
-    userId: string
-  ): Promise<string> {
+  private uploadMedicalImage(imageData: unknown, callId: string, userId: string): Promise<string> {
     // This would integrate with actual file storage service
     // For now, return mock URL
-    return `https://images.example.com/medical/${callId}/${userId}/${Date.now()}.jpg`;
+    return Promise.resolve(
+      `https://images.example.com/medical/${callId}/${userId}/${Date.now()}.jpg`
+    );
   }
 
   // storeVirtualFitting method removed - healthcare application only
 
-  private async fetchVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCall[]> {
+  private fetchVideoCallHistory(_userId: string, _clinicId?: string): Promise<VideoCall[]> {
     // This would integrate with the actual database
     // For now, return mock data
-    return [
+    return Promise.resolve([
       {
         id: 'vc-1',
         appointmentId: 'app-1',
@@ -560,6 +554,6 @@ export class VideoService {
           autoRecord: false,
         },
       },
-    ];
+    ]);
   }
 }

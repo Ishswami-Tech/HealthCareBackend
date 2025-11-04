@@ -9,27 +9,28 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
   abstract readonly version: string;
   abstract readonly features: string[];
 
-  async initialize(context: PluginContext): Promise<void> {
+  initialize(_context: PluginContext): Promise<void> {
     this.logger.log(`🚀 Initializing plugin: ${this.name}`);
     // Default implementation - can be overridden
+    return Promise.resolve();
   }
 
-  async validate(data: unknown): Promise<boolean> {
+  validate(data: unknown): Promise<boolean> {
     const pluginData = data as Record<string, unknown>;
     this.logger.log(`✅ Validating data for plugin: ${this.name}`);
     // Default implementation - can be overridden
-    return Boolean(pluginData);
+    return Promise.resolve(Boolean(pluginData));
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as Record<string, unknown>;
+    const _pluginData = data as Record<string, unknown>;
     this.logger.log(`🔧 Processing data for plugin: ${this.name}`);
     // Default implementation - can be overridden
-    return data;
+    return Promise.resolve(data);
   }
 
-  async getHealth(): Promise<PluginHealth> {
-    return {
+  getHealth(): Promise<PluginHealth> {
+    return Promise.resolve({
       isHealthy: true,
       lastCheck: new Date(),
       errors: [],
@@ -38,12 +39,13 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
         features: this.features,
         uptime: process.uptime(),
       },
-    };
+    });
   }
 
-  async destroy(): Promise<void> {
+  destroy(): Promise<void> {
     this.logger.log(`🛑 Destroying plugin: ${this.name}`);
     // Default implementation - can be overridden
+    return Promise.resolve();
   }
 
   protected createContext(config: unknown, metadata: Record<string, unknown> = {}): PluginContext {
