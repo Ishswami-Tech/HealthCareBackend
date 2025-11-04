@@ -1,17 +1,8 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from '@nestjs/common';
+import type { WorkflowContext, WorkflowResult } from '@core/types/appointment.types';
 
-export interface WorkflowContext {
-  appointmentId: string;
-  userId: string;
-  clinicId?: string;
-  data: unknown;
-}
-
-export interface WorkflowResult {
-  success: boolean;
-  message?: string;
-  data?: unknown;
-}
+// Re-export for backward compatibility
+export type { WorkflowContext, WorkflowResult };
 
 @Injectable()
 export class AppointmentWorkflowEngine {
@@ -22,14 +13,12 @@ export class AppointmentWorkflowEngine {
    */
   executeWorkflowStep(context: WorkflowContext): WorkflowResult {
     try {
-      this.logger.log(
-        `Executing workflow step for appointment: ${context.appointmentId}`,
-      );
+      this.logger.log(`Executing workflow step for appointment: ${context.appointmentId}`);
 
       // Placeholder workflow logic
       return {
         success: true,
-        message: "Workflow step executed successfully",
+        message: 'Workflow step executed successfully',
         data: { processedAt: new Date() },
       };
     } catch (_error) {
@@ -68,21 +57,18 @@ export class AppointmentWorkflowEngine {
   initializeWorkflow(appointmentId: string, eventType: string): WorkflowResult {
     try {
       this.logger.log(
-        `Initializing workflow for appointment ${appointmentId} with event ${eventType}`,
+        `Initializing workflow for appointment ${appointmentId} with event ${eventType}`
       );
 
       const context: WorkflowContext = {
         appointmentId,
-        userId: "system",
+        userId: 'system',
         data: { eventType, initializedAt: new Date() },
       };
 
       return this.executeWorkflowStep(context);
     } catch (_error) {
-      this.logger.error(
-        `Failed to initialize workflow:`,
-        (_error as Error).stack,
-      );
+      this.logger.error(`Failed to initialize workflow:`, (_error as Error).stack);
       return {
         success: false,
         message: (_error as Error).message,
@@ -95,13 +81,13 @@ export class AppointmentWorkflowEngine {
    */
   isValidStatusTransition(currentStatus: string, newStatus: string): boolean {
     const validTransitions: Record<string, string[]> = {
-      SCHEDULED: ["CONFIRMED", "CANCELLED", "RESCHEDULED"],
-      CONFIRMED: ["IN_PROGRESS", "NO_SHOW", "CANCELLED"],
-      IN_PROGRESS: ["COMPLETED", "CANCELLED"],
+      SCHEDULED: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
+      CONFIRMED: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
+      IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
       COMPLETED: [], // Final state
       CANCELLED: [], // Final state
-      NO_SHOW: ["RESCHEDULED"], // Can be rescheduled
-      RESCHEDULED: ["SCHEDULED", "CONFIRMED"],
+      NO_SHOW: ['RESCHEDULED'], // Can be rescheduled
+      RESCHEDULED: ['SCHEDULED', 'CONFIRMED'],
     };
 
     return validTransitions[currentStatus]?.includes(newStatus) || false;
@@ -114,7 +100,7 @@ export class AppointmentWorkflowEngine {
     appointmentId: string,
     currentStatus: string,
     newStatus: string,
-    userId: string,
+    userId: string
   ): WorkflowResult {
     try {
       if (!this.isValidStatusTransition(currentStatus, newStatus)) {
@@ -125,7 +111,7 @@ export class AppointmentWorkflowEngine {
       }
 
       this.logger.log(
-        `Transitioning appointment ${appointmentId} from ${currentStatus} to ${newStatus}`,
+        `Transitioning appointment ${appointmentId} from ${currentStatus} to ${newStatus}`
       );
 
       const context: WorkflowContext = {
@@ -140,10 +126,7 @@ export class AppointmentWorkflowEngine {
 
       return this.executeWorkflowStep(context);
     } catch (_error) {
-      this.logger.error(
-        `Failed to transition status:`,
-        (_error as Error).stack,
-      );
+      this.logger.error(`Failed to transition status:`, (_error as Error).stack);
       return {
         success: false,
         message: (_error as Error).message,
@@ -155,7 +138,7 @@ export class AppointmentWorkflowEngine {
    * Check if appointment can be cancelled based on its current status
    */
   canCancelAppointment(currentStatus: string): boolean {
-    const cancellableStatuses = ["SCHEDULED", "CONFIRMED", "RESCHEDULED"];
+    const cancellableStatuses = ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED'];
     return cancellableStatuses.includes(currentStatus);
   }
 }

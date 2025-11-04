@@ -1,4 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 /**
  * Configuration options for circuit breaker
@@ -45,11 +47,11 @@ export interface CircuitBreakerOptions {
  */
 @Injectable()
 export class CircuitBreakerService {
-  private readonly logger = new Logger(CircuitBreakerService.name);
+  constructor(private readonly loggingService: LoggingService) {}
   private circuitStates = new Map<
     string,
     {
-      state: "closed" | "open" | "half-open";
+      state: 'closed' | 'open' | 'half-open';
       failures: number;
       lastFailureTime?: number;
     }
@@ -76,12 +78,9 @@ export class CircuitBreakerService {
    * );
    * ```
    */
-  async execute<T>(
-    fn: () => Promise<T>,
-    options: CircuitBreakerOptions,
-  ): Promise<T> {
+  async execute<T>(fn: () => Promise<T>, options: CircuitBreakerOptions): Promise<T> {
     const state = this.circuitStates.get(options.name) || {
-      state: "closed",
+      state: 'closed',
       failures: 0,
     };
 
@@ -92,7 +91,7 @@ export class CircuitBreakerService {
 
       // Reset failures on success
       if (state.failures > 0) {
-        this.circuitStates.set(options.name, { state: "closed", failures: 0 });
+        this.circuitStates.set(options.name, { state: 'closed', failures: 0 });
       }
 
       return result;
@@ -101,11 +100,25 @@ export class CircuitBreakerService {
       state.lastFailureTime = Date.now();
 
       if (state.failures >= options.failureThreshold) {
-        state.state = "open";
-        options.onStateChange?.("open", options.name);
+        state.state = 'open';
+        options.onStateChange?.('open', options.name);
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Circuit opened',
+          'CircuitBreakerService',
+          { name: options.name, failures: state.failures }
+        );
       }
 
       this.circuitStates.set(options.name, state);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Circuit breaker execution failed',
+        'CircuitBreakerService',
+        { name: options.name, error: _error instanceof Error ? _error.message : String(_error) }
+      );
       throw _error;
     }
   }

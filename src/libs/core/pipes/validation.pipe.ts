@@ -1,17 +1,12 @@
-import {
-  PipeTransform,
-  Injectable,
-  ArgumentMetadata,
-  BadRequestException,
-} from "@nestjs/common";
-import { validate } from "class-validator";
-import { plainToClass } from "class-transformer";
+import { PipeTransform, Injectable, ArgumentMetadata, BadRequestException } from '@nestjs/common';
+import { validate, ValidationError } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 
 /**
  * Type constructor for validation pipe
  * @template T - The type to construct
  */
-type Constructor<T = object> = new (...args: unknown[]) => T;
+type Constructor<T = unknown> = new (...args: unknown[]) => T;
 
 /**
  * Validation result interface
@@ -43,7 +38,7 @@ interface ValidationResult {
  * ```
  */
 @Injectable()
-export class ValidationPipe implements PipeTransform<object> {
+export class ValidationPipe implements PipeTransform {
   /**
    * Transform and validate incoming data
    *
@@ -57,20 +52,17 @@ export class ValidationPipe implements PipeTransform<object> {
    * const result = await validationPipe.transform(userData, { metatype: UserDto });
    * ```
    */
-  async transform(
-    value: object,
-    { metatype }: ArgumentMetadata,
-  ): Promise<object> {
+  async transform<TInput>(value: TInput, { metatype }: ArgumentMetadata): Promise<TInput> {
     if (!metatype || !this.toValidate(metatype)) {
       return value;
     }
 
     try {
       // Convert plain object to class instance for validation
-      const object = plainToClass(metatype, value as Record<string, unknown>);
+      const instance = plainToInstance(metatype as Constructor, value);
 
       // Validate the object
-      const errors = await validate(object);
+      const errors = await validate(instance as object);
 
       if (errors.length > 0) {
         const validationResult = this.formatValidationErrors(errors);
@@ -78,14 +70,14 @@ export class ValidationPipe implements PipeTransform<object> {
       }
 
       return value;
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof BadRequestException) {
         throw error;
       }
 
       // Handle unexpected validation errors
       throw new BadRequestException({
-        message: "Validation failed due to unexpected error",
+        message: 'Validation failed due to unexpected error',
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -100,13 +92,7 @@ export class ValidationPipe implements PipeTransform<object> {
    * @private
    */
   private toValidate(metatype: Constructor): boolean {
-    const types: readonly Constructor[] = [
-      String,
-      Boolean,
-      Number,
-      Array,
-      Object,
-    ];
+    const types: readonly Constructor[] = [String, Boolean, Number, Array, Object];
     return !types.includes(metatype);
   }
 
@@ -118,16 +104,14 @@ export class ValidationPipe implements PipeTransform<object> {
    *
    * @private
    */
-  private formatValidationErrors(errors: unknown[]): ValidationResult {
+  private formatValidationErrors(errors: readonly ValidationError[]): ValidationResult {
     const formattedErrors: string[] = [];
 
     for (const error of errors) {
-      if (this.isValidationError(error)) {
-        const constraints = error.constraints;
-        if (constraints) {
-          for (const message of Object.values(constraints)) {
-            formattedErrors.push(message);
-          }
+      const constraints = error.constraints;
+      if (constraints) {
+        for (const message of Object.values(constraints)) {
+          formattedErrors.push(message);
         }
       }
     }
@@ -136,22 +120,5 @@ export class ValidationPipe implements PipeTransform<object> {
       isValid: false,
       errors: formattedErrors,
     };
-  }
-
-  /**
-   * Type guard to check if an error is a validation error
-   *
-   * @param {unknown} error - The error to check
-   * @returns {boolean} True if it's a validation error
-   *
-   * @private
-   */
-  private isValidationError(error: unknown): error is {
-    readonly constraints?: Record<string, string>;
-    readonly property?: string;
-  } {
-    return (
-      typeof error === "object" && error !== null && "constraints" in error
-    );
   }
 }

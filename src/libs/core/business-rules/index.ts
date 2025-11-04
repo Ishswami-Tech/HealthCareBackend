@@ -13,11 +13,11 @@
  */
 
 // Core services
-export * from "./business-rules-engine.service";
-export * from "./services/rule-validation.service";
+export * from './business-rules-engine.service';
+export * from './services/rule-validation.service';
 
-// Types
-export * from "./types/business-rules.types";
+// Types (re-export centralized core types)
+export * from '@core/types';
 
 // Utilities
-export * from "./utils/rule-builder.util";
+export * from './utils/rule-builder.util';

@@ -25,13 +25,13 @@
  */
 
 // Main exception filter
-export { HttpExceptionFilter } from "./http-exception.filter";
+export { HttpExceptionFilter } from './http-exception.filter';
 
-// Type definitions
+// All types are now in @core/types/filter.types.ts
 export type {
-  RequestUser,
+  AuthenticatedUser,
   RequestHeaders,
   CustomFastifyRequest,
   ErrorLog,
   ErrorResponse,
-} from "./http-exception.filter";
+} from '@core/types/filter.types';

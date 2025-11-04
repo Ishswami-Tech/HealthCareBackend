@@ -1,28 +1,28 @@
-import { Module, NestModule } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { UsersModule } from "./services/users/users.module";
-import { AuthModule } from "./services/auth/auth.module";
-import { HealthModule } from "./services/health/health.module";
-import { AppController } from "./app.controller";
-import { CacheModule } from "./libs/infrastructure/cache/cache.module";
-import { WhatsAppModule } from "./libs/communication/messaging/whatsapp/whatsapp.module";
-import { DatabaseModule } from "./libs/infrastructure/database/database.module";
-import { ClinicModule } from "./services/clinic/clinic.module";
-import { LoggingModule } from "./libs/infrastructure/logging/logging.module";
-import { JwtModule } from "@nestjs/jwt";
-import { AppService } from "./app.service";
-import { AppointmentsModule } from "./services/appointments/appointments.module";
-import { BullBoardModule } from "./libs/infrastructure/queue/src/bull-board/bull-board.module";
-import { EventEmitterModule } from "@nestjs/event-emitter";
-import { ScheduleModule } from "@nestjs/schedule";
-import { QueueModule } from "./libs/infrastructure/queue/src/queue.module";
+import { Module, NestModule } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { UsersModule } from './services/users/users.module';
+import { AuthModule } from './services/auth/auth.module';
+import { HealthModule } from './services/health/health.module';
+import { AppController } from './app.controller';
+import { CacheModule } from '@infrastructure/cache/cache.module';
+import { WhatsAppModule } from '@communication/messaging/whatsapp/whatsapp.module';
+import { DatabaseModule } from '@infrastructure/database/database.module';
+import { ClinicModule } from './services/clinic/clinic.module';
+import { LoggingModule } from '@infrastructure/logging/logging.module';
+import { JwtModule } from '@nestjs/jwt';
+import { AppService } from './app.service';
+import { AppointmentsModule } from './services/appointments/appointments.module';
+import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
+import { QueueModule } from '@infrastructure/queue/src/queue.module';
 // Queue constants imported but not used in module configuration
-import configuration from "./config/configuration";
-import { HealthController } from "./services/health/health.controller";
-import { SocketModule } from "./libs/communication/socket/socket.module";
-import { NotificationModule } from "./services/notification/notification.module";
-import { BillingModule } from "./services/billing/billing.module";
-import { EHRModule } from "./services/ehr/ehr.module";
+import configuration from './config/configuration';
+import { HealthController } from './services/health/health.controller';
+import { SocketModule } from '@communication/socket/socket.module';
+import { NotificationModule } from './services/notification/notification.module';
+import { BillingModule } from './services/billing/billing.module';
+import { EHRModule } from './services/ehr/ehr.module';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -30,33 +30,26 @@ import { EHRModule } from "./services/ehr/ehr.module";
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath:
-        process.env["NODE_ENV"] === "production"
-          ? ".env.production"
-          : ".env.development",
+        process.env['NODE_ENV'] === 'production' ? '.env.production' : '.env.development',
       load: [configuration],
       expandVariables: true,
       cache: true,
-      validate: (config) => {
+      validate: config => {
         // Core required environment variables
-        const required = [
-          "API_URL",
-          "SWAGGER_URL",
-          "BULL_BOARD_URL",
-          "SOCKET_URL",
-        ];
+        const required = ['API_URL', 'SWAGGER_URL', 'BULL_BOARD_URL', 'SOCKET_URL'];
 
         // Development-only services
-        if (process.env["NODE_ENV"] !== "production") {
-          required.push("REDIS_COMMANDER_URL");
-          required.push("PRISMA_STUDIO_URL");
-          required.push("PGADMIN_URL");
+        if (process.env['NODE_ENV'] !== 'production') {
+          required.push('REDIS_COMMANDER_URL');
+          required.push('PRISMA_STUDIO_URL');
+          required.push('PGADMIN_URL');
         } else {
           // Set only Prisma Studio URL for production (needed for some internal routes)
-          config["PRISMA_STUDIO_URL"] = "/prisma";
-          config["PGADMIN_URL"] = "/pgadmin";
+          config['PRISMA_STUDIO_URL'] = '/prisma';
+          config['PGADMIN_URL'] = '/pgadmin';
           // Explicitly delete Redis Commander config in production
-          delete config["REDIS_COMMANDER_URL"];
-          delete config["REDIS_UI_URL"];
+          delete config['REDIS_COMMANDER_URL'];
+          delete config['REDIS_UI_URL'];
         }
 
         for (const key of required) {
@@ -70,7 +63,7 @@ import { EHRModule } from "./services/ehr/ehr.module";
     EventEmitterModule.forRoot({
       // Add WebSocket specific event emitter config
       wildcard: true,
-      delimiter: ".",
+      delimiter: '.',
       newListener: true,
       removeListener: true,
       maxListeners: 20,
@@ -79,8 +72,8 @@ import { EHRModule } from "./services/ehr/ehr.module";
     ScheduleModule.forRoot(),
     QueueModule.forRoot(),
     JwtModule.register({
-      secret: process.env["JWT_SECRET"] || "your-secret-key",
-      signOptions: { expiresIn: "24h" },
+      secret: process.env['JWT_SECRET'] || 'your-secret-key',
+      signOptions: { expiresIn: '24h' },
     }),
     // Socket modules
     SocketModule,

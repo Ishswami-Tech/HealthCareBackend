@@ -1,18 +1,16 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { Injectable } from "@nestjs/common";
-import { BaseAppointmentPlugin } from "../base/base-plugin.service";
-import { AppointmentReminderService } from "./appointment-reminder.service";
+import { Injectable } from '@nestjs/common';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentReminderService } from './appointment-reminder.service';
 
 @Injectable()
 export class ClinicReminderPlugin extends BaseAppointmentPlugin {
-  readonly name = "clinic-reminder-plugin";
-  readonly version = "1.0.0";
+  readonly name = 'clinic-reminder-plugin';
+  readonly version = '1.0.0';
   readonly features = [
-    "reminder-scheduling",
-    "automated-reminders",
-    "reminder-rules",
-    "reminder-analytics",
+    'reminder-scheduling',
+    'automated-reminders',
+    'reminder-rules',
+    'reminder-analytics',
   ];
 
   constructor(private readonly reminderService: AppointmentReminderService) {
@@ -21,12 +19,12 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as any;
-    this.logPluginAction("Processing clinic reminder operation", {
+    this.logPluginAction('Processing clinic reminder operation', {
       operation: pluginData.operation,
     });
 
     switch (pluginData.operation) {
-      case "scheduleReminder":
+      case 'scheduleReminder':
         return await this.reminderService.scheduleReminder(
           pluginData.appointmentId,
           pluginData.patientId,
@@ -35,41 +33,41 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
           pluginData.reminderType,
           pluginData.hoursBefore,
           pluginData.channels,
-          pluginData.templateData,
+          pluginData.templateData
         );
 
-      case "processScheduledReminders":
+      case 'processScheduledReminders':
         return await this.reminderService.processScheduledReminders();
 
-      case "cancelReminder":
+      case 'cancelReminder':
         return await this.reminderService.cancelReminder(pluginData.reminderId);
 
-      case "getReminderRules":
+      case 'getReminderRules':
         return await this.reminderService.getReminderRules(pluginData.clinicId);
 
-      case "createReminderRule":
+      case 'createReminderRule':
         return await this.reminderService.createReminderRule(pluginData.rule);
 
-      case "getReminderStats":
+      case 'getReminderStats':
         return await this.reminderService.getReminderStats(
           pluginData.clinicId,
-          pluginData.dateRange,
+          pluginData.dateRange
         );
 
-      case "scheduleAppointmentReminder":
+      case 'scheduleAppointmentReminder':
         return await this.scheduleAppointmentReminder(data);
 
-      case "scheduleFollowUpReminder":
+      case 'scheduleFollowUpReminder':
         return await this.scheduleFollowUpReminder(data);
 
-      case "schedulePrescriptionReminder":
+      case 'schedulePrescriptionReminder':
         return await this.schedulePrescriptionReminder(data);
 
-      case "schedulePaymentReminder":
+      case 'schedulePaymentReminder':
         return await this.schedulePaymentReminder(data);
 
       default:
-        this.logPluginError("Unknown reminder operation", {
+        this.logPluginError('Unknown reminder operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown reminder operation: ${pluginData.operation}`);
@@ -80,49 +78,29 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const pluginData = data as any;
     const requiredFields = {
       scheduleReminder: [
-        "appointmentId",
-        "patientId",
-        "doctorId",
-        "clinicId",
-        "reminderType",
-        "hoursBefore",
+        'appointmentId',
+        'patientId',
+        'doctorId',
+        'clinicId',
+        'reminderType',
+        'hoursBefore',
       ],
       processScheduledReminders: [],
-      cancelReminder: ["reminderId"],
-      getReminderRules: ["clinicId"],
-      createReminderRule: ["rule"],
-      getReminderStats: ["clinicId", "dateRange"],
-      scheduleAppointmentReminder: [
-        "appointmentId",
-        "patientId",
-        "doctorId",
-        "clinicId",
-      ],
-      scheduleFollowUpReminder: [
-        "appointmentId",
-        "patientId",
-        "doctorId",
-        "clinicId",
-      ],
-      schedulePrescriptionReminder: [
-        "appointmentId",
-        "patientId",
-        "doctorId",
-        "clinicId",
-      ],
-      schedulePaymentReminder: [
-        "appointmentId",
-        "patientId",
-        "doctorId",
-        "clinicId",
-      ],
+      cancelReminder: ['reminderId'],
+      getReminderRules: ['clinicId'],
+      createReminderRule: ['rule'],
+      getReminderStats: ['clinicId', 'dateRange'],
+      scheduleAppointmentReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      scheduleFollowUpReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      schedulePrescriptionReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      schedulePaymentReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
     };
 
     const operation = pluginData.operation;
     const required = requiredFields[operation as keyof typeof requiredFields];
 
     if (!required) {
-      this.logPluginError("Unknown operation for validation", { operation });
+      this.logPluginError('Unknown operation for validation', { operation });
       return Promise.resolve(false);
     }
 
@@ -144,17 +122,16 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
    */
   private async scheduleAppointmentReminder(data: unknown): Promise<unknown> {
     const pluginData = data as any;
-    const reminderType = "appointment_reminder";
+    const reminderType = 'appointment_reminder';
     const hoursBefore = pluginData.hoursBefore || 24;
-    const channels = pluginData.channels || ["email", "whatsapp", "push"];
+    const channels = pluginData.channels || ['email', 'whatsapp', 'push'];
     const templateData = {
-      patientName: pluginData.patientName || "Patient",
-      doctorName: pluginData.doctorName || "Doctor",
-      appointmentDate:
-        pluginData.appointmentDate || new Date().toISOString().split("T")[0],
-      appointmentTime: pluginData.appointmentTime || "10:00",
-      location: pluginData.location || "Clinic",
-      clinicName: pluginData.clinicName || "Healthcare Clinic",
+      patientName: pluginData.patientName || 'Patient',
+      doctorName: pluginData.doctorName || 'Doctor',
+      appointmentDate: pluginData.appointmentDate || new Date().toISOString().split('T')[0],
+      appointmentTime: pluginData.appointmentTime || '10:00',
+      location: pluginData.location || 'Clinic',
+      clinicName: pluginData.clinicName || 'Healthcare Clinic',
       appointmentType: pluginData.appointmentType,
       notes: pluginData.notes,
     };
@@ -167,7 +144,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       reminderType,
       hoursBefore,
       channels,
-      templateData,
+      templateData
     );
   }
 
@@ -175,17 +152,16 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
    * Schedule follow-up reminder
    */
   private async scheduleFollowUpReminder(data: unknown): Promise<unknown> {
-    const reminderType = "follow_up";
+    const reminderType = 'follow_up';
     const hoursBefore = (data as any).hoursBefore || 168; // 1 week
-    const channels = (data as any).channels || ["email", "whatsapp"];
+    const channels = (data as any).channels || ['email', 'whatsapp'];
     const templateData = {
-      patientName: (data as any).patientName || "Patient",
-      doctorName: (data as any).doctorName || "Doctor",
-      appointmentDate:
-        (data as any).appointmentDate || new Date().toISOString().split("T")[0],
-      appointmentTime: (data as any).appointmentTime || "10:00",
-      location: (data as any).location || "Clinic",
-      clinicName: (data as any).clinicName || "Healthcare Clinic",
+      patientName: (data as any).patientName || 'Patient',
+      doctorName: (data as any).doctorName || 'Doctor',
+      appointmentDate: (data as any).appointmentDate || new Date().toISOString().split('T')[0],
+      appointmentTime: (data as any).appointmentTime || '10:00',
+      location: (data as any).location || 'Clinic',
+      clinicName: (data as any).clinicName || 'Healthcare Clinic',
       appointmentType: (data as any).appointmentType,
       notes: (data as any).notes,
     };
@@ -198,7 +174,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       reminderType,
       hoursBefore,
       channels,
-      templateData,
+      templateData
     );
   }
 
@@ -206,17 +182,16 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
    * Schedule prescription reminder
    */
   private async schedulePrescriptionReminder(data: unknown): Promise<unknown> {
-    const reminderType = "prescription";
+    const reminderType = 'prescription';
     const hoursBefore = (data as any).hoursBefore || 24;
-    const channels = (data as any).channels || ["whatsapp", "push"];
+    const channels = (data as any).channels || ['whatsapp', 'push'];
     const templateData = {
-      patientName: (data as any).patientName || "Patient",
-      doctorName: (data as any).doctorName || "Doctor",
-      appointmentDate:
-        (data as any).appointmentDate || new Date().toISOString().split("T")[0],
-      appointmentTime: (data as any).appointmentTime || "10:00",
-      location: (data as any).location || "Clinic",
-      clinicName: (data as any).clinicName || "Healthcare Clinic",
+      patientName: (data as any).patientName || 'Patient',
+      doctorName: (data as any).doctorName || 'Doctor',
+      appointmentDate: (data as any).appointmentDate || new Date().toISOString().split('T')[0],
+      appointmentTime: (data as any).appointmentTime || '10:00',
+      location: (data as any).location || 'Clinic',
+      clinicName: (data as any).clinicName || 'Healthcare Clinic',
       appointmentType: (data as any).appointmentType,
       notes: (data as any).notes,
       prescriptionDetails: (data as any).prescriptionDetails,
@@ -230,7 +205,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       reminderType,
       hoursBefore,
       channels,
-      templateData,
+      templateData
     );
   }
 
@@ -238,17 +213,16 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
    * Schedule payment reminder
    */
   private async schedulePaymentReminder(data: unknown): Promise<unknown> {
-    const reminderType = "payment";
+    const reminderType = 'payment';
     const hoursBefore = (data as any).hoursBefore || 24;
-    const channels = (data as any).channels || ["email", "whatsapp"];
+    const channels = (data as any).channels || ['email', 'whatsapp'];
     const templateData = {
-      patientName: (data as any).patientName || "Patient",
-      doctorName: (data as any).doctorName || "Doctor",
-      appointmentDate:
-        (data as any).appointmentDate || new Date().toISOString().split("T")[0],
-      appointmentTime: (data as any).appointmentTime || "10:00",
-      location: (data as any).location || "Clinic",
-      clinicName: (data as any).clinicName || "Healthcare Clinic",
+      patientName: (data as any).patientName || 'Patient',
+      doctorName: (data as any).doctorName || 'Doctor',
+      appointmentDate: (data as any).appointmentDate || new Date().toISOString().split('T')[0],
+      appointmentTime: (data as any).appointmentTime || '10:00',
+      location: (data as any).location || 'Clinic',
+      clinicName: (data as any).clinicName || 'Healthcare Clinic',
       appointmentType: (data as any).appointmentType,
       notes: (data as any).notes,
       amount: (data as any).amount,
@@ -263,8 +237,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       reminderType,
       hoursBefore,
       channels,
-      templateData,
+      templateData
     );
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */

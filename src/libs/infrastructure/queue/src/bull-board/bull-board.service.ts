@@ -1,6 +1,15 @@
-import { Injectable, Logger, Optional } from "@nestjs/common";
-import { InjectQueue } from "@nestjs/bull";
-import { Queue } from "bull";
+import { Injectable, Optional } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { LogType, LogLevel } from '@core/types';
+
 import {
   SERVICE_QUEUE,
   APPOINTMENT_QUEUE,
@@ -9,7 +18,7 @@ import {
   VIDHAKARMA_QUEUE,
   PANCHAKARMA_QUEUE,
   CHEQUP_QUEUE,
-} from "../queue.constants";
+} from '../queue.constants';
 
 /**
  * Bull Board Service for Queue Management
@@ -34,11 +43,10 @@ import {
  */
 @Injectable()
 export class BullBoardService {
-  private readonly logger = new Logger(BullBoardService.name);
-
   /**
    * Constructor for BullBoardService
    *
+   * @param loggingService - Logging service for structured logging
    * @param serviceQueue - Service queue instance (optional)
    * @param appointmentQueue - Appointment queue instance (optional)
    * @param emailQueue - Email queue instance (optional)
@@ -48,6 +56,7 @@ export class BullBoardService {
    * @param chequpQueue - Chequp queue instance (optional)
    */
   constructor(
+    private readonly loggingService: LoggingService,
     @Optional() @InjectQueue(SERVICE_QUEUE) private serviceQueue: Queue,
     @Optional() @InjectQueue(APPOINTMENT_QUEUE) private appointmentQueue: Queue,
     @Optional() @InjectQueue(EMAIL_QUEUE) private emailQueue: Queue,
@@ -56,7 +65,7 @@ export class BullBoardService {
     private notificationQueue: Queue,
     @Optional() @InjectQueue(VIDHAKARMA_QUEUE) private vidhakarmaQueue: Queue,
     @Optional() @InjectQueue(PANCHAKARMA_QUEUE) private panchakarmaQueue: Queue,
-    @Optional() @InjectQueue(CHEQUP_QUEUE) private chequpQueue: Queue,
+    @Optional() @InjectQueue(CHEQUP_QUEUE) private chequpQueue: Queue
   ) {}
 
   /**
@@ -68,14 +77,11 @@ export class BullBoardService {
   getQueues(): Record<string, Queue | undefined> {
     const queues: Record<string, Queue | undefined> = {};
     if (this.serviceQueue) queues[SERVICE_QUEUE] = this.serviceQueue;
-    if (this.appointmentQueue)
-      queues[APPOINTMENT_QUEUE] = this.appointmentQueue;
+    if (this.appointmentQueue) queues[APPOINTMENT_QUEUE] = this.appointmentQueue;
     if (this.emailQueue) queues[EMAIL_QUEUE] = this.emailQueue;
-    if (this.notificationQueue)
-      queues[NOTIFICATION_QUEUE] = this.notificationQueue;
+    if (this.notificationQueue) queues[NOTIFICATION_QUEUE] = this.notificationQueue;
     if (this.vidhakarmaQueue) queues[VIDHAKARMA_QUEUE] = this.vidhakarmaQueue;
-    if (this.panchakarmaQueue)
-      queues[PANCHAKARMA_QUEUE] = this.panchakarmaQueue;
+    if (this.panchakarmaQueue) queues[PANCHAKARMA_QUEUE] = this.panchakarmaQueue;
     if (this.chequpQueue) queues[CHEQUP_QUEUE] = this.chequpQueue;
     return queues;
   }
@@ -92,20 +98,18 @@ export class BullBoardService {
 
     for (const [name, queue] of Object.entries(queues)) {
       if (!queue) {
-        stats[name] = { _error: "Queue not available" };
+        stats[name] = { _error: 'Queue not available' };
         continue;
       }
 
       try {
-        const [waiting, active, completed, failed, delayed] = await Promise.all(
-          [
-            queue.getWaiting(),
-            queue.getActive(),
-            queue.getCompleted(),
-            queue.getFailed(),
-            queue.getDelayed(),
-          ],
-        );
+        const [waiting, active, completed, failed, delayed] = await Promise.all([
+          queue.getWaiting(),
+          queue.getActive(),
+          queue.getCompleted(),
+          queue.getFailed(),
+          queue.getDelayed(),
+        ]);
 
         stats[name] = {
           waiting: waiting.length,
@@ -113,20 +117,22 @@ export class BullBoardService {
           completed: completed.length,
           failed: failed.length,
           delayed: delayed.length,
-          total:
-            waiting.length +
-            active.length +
-            completed.length +
-            failed.length +
-            delayed.length,
+          total: waiting.length + active.length + completed.length + failed.length + delayed.length,
         };
       } catch (error) {
-        this.logger.error(
-          `Failed to get stats for queue ${name}:`,
-          error instanceof Error ? error.stack : "",
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
+          `Failed to get stats for queue ${name}`,
+          'BullBoardService',
+          {
+            queueName: name,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
         );
         stats[name] = {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
         };
       }
     }
@@ -142,7 +148,13 @@ export class BullBoardService {
     const queue = queues[queueName];
 
     if (!queue) {
-      throw new Error(`Queue ${queueName} not found`);
+      throw new HealthcareError(
+        ErrorCode.QUEUE_NOT_FOUND,
+        `Queue ${queueName} not found`,
+        undefined,
+        { queueName },
+        'BullBoardService.getQueueDetails'
+      );
     }
 
     try {
@@ -161,12 +173,7 @@ export class BullBoardService {
         completed: completed.length,
         failed: failed.length,
         delayed: delayed.length,
-        total:
-          waiting.length +
-          active.length +
-          completed.length +
-          failed.length +
-          delayed.length,
+        total: waiting.length + active.length + completed.length + failed.length + delayed.length,
         jobs: {
           waiting: waiting.slice(0, 10), // First 10 waiting jobs
           active: active.slice(0, 10), // First 10 active jobs
@@ -174,11 +181,27 @@ export class BullBoardService {
         },
       };
     } catch (error) {
-      this.logger.error(
-        `Failed to get details for queue ${queueName}:`,
-        error instanceof Error ? error.stack : "",
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get details for queue ${queueName}`,
+        'BullBoardService',
+        {
+          queueName,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw error;
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.QUEUE_OPERATION_FAILED,
+        `Failed to get details for queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        { queueName, originalError: error instanceof Error ? error.message : String(error) },
+        'BullBoardService.getQueueDetails'
+      );
     }
   }
 
@@ -190,7 +213,13 @@ export class BullBoardService {
     const queue = queues[queueName];
 
     if (!queue) {
-      throw new Error(`Queue ${queueName} not found`);
+      throw new HealthcareError(
+        ErrorCode.QUEUE_NOT_FOUND,
+        `Queue ${queueName} not found`,
+        undefined,
+        { queueName },
+        'BullBoardService.retryFailedJobs'
+      );
     }
 
     try {
@@ -201,9 +230,9 @@ export class BullBoardService {
           const job = await queue.getJob(jobId);
           if (job) {
             await job.retry();
-            results.push({ jobId, status: "retried" });
+            results.push({ jobId, status: 'retried' });
           } else {
-            results.push({ jobId, status: "not_found" });
+            results.push({ jobId, status: 'not_found' });
           }
         }
         return results;
@@ -213,16 +242,36 @@ export class BullBoardService {
         const results = [];
         for (const job of failedJobs) {
           await job.retry();
-          results.push({ jobId: job.id, status: "retried" });
+          results.push({ jobId: job.id, status: 'retried' });
         }
         return results;
       }
     } catch (error) {
-      this.logger.error(
-        `Failed to retry jobs in queue ${queueName}:`,
-        error instanceof Error ? error.stack : "",
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to retry jobs in queue ${queueName}`,
+        'BullBoardService',
+        {
+          queueName,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw error;
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.QUEUE_OPERATION_FAILED,
+        `Failed to retry jobs in queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        {
+          queueName,
+          jobIds,
+          originalError: error instanceof Error ? error.message : String(error),
+        },
+        'BullBoardService.retryFailedJobs'
+      );
     }
   }
 
@@ -234,7 +283,13 @@ export class BullBoardService {
     const queue = queues[queueName];
 
     if (!queue) {
-      throw new Error(`Queue ${queueName} not found`);
+      throw new HealthcareError(
+        ErrorCode.QUEUE_NOT_FOUND,
+        `Queue ${queueName} not found`,
+        undefined,
+        { queueName },
+        'BullBoardService.removeJobs'
+      );
     }
 
     try {
@@ -243,18 +298,38 @@ export class BullBoardService {
         const job = await queue.getJob(jobId);
         if (job) {
           await job.remove();
-          results.push({ jobId, status: "removed" });
+          results.push({ jobId, status: 'removed' });
         } else {
-          results.push({ jobId, status: "not_found" });
+          results.push({ jobId, status: 'not_found' });
         }
       }
       return results;
     } catch (error) {
-      this.logger.error(
-        `Failed to remove jobs from queue ${queueName}:`,
-        error instanceof Error ? error.stack : "",
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to remove jobs from queue ${queueName}`,
+        'BullBoardService',
+        {
+          queueName,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw error;
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.QUEUE_OPERATION_FAILED,
+        `Failed to remove jobs from queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        {
+          queueName,
+          jobIds,
+          originalError: error instanceof Error ? error.message : String(error),
+        },
+        'BullBoardService.removeJobs'
+      );
     }
   }
 
@@ -266,24 +341,63 @@ export class BullBoardService {
     const queue = queues[queueName];
 
     if (!queue) {
-      throw new Error(`Queue ${queueName} not found`);
+      throw new HealthcareError(
+        ErrorCode.QUEUE_NOT_FOUND,
+        `Queue ${queueName} not found`,
+        undefined,
+        { queueName },
+        'BullBoardService.toggleQueue'
+      );
     }
 
     try {
       if (pause) {
         await queue.pause();
-        this.logger.log(`Queue ${queueName} paused`);
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          `Queue ${queueName} paused`,
+          'BullBoardService',
+          { queueName }
+        );
       } else {
         await queue.resume();
-        this.logger.log(`Queue ${queueName} resumed`);
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          `Queue ${queueName} resumed`,
+          'BullBoardService',
+          { queueName }
+        );
       }
       return { queueName, paused: pause };
     } catch (error) {
-      this.logger.error(
-        `Failed to ${pause ? "pause" : "resume"} queue ${queueName}:`,
-        error instanceof Error ? error.stack : "",
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to ${pause ? 'pause' : 'resume'} queue ${queueName}`,
+        'BullBoardService',
+        {
+          queueName,
+          action: pause ? 'pause' : 'resume',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw error;
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.QUEUE_OPERATION_FAILED,
+        `Failed to ${pause ? 'pause' : 'resume'} queue ${queueName}: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        {
+          queueName,
+          action: pause ? 'pause' : 'resume',
+          originalError: error instanceof Error ? error.message : String(error),
+        },
+        'BullBoardService.toggleQueue'
+      );
     }
   }
 
@@ -293,35 +407,33 @@ export class BullBoardService {
   async getQueueHealth() {
     const stats = await this.getQueueStats();
     const health = {
-      overall: "healthy" as string,
+      overall: 'healthy' as string,
       queues: {} as Record<string, string>,
       issues: [] as string[],
     };
 
     for (const [queueName, queueStats] of Object.entries(stats)) {
       const stat = queueStats as Record<string, unknown>;
-      if (stat["error"]) {
-        health.queues[queueName] = "unhealthy";
+      if (stat['error']) {
+        health.queues[queueName] = 'unhealthy';
         health.issues.push(
-          `Queue ${queueName}: ${stat["error"] instanceof Error ? stat["error"].message : JSON.stringify(stat["error"])}`,
+          `Queue ${queueName}: ${stat['error'] instanceof Error ? stat['error'].message : JSON.stringify(stat['error'])}`
         );
-        health.overall = "unhealthy";
-      } else if ((stat["failed"] as number) > 100) {
-        health.queues[queueName] = "degraded";
+        health.overall = 'unhealthy';
+      } else if ((stat['failed'] as number) > 100) {
+        health.queues[queueName] = 'degraded';
         health.issues.push(
-          `Queue ${queueName}: High failure rate (${String(stat["failed"])} failed jobs)`,
+          `Queue ${queueName}: High failure rate (${String(stat['failed'])} failed jobs)`
         );
-        health.overall =
-          health.overall === "healthy" ? "degraded" : health.overall;
-      } else if ((stat["waiting"] as number) > 1000) {
-        health.queues[queueName] = "degraded";
+        health.overall = health.overall === 'healthy' ? 'degraded' : health.overall;
+      } else if ((stat['waiting'] as number) > 1000) {
+        health.queues[queueName] = 'degraded';
         health.issues.push(
-          `Queue ${queueName}: High queue depth (${String(stat["waiting"])} waiting jobs)`,
+          `Queue ${queueName}: High queue depth (${String(stat['waiting'])} waiting jobs)`
         );
-        health.overall =
-          health.overall === "healthy" ? "degraded" : health.overall;
+        health.overall = health.overall === 'healthy' ? 'degraded' : health.overall;
       } else {
-        health.queues[queueName] = "healthy";
+        health.queues[queueName] = 'healthy';
       }
     }
 

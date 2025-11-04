@@ -23,19 +23,15 @@
  */
 
 // Core error classes and types
-export {
-  HealthcareError,
-  ErrorMetadata,
-  ApiErrorResponse,
-} from "./healthcare-error.class";
-export { ErrorCode } from "./error-codes.enum";
-export { ErrorMessages } from "./error-messages.constant";
+export { HealthcareError, ErrorMetadata, ApiErrorResponse } from './healthcare-error.class';
+export { ErrorCode } from './error-codes.enum';
+export { ErrorMessages } from './error-messages.constant';
 
 // Main error service
-export { HealthcareErrorsService } from "./healthcare-errors.service";
+export { HealthcareErrorsService } from './healthcare-errors.service';
 
 // Module
-export { ErrorsModule } from "./errors.module";
+export { ErrorsModule } from './errors.module';
 
 // Re-export for convenience
-export { HealthcareErrorsService as Errors } from "./healthcare-errors.service";
+export { HealthcareErrorsService as Errors } from './healthcare-errors.service';

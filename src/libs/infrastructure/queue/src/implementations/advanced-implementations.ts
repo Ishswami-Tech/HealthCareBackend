@@ -6,7 +6,12 @@
  * =====================================================================
  */
 
-import { createHash, randomBytes } from "crypto";
+import { createHash, randomBytes } from 'crypto';
+import { HttpStatus } from '@nestjs/common';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 // ========================================
 // MULTI-REGION ACTIVE-ACTIVE DEPLOYMENT
@@ -63,14 +68,11 @@ export class CrossRegionReplicatorImpl {
     return results;
   }
 
-  private replicateToRegion(
-    event: unknown,
-    endpoint: string,
-  ): Promise<unknown> {
+  private replicateToRegion(event: unknown, endpoint: string): Promise<unknown> {
     // Simplified replication - in production this would use HTTP/gRPC
     const eventData = event as Record<string, unknown>;
     return Promise.resolve({
-      eventId: eventData["id"],
+      eventId: eventData['id'],
       replicatedAt: new Date().toISOString(),
       endpoint,
     });
@@ -96,14 +98,11 @@ export class VectorClockImpl {
     }
   }
 
-  compare(otherClock: Map<string, number>): "before" | "after" | "concurrent" {
+  compare(otherClock: Map<string, number>): 'before' | 'after' | 'concurrent' {
     let isGreater = false;
     let isLess = false;
 
-    const allNodes = new Set([
-      ...Array.from(this.clock.keys()),
-      ...Array.from(otherClock.keys()),
-    ]);
+    const allNodes = new Set([...Array.from(this.clock.keys()), ...Array.from(otherClock.keys())]);
 
     for (const node of Array.from(allNodes)) {
       const thisValue = this.clock.get(node) || 0;
@@ -113,9 +112,9 @@ export class VectorClockImpl {
       if (thisValue < otherValue) isLess = true;
     }
 
-    if (isGreater && !isLess) return "after";
-    if (isLess && !isGreater) return "before";
-    return "concurrent";
+    if (isGreater && !isLess) return 'after';
+    if (isLess && !isGreater) return 'before';
+    return 'concurrent';
   }
 
   getClock(): Map<string, number> {
@@ -154,9 +153,7 @@ export class MLPredictorImpl {
     // Simple trend calculation
     const older = this.historicalData.slice(-20, -10);
     const olderAvg =
-      older.length > 0
-        ? older.reduce((sum, d) => sum + d.value, 0) / older.length
-        : average;
+      older.length > 0 ? older.reduce((sum, d) => sum + d.value, 0) / older.length : average;
 
     const trend = average - olderAvg;
     const prediction = Math.max(0, average + trend);
@@ -173,8 +170,7 @@ export class MLPredictorImpl {
     const recent = this.historicalData.slice(-30);
     const mean = recent.reduce((sum, d) => sum + d.value, 0) / recent.length;
     const variance =
-      recent.reduce((sum, d) => sum + Math.pow(d.value - mean, 2), 0) /
-      recent.length;
+      recent.reduce((sum, d) => sum + Math.pow(d.value - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
 
     return Math.abs(value - mean) > 3 * stdDev; // 3-sigma rule
@@ -193,33 +189,27 @@ export class AutoScalerImpl {
   }
 
   getScalingRecommendation(): Promise<{
-    action: "scale_up" | "scale_down" | "maintain";
+    action: 'scale_up' | 'scale_down' | 'maintain';
     targetCapacity: number;
     confidence: number;
     reason: string;
   }> {
     const prediction = this.predictor.predict(300000); // 5 minute horizon
 
-    let action: "scale_up" | "scale_down" | "maintain" = "maintain";
+    let action: 'scale_up' | 'scale_down' | 'maintain' = 'maintain';
     let targetCapacity = this.currentCapacity;
-    let reason = "Queue depth within normal range";
+    let reason = 'Queue depth within normal range';
 
     if (prediction.prediction > this.currentCapacity * 10) {
-      action = "scale_up";
-      targetCapacity = Math.min(
-        this.maxCapacity,
-        Math.ceil(this.currentCapacity * 1.5),
-      );
+      action = 'scale_up';
+      targetCapacity = Math.min(this.maxCapacity, Math.ceil(this.currentCapacity * 1.5));
       reason = `Predicted queue depth ${prediction.prediction} requires scaling`;
     } else if (
       prediction.prediction < this.currentCapacity * 2 &&
       this.currentCapacity > this.minCapacity
     ) {
-      action = "scale_down";
-      targetCapacity = Math.max(
-        this.minCapacity,
-        Math.floor(this.currentCapacity * 0.8),
-      );
+      action = 'scale_down';
+      targetCapacity = Math.max(this.minCapacity, Math.floor(this.currentCapacity * 0.8));
       reason = `Low predicted queue depth allows scaling down`;
     }
 
@@ -241,7 +231,7 @@ export class AutoScalerImpl {
 // ========================================
 
 export class AdaptiveCircuitBreakerImpl {
-  private state: "closed" | "open" | "half-open" = "closed";
+  private state: 'closed' | 'open' | 'half-open' = 'closed';
   private failures = 0;
   private successes = 0;
   private lastFailureTime = 0;
@@ -249,11 +239,16 @@ export class AdaptiveCircuitBreakerImpl {
   private recoveryTimeout = 30000; // 30 seconds
 
   async execute<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.state === "open") {
+    if (this.state === 'open') {
       if (Date.now() - this.lastFailureTime < this.recoveryTimeout) {
-        throw new Error("Circuit breaker is open");
+        throw new HealthcareError(
+          ErrorCode.QUEUE_OPERATION_FAILED,
+          'Circuit breaker is open',
+          HttpStatus.SERVICE_UNAVAILABLE,
+          { state: this.state, recoveryTimeout: this.recoveryTimeout }
+        );
       }
-      this.state = "half-open";
+      this.state = 'half-open';
     }
 
     try {
@@ -270,8 +265,8 @@ export class AdaptiveCircuitBreakerImpl {
     this.failures = 0;
     this.successes++;
 
-    if (this.state === "half-open") {
-      this.state = "closed";
+    if (this.state === 'half-open') {
+      this.state = 'closed';
     }
   }
 
@@ -280,7 +275,7 @@ export class AdaptiveCircuitBreakerImpl {
     this.lastFailureTime = Date.now();
 
     if (this.failures >= this.failureThreshold) {
-      this.state = "open";
+      this.state = 'open';
     }
   }
 
@@ -293,7 +288,7 @@ export class AdaptiveCircuitBreakerImpl {
   }
 
   reset(): void {
-    this.state = "closed";
+    this.state = 'closed';
     this.failures = 0;
     this.successes = 0;
     this.lastFailureTime = 0;
@@ -310,13 +305,18 @@ export class FieldLevelEncryptionImpl {
   generateKey(keyId: string): string {
     const key = randomBytes(32); // 256-bit key
     this.encryptionKeys.set(keyId, key);
-    return key.toString("hex");
+    return key.toString('hex');
   }
 
   encrypt(data: unknown, keyId: string, fieldsToEncrypt: string[]): unknown {
     const key = this.encryptionKeys.get(keyId);
     if (!key) {
-      throw new Error(`Encryption key ${keyId} not found`);
+      throw new HealthcareError(
+        ErrorCode.QUEUE_OPERATION_FAILED,
+        `Encryption key ${keyId} not found`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        { keyId }
+      );
     }
 
     const result = { ...(data as Record<string, unknown>) };
@@ -330,14 +330,15 @@ export class FieldLevelEncryptionImpl {
     return result;
   }
 
-  decrypt(
-    encryptedData: unknown,
-    keyId: string,
-    fieldsToDecrypt: string[],
-  ): unknown {
+  decrypt(encryptedData: unknown, keyId: string, fieldsToDecrypt: string[]): unknown {
     const key = this.encryptionKeys.get(keyId);
     if (!key) {
-      throw new Error(`Decryption key ${keyId} not found`);
+      throw new HealthcareError(
+        ErrorCode.QUEUE_OPERATION_FAILED,
+        `Decryption key ${keyId} not found`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        { keyId }
+      );
     }
 
     const result = { ...(encryptedData as Record<string, unknown>) };
@@ -353,14 +354,14 @@ export class FieldLevelEncryptionImpl {
 
   private encryptField(plaintext: string, key: Buffer): string {
     // Simplified encryption - in production use proper AES-GCM
-    const hash = createHash("sha256");
-    hash.update(plaintext + key.toString("hex"));
-    return hash.digest("hex");
+    const hash = createHash('sha256');
+    hash.update(plaintext + key.toString('hex'));
+    return hash.digest('hex');
   }
 
   private decryptField(_ciphertext: string, _key: Buffer): string {
     // This is a placeholder - real decryption would reverse the encryption
-    return "[ENCRYPTED]";
+    return '[ENCRYPTED]';
   }
 
   rotateKey(keyId: string): string {
@@ -383,12 +384,7 @@ export class AuditTrailImpl {
     hash: string;
   }> = [];
 
-  logEvent(
-    action: string,
-    userId: string,
-    resource: string,
-    details: unknown,
-  ): string {
+  logEvent(action: string, userId: string, resource: string, details: unknown): string {
     const event = {
       id: this.generateId(),
       timestamp: Date.now(),
@@ -396,7 +392,7 @@ export class AuditTrailImpl {
       userId,
       resource,
       details,
-      hash: "",
+      hash: '',
     };
 
     // Create hash for integrity
@@ -411,7 +407,7 @@ export class AuditTrailImpl {
     for (const event of this.auditLog) {
       const expectedHash = this.createEventHash({
         ...event,
-        hash: "", // Exclude hash from hash calculation
+        hash: '', // Exclude hash from hash calculation
       });
 
       if (event.hash !== expectedHash) {
@@ -432,41 +428,41 @@ export class AuditTrailImpl {
 
     if (filters) {
       if (filters.userId) {
-        filtered = filtered.filter((e) => e.userId === filters.userId);
+        filtered = filtered.filter(e => e.userId === filters.userId);
       }
       if (filters.action) {
-        filtered = filtered.filter((e) => e.action === filters.action);
+        filtered = filtered.filter(e => e.action === filters.action);
       }
       if (filters.fromTime) {
-        filtered = filtered.filter((e) => e.timestamp >= filters.fromTime!);
+        filtered = filtered.filter(e => e.timestamp >= filters.fromTime!);
       }
       if (filters.toTime) {
-        filtered = filtered.filter((e) => e.timestamp <= filters.toTime!);
+        filtered = filtered.filter(e => e.timestamp <= filters.toTime!);
       }
     }
 
-    return filtered.map((event) => ({
+    return filtered.map(event => ({
       ...event,
       timestamp: new Date(event.timestamp).toISOString(),
     }));
   }
 
   private generateId(): string {
-    return randomBytes(16).toString("hex");
+    return randomBytes(16).toString('hex');
   }
 
   private createEventHash(event: unknown): string {
     const eventData = event as Record<string, unknown>;
     const dataToHash = JSON.stringify({
-      id: eventData["id"],
-      timestamp: eventData["timestamp"],
-      action: eventData["action"],
-      userId: eventData["userId"],
-      resource: eventData["resource"],
-      details: eventData["details"],
+      id: eventData['id'],
+      timestamp: eventData['timestamp'],
+      action: eventData['action'],
+      userId: eventData['userId'],
+      resource: eventData['resource'],
+      details: eventData['details'],
     });
 
-    return createHash("sha256").update(dataToHash).digest("hex");
+    return createHash('sha256').update(dataToHash).digest('hex');
   }
 }
 
@@ -475,12 +471,11 @@ export class AuditTrailImpl {
 // ========================================
 
 export class RealTimeMonitoringImpl {
-  private metrics: Map<string, Array<{ timestamp: number; value: number }>> =
-    new Map();
+  private metrics: Map<string, Array<{ timestamp: number; value: number }>> = new Map();
   private alerts: Array<{
     id: string;
     type: string;
-    severity: "low" | "medium" | "high" | "critical";
+    severity: 'low' | 'medium' | 'high' | 'critical';
     message: string;
     timestamp: number;
   }> = [];
@@ -505,14 +500,11 @@ export class RealTimeMonitoringImpl {
     this.checkAlerts(name, value);
   }
 
-  getMetrics(
-    name: string,
-    fromTime?: number,
-  ): Array<{ timestamp: number; value: number }> {
+  getMetrics(name: string, fromTime?: number): Array<{ timestamp: number; value: number }> {
     const data = this.metrics.get(name) || [];
 
     if (fromTime) {
-      return data.filter((d) => d.timestamp >= fromTime);
+      return data.filter(d => d.timestamp >= fromTime);
     }
 
     return [...data];
@@ -522,10 +514,10 @@ export class RealTimeMonitoringImpl {
     let filtered = this.alerts;
 
     if (severity) {
-      filtered = filtered.filter((a) => a.severity === severity);
+      filtered = filtered.filter(a => a.severity === severity);
     }
 
-    return filtered.map((alert) => ({
+    return filtered.map(alert => ({
       ...alert,
       timestamp: new Date(alert.timestamp).toISOString(),
     }));
@@ -539,25 +531,25 @@ export class RealTimeMonitoringImpl {
       processing_time: { warning: 5000, critical: 10000 },
     };
 
-    const threshold = (
-      thresholds as Record<string, { warning: number; critical: number }>
-    )[metricName];
+    const threshold = (thresholds as Record<string, { warning: number; critical: number }>)[
+      metricName
+    ];
     if (!threshold) return;
 
-    let severity: "low" | "medium" | "high" | "critical" = "low";
+    let severity: 'low' | 'medium' | 'high' | 'critical' = 'low';
     let shouldAlert = false;
 
     if (value >= threshold.critical) {
-      severity = "critical";
+      severity = 'critical';
       shouldAlert = true;
     } else if (value >= threshold.warning) {
-      severity = "medium";
+      severity = 'medium';
       shouldAlert = true;
     }
 
     if (shouldAlert) {
       this.alerts.push({
-        id: randomBytes(8).toString("hex"),
+        id: randomBytes(8).toString('hex'),
         type: metricName,
         severity,
         message: `${metricName} is ${value}, threshold: ${String(threshold.warning)}/${String(threshold.critical)}`,
@@ -644,7 +636,7 @@ export class IntelligentCacheImpl {
   }
 
   private evictLeastUsed(): void {
-    let leastUsedKey = "";
+    let leastUsedKey = '';
     let leastUsedScore = Infinity;
 
     for (const [key, entry] of Array.from(this.cache.entries())) {

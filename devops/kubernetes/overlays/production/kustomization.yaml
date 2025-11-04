@@ -31,7 +31,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 10
+        value: 3
 
   # Increase HPA limits for production
   - target:
@@ -40,10 +40,10 @@ patches:
     patch: |-
       - op: replace
         path: /spec/minReplicas
-        value: 10
+        value: 3
       - op: replace
         path: /spec/maxReplicas
-        value: 100
+        value: 12
 
   # Production resource limits
   - target:
@@ -52,16 +52,50 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
-        value: "2000m"
+        value: "500m"
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/memory
-        value: "4Gi"
+        value: "1Gi"
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/cpu
-        value: "4000m"
+        value: "2000m"
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/memory
-        value: "8Gi"
+        value: "2Gi"
+
+  # Spread API pods across nodes (anti-affinity)
+  - target:
+      kind: Deployment
+      name: healthcare-api
+    patch: |-
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: healthcare-api
+
+  # Spread Worker pods across nodes (anti-affinity)
+  - target:
+      kind: Deployment
+      name: healthcare-worker
+    patch: |-
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: healthcare-worker
 
   # Production PostgreSQL resources
   - target:
@@ -70,13 +104,13 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/memory
-        value: "8Gi"
+        value: "4Gi"
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/memory
-        value: "16Gi"
+        value: "8Gi"
       - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
-        value: "100Gi"
+        value: "50Gi"
 
   # Production Redis cluster
   - target:
@@ -85,7 +119,44 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 6  # 6 Redis nodes for production
+        value: 3  # 3 nodes for initial cluster across 3 VPS
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: redis
+
+  # Ensure Postgres schedules on a single node but prefer different nodes for failover in future
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: postgres
+
+  # Use DNS-01 ClusterIssuer for TLS in production
+  - target:
+      kind: Ingress
+      name: healthcare-ingress
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+        value: letsencrypt-dns01
 
 # Production config overrides
 configMapGenerator:

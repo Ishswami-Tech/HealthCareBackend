@@ -1,76 +1,76 @@
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty } from '@nestjs/swagger';
 
 export class ClinicResponseDto {
-  @ApiProperty({ description: "Clinic ID" })
+  @ApiProperty({ description: 'Clinic ID' })
   id!: string;
 
-  @ApiProperty({ description: "Clinic name" })
+  @ApiProperty({ description: 'Clinic name' })
   name!: string;
 
-  @ApiProperty({ description: "Clinic address" })
+  @ApiProperty({ description: 'Clinic address' })
   address!: string;
 
-  @ApiProperty({ description: "Clinic phone number" })
+  @ApiProperty({ description: 'Clinic phone number' })
   phone!: string;
 
-  @ApiProperty({ description: "Clinic email" })
+  @ApiProperty({ description: 'Clinic email' })
   email!: string;
 
-  @ApiProperty({ description: "Clinic subdomain" })
+  @ApiProperty({ description: 'Clinic subdomain' })
   subdomain!: string;
 
-  @ApiProperty({ description: "Clinic app name" })
+  @ApiProperty({ description: 'Clinic app name' })
   app_name!: string;
 
-  @ApiProperty({ description: "Clinic logo URL", required: false })
+  @ApiProperty({ description: 'Clinic logo URL', required: false })
   logo?: string;
 
-  @ApiProperty({ description: "Clinic website", required: false })
+  @ApiProperty({ description: 'Clinic website', required: false })
   website?: string;
 
-  @ApiProperty({ description: "Clinic description", required: false })
+  @ApiProperty({ description: 'Clinic description', required: false })
   description?: string;
 
-  @ApiProperty({ description: "Clinic timezone" })
+  @ApiProperty({ description: 'Clinic timezone' })
   timezone!: string;
 
-  @ApiProperty({ description: "Clinic currency" })
+  @ApiProperty({ description: 'Clinic currency' })
   currency!: string;
 
-  @ApiProperty({ description: "Clinic language" })
+  @ApiProperty({ description: 'Clinic language' })
   language!: string;
 
-  @ApiProperty({ description: "Whether clinic is active" })
+  @ApiProperty({ description: 'Whether clinic is active' })
   isActive!: boolean;
 
-  @ApiProperty({ description: "Clinic admins", type: [Object] })
+  @ApiProperty({ description: 'Clinic admins', type: [Object] })
   admins!: unknown[];
 
-  @ApiProperty({ description: "Created at timestamp" })
+  @ApiProperty({ description: 'Created at timestamp' })
   createdAt!: Date;
 
-  @ApiProperty({ description: "Updated at timestamp" })
+  @ApiProperty({ description: 'Updated at timestamp' })
   updatedAt!: Date;
 }
 
 export class ClinicListResponseDto {
-  @ApiProperty({ description: "List of clinics", type: [ClinicResponseDto] })
+  @ApiProperty({ description: 'List of clinics', type: [ClinicResponseDto] })
   clinics!: ClinicResponseDto[];
 
-  @ApiProperty({ description: "Total count of clinics" })
+  @ApiProperty({ description: 'Total count of clinics' })
   total!: number;
 
-  @ApiProperty({ description: "Current page number" })
+  @ApiProperty({ description: 'Current page number' })
   page!: number;
 
-  @ApiProperty({ description: "Number of items per page" })
+  @ApiProperty({ description: 'Number of items per page' })
   limit!: number;
 
-  @ApiProperty({ description: "Total number of pages" })
+  @ApiProperty({ description: 'Total number of pages' })
   totalPages!: number;
 }
 
 export class AppNameInlineDto {
-  @ApiProperty({ description: "App name (subdomain)", example: "myclinic" })
+  @ApiProperty({ description: 'App name (subdomain)', example: 'myclinic' })
   appName!: string;
 }

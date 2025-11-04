@@ -16,7 +16,9 @@ import type {
   RuleSeverity,
   RuleConditionType,
   RuleActionType,
-} from "../types/business-rules.types";
+} from '@core/types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 /**
  * Rule builder class for creating business rules
@@ -49,8 +51,8 @@ export class RuleBuilder {
       priority: 0,
       conditions: [],
       actions: [],
-      category: "custom",
-      version: "1.0.0",
+      category: 'custom',
+      version: '1.0.0',
       createdAt: new Date(),
       updatedAt: new Date(),
       tags: [],
@@ -177,7 +179,24 @@ export class RuleBuilder {
    */
   build(): BusinessRule {
     this.validateRule();
-    return this.rule as BusinessRule;
+    const builtRule: BusinessRule = {
+      id: this.rule.id!,
+      name: this.rule.name!,
+      description: this.rule.description!,
+      priority: this.rule.priority ?? 0,
+      isActive: this.rule.isActive ?? true,
+      category: this.rule.category ?? 'custom',
+      version: this.rule.version ?? '1.0.0',
+      tags: this.rule.tags ?? [],
+      conditions: (this.rule.conditions ?? []) as readonly RuleCondition[],
+      actions: (this.rule.actions ?? []) as readonly RuleAction[],
+      createdAt: this.rule.createdAt ?? new Date(),
+      updatedAt: this.rule.updatedAt ?? new Date(),
+    };
+    if (this.rule.clinicId !== undefined) {
+      builtRule.clinicId = this.rule.clinicId;
+    }
+    return builtRule;
   }
 
   /**
@@ -187,19 +206,49 @@ export class RuleBuilder {
    */
   private validateRule(): void {
     if (!this.rule.id) {
-      throw new Error("Rule ID is required");
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'Rule ID is required',
+        undefined,
+        {},
+        'RuleBuilder.validateRule'
+      );
     }
     if (!this.rule.name) {
-      throw new Error("Rule name is required");
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'Rule name is required',
+        undefined,
+        {},
+        'RuleBuilder.validateRule'
+      );
     }
     if (!this.rule.description) {
-      throw new Error("Rule description is required");
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'Rule description is required',
+        undefined,
+        {},
+        'RuleBuilder.validateRule'
+      );
     }
     if (this.rule.conditions?.length === 0) {
-      throw new Error("At least one condition is required");
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'At least one condition is required',
+        undefined,
+        {},
+        'RuleBuilder.validateRule'
+      );
     }
     if (this.rule.actions?.length === 0) {
-      throw new Error("At least one action is required");
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'At least one action is required',
+        undefined,
+        {},
+        'RuleBuilder.validateRule'
+      );
     }
   }
 }
@@ -210,7 +259,7 @@ export class RuleBuilder {
  */
 export class ConditionBuilder {
   private condition: Partial<RuleCondition> & {
-    operator?: "AND" | "OR";
+    operator?: 'AND' | 'OR';
     customFunction?: string;
   } = {};
 
@@ -221,17 +270,13 @@ export class ConditionBuilder {
    * @param value - Expected value
    * @returns New condition builder instance
    */
-  static create(
-    type: RuleConditionType,
-    field: string,
-    value: unknown,
-  ): ConditionBuilder {
+  static create(type: RuleConditionType, field: string, value: unknown): ConditionBuilder {
     const builder = new ConditionBuilder();
     builder.condition = {
       type,
       field,
       value,
-      operator: "AND",
+      operator: 'AND',
     };
     return builder;
   }
@@ -241,7 +286,7 @@ export class ConditionBuilder {
    * @param operator - Logical operator
    * @returns Condition builder instance
    */
-  withOperator(operator: "AND" | "OR"): ConditionBuilder {
+  withOperator(operator: 'AND' | 'OR'): ConditionBuilder {
     this.condition.operator = operator;
     return this;
   }
@@ -282,11 +327,7 @@ export class ActionBuilder {
    * @param severity - Action severity
    * @returns New action builder instance
    */
-  static create(
-    type: RuleActionType,
-    message: string,
-    severity: RuleSeverity,
-  ): ActionBuilder {
+  static create(type: RuleActionType, message: string, severity: RuleSeverity): ActionBuilder {
     const builder = new ActionBuilder();
     builder.action = {
       type,
@@ -336,7 +377,7 @@ export class RulePatterns {
    * @returns Rule condition
    */
   static equals(field: string, value: unknown): RuleCondition {
-    return ConditionBuilder.create("equals", field, value).build();
+    return ConditionBuilder.create('equals', field, value).build();
   }
 
   /**
@@ -346,7 +387,7 @@ export class RulePatterns {
    * @returns Rule condition
    */
   static notEquals(field: string, value: unknown): RuleCondition {
-    return ConditionBuilder.create("not_equals", field, value).build();
+    return ConditionBuilder.create('not_equals', field, value).build();
   }
 
   /**
@@ -356,7 +397,7 @@ export class RulePatterns {
    * @returns Rule condition
    */
   static greaterThan(field: string, value: number): RuleCondition {
-    return ConditionBuilder.create("greater_than", field, value).build();
+    return ConditionBuilder.create('greater_than', field, value).build();
   }
 
   /**
@@ -366,7 +407,7 @@ export class RulePatterns {
    * @returns Rule condition
    */
   static lessThan(field: string, value: number): RuleCondition {
-    return ConditionBuilder.create("less_than", field, value).build();
+    return ConditionBuilder.create('less_than', field, value).build();
   }
 
   /**
@@ -376,7 +417,7 @@ export class RulePatterns {
    * @returns Rule condition
    */
   static contains(field: string, value: string): RuleCondition {
-    return ConditionBuilder.create("contains", field, value).build();
+    return ConditionBuilder.create('contains', field, value).build();
   }
 
   /**
@@ -385,7 +426,7 @@ export class RulePatterns {
    * @returns Rule condition
    */
   static isEmpty(field: string): RuleCondition {
-    return ConditionBuilder.create("is_empty", field, null).build();
+    return ConditionBuilder.create('is_empty', field, null).build();
   }
 
   /**
@@ -394,7 +435,7 @@ export class RulePatterns {
    * @returns Rule condition
    */
   static isNotEmpty(field: string): RuleCondition {
-    return ConditionBuilder.create("is_not_empty", field, null).build();
+    return ConditionBuilder.create('is_not_empty', field, null).build();
   }
 
   /**
@@ -403,8 +444,8 @@ export class RulePatterns {
    * @param severity - Action severity
    * @returns Rule action
    */
-  static block(message: string, severity: RuleSeverity = "high"): RuleAction {
-    return ActionBuilder.create("block", message, severity).build();
+  static block(message: string, severity: RuleSeverity = 'high'): RuleAction {
+    return ActionBuilder.create('block', message, severity).build();
   }
 
   /**
@@ -413,8 +454,8 @@ export class RulePatterns {
    * @param severity - Action severity
    * @returns Rule action
    */
-  static warn(message: string, severity: RuleSeverity = "medium"): RuleAction {
-    return ActionBuilder.create("warn", message, severity).build();
+  static warn(message: string, severity: RuleSeverity = 'medium'): RuleAction {
+    return ActionBuilder.create('warn', message, severity).build();
   }
 
   /**
@@ -423,8 +464,8 @@ export class RulePatterns {
    * @param severity - Action severity
    * @returns Rule action
    */
-  static log(message: string, severity: RuleSeverity = "low"): RuleAction {
-    return ActionBuilder.create("log", message, severity).build();
+  static log(message: string, severity: RuleSeverity = 'low'): RuleAction {
+    return ActionBuilder.create('log', message, severity).build();
   }
 
   /**
@@ -433,10 +474,7 @@ export class RulePatterns {
    * @param severity - Action severity
    * @returns Rule action
    */
-  static notify(
-    message: string,
-    severity: RuleSeverity = "medium",
-  ): RuleAction {
-    return ActionBuilder.create("notify", message, severity).build();
+  static notify(message: string, severity: RuleSeverity = 'medium'): RuleAction {
+    return ActionBuilder.create('notify', message, severity).build();
   }
 }

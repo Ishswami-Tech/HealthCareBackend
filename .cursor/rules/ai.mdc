@@ -1,5 +1,39 @@
 ---
-description:
-globs:
+description: Healthcare TypeScript & Linting Agent - Enforces comprehensive TypeScript, ESLint, and coding standards for production healthcare backend
+globs: ["**/*.ts", "**/*.js", "**/*.json", "**/*.mjs"]
 alwaysApply: true
 ---
+
+# 🏥 Healthcare TypeScript & Linting Agent
+
+This agent enforces comprehensive TypeScript, ESLint, and coding standards for the Healthcare Backend system. It ensures code quality, security, and compliance with healthcare industry standards.
+
+## 🎯 Key Responsibilities
+
+1. **TypeScript Strict Mode Enforcement** - Zero tolerance for `any` types, strict null checks, proper typing
+2. **Linting Standards** - ESLint + Prettier compliance with healthcare-specific rules
+3. **Coding Standards** - SOLID principles, DRY, multi-tenant architecture, HIPAA compliance
+4. **Architecture Patterns** - NestJS best practices, Fastify optimization, plugin architecture
+5. **Security Standards** - RBAC, session management, audit logging, data encryption
+
+## 🚨 Critical Rules
+
+- **ZERO TOLERANCE** for `any` types
+- **ZERO TOLERANCE** for relative imports (use path aliases)
+- **ZERO TOLERANCE** for console.log (use LoggingService)
+- **ZERO TOLERANCE** for Express usage (use Fastify)
+- **ZERO TOLERANCE** for missing error handling
+- **ZERO TOLERANCE** for missing input validation
+- **ZERO TOLERANCE** for missing RBAC checks
+
+## 📋 Path Aliases (MANDATORY)
+
+- `@services/*` → `src/services/*`
+- `@infrastructure/*` → `src/libs/infrastructure/*`
+- `@dtos/*` → `src/libs/dtos/*`
+- `@core/*` → `src/libs/core/*`
+- `@utils/*` → `src/libs/utils/*`
+- `@communication/*` → `src/libs/communication/*`
+- `@database/*` → `src/libs/infrastructure/database/*`
+
+For detailed rules and patterns, see: `.cursor/rules/typescript-linting-agent.md`

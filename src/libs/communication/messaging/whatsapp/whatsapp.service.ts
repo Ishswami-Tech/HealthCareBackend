@@ -1,7 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import axios from "axios";
-import { WhatsAppConfig } from "./whatsapp.config";
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import axios from 'axios';
+import { WhatsAppConfig } from '@communication/messaging/whatsapp/whatsapp.config';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 /**
  * WhatsApp Business API service for sending messages and notifications
@@ -10,17 +12,16 @@ import { WhatsAppConfig } from "./whatsapp.config";
  */
 @Injectable()
 export class WhatsAppService {
-  private readonly logger = new Logger(WhatsAppService.name);
-
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly whatsAppConfig: WhatsAppConfig,
+    private readonly loggingService: LoggingService
+  ) {}
   /**
    * Creates an instance of WhatsAppService
    * @param configService - Configuration service for environment variables
    * @param whatsAppConfig - WhatsApp configuration service
    */
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly whatsAppConfig: WhatsAppConfig,
-  ) {}
 
   /**
    * Send OTP via WhatsApp
@@ -42,10 +43,15 @@ export class WhatsAppService {
     phoneNumber: string,
     otp: string,
     expiryMinutes: number = 10,
-    maxRetries: number = 2,
+    maxRetries: number = 2
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled) {
-      this.logger.log("WhatsApp service is disabled. Skipping OTP send.");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Skipping OTP send.',
+        'WhatsAppService'
+      );
       return false;
     }
 
@@ -56,40 +62,39 @@ export class WhatsAppService {
       try {
         const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-        await this.sendTemplateMessage(
-          formattedPhone,
-          this.whatsAppConfig.otpTemplateId,
-          [
-            {
-              type: "body",
-              parameters: [
-                { type: "text", text: otp },
-                { type: "text", text: `${expiryMinutes}` },
-              ],
-            },
-          ],
-        );
+        await this.sendTemplateMessage(formattedPhone, this.whatsAppConfig.otpTemplateId, [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: otp },
+              { type: 'text', text: `${expiryMinutes}` },
+            ],
+          },
+        ]);
 
-        this.logger.log(
-          `OTP sent to ${phoneNumber} via WhatsApp${retries > 0 ? ` (after ${retries} retries)` : ""}`,
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `OTP sent to ${phoneNumber} via WhatsApp${retries > 0 ? ` (after ${retries} retries)` : ''}`,
+          'WhatsAppService'
         );
         success = true;
         return true;
       } catch (error) {
         retries++;
-        const retryMsg =
-          retries <= maxRetries
-            ? `, retrying (${retries}/${maxRetries})...`
-            : "";
-        this.logger.error(
-          `Failed to send OTP via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}${retryMsg}`,
-          error instanceof Error ? error.stack : undefined,
+        const retryMsg = retries <= maxRetries ? `, retrying (${retries}/${maxRetries})...` : '';
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Failed to send OTP via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}${retryMsg}`,
+          'WhatsAppService',
+          { stack: (error as Error)?.stack }
         );
 
         if (retries <= maxRetries) {
           // Exponential backoff: wait longer between each retry
           const backoffMs = 1000 * Math.pow(2, retries - 1); // 1s, 2s, 4s, etc.
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
         }
       }
     }
@@ -123,11 +128,14 @@ export class WhatsAppService {
     doctorName: string,
     appointmentDate: string,
     appointmentTime: string,
-    location: string,
+    location: string
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled) {
-      this.logger.log(
-        "WhatsApp service is disabled. Skipping appointment reminder.",
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Skipping appointment reminder.',
+        'WhatsAppService'
       );
       return false;
     }
@@ -135,31 +143,33 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      await this.sendTemplateMessage(
-        formattedPhone,
-        this.whatsAppConfig.appointmentTemplateId,
-        [
-          {
-            type: "body",
-            parameters: [
-              { type: "text", text: patientName },
-              { type: "text", text: doctorName },
-              { type: "text", text: appointmentDate },
-              { type: "text", text: appointmentTime },
-              { type: "text", text: location },
-            ],
-          },
-        ],
-      );
+      await this.sendTemplateMessage(formattedPhone, this.whatsAppConfig.appointmentTemplateId, [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: patientName },
+            { type: 'text', text: doctorName },
+            { type: 'text', text: appointmentDate },
+            { type: 'text', text: appointmentTime },
+            { type: 'text', text: location },
+          ],
+        },
+      ]);
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
         `Appointment reminder sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService'
       );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Failed to send appointment reminder via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : undefined,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send appointment reminder via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
       );
       return false;
     }
@@ -188,11 +198,14 @@ export class WhatsAppService {
     patientName: string,
     doctorName: string,
     medicationDetails: string,
-    prescriptionUrl?: string,
+    prescriptionUrl?: string
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled) {
-      this.logger.log(
-        "WhatsApp service is disabled. Skipping prescription notification.",
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Skipping prescription notification.',
+        'WhatsAppService'
       );
       return false;
     }
@@ -200,38 +213,36 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      await this.sendTemplateMessage(
-        formattedPhone,
-        this.whatsAppConfig.prescriptionTemplateId,
-        [
-          {
-            type: "body",
-            parameters: [
-              { type: "text", text: patientName },
-              { type: "text", text: doctorName },
-              { type: "text", text: medicationDetails },
-            ],
-          },
-        ],
-      );
+      await this.sendTemplateMessage(formattedPhone, this.whatsAppConfig.prescriptionTemplateId, [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: patientName },
+            { type: 'text', text: doctorName },
+            { type: 'text', text: medicationDetails },
+          ],
+        },
+      ]);
 
       // If prescription URL is provided, send the document
       if (prescriptionUrl) {
-        await this.sendDocumentMessage(
-          formattedPhone,
-          prescriptionUrl,
-          "Your Prescription",
-        );
+        await this.sendDocumentMessage(formattedPhone, prescriptionUrl, 'Your Prescription');
       }
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
         `Prescription notification sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService'
       );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Failed to send prescription notification via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : undefined,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send prescription notification via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
       );
       return false;
     }
@@ -249,12 +260,14 @@ export class WhatsAppService {
    * @param message - Message text to send
    * @returns Promise resolving to true if message was sent successfully
    */
-  async sendCustomMessage(
-    phoneNumber: string,
-    message: string,
-  ): Promise<boolean> {
+  async sendCustomMessage(phoneNumber: string, message: string): Promise<boolean> {
     if (!this.whatsAppConfig.enabled) {
-      this.logger.log("WhatsApp service is disabled. Skipping custom message.");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Skipping custom message.',
+        'WhatsAppService'
+      );
       return false;
     }
 
@@ -264,10 +277,10 @@ export class WhatsAppService {
       await axios.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
         {
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
           to: formattedPhone,
-          type: "text",
+          type: 'text',
           text: {
             body: message,
           },
@@ -275,17 +288,25 @@ export class WhatsAppService {
         {
           headers: {
             Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
-        },
+        }
       );
 
-      this.logger.log(`Custom message sent to ${phoneNumber} via WhatsApp`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Custom message sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService'
+      );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Failed to send custom message via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : undefined,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send custom message via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
       );
       return false;
     }
@@ -312,20 +333,20 @@ export class WhatsAppService {
     components: Array<{
       type: string;
       parameters: Array<{ type: string; text: string }>;
-    }>,
+    }>
   ): Promise<unknown> {
     try {
       const response = await axios.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
         {
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
           to,
-          type: "template",
+          type: 'template',
           template: {
             name: templateName,
             language: {
-              code: "en",
+              code: 'en',
             },
             components,
           },
@@ -333,16 +354,19 @@ export class WhatsAppService {
         {
           headers: {
             Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
-        },
+        }
       );
 
       return response.data;
     } catch (error) {
-      this.logger.error(
-        `WhatsApp template message error: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : undefined,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `WhatsApp template message error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
       );
       throw error;
     }
@@ -366,16 +390,16 @@ export class WhatsAppService {
   private async sendDocumentMessage(
     to: string,
     documentUrl: string,
-    caption: string,
+    caption: string
   ): Promise<unknown> {
     try {
       const response = await axios.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
         {
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
           to,
-          type: "document",
+          type: 'document',
           document: {
             link: documentUrl,
             caption,
@@ -384,16 +408,19 @@ export class WhatsAppService {
         {
           headers: {
             Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
-        },
+        }
       );
 
       return response.data;
     } catch (error) {
-      this.logger.error(
-        `WhatsApp document message error: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : undefined,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `WhatsApp document message error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
       );
       throw error;
     }
@@ -425,11 +452,14 @@ export class WhatsAppService {
     invoiceNumber: string,
     amount: number,
     dueDate: string,
-    invoiceUrl: string,
+    invoiceUrl: string
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled) {
-      this.logger.log(
-        "WhatsApp service is disabled. Skipping invoice delivery.",
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Skipping invoice delivery.',
+        'WhatsAppService'
       );
       return false;
     }
@@ -444,22 +474,26 @@ export class WhatsAppService {
           `Your invoice ${invoiceNumber} for ₹${amount} has been generated.\n` +
           `Due Date: ${dueDate}\n\n` +
           `Please find your invoice attached below. You can also download it from: ${invoiceUrl}\n\n` +
-          `Thank you for your business!`,
+          `Thank you for your business!`
       );
 
       // Send invoice PDF as document
-      await this.sendDocumentMessage(
-        formattedPhone,
-        invoiceUrl,
-        `Invoice ${invoiceNumber}`,
-      );
+      await this.sendDocumentMessage(formattedPhone, invoiceUrl, `Invoice ${invoiceNumber}`);
 
-      this.logger.log(`Invoice sent to ${phoneNumber} via WhatsApp`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Invoice sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService'
+      );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : undefined,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
       );
       return false;
     }
@@ -491,11 +525,14 @@ export class WhatsAppService {
     planName: string,
     amount: number,
     startDate: string,
-    endDate: string,
+    endDate: string
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled) {
-      this.logger.log(
-        "WhatsApp service is disabled. Skipping subscription confirmation.",
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Skipping subscription confirmation.',
+        'WhatsAppService'
       );
       return false;
     }
@@ -512,17 +549,23 @@ export class WhatsAppService {
           `Start Date: ${startDate}\n` +
           `End Date: ${endDate}\n\n` +
           `Your invoice will be sent shortly.\n\n` +
-          `Thank you for choosing us!`,
+          `Thank you for choosing us!`
       );
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
         `Subscription confirmation sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService'
       );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Failed to send subscription confirmation via WhatsApp: ${error instanceof Error ? error.message : "Unknown error"}`,
-        error instanceof Error ? error.stack : undefined,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send subscription confirmation via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
       );
       return false;
     }
@@ -541,16 +584,16 @@ export class WhatsAppService {
    */
   private formatPhoneNumber(phoneNumber: string): string {
     // Remove any non-digit characters
-    let cleaned = phoneNumber.replace(/\D/g, "");
+    let cleaned = phoneNumber.replace(/\D/g, '');
 
     // Ensure it has a country code (default to India +91 if none)
-    if (!cleaned.startsWith("91") && cleaned.length === 10) {
-      cleaned = "91" + cleaned;
+    if (!cleaned.startsWith('91') && cleaned.length === 10) {
+      cleaned = '91' + cleaned;
     }
 
     // Ensure it starts with a plus sign
-    if (!cleaned.startsWith("+")) {
-      cleaned = "+" + cleaned;
+    if (!cleaned.startsWith('+')) {
+      cleaned = '+' + cleaned;
     }
 
     return cleaned;

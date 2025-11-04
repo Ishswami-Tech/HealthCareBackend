@@ -1,129 +1,355 @@
 /**
- * Represents a patient's position in the queue
- * @interface QueuePosition
- * @description Contains queue position and wait time information
- * @example
- * ```typescript
- * const position: QueuePosition = {
- *   position: 3,
- *   estimatedWaitTime: 45,
- *   totalAhead: 2
- * };
- * ```
+ * QUEUE JOB TYPE DEFINITIONS
+ * ==========================
+ * Proper TypeScript types for all queue job data structures
+ * Centralized in @core/types for consistency
  */
-export interface QueuePosition {
-  /** Current position in the queue */
-  readonly position: number;
-  /** Estimated wait time in minutes */
-  readonly estimatedWaitTime: number;
-  /** Number of patients ahead */
-  readonly totalAhead: number;
+
+// Base job metadata
+export interface JobMetadata {
+  clinicId?: string;
+  userId?: string;
+  timestamp?: Date;
+  priority?: number;
+  [key: string]: unknown;
+}
+
+// Appointment-related job data
+export interface AppointmentData {
+  appointmentId: string;
+  patientId?: string;
+  doctorId?: string;
+  clinicId?: string;
+  status?: string;
+  scheduledTime?: Date;
+  duration?: number;
+  type?: string;
+  notes?: string;
+}
+
+export interface AppointmentJobData {
+  appointment?: AppointmentData;
+  appointmentId?: string;
+  action?: string;
+  metadata?: JobMetadata;
+}
+
+// Payment-related job data
+export interface PaymentData {
+  id: string;
+  userId: string;
+  amount: number;
+  currency: string;
+  status: string;
+  gateway: string;
+  transactionId?: string;
+  createdAt: Date;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PaymentDto {
+  userId: string;
+  amount: number;
+  currency: string;
+  gateway: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PaymentJobData {
+  payment?: PaymentData;
+  paymentDto?: PaymentDto;
+  domain?: string;
+  timestamp?: Date;
+  fraudScore?: number;
+  status?: string;
+}
+
+// Notification-related job data
+export interface NotificationData {
+  type: string;
+  recipient: string;
+  recipientId?: string;
+  subject?: string;
+  message: string;
+  channel: 'email' | 'sms' | 'push' | 'whatsapp';
+  templateId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface NotificationJobData {
+  notification?: NotificationData;
+  type?: string;
+  recipients?: string[];
+  data?: Record<string, unknown>;
+  metadata?: JobMetadata;
+}
+
+// Email-related job data
+export interface EmailJobData {
+  to: string | string[];
+  from?: string;
+  subject: string;
+  html?: string;
+  text?: string;
+  templateId?: string;
+  templateData?: Record<string, unknown>;
+  attachments?: Array<{
+    filename: string;
+    content: string | Buffer;
+    contentType?: string;
+  }>;
+  metadata?: JobMetadata;
+}
+
+// Patient check-in job data
+export interface PatientCheckinData {
+  patientId: string;
+  appointmentId?: string;
+  clinicId: string;
+  locationId?: string;
+  checkinTime: Date;
+  metadata?: JobMetadata;
+}
+
+// Analytics job data
+export interface AnalyticsJobData {
+  payment?: PaymentData;
+  error?: Error;
+  paymentDto?: PaymentDto;
+  timestamp?: Date;
+  eventType: string;
+  eventData: Record<string, unknown>;
+  metadata?: JobMetadata;
+}
+
+// Reconciliation job data
+export interface ReconciliationJobData {
+  paymentIds: string[];
+  reconciliationType: 'daily' | 'weekly' | 'monthly';
+  startDate?: Date;
+  endDate?: Date;
+  metadata?: JobMetadata;
+}
+
+// Generic queue job data with domain
+export interface QueueJobData<T = unknown> {
+  domain: 'clinic';
+  action: string;
+  data: T;
+  metadata?: JobMetadata;
+}
+
+// Union type for all job data types
+export type AnyJobData =
+  | AppointmentJobData
+  | PaymentJobData
+  | NotificationJobData
+  | EmailJobData
+  | PatientCheckinData
+  | AnalyticsJobData
+  | ReconciliationJobData;
+
+// Job processing result
+export interface JobProcessingResult {
+  success: boolean;
+  message: string;
+  data?: unknown;
+  error?: string;
+}
+
+// Worker status
+export interface WorkerStatus {
+  isRunning: boolean;
+  queueName: string;
+  concurrency: number;
+}
+
+// Queue metrics (basic - simple structure)
+export interface QueueMetrics {
+  activeJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  delayedJobs: number;
+  waitingJobs: number;
+}
+
+// Queue metrics (detailed - used in QueueService)
+export interface DetailedQueueMetrics {
+  queueName: string;
+  domain: string;
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  throughputPerMinute: number;
+  averageProcessingTime: number;
+  errorRate: number;
+}
+
+// Queue health status
+export interface QueueHealthStatus {
+  isHealthy: boolean;
+  domain: string;
+  queues: DetailedQueueMetrics[];
+  totalJobs: number;
+  errorRate: number;
+  averageResponseTime: number;
+}
+
+// Extended queue metrics (for monitoring service)
+export interface ExtendedQueueMetrics {
+  queueName: string;
+  domain: string;
+  totalJobs: number;
+  waitingJobs: number;
+  activeJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  delayedJobs: number;
+  pausedJobs: number;
+  processedJobs: number;
+  throughput: number; // jobs per minute
+  averageProcessingTime: number; // milliseconds
+  errorRate: number; // percentage
+  lastActivity: Date;
+  health: 'healthy' | 'degraded' | 'unhealthy';
+}
+
+// Queue alert
+export interface QueueAlert {
+  id: string;
+  queueName: string;
+  type:
+    | 'error_rate_high'
+    | 'throughput_low'
+    | 'queue_size_large'
+    | 'processing_time_high'
+    | 'health_degraded';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  message: string;
+  threshold: number;
+  currentValue: number;
+  timestamp: Date;
+  resolved: boolean;
+  resolvedAt?: Date;
+}
+
+// Queue performance report
+export interface QueuePerformanceReport {
+  period: string;
+  startDate: Date;
+  endDate: Date;
+  queues: ExtendedQueueMetrics[];
+  summary: {
+    totalQueues: number;
+    healthyQueues: number;
+    degradedQueues: number;
+    unhealthyQueues: number;
+    totalJobs: number;
+    totalThroughput: number;
+    averageErrorRate: number;
+  };
+  alerts: QueueAlert[];
+  recommendations: string[];
+}
+
+// Performance metrics (queue-specific, distinct from general PerformanceMetrics)
+export interface QueuePerformanceMetrics {
+  throughput: number;
+  averageLatency: number;
+  errorRate: number;
+  queueSize: number;
+  activeConnections: number;
+}
+
+// Legacy alias for backwards compatibility during migration
+
+// Fraud data
+export interface FraudData {
+  riskFactors: string[];
+  userId: string;
+  amount: number;
+  gateway: string;
+}
+
+// ============================================================================
+// Queue Service Types (used in QueueService)
+// ============================================================================
+
+/**
+ * Generic job data interface
+ * @interface JobData
+ */
+export interface JobData {
+  [key: string]: unknown;
 }
 
 /**
- * Represents queue statistics
- * @interface QueueStats
- * @description Contains comprehensive queue performance metrics
- * @example
- * ```typescript
- * const stats: QueueStats = {
- *   waiting: 5,
- *   active: 3,
- *   completed: 25,
- *   failed: 1,
- *   avgWaitTime: 15,
- *   estimatedWaitTime: 20
- * };
- * ```
+ * Queue filter options
+ * @interface QueueFilters
  */
-export interface QueueStats {
-  /** Number of patients waiting */
-  readonly waiting: number;
-  /** Number of patients currently being served */
-  readonly active: number;
-  /** Number of completed appointments */
-  readonly completed: number;
-  /** Number of failed appointments */
-  readonly failed: number;
-  /** Average wait time in minutes */
-  readonly avgWaitTime: number;
-  /** Current estimated wait time in minutes */
-  readonly estimatedWaitTime: number;
-}
-
-/**
- * Represents queue statistics for a specific location
- * @interface LocationQueueStats
- * @description Extends QueueStats with location-specific data and doctor statistics
- * @example
- * ```typescript
- * const locationStats: LocationQueueStats = {
- *   locationId: "location-123",
- *   waiting: 5,
- *   active: 3,
- *   completed: 25,
- *   failed: 1,
- *   avgWaitTime: 15,
- *   estimatedWaitTime: 20,
- *   doctorStats: {
- *     "doctor-1": { waiting: 2, active: 1, avgWaitTime: 10 },
- *     "doctor-2": { waiting: 3, active: 2, avgWaitTime: 20 }
- *   }
- * };
- * ```
- */
-export interface LocationQueueStats extends QueueStats {
-  /** Location identifier */
-  readonly locationId: string;
-  /** Statistics per doctor */
-  readonly doctorStats: {
-    /** Doctor ID to statistics mapping */
-    readonly [doctorId: string]: {
-      /** Number of patients waiting for this doctor */
-      readonly waiting: number;
-      /** Number of patients currently being served by this doctor */
-      readonly active: number;
-      /** Average wait time for this doctor in minutes */
-      readonly avgWaitTime: number;
-    };
+export interface QueueFilters {
+  status?: string[];
+  priority?: string[];
+  tenantId?: string;
+  domain?: 'clinic' | 'worker';
+  dateRange?: {
+    from: string;
+    to: string;
   };
 }
 
 /**
- * Represents queue statistics for a specific doctor
- * @interface DoctorQueueStats
- * @description Contains doctor-specific queue metrics and next appointment information
- * @example
- * ```typescript
- * const doctorStats: DoctorQueueStats = {
- *   waiting: 3,
- *   active: 1,
- *   completed: 15,
- *   avgWaitTime: 12,
- *   nextAppointment: {
- *     id: "appointment-123",
- *     patientName: "John Doe",
- *     scheduledTime: "2024-01-15T14:30:00Z"
- *   }
- * };
- * ```
+ * Client session for queue WebSocket connections
+ * @interface ClientSession
  */
-export interface DoctorQueueStats {
-  /** Number of patients waiting for this doctor */
-  readonly waiting: number;
-  /** Number of patients currently being served by this doctor */
-  readonly active: number;
-  /** Number of completed appointments for this doctor */
-  readonly completed: number;
-  /** Average wait time for this doctor in minutes */
-  readonly avgWaitTime: number;
-  /** Optional next appointment information */
-  readonly nextAppointment?: {
-    /** Appointment ID */
-    readonly id: string;
-    /** Patient name */
-    readonly patientName: string;
-    /** Scheduled time */
-    readonly scheduledTime: string;
-  };
+export interface ClientSession {
+  clientId: string;
+  tenantId: string;
+  userId: string;
+  domain: 'clinic' | 'worker';
+  connectedAt: Date;
+  subscribedQueues: Set<string>;
+  messageCount: number;
+  lastActivity: Date;
+}
+
+/**
+ * Enterprise job options for queue operations
+ * @interface EnterpriseJobOptions
+ */
+export interface EnterpriseJobOptions {
+  tenantId?: string;
+  correlationId?: string;
+  priority?: number;
+  classification?: 'public' | 'internal' | 'confidential' | 'restricted';
+  auditLevel?: 'none' | 'basic' | 'detailed' | 'comprehensive';
+  timeout?: number;
+  delay?: number;
+  attempts?: number;
+  removeOnComplete?: boolean | number;
+  removeOnFail?: boolean | number;
+  domain?: 'clinic' | 'worker';
+}
+
+/**
+ * Bulk job data for batch operations
+ * @interface BulkJobData
+ */
+export interface BulkJobData<T = unknown> {
+  jobType: string;
+  data: T;
+  options?: EnterpriseJobOptions;
+}
+
+/**
+ * Audit actions for queue operations
+ * @enum AuditAction
+ */
+export enum AuditAction {
+  CREATE = 'create',
+  READ = 'read',
+  UPDATE = 'update',
+  DELETE = 'delete',
 }

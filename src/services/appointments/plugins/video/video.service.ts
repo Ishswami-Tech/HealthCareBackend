@@ -1,39 +1,13 @@
-/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-floating-promises, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  NotFoundException,
-} from "@nestjs/common";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
-import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
-import { JitsiVideoService } from "./jitsi-video.service";
+import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { JitsiVideoService } from './jitsi-video.service';
 
-export interface VideoCall {
-  id: string;
-  appointmentId: string;
-  patientId: string;
-  doctorId: string;
-  clinicId: string;
-  status: "scheduled" | "active" | "completed" | "cancelled";
-  startTime?: string;
-  endTime?: string;
-  duration?: number;
-  recordingUrl?: string;
-  meetingUrl: string;
-  participants: string[];
-  settings: VideoCallSettings;
-}
+import type { VideoCall, VideoCallSettings } from '@core/types/appointment.types';
 
-export interface VideoCallSettings {
-  maxParticipants: number;
-  recordingEnabled: boolean;
-  screenSharingEnabled: boolean;
-  chatEnabled: boolean;
-  waitingRoomEnabled: boolean;
-  autoRecord: boolean;
-}
+// Re-export types for backward compatibility
+export type { VideoCall, VideoCallSettings };
 
 // VirtualFitting interface removed - healthcare application only
 
@@ -46,14 +20,14 @@ export class VideoService {
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly jitsiVideoService: JitsiVideoService,
+    private readonly jitsiVideoService: JitsiVideoService
   ) {}
 
   async createVideoCall(
     appointmentId: string,
     patientId: string,
     doctorId: string,
-    clinicId: string,
+    clinicId: string
   ): Promise<unknown> {
     const startTime = Date.now();
 
@@ -63,7 +37,7 @@ export class VideoService {
         appointmentId,
         patientId,
         doctorId,
-        clinicId,
+        clinicId
       );
 
       // Generate unique meeting URL
@@ -76,7 +50,7 @@ export class VideoService {
         patientId,
         doctorId,
         clinicId,
-        status: "scheduled",
+        status: 'scheduled',
         meetingUrl,
         participants: [patientId, doctorId],
         settings: {
@@ -94,24 +68,20 @@ export class VideoService {
 
       // Cache the video call
       const cacheKey = `videocall:${videoCall.id}`;
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(videoCall),
-        this.VIDEO_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(videoCall), this.VIDEO_CACHE_TTL);
 
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Video call created successfully",
-        "VideoService",
+        'Video call created successfully',
+        'VideoService',
         {
           appointmentId,
           patientId,
           doctorId,
           clinicId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return videoCall;
@@ -120,14 +90,14 @@ export class VideoService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create video call: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "VideoService",
+        'VideoService',
         {
           appointmentId,
           patientId,
           doctorId,
           clinicId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -140,17 +110,17 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException("Video call not found");
+        throw new NotFoundException('Video call not found');
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException("User is not a participant in this call");
+        throw new BadRequestException('User is not a participant in this call');
       }
 
       // Update call status if first participant
-      if (videoCall.status === "scheduled") {
-        videoCall.status = "active";
+      if (videoCall.status === 'scheduled') {
+        videoCall.status = 'active';
         videoCall.startTime = new Date().toISOString();
         await this.updateVideoCall(videoCall);
       }
@@ -161,9 +131,9 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "User joined video call successfully",
-        "VideoService",
-        { callId, userId, responseTime: Date.now() - startTime },
+        'User joined video call successfully',
+        'VideoService',
+        { callId, userId, responseTime: Date.now() - startTime }
       );
 
       return {
@@ -177,12 +147,12 @@ export class VideoService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to join video call: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "VideoService",
+        'VideoService',
         {
           callId,
           userId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -195,12 +165,12 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException("Video call not found");
+        throw new NotFoundException('Video call not found');
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException("User is not a participant in this call");
+        throw new BadRequestException('User is not a participant in this call');
       }
 
       // Start recording (placeholder implementation)
@@ -213,28 +183,28 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Recording started successfully",
-        "VideoService",
-        { callId, userId, recordingId, responseTime: Date.now() - startTime },
+        'Recording started successfully',
+        'VideoService',
+        { callId, userId, recordingId, responseTime: Date.now() - startTime }
       );
 
       return {
         success: true,
         recordingId,
         recordingUrl: videoCall.recordingUrl,
-        message: "Recording started",
+        message: 'Recording started',
       };
     } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to start recording: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "VideoService",
+        'VideoService',
         {
           callId,
           userId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -247,12 +217,12 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException("Video call not found");
+        throw new NotFoundException('Video call not found');
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException("User is not a participant in this call");
+        throw new BadRequestException('User is not a participant in this call');
       }
 
       // Stop recording (placeholder implementation)
@@ -261,28 +231,28 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Recording stopped successfully",
-        "VideoService",
-        { callId, userId, responseTime: Date.now() - startTime },
+        'Recording stopped successfully',
+        'VideoService',
+        { callId, userId, responseTime: Date.now() - startTime }
       );
 
       return {
         success: true,
         recordingUrl: videoCall.recordingUrl,
         duration: (recordingResult as { duration: number }).duration,
-        message: "Recording stopped",
+        message: 'Recording stopped',
       };
     } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to stop recording: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "VideoService",
+        'VideoService',
         {
           callId,
           userId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -295,22 +265,20 @@ export class VideoService {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException("Video call not found");
+        throw new NotFoundException('Video call not found');
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException("User is not a participant in this call");
+        throw new BadRequestException('User is not a participant in this call');
       }
 
       // End the call
-      videoCall.status = "completed";
+      videoCall.status = 'completed';
       videoCall.endTime = new Date().toISOString();
       if (videoCall.startTime) {
         videoCall.duration = Math.floor(
-          (new Date(videoCall.endTime).getTime() -
-            new Date(videoCall.startTime).getTime()) /
-            1000,
+          (new Date(videoCall.endTime).getTime() - new Date(videoCall.startTime).getTime()) / 1000
         );
       }
 
@@ -324,55 +292,51 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Video call ended successfully",
-        "VideoService",
+        'Video call ended successfully',
+        'VideoService',
         {
           callId,
           userId,
           duration: videoCall.duration,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return {
         success: true,
         callId,
         duration: videoCall.duration,
-        message: "Video call ended",
+        message: 'Video call ended',
       };
     } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to end video call: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "VideoService",
+        'VideoService',
         {
           callId,
           userId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
   }
 
-  async shareMedicalImage(
-    callId: string,
-    userId: string,
-    imageData: unknown,
-  ): Promise<unknown> {
+  async shareMedicalImage(callId: string, userId: string, imageData: unknown): Promise<unknown> {
     const startTime = Date.now();
 
     try {
       // Get video call details
       const videoCall = await this.getVideoCall(callId);
       if (!videoCall) {
-        throw new NotFoundException("Video call not found");
+        throw new NotFoundException('Video call not found');
       }
 
       // Validate user is a participant
       if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException("User is not a participant in this call");
+        throw new BadRequestException('User is not a participant in this call');
       }
 
       // Upload and share image (placeholder implementation)
@@ -381,27 +345,27 @@ export class VideoService {
       this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Medical image shared successfully",
-        "VideoService",
-        { callId, userId, imageUrl, responseTime: Date.now() - startTime },
+        'Medical image shared successfully',
+        'VideoService',
+        { callId, userId, imageUrl, responseTime: Date.now() - startTime }
       );
 
       return {
         success: true,
         imageUrl,
-        message: "Medical image shared",
+        message: 'Medical image shared',
       };
     } catch (_error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to share medical image: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "VideoService",
+        'VideoService',
         {
           callId,
           userId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -409,12 +373,9 @@ export class VideoService {
 
   // startVirtualFitting method removed - healthcare application only
 
-  async getVideoCallHistory(
-    userId: string,
-    clinicId?: string,
-  ): Promise<unknown> {
+  async getVideoCallHistory(userId: string, clinicId?: string): Promise<unknown> {
     const startTime = Date.now();
-    const cacheKey = `videocalls:history:${userId}:${clinicId || "all"}`;
+    const cacheKey = `videocalls:history:${userId}:${clinicId || 'all'}`;
 
     try {
       // Try to get from cache first
@@ -435,23 +396,19 @@ export class VideoService {
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(result),
-        this.VIDEO_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(result), this.VIDEO_CACHE_TTL);
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Video call history retrieved successfully",
-        "VideoService",
+        'Video call history retrieved successfully',
+        'VideoService',
         {
           userId,
           clinicId,
           count: calls.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return result;
@@ -460,12 +417,12 @@ export class VideoService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get video call history: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "VideoService",
+        'VideoService',
         {
           userId,
           clinicId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -478,7 +435,7 @@ export class VideoService {
     appointmentId: string,
     patientId: string,
     doctorId: string,
-    clinicId: string,
+    clinicId: string
   ): Promise<unknown> {
     // This would integrate with the actual appointment service
     // For now, return mock data
@@ -487,7 +444,7 @@ export class VideoService {
       patientId,
       doctorId,
       clinicId,
-      status: "CONFIRMED",
+      status: 'CONFIRMED',
     };
   }
 
@@ -499,10 +456,7 @@ export class VideoService {
     return `https://meet.example.com/${appointmentId}-${Date.now()}`;
   }
 
-  private async generateJoinToken(
-    callId: string,
-    userId: string,
-  ): Promise<string> {
+  private async generateJoinToken(callId: string, userId: string): Promise<string> {
     // This would integrate with actual video service
     // For now, return mock token
     return `token-${callId}-${userId}-${Date.now()}`;
@@ -526,13 +480,13 @@ export class VideoService {
     // For now, return mock data
     return {
       id: callId,
-      appointmentId: "app-1",
-      patientId: "patient-1",
-      doctorId: "doctor-1",
-      clinicId: "clinic-1",
-      status: "scheduled",
-      meetingUrl: "https://meet.example.com/test",
-      participants: ["patient-1", "doctor-1"],
+      appointmentId: 'app-1',
+      patientId: 'patient-1',
+      doctorId: 'doctor-1',
+      clinicId: 'clinic-1',
+      status: 'scheduled',
+      meetingUrl: 'https://meet.example.com/test',
+      participants: ['patient-1', 'doctor-1'],
       settings: {
         maxParticipants: 2,
         recordingEnabled: true,
@@ -547,11 +501,7 @@ export class VideoService {
   private async updateVideoCall(videoCall: VideoCall): Promise<void> {
     // Update cache
     const cacheKey = `videocall:${videoCall.id}`;
-    await this.cacheService.set(
-      cacheKey,
-      JSON.stringify(videoCall),
-      this.VIDEO_CACHE_TTL,
-    );
+    await this.cacheService.set(cacheKey, JSON.stringify(videoCall), this.VIDEO_CACHE_TTL);
 
     // This would integrate with the actual database
     // For now, just log
@@ -576,7 +526,7 @@ export class VideoService {
   private async uploadMedicalImage(
     imageData: unknown,
     callId: string,
-    userId: string,
+    userId: string
   ): Promise<string> {
     // This would integrate with actual file storage service
     // For now, return mock URL
@@ -585,25 +535,22 @@ export class VideoService {
 
   // storeVirtualFitting method removed - healthcare application only
 
-  private async fetchVideoCallHistory(
-    userId: string,
-    clinicId?: string,
-  ): Promise<VideoCall[]> {
+  private async fetchVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCall[]> {
     // This would integrate with the actual database
     // For now, return mock data
     return [
       {
-        id: "vc-1",
-        appointmentId: "app-1",
-        patientId: "patient-1",
-        doctorId: "doctor-1",
-        clinicId: "clinic-1",
-        status: "completed",
+        id: 'vc-1',
+        appointmentId: 'app-1',
+        patientId: 'patient-1',
+        doctorId: 'doctor-1',
+        clinicId: 'clinic-1',
+        status: 'completed',
         startTime: new Date(Date.now() - 3600000).toISOString(),
         endTime: new Date().toISOString(),
         duration: 3600,
-        meetingUrl: "https://meet.example.com/test",
-        participants: ["patient-1", "doctor-1"],
+        meetingUrl: 'https://meet.example.com/test',
+        participants: ['patient-1', 'doctor-1'],
         settings: {
           maxParticipants: 2,
           recordingEnabled: true,
@@ -615,7 +562,4 @@ export class VideoService {
       },
     ];
   }
-
-  // fetchVirtualFittingHistory method removed - healthcare application only
 }
-/* eslint-enable @typescript-eslint/no-unused-vars, @typescript-eslint/no-floating-promises, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */

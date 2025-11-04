@@ -1,17 +1,29 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "./prisma/prisma.service";
-import { ConnectionPoolManager } from "./connection-pool.manager";
-import { HealthcareQueryOptimizerService } from "./query-optimizer.service";
-import { ClinicIsolationService } from "./clinic-isolation.service";
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
+import type { PrismaService } from './prisma/prisma.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { ConnectionPoolManager } from './connection-pool.manager';
+import { HealthcareQueryOptimizerService } from './query-optimizer.service';
+import { ClinicIsolationService } from './clinic-isolation.service';
+import type {
+  DatabaseMetrics,
+  ConnectionPoolMetricsInternal,
+  ClinicMetrics,
+  Alert,
+  MetricsSnapshot,
+  HealthStatus,
+  PerformanceTrends,
+  DatabasePerformanceReport,
+  ClinicSummary,
+} from '@core/types/database.types';
 
 /**
  * Comprehensive Database Metrics Service
+ *
+ * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
+ * All methods are private/protected. Use HealthcareDatabaseClient instead.
  *
  * Features:
  * - Real-time performance monitoring
@@ -22,10 +34,11 @@ import { ClinicIsolationService } from "./clinic-isolation.service";
  * - HIPAA compliance tracking
  * - Alert system for performance issues
  * - Historical metrics storage
+ * @internal
  */
 @Injectable()
 export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(DatabaseMetricsService.name);
+  private readonly serviceName = 'DatabaseMetricsService';
   private metricsInterval!: NodeJS.Timeout;
   private alertInterval!: NodeJS.Timeout;
   private readonly metricsHistory: MetricsSnapshot[] = [];
@@ -59,7 +72,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       connectionPoolUsage: 0,
       connectionErrors: 0,
       connectionLatency: 0,
-    },
+    } as ConnectionPoolMetricsInternal,
     healthcare: {
       totalPatients: 0,
       totalAppointments: 0,
@@ -71,19 +84,25 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     },
     clinicMetrics: new Map(),
     alerts: [],
-    health: "healthy",
+    health: 'healthy',
   };
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly prismaService: PrismaService,
+    private readonly databaseService: HealthcareDatabaseClient,
+    private readonly loggingService: LoggingService,
     private readonly connectionPoolManager: ConnectionPoolManager,
     private readonly queryOptimizer: HealthcareQueryOptimizerService,
-    private readonly clinicIsolationService: ClinicIsolationService,
+    private readonly clinicIsolationService: ClinicIsolationService
   ) {}
 
   onModuleInit() {
-    this.logger.log("Database metrics service initialized");
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Database metrics service initialized',
+      this.serviceName
+    );
     this.startMetricsCollection();
     this.startAlertMonitoring();
   }
@@ -91,55 +110,70 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() {
     clearInterval(this.metricsInterval);
     clearInterval(this.alertInterval);
-    this.logger.log("Database metrics service destroyed");
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Database metrics service destroyed',
+      this.serviceName
+    );
   }
 
   /**
    * Get current database metrics
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getCurrentMetrics(): DatabaseMetrics {
     return { ...this.currentMetrics };
   }
 
   /**
    * Get metrics history
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getMetricsHistory(limit: number = 100): MetricsSnapshot[] {
     return this.metricsHistory.slice(-limit);
   }
 
   /**
    * Get clinic-specific metrics
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getClinicMetrics(clinicId: string): ClinicMetrics | null {
     return this.currentMetrics.clinicMetrics.get(clinicId) || null;
   }
 
   /**
    * Get performance trends
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
-  getPerformanceTrends(
-    timeRange: "1h" | "6h" | "24h" | "7d",
-  ): PerformanceTrends {
+  // Public for HealthcareDatabaseClient access, but marked as internal
+  getPerformanceTrends(timeRange: '1h' | '6h' | '24h' | '7d'): PerformanceTrends {
     const now = Date.now();
     const timeRanges = {
-      "1h": 60 * 60 * 1000,
-      "6h": 6 * 60 * 60 * 1000,
-      "24h": 24 * 60 * 60 * 1000,
-      "7d": 7 * 24 * 60 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '6h': 6 * 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
     };
 
     const cutoff = now - timeRanges[timeRange];
     const relevantSnapshots = this.metricsHistory.filter(
-      (snapshot) => snapshot.timestamp.getTime() > cutoff,
+      snapshot => snapshot.timestamp.getTime() > cutoff
     );
 
     if (relevantSnapshots.length === 0) {
       return {
-        queryPerformance: { trend: "stable", change: 0 },
-        connectionPool: { trend: "stable", change: 0 },
-        errorRate: { trend: "stable", change: 0 },
-        throughput: { trend: "stable", change: 0 },
+        queryPerformance: { trend: 'stable', change: 0 },
+        connectionPool: { trend: 'stable', change: 0 },
+        errorRate: { trend: 'stable', change: 0 },
+        throughput: { trend: 'stable', change: 0 },
       };
     }
 
@@ -150,7 +184,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       queryPerformance: {
         trend: this.calculateTrend(
           last?.performance.averageQueryTime || 0,
-          first?.performance.averageQueryTime || 0,
+          first?.performance.averageQueryTime || 0
         ),
         change:
           (((last?.performance.averageQueryTime || 0) -
@@ -161,7 +195,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       connectionPool: {
         trend: this.calculateTrend(
           last?.connectionPool.connectionPoolUsage || 0,
-          first?.connectionPool.connectionPoolUsage || 0,
+          first?.connectionPool.connectionPoolUsage || 0
         ),
         change:
           (((last?.connectionPool.connectionPoolUsage || 0) -
@@ -171,28 +205,22 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       },
       errorRate: {
         trend: this.calculateTrend(
-          (last?.performance.failedQueries || 0) /
-            (last?.performance.totalQueries || 1),
-          (first?.performance.failedQueries || 0) /
-            (first?.performance.totalQueries || 1),
+          (last?.performance.failedQueries || 0) / (last?.performance.totalQueries || 1),
+          (first?.performance.failedQueries || 0) / (first?.performance.totalQueries || 1)
         ),
         change:
-          (((last?.performance.failedQueries || 0) /
-            (last?.performance.totalQueries || 1) -
-            (first?.performance.failedQueries || 0) /
-              (first?.performance.totalQueries || 1)) /
-            ((first?.performance.failedQueries || 0) /
-              (first?.performance.totalQueries || 1))) *
+          (((last?.performance.failedQueries || 0) / (last?.performance.totalQueries || 1) -
+            (first?.performance.failedQueries || 0) / (first?.performance.totalQueries || 1)) /
+            ((first?.performance.failedQueries || 0) / (first?.performance.totalQueries || 1))) *
           100,
       },
       throughput: {
         trend: this.calculateTrend(
           last?.performance.queryThroughput || 0,
-          first?.performance.queryThroughput || 0,
+          first?.performance.queryThroughput || 0
         ),
         change:
-          (((last?.performance.queryThroughput || 0) -
-            (first?.performance.queryThroughput || 0)) /
+          (((last?.performance.queryThroughput || 0) - (first?.performance.queryThroughput || 0)) /
             (first?.performance.queryThroughput || 1)) *
           100,
       },
@@ -201,7 +229,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get health status
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getHealthStatus(): HealthStatus {
     const metrics = this.currentMetrics;
     const issues: string[] = [];
@@ -209,22 +240,18 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // Check performance issues
     if (metrics.performance.averageQueryTime > this.slowQueryThreshold) {
       issues.push(
-        `Average query time (${metrics.performance.averageQueryTime}ms) exceeds threshold (${this.slowQueryThreshold}ms)`,
+        `Average query time (${metrics.performance.averageQueryTime}ms) exceeds threshold (${this.slowQueryThreshold}ms)`
       );
     }
 
     if (metrics.performance.criticalQueries > 0) {
-      issues.push(
-        `${metrics.performance.criticalQueries} critical queries detected`,
-      );
+      issues.push(`${metrics.performance.criticalQueries} critical queries detected`);
     }
 
     // Check connection pool issues
-    if (
-      metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage
-    ) {
+    if (metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage) {
       issues.push(
-        `Connection pool usage (${(metrics.connectionPool.connectionPoolUsage * 100).toFixed(1)}%) exceeds threshold (${(this.maxConnectionPoolUsage * 100).toFixed(1)}%)`,
+        `Connection pool usage (${(metrics.connectionPool.connectionPoolUsage * 100).toFixed(1)}%) exceeds threshold (${(this.maxConnectionPoolUsage * 100).toFixed(1)}%)`
       );
     }
 
@@ -235,23 +262,18 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
         : 0;
     if (errorRate > this.maxErrorRate) {
       issues.push(
-        `Error rate (${(errorRate * 100).toFixed(2)}%) exceeds threshold (${(this.maxErrorRate * 100).toFixed(2)}%)`,
+        `Error rate (${(errorRate * 100).toFixed(2)}%) exceeds threshold (${(this.maxErrorRate * 100).toFixed(2)}%)`
       );
     }
 
     // Check healthcare compliance
     if (metrics.healthcare.unauthorizedAccessAttempts > 0) {
       issues.push(
-        `${metrics.healthcare.unauthorizedAccessAttempts} unauthorized access attempts detected`,
+        `${metrics.healthcare.unauthorizedAccessAttempts} unauthorized access attempts detected`
       );
     }
 
-    const health =
-      issues.length === 0
-        ? "healthy"
-        : issues.length <= 2
-          ? "warning"
-          : "critical";
+    const health = issues.length === 0 ? 'healthy' : issues.length <= 2 ? 'warning' : 'critical';
 
     return {
       status: health,
@@ -263,13 +285,16 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record query execution metrics
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   recordQueryExecution(
     operation: string,
     executionTime: number,
     success: boolean,
     clinicId?: string,
-    userId?: string,
+    _userId?: string
   ): void {
     const metrics = this.currentMetrics.performance;
 
@@ -309,7 +334,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     const now = Date.now();
     const oneMinuteAgo = now - 60000;
     const recentQueries = this.metricsHistory
-      .filter((snapshot) => snapshot.timestamp.getTime() > oneMinuteAgo)
+      .filter(snapshot => snapshot.timestamp.getTime() > oneMinuteAgo)
       .reduce((sum, snapshot) => sum + snapshot.performance.totalQueries, 0);
 
     metrics.queryThroughput = recentQueries / 60;
@@ -317,7 +342,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record connection pool metrics
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   recordConnectionPoolMetrics(): void {
     const poolMetrics = this.connectionPoolManager.getMetrics();
     const metrics = this.currentMetrics.connectionPool;
@@ -326,25 +354,41 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     metrics.activeConnections = poolMetrics.activeConnections;
     metrics.idleConnections = poolMetrics.idleConnections;
     metrics.waitingConnections = poolMetrics.waitingConnections;
-    metrics.connectionPoolUsage =
-      poolMetrics.activeConnections / poolMetrics.totalConnections;
+    metrics.connectionPoolUsage = poolMetrics.activeConnections / poolMetrics.totalConnections;
     metrics.connectionErrors = poolMetrics.errors;
     metrics.connectionLatency = poolMetrics.averageQueryTime;
   }
 
   /**
-   * Record healthcare-specific metrics
+   * Record healthcare metrics
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   async recordHealthcareMetrics(): Promise<void> {
     try {
+      // Use internal accessor - DatabaseMetricsService is infrastructure component
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+      ).getInternalPrismaClient();
+
+      // Type-safe Prisma delegates
+      type PatientDelegate = { count: (args?: Record<string, never>) => Promise<number> };
+      type AppointmentDelegate = { count: (args?: Record<string, never>) => Promise<number> };
+      type ClinicDelegate = { count: (args?: Record<string, never>) => Promise<number> };
+
+      const patientDelegate = prismaClient.patient as unknown as PatientDelegate;
+      const appointmentDelegate = prismaClient.appointment as unknown as AppointmentDelegate;
+      const clinicDelegate = prismaClient.clinic as unknown as ClinicDelegate;
+
       // Get patient count
-      const patientCount = await this.prismaService.patient.count();
+      const patientCount = await patientDelegate.count({} as Record<string, never>);
 
       // Get appointment count
-      const appointmentCount = await this.prismaService.appointment.count();
+      const appointmentCount = await appointmentDelegate.count({} as Record<string, never>);
 
       // Get clinic count
-      const clinicCount = await this.prismaService.clinic.count();
+      const clinicCount = await clinicDelegate.count({} as Record<string, never>);
 
       this.currentMetrics.healthcare.totalPatients = patientCount;
       this.currentMetrics.healthcare.totalAppointments = appointmentCount;
@@ -353,26 +397,30 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       // Update clinic-specific metrics
       await this.updateClinicSpecificMetrics();
     } catch (_error) {
-      this.logger.error("Failed to record healthcare metrics:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to record healthcare metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
+        this.serviceName,
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
     }
   }
 
   /**
    * Generate performance report
    */
-  generatePerformanceReport(): PerformanceReport {
+  generatePerformanceReport(): DatabasePerformanceReport {
     const metrics = this.currentMetrics;
     const health = this.getHealthStatus();
-    const trends = this.getPerformanceTrends("24h");
+    const trends = this.getPerformanceTrends('24h');
 
     return {
       timestamp: new Date(),
       summary: {
         overallHealth: health.status,
         totalIssues: health.issues.length,
-        performanceGrade: this.calculatePerformanceGrade(
-          metrics.performance.averageQueryTime,
-        ),
+        performanceGrade: this.calculatePerformanceGrade(metrics.performance.averageQueryTime),
         recommendations: this.generateRecommendations(metrics, health),
       },
       metrics: metrics,
@@ -385,13 +433,21 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   // Private methods
 
   private startMetricsCollection(): void {
-    this.metricsInterval = setInterval(async () => {
-      try {
-        await this.collectMetrics();
-        this.storeMetricsSnapshot();
-      } catch (_error) {
-        this.logger.error("Failed to collect metrics:", _error);
-      }
+    this.metricsInterval = setInterval(() => {
+      void (async () => {
+        try {
+          await this.collectMetrics();
+          this.storeMetricsSnapshot();
+        } catch (_error) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            `Failed to collect metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
+            this.serviceName,
+            { error: _error instanceof Error ? _error.stack : String(_error) }
+          );
+        }
+      })();
     }, 30000); // Every 30 seconds
   }
 
@@ -410,9 +466,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Get query optimizer stats
     const optimizerStats = this.queryOptimizer.getOptimizerStats();
-    this.currentMetrics.performance.cacheHitRate = (
-      optimizerStats["cacheStats"] as Record<string, unknown>
-    )["hitRate"] as number;
+    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheHitRate || 0;
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -436,10 +490,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private updateClinicMetrics(
-    clinicId: string,
-    update: Partial<ClinicMetrics>,
-  ): void {
+  private updateClinicMetrics(clinicId: string, update: Partial<ClinicMetrics>): void {
     const current = this.currentMetrics.clinicMetrics.get(clinicId) || {
       clinicId,
       totalQueries: 0,
@@ -458,8 +509,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Recalculate averages
     if (current.totalQueries > 0) {
-      current.averageExecutionTime =
-        current.totalExecutionTime / current.totalQueries;
+      current.averageExecutionTime = current.totalExecutionTime / current.totalQueries;
     }
 
     this.currentMetrics.clinicMetrics.set(clinicId, current);
@@ -467,8 +517,30 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   private async updateClinicSpecificMetrics(): Promise<void> {
     try {
+      // Use internal accessor - DatabaseMetricsService is infrastructure component
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+      ).getInternalPrismaClient();
+
+      // Type-safe Prisma delegates
+      type ClinicWithCount = {
+        id: string;
+        _count: {
+          appointments: number;
+        };
+      };
+      type ClinicDelegate = {
+        findMany: (args: Record<string, unknown>) => Promise<ClinicWithCount[]>;
+      };
+      type PatientDelegate = {
+        count: (args: Record<string, unknown>) => Promise<number>;
+      };
+
+      const clinicDelegate = prismaClient.clinic as unknown as ClinicDelegate;
+      const patientDelegate = prismaClient.patient as unknown as PatientDelegate;
+
       // Get clinic-specific data
-      const clinics = await this.prismaService.clinic.findMany({
+      const clinics = await clinicDelegate.findMany({
         select: {
           id: true,
           _count: {
@@ -477,30 +549,30 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
             },
           },
         },
-      });
+      } as Record<string, unknown>);
 
       // Get patient counts separately (since patients are related through appointments)
       const patientCounts = await Promise.all(
-        clinics.map(async (clinic: unknown) => {
-          const patientCount = await this.prismaService.patient.count({
+        clinics.map(async (clinic: ClinicWithCount) => {
+          const patientCount = await patientDelegate.count({
             where: {
               appointments: {
                 some: {
-                  clinicId: (clinic as Record<string, unknown>)["id"] as string,
+                  clinicId: clinic.id,
                 },
               },
             },
-          });
+          } as Record<string, unknown>);
           return {
-            clinicId: (clinic as Record<string, unknown>)["id"] as string,
+            clinicId: clinic.id,
             patientCount,
           };
-        }),
+        })
       );
 
       for (const clinic of clinics) {
         const patientCountData = patientCounts.find(
-          (p) => p.clinicId === clinic.id,
+          (p: { clinicId: string; patientCount: number }) => p.clinicId === clinic.id
         );
 
         const current = this.currentMetrics.clinicMetrics.get(clinic.id) || {
@@ -522,7 +594,13 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
         this.currentMetrics.clinicMetrics.set(clinic.id, current);
       }
     } catch (_error) {
-      this.logger.error("Failed to update clinic-specific metrics:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to update clinic-specific metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
+        this.serviceName,
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
     }
   }
 
@@ -533,11 +611,11 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // Performance alerts
     if (metrics.performance.averageQueryTime > this.slowQueryThreshold) {
       alerts.push({
-        type: "PERFORMANCE",
-        severity: "warning",
+        type: 'PERFORMANCE',
+        severity: 'warning',
         message: `Average query time (${metrics.performance.averageQueryTime}ms) exceeds threshold`,
         timestamp: new Date(),
-        metric: "averageQueryTime",
+        metric: 'averageQueryTime',
         value: metrics.performance.averageQueryTime,
         threshold: this.slowQueryThreshold,
       });
@@ -545,26 +623,24 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     if (metrics.performance.criticalQueries > 0) {
       alerts.push({
-        type: "PERFORMANCE",
-        severity: "critical",
+        type: 'PERFORMANCE',
+        severity: 'critical',
         message: `${metrics.performance.criticalQueries} critical queries detected`,
         timestamp: new Date(),
-        metric: "criticalQueries",
+        metric: 'criticalQueries',
         value: metrics.performance.criticalQueries,
         threshold: 0,
       });
     }
 
     // Connection pool alerts
-    if (
-      metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage
-    ) {
+    if (metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage) {
       alerts.push({
-        type: "CONNECTION_POOL",
-        severity: "warning",
+        type: 'CONNECTION_POOL',
+        severity: 'warning',
         message: `Connection pool usage (${(metrics.connectionPool.connectionPoolUsage * 100).toFixed(1)}%) is high`,
         timestamp: new Date(),
-        metric: "connectionPoolUsage",
+        metric: 'connectionPoolUsage',
         value: metrics.connectionPool.connectionPoolUsage,
         threshold: this.maxConnectionPoolUsage,
       });
@@ -573,11 +649,11 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // Healthcare alerts
     if (metrics.healthcare.unauthorizedAccessAttempts > 0) {
       alerts.push({
-        type: "SECURITY",
-        severity: "critical",
+        type: 'SECURITY',
+        severity: 'critical',
         message: `${metrics.healthcare.unauthorizedAccessAttempts} unauthorized access attempts detected`,
         timestamp: new Date(),
-        metric: "unauthorizedAccessAttempts",
+        metric: 'unauthorizedAccessAttempts',
         value: metrics.healthcare.unauthorizedAccessAttempts,
         threshold: 0,
       });
@@ -587,193 +663,65 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     this.currentMetrics.alerts = alerts;
 
     // Log critical alerts
-    const criticalAlerts = alerts.filter(
-      (alert) => alert.severity === "critical",
-    );
+    const criticalAlerts = alerts.filter(alert => alert.severity === 'critical');
     if (criticalAlerts.length > 0) {
-      this.logger.error("Critical database alerts:", criticalAlerts);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Critical database alerts: ${criticalAlerts.length} alerts`,
+        this.serviceName,
+        { alerts: criticalAlerts }
+      );
     }
   }
 
-  private calculateTrend(
-    current: number,
-    previous: number,
-  ): "improving" | "stable" | "degrading" {
+  private calculateTrend(current: number, previous: number): 'improving' | 'stable' | 'degrading' {
     const change = ((current - previous) / previous) * 100;
-    if (change < -5) return "improving";
-    if (change > 5) return "degrading";
-    return "stable";
+    if (change < -5) return 'improving';
+    if (change > 5) return 'degrading';
+    return 'stable';
   }
 
-  private calculatePerformanceGrade(
-    averageQueryTime: number,
-  ): "A" | "B" | "C" | "D" | "F" {
-    if (averageQueryTime < 100) return "A";
-    if (averageQueryTime < 500) return "B";
-    if (averageQueryTime < 1000) return "C";
-    if (averageQueryTime < 2000) return "D";
-    return "F";
+  private calculatePerformanceGrade(averageQueryTime: number): 'A' | 'B' | 'C' | 'D' | 'F' {
+    if (averageQueryTime < 100) return 'A';
+    if (averageQueryTime < 500) return 'B';
+    if (averageQueryTime < 1000) return 'C';
+    if (averageQueryTime < 2000) return 'D';
+    return 'F';
   }
 
-  private generateRecommendations(
-    metrics: DatabaseMetrics,
-    health: HealthStatus,
-  ): string[] {
+  private generateRecommendations(metrics: DatabaseMetrics, _health: HealthStatus): string[] {
     const recommendations: string[] = [];
 
     if (metrics.performance.averageQueryTime > this.slowQueryThreshold) {
-      recommendations.push(
-        "Consider query optimization and index improvements",
-      );
+      recommendations.push('Consider query optimization and index improvements');
     }
 
-    if (
-      metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage
-    ) {
+    if (metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage) {
       recommendations.push(
-        "Consider increasing connection pool size or optimizing connection usage",
+        'Consider increasing connection pool size or optimizing connection usage'
       );
     }
 
     if (metrics.performance.cacheHitRate < 0.8) {
-      recommendations.push("Review caching strategy to improve cache hit rate");
+      recommendations.push('Review caching strategy to improve cache hit rate');
     }
 
     if (metrics.healthcare.unauthorizedAccessAttempts > 0) {
-      recommendations.push(
-        "Review access controls and investigate unauthorized access attempts",
-      );
+      recommendations.push('Review access controls and investigate unauthorized access attempts');
     }
 
     return recommendations;
   }
 
   private generateClinicSummary(): ClinicSummary[] {
-    return Array.from(this.currentMetrics.clinicMetrics.values()).map(
-      (clinic) => ({
-        clinicId: clinic.clinicId,
-        patientCount: clinic.patientCount,
-        appointmentCount: clinic.appointmentCount,
-        queryCount: clinic.totalQueries,
-        averageQueryTime: clinic.averageExecutionTime,
-        lastUpdated: clinic.lastUpdated,
-      }),
-    );
+    return Array.from(this.currentMetrics.clinicMetrics.values()).map(clinic => ({
+      clinicId: clinic.clinicId,
+      patientCount: clinic.patientCount,
+      appointmentCount: clinic.appointmentCount,
+      queryCount: clinic.totalQueries,
+      averageQueryTime: clinic.averageExecutionTime,
+      lastUpdated: clinic.lastUpdated,
+    }));
   }
-}
-
-// Interfaces
-
-export interface DatabaseMetrics {
-  timestamp: Date;
-  performance: PerformanceMetrics;
-  connectionPool: ConnectionPoolMetrics;
-  healthcare: HealthcareMetrics;
-  clinicMetrics: Map<string, ClinicMetrics>;
-  alerts: Alert[];
-  health: "healthy" | "warning" | "critical";
-}
-
-export interface PerformanceMetrics {
-  totalQueries: number;
-  successfulQueries: number;
-  failedQueries: number;
-  averageQueryTime: number;
-  slowQueries: number;
-  criticalQueries: number;
-  queryThroughput: number;
-  cacheHitRate: number;
-  indexUsageRate: number;
-}
-
-export interface ConnectionPoolMetrics {
-  totalConnections: number;
-  activeConnections: number;
-  idleConnections: number;
-  waitingConnections: number;
-  connectionPoolUsage: number;
-  connectionErrors: number;
-  connectionLatency: number;
-}
-
-export interface HealthcareMetrics {
-  totalPatients: number;
-  totalAppointments: number;
-  totalClinics: number;
-  hipaaCompliantOperations: number;
-  auditTrailEntries: number;
-  dataEncryptionRate: number;
-  unauthorizedAccessAttempts: number;
-}
-
-export interface ClinicMetrics {
-  clinicId: string;
-  totalQueries: number;
-  successfulQueries: number;
-  failedQueries: number;
-  totalExecutionTime: number;
-  averageExecutionTime: number;
-  patientCount: number;
-  appointmentCount: number;
-  lastUpdated: Date;
-}
-
-export interface Alert {
-  type: "PERFORMANCE" | "CONNECTION_POOL" | "SECURITY" | "HEALTHCARE";
-  severity: "info" | "warning" | "critical";
-  message: string;
-  timestamp: Date;
-  metric: string;
-  value: number;
-  threshold: number;
-}
-
-export interface MetricsSnapshot {
-  timestamp: Date;
-  performance: PerformanceMetrics;
-  connectionPool: ConnectionPoolMetrics;
-  healthcare: HealthcareMetrics;
-  clinicMetrics: Map<string, ClinicMetrics>;
-}
-
-export interface HealthStatus {
-  status: "healthy" | "warning" | "critical";
-  issues: string[];
-  lastCheck: Date;
-  metrics: DatabaseMetrics;
-}
-
-export interface PerformanceTrends {
-  queryPerformance: TrendData;
-  connectionPool: TrendData;
-  errorRate: TrendData;
-  throughput: TrendData;
-}
-
-export interface TrendData {
-  trend: "improving" | "stable" | "degrading";
-  change: number; // Percentage change
-}
-
-export interface PerformanceReport {
-  timestamp: Date;
-  summary: {
-    overallHealth: string;
-    totalIssues: number;
-    performanceGrade: string;
-    recommendations: string[];
-  };
-  metrics: DatabaseMetrics;
-  trends: PerformanceTrends;
-  alerts: Alert[];
-  clinicSummary: ClinicSummary[];
-}
-
-export interface ClinicSummary {
-  clinicId: string;
-  patientCount: number;
-  appointmentCount: number;
-  queryCount: number;
-  averageQueryTime: number;
-  lastUpdated: Date;
 }

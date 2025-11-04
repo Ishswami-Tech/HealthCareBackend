@@ -1,11 +1,15 @@
-import { Module, Global } from "@nestjs/common";
-import { APP_INTERCEPTOR } from "@nestjs/core";
-import { ConfigModule } from "@nestjs/config";
-import { EventEmitterModule } from "@nestjs/event-emitter";
-import { CacheController } from "./controllers/cache.controller";
-import { CacheService } from "./cache.service";
-import { RedisService } from "./redis/redis.service";
-import { HealthcareCacheInterceptor } from "./interceptors/healthcare-cache.interceptor";
+// External imports
+import { Module, Global } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+
+// Internal imports - Infrastructure
+import { LoggingModule } from '@infrastructure/logging';
+import { CacheController } from '@infrastructure/cache/controllers/cache.controller';
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { HealthcareCacheInterceptor } from '@infrastructure/cache/interceptors/healthcare-cache.interceptor';
 
 /**
  * Enterprise Cache Module for 10M+ Users
@@ -26,10 +30,11 @@ import { HealthcareCacheInterceptor } from "./interceptors/healthcare-cache.inte
 @Module({
   imports: [
     ConfigModule,
+    LoggingModule,
     EventEmitterModule.forRoot({
       // Enterprise-grade event emitter configuration
       wildcard: false,
-      delimiter: ".",
+      delimiter: '.',
       newListener: false,
       removeListener: false,
       maxListeners: 1000,

@@ -1,6 +1,6 @@
-import { registerAs } from "@nestjs/config";
-import { ENV_VARS, DEFAULT_CONFIG } from "./constants";
-import type { RedisConfig } from "./config.types";
+import { registerAs } from '@nestjs/config';
+import { ENV_VARS, DEFAULT_CONFIG } from './constants';
+import type { RedisConfig } from './config.types';
 
 /**
  * Validates Redis configuration
@@ -9,19 +9,19 @@ import type { RedisConfig } from "./config.types";
  */
 function validateRedisConfig(config: RedisConfig): void {
   if (config.port < 1 || config.port > 65535) {
-    throw new Error("Redis port must be between 1 and 65535");
+    throw new Error('Redis port must be between 1 and 65535');
   }
 
   if (config.ttl < 1) {
-    throw new Error("Redis TTL must be a positive number");
+    throw new Error('Redis TTL must be a positive number');
   }
 
   if (!config.prefix || config.prefix.length === 0) {
-    throw new Error("Redis prefix cannot be empty");
+    throw new Error('Redis prefix cannot be empty');
   }
 
   if (!config.host || config.host.length === 0) {
-    throw new Error("Redis host cannot be empty");
+    throw new Error('Redis host cannot be empty');
   }
 }
 
@@ -37,7 +37,7 @@ function parseRedisInteger(
   value: string | undefined,
   defaultValue: number,
   min = 1,
-  max = Number.MAX_SAFE_INTEGER,
+  max = Number.MAX_SAFE_INTEGER
 ): number {
   const parsed = value ? parseInt(value, 10) : defaultValue;
 
@@ -51,21 +51,16 @@ function parseRedisInteger(
 /**
  * Redis configuration factory
  */
-export default registerAs("redis", (): RedisConfig => {
+export default registerAs('redis', (): RedisConfig => {
   const config: RedisConfig = {
-    host: process.env[ENV_VARS.REDIS_HOST] ?? "localhost",
+    host: process.env[ENV_VARS.REDIS_HOST] ?? 'localhost',
     port: parseRedisInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
-    ttl: parseRedisInteger(
-      process.env["REDIS_TTL"],
-      DEFAULT_CONFIG.REDIS_TTL,
-      1,
-    ),
-    prefix: process.env["REDIS_PREFIX"] ?? "healthcare:",
+    ttl: parseRedisInteger(process.env['REDIS_TTL'], DEFAULT_CONFIG.REDIS_TTL, 1),
+    prefix: process.env['REDIS_PREFIX'] ?? 'healthcare:',
     // Add development mode flag to make Redis optional
     enabled:
-      process.env["REDIS_ENABLED"] !== "false" &&
-      process.env[ENV_VARS.NODE_ENV] !== "development",
-    development: process.env[ENV_VARS.NODE_ENV] === "development",
+      process.env['REDIS_ENABLED'] !== 'false' && process.env[ENV_VARS.NODE_ENV] !== 'development',
+    development: process.env[ENV_VARS.NODE_ENV] === 'development',
   };
 
   // Validate configuration

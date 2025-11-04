@@ -1,84 +1,28 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-} from "@nestjs/common";
-import { DatabaseService } from "../../../../libs/infrastructure/database";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
-import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
-import {
-  QueueStatus,
-  TherapyType,
-} from "../../../../libs/infrastructure/database/prisma/prisma.types";
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import type { AuditInfo } from '@core/types/database.types';
+import { QueueStatus, TherapyType } from '@core/types/enums.types';
+import type {
+  TherapyQueue,
+  QueueEntry,
+  CreateTherapyQueueDto,
+  CreateQueueEntryDto,
+  UpdateQueueEntryDto,
+} from '@core/types/appointment.types';
+import type { TherapyQueueStats } from '@core/types/appointment.types';
 
-// Local type definitions for Therapy Queue models
-export interface TherapyQueue {
-  id: string;
-  clinicId: string;
-  therapyType: TherapyType;
-  queueName: string;
-  isActive: boolean;
-  maxCapacity: number;
-  currentPosition: number;
-  estimatedWaitTime?: number | null;
-  createdAt: Date;
-  updatedAt: Date;
-  queueEntries?: QueueEntry[];
-}
-
-export interface QueueEntry {
-  id: string;
-  queueId: string;
-  appointmentId: string;
-  position: number;
-  priority: number;
-  status: QueueStatus;
-  estimatedWaitTime?: number | null;
-  actualWaitTime?: number | null;
-  checkedInAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CreateTherapyQueueDto {
-  clinicId: string;
-  therapyType: TherapyType;
-  queueName: string;
-  maxCapacity?: number;
-}
-
-export interface CreateQueueEntryDto {
-  queueId: string;
-  appointmentId: string;
-  patientId: string;
-  priority?: number;
-  notes?: string;
-}
-
-export interface UpdateQueueEntryDto {
-  position?: number;
-  status?: QueueStatus;
-  estimatedWaitTime?: number;
-  actualWaitTime?: number;
-  priority?: number;
-  notes?: string;
-}
-
-export interface QueueStats {
-  queueId: string;
-  therapyType: string;
-  totalEntries: number;
-  waiting: number;
-  inProgress: number;
-  completed: number;
-  averageWaitTime: number;
-  currentCapacity: number;
-  maxCapacity: number;
-  utilizationRate: number;
-}
+// Re-export types for backward compatibility
+export type {
+  TherapyQueue,
+  QueueEntry,
+  CreateTherapyQueueDto,
+  CreateQueueEntryDto,
+  UpdateQueueEntryDto,
+  TherapyQueueStats as QueueStats,
+};
 
 @Injectable()
 export class TherapyQueueService {
@@ -89,7 +33,7 @@ export class TherapyQueueService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService,
+    private readonly loggingService: LoggingService
   ) {}
 
   /**
@@ -99,64 +43,73 @@ export class TherapyQueueService {
     const startTime = Date.now();
 
     try {
-      // Check if queue already exists for this therapy type
-
-      const existingQueue = await this.databaseService
-        .getPrismaClient()
-        .therapyQueue.findFirst({
+      // Check if queue already exists for this therapy type using executeHealthcareRead
+      const existingQueue = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.therapyQueue.findFirst({
           where: {
             clinicId: data.clinicId,
-            therapyType: data.therapyType,
+            therapyType: data.therapyType as TherapyType,
             isActive: true,
           },
         });
+      });
 
       if (existingQueue) {
         throw new BadRequestException(
-          `Active queue already exists for therapy type ${data.therapyType}`,
+          `Active queue already exists for therapy type ${data.therapyType}`
         );
       }
 
-      const queue = await this.databaseService
-        .getPrismaClient()
-        .therapyQueue.create({
-          data: {
-            clinicId: data.clinicId,
-            therapyType: data.therapyType,
-            queueName: data.queueName,
-            maxCapacity: data.maxCapacity || 10,
-          },
-        });
+      // Use executeHealthcareWrite for create operation
+      const queue = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.therapyQueue.create({
+            data: {
+              clinicId: data.clinicId,
+              therapyType: data.therapyType as TherapyType,
+              queueName: data.queueName,
+              maxCapacity: data.maxCapacity || 10,
+            },
+          });
+        },
+        {
+          userId: 'system',
+          clinicId: data.clinicId,
+          resourceType: 'THERAPY_QUEUE',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'system',
+          details: { therapyType: data.therapyType, queueName: data.queueName },
+        }
+      );
 
       // Invalidate cache
-      await this.cacheService.invalidateByPattern(
-        `therapy-queues:clinic:${data.clinicId}*`,
-      );
+      await this.cacheService.invalidateByPattern(`therapy-queues:clinic:${data.clinicId}*`);
 
       void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        "Therapy queue created successfully",
-        "TherapyQueueService",
+        'Therapy queue created successfully',
+        'TherapyQueueService',
         {
           queueId: queue.id,
           therapyType: data.therapyType,
           clinicId: data.clinicId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
-      return queue;
+      return queue as TherapyQueue;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create therapy queue: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           data,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -165,12 +118,9 @@ export class TherapyQueueService {
   /**
    * Get all queues for a clinic
    */
-  async getClinicQueues(
-    clinicId: string,
-    isActive?: boolean,
-  ): Promise<TherapyQueue[]> {
+  async getClinicQueues(clinicId: string, isActive?: boolean): Promise<TherapyQueue[]> {
     const startTime = Date.now();
-    const cacheKey = `therapy-queues:clinic:${clinicId}:${isActive ?? "all"}`;
+    const cacheKey = `therapy-queues:clinic:${clinicId}:${isActive ?? 'all'}`;
 
     try {
       // Try to get from cache first
@@ -179,9 +129,9 @@ export class TherapyQueueService {
         return JSON.parse(cached as string);
       }
 
-      const queues = await this.databaseService
-        .getPrismaClient()
-        .therapyQueue.findMany({
+      // Use executeHealthcareRead with client parameter
+      const queues = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.therapyQueue.findMany({
           where: {
             clinicId,
             ...(isActive !== undefined && { isActive }),
@@ -193,7 +143,7 @@ export class TherapyQueueService {
                   in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
                 },
               },
-              orderBy: { position: "asc" },
+              orderBy: { position: 'asc' },
               include: {
                 patient: {
                   include: {
@@ -209,39 +159,36 @@ export class TherapyQueueService {
               },
             },
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: { createdAt: 'desc' },
         });
+      });
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(queues),
-        this.QUEUE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(queues), this.QUEUE_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Clinic therapy queues retrieved successfully",
-        "TherapyQueueService",
+        'Clinic therapy queues retrieved successfully',
+        'TherapyQueueService',
         {
           clinicId,
           count: queues.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
-      return queues;
+      return queues as TherapyQueue[];
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic queues: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           clinicId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -250,10 +197,7 @@ export class TherapyQueueService {
   /**
    * Get queue by therapy type
    */
-  async getQueueByTherapyType(
-    clinicId: string,
-    therapyType: TherapyType,
-  ): Promise<TherapyQueue> {
+  async getQueueByTherapyType(clinicId: string, therapyType: TherapyType): Promise<TherapyQueue> {
     const startTime = Date.now();
     const cacheKey = `therapy-queue:clinic:${clinicId}:type:${therapyType}`;
 
@@ -264,9 +208,9 @@ export class TherapyQueueService {
         return JSON.parse(cached as string);
       }
 
-      const queue = await this.databaseService
-        .getPrismaClient()
-        .therapyQueue.findFirst({
+      // Use executeHealthcareRead with client parameter
+      const queue = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.therapyQueue.findFirst({
           where: {
             clinicId,
             therapyType,
@@ -279,7 +223,7 @@ export class TherapyQueueService {
                   in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
                 },
               },
-              orderBy: { position: "asc" },
+              orderBy: { position: 'asc' },
               include: {
                 patient: {
                   include: {
@@ -304,45 +248,40 @@ export class TherapyQueueService {
             },
           },
         });
+      });
 
       if (!queue) {
-        throw new NotFoundException(
-          `No active queue found for therapy type ${therapyType}`,
-        );
+        throw new NotFoundException(`No active queue found for therapy type ${therapyType}`);
       }
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(queue),
-        this.QUEUE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(queue), this.QUEUE_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Therapy queue retrieved by type",
-        "TherapyQueueService",
+        'Therapy queue retrieved by type',
+        'TherapyQueueService',
         {
           clinicId,
           therapyType,
           entriesCount: queue.queueEntries.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
-      return queue;
+      return queue as TherapyQueue;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get queue by therapy type: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           clinicId,
           therapyType,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -355,11 +294,9 @@ export class TherapyQueueService {
     const startTime = Date.now();
 
     try {
-      // Get the queue to check capacity
-
-      const queue = await this.databaseService
-        .getPrismaClient()
-        .therapyQueue.findUnique({
+      // Get the queue to check capacity using executeHealthcareRead
+      const queue = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.therapyQueue.findUnique({
           where: { id: data.queueId },
           include: {
             queueEntries: {
@@ -371,25 +308,30 @@ export class TherapyQueueService {
             },
           },
         });
+      });
 
       if (!queue) {
         throw new NotFoundException(`Queue with ID ${data.queueId} not found`);
       }
 
       if (!queue.isActive) {
-        throw new BadRequestException("Queue is not active");
+        throw new BadRequestException('Queue is not active');
       }
 
       // Check capacity
-      if (queue.queueEntries.length >= queue.maxCapacity) {
-        throw new BadRequestException("Queue is at maximum capacity");
+      const queueWithEntries = queue as {
+        queueEntries: unknown[];
+        maxCapacity: number;
+        currentPosition: number;
+        therapyType: TherapyType;
+      };
+      if (queueWithEntries.queueEntries.length >= queueWithEntries.maxCapacity) {
+        throw new BadRequestException('Queue is at maximum capacity');
       }
 
-      // Check if patient already in queue
-
-      const existingEntry = await this.databaseService
-        .getPrismaClient()
-        .queueEntry.findFirst({
+      // Check if patient already in queue using executeHealthcareRead
+      const existingEntry = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.queueEntry.findFirst({
           where: {
             queueId: data.queueId,
             patientId: data.patientId,
@@ -398,89 +340,111 @@ export class TherapyQueueService {
             },
           },
         });
+      });
 
       if (existingEntry) {
-        throw new BadRequestException("Patient is already in the queue");
+        throw new BadRequestException('Patient is already in the queue');
       }
 
       // Calculate position based on priority
-      const position = await this.calculatePosition(
-        data.queueId,
-        data.priority || 0,
-      );
+      const position = await this.calculatePosition(data.queueId, data.priority || 0);
 
       // Calculate estimated wait time
       const estimatedWaitTime = this.calculateEstimatedWaitTime(
         position,
-        queue.therapyType,
+        queueWithEntries.therapyType
       );
 
-      const entry = await this.databaseService
-        .getPrismaClient()
-        .queueEntry.create({
-          data: {
-            queueId: data.queueId,
-            appointmentId: data.appointmentId,
-            patientId: data.patientId,
-            position,
-            priority: data.priority || 0,
-            estimatedWaitTime,
-            notes: data.notes,
-            status: QueueStatus.WAITING,
-          },
-          include: {
-            patient: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
+      // Use executeHealthcareWrite for create operation
+      const entry = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.queueEntry.create({
+            data: {
+              queueId: data.queueId,
+              appointmentId: data.appointmentId,
+              patientId: data.patientId,
+              position,
+              priority: data.priority || 0,
+              estimatedWaitTime,
+              notes: data.notes ?? null,
+              status: QueueStatus.WAITING,
+            },
+            include: {
+              patient: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                      phone: true,
+                    },
                   },
                 },
               },
+              appointment: true,
             },
-            appointment: true,
-          },
-        });
-
-      // Update queue current position
-
-      await this.databaseService.getPrismaClient().therapyQueue.update({
-        where: { id: data.queueId },
-        data: {
-          currentPosition: queue.currentPosition + 1,
+          });
         },
-      });
+        {
+          userId: 'system',
+          clinicId: (queue as { clinicId: string }).clinicId,
+          resourceType: 'QUEUE_ENTRY',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'system',
+          details: { queueId: data.queueId, patientId: data.patientId },
+        }
+      );
+
+      // Update queue current position using executeHealthcareWrite
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.therapyQueue.update({
+            where: { id: data.queueId },
+            data: {
+              currentPosition: queueWithEntries.currentPosition + 1,
+            },
+          });
+        },
+        {
+          userId: 'system',
+          clinicId: (queue as { clinicId: string }).clinicId,
+          resourceType: 'THERAPY_QUEUE',
+          operation: 'UPDATE',
+          resourceId: data.queueId,
+          userRole: 'system',
+          details: { updatedField: 'currentPosition' },
+        }
+      );
 
       // Invalidate cache
-      await this.invalidateQueueCache(queue.clinicId, data.queueId);
+      await this.invalidateQueueCache((queue as { clinicId: string }).clinicId, data.queueId);
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Patient added to therapy queue",
-        "TherapyQueueService",
+        'Patient added to therapy queue',
+        'TherapyQueueService',
         {
           entryId: entry.id,
           queueId: data.queueId,
           patientId: data.patientId,
           position,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
-      return entry;
+      return entry as QueueEntry;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to add to queue: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           data,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -489,34 +453,52 @@ export class TherapyQueueService {
   /**
    * Update queue entry
    */
-  async updateQueueEntry(
-    entryId: string,
-    data: UpdateQueueEntryDto,
-  ): Promise<QueueEntry> {
+  async updateQueueEntry(entryId: string, data: UpdateQueueEntryDto): Promise<QueueEntry> {
     const startTime = Date.now();
 
     try {
-      const entry = await this.databaseService
-        .getPrismaClient()
-        .queueEntry.update({
-          where: { id: entryId },
-          data,
-          include: {
-            queue: true,
-            patient: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
+      // Use executeHealthcareWrite for update operation
+      const entry = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.queueEntry.update({
+            where: { id: entryId },
+            data: {
+              ...(data.position !== undefined && { position: data.position }),
+              ...(data.status !== undefined && { status: data.status as QueueStatus }),
+              ...(data.estimatedWaitTime !== undefined && {
+                estimatedWaitTime: data.estimatedWaitTime,
+              }),
+              ...(data.actualWaitTime !== undefined && { actualWaitTime: data.actualWaitTime }),
+              ...(data.priority !== undefined && { priority: data.priority }),
+              ...(data.notes !== undefined && { notes: data.notes ?? null }),
+            },
+            include: {
+              queue: true,
+              patient: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                      phone: true,
+                    },
                   },
                 },
               },
+              appointment: true,
             },
-            appointment: true,
-          },
-        });
+          });
+        },
+        {
+          userId: 'system',
+          clinicId: '',
+          resourceType: 'QUEUE_ENTRY',
+          operation: 'UPDATE',
+          resourceId: entryId,
+          userRole: 'system',
+          details: { updates: Object.keys(data) },
+        }
+      );
 
       // Invalidate cache
       await this.invalidateQueueCache(entry.queue.clinicId, entry.queueId);
@@ -524,26 +506,26 @@ export class TherapyQueueService {
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Queue entry updated successfully",
-        "TherapyQueueService",
+        'Queue entry updated successfully',
+        'TherapyQueueService',
         {
           entryId,
           status: data.status,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
-      return entry;
+      return entry as QueueEntry;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update queue entry: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           entryId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -561,15 +543,13 @@ export class TherapyQueueService {
   /**
    * Complete queue entry
    */
-  async completeQueueEntry(
-    entryId: string,
-    actualWaitTime?: number,
-  ): Promise<QueueEntry> {
-    const entry = await this.databaseService
-      .getPrismaClient()
-      .queueEntry.findUnique({
+  async completeQueueEntry(entryId: string, actualWaitTime?: number): Promise<QueueEntry> {
+    // Use executeHealthcareRead with client parameter
+    const entry = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.queueEntry.findUnique({
         where: { id: entryId },
       });
+    });
 
     if (!entry) {
       throw new NotFoundException(`Queue entry with ID ${entryId} not found`);
@@ -596,48 +576,68 @@ export class TherapyQueueService {
     const startTime = Date.now();
 
     try {
-      const entry = await this.databaseService
-        .getPrismaClient()
-        .queueEntry.findUnique({
+      // Use executeHealthcareRead to get entry with queue info
+      const entry = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.queueEntry.findUnique({
           where: { id: entryId },
           include: { queue: true },
         });
+      });
 
       if (!entry) {
         throw new NotFoundException(`Queue entry with ID ${entryId} not found`);
       }
 
-      await this.databaseService.getPrismaClient().queueEntry.delete({
-        where: { id: entryId },
-      });
+      const queueId = entry.queueId;
+      const clinicId = (entry as { queue: { clinicId: string } }).queue?.clinicId || '';
+
+      // Use executeHealthcareWrite for delete operation
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.queueEntry.delete({
+            where: { id: entryId },
+          });
+        },
+        {
+          userId: 'system',
+          clinicId,
+          resourceType: 'QUEUE_ENTRY',
+          operation: 'DELETE',
+          resourceId: entryId,
+          userRole: 'system',
+          details: {},
+        }
+      );
 
       // Reorder remaining entries
-      await this.reorderQueue(entry.queueId);
+      await this.reorderQueue(queueId);
 
       // Invalidate cache
-      await this.invalidateQueueCache(entry.queue.clinicId, entry.queueId);
+      if (clinicId) {
+        await this.invalidateQueueCache(clinicId, queueId);
+      }
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Patient removed from queue",
-        "TherapyQueueService",
+        'Patient removed from queue',
+        'TherapyQueueService',
         {
           entryId,
           queueId: entry.queueId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to remove from queue: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           entryId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -655,9 +655,9 @@ export class TherapyQueueService {
     const startTime = Date.now();
 
     try {
-      const entry = await this.databaseService
-        .getPrismaClient()
-        .queueEntry.findFirst({
+      // Use executeHealthcareRead with client parameter
+      const entry = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.queueEntry.findFirst({
           where: {
             appointmentId,
             status: {
@@ -678,9 +678,10 @@ export class TherapyQueueService {
             },
           },
         });
+      });
 
       if (!entry) {
-        throw new NotFoundException("Patient not found in any queue");
+        throw new NotFoundException('Patient not found in any queue');
       }
 
       const result = {
@@ -693,26 +694,31 @@ export class TherapyQueueService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Patient queue position retrieved",
-        "TherapyQueueService",
+        'Patient queue position retrieved',
+        'TherapyQueueService',
         {
           appointmentId,
           position: result.position,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
-      return result;
+      return result as {
+        position: number;
+        totalInQueue: number;
+        estimatedWaitTime: number;
+        status: QueueStatus;
+      };
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get patient queue position: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           appointmentId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -721,7 +727,7 @@ export class TherapyQueueService {
   /**
    * Get queue statistics
    */
-  async getQueueStats(queueId: string): Promise<QueueStats> {
+  async getQueueStats(queueId: string): Promise<TherapyQueueStats> {
     const startTime = Date.now();
     const cacheKey = `therapy-queue-stats:${queueId}`;
 
@@ -732,14 +738,15 @@ export class TherapyQueueService {
         return JSON.parse(cached as string);
       }
 
-      const queue = await this.databaseService
-        .getPrismaClient()
-        .therapyQueue.findUnique({
+      // Use executeHealthcareRead with client parameter
+      const queue = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.therapyQueue.findUnique({
           where: { id: queueId },
           include: {
             queueEntries: true,
           },
         });
+      });
 
       if (!queue) {
         throw new NotFoundException(`Queue with ID ${queueId} not found`);
@@ -751,33 +758,31 @@ export class TherapyQueueService {
       };
       const entries = queue.queueEntries as QueueEntryWithStatus[];
       const waiting = entries.filter(
-        (e: QueueEntryWithStatus) => e.status === QueueStatus.WAITING,
+        (e: QueueEntryWithStatus) => e.status === QueueStatus.WAITING
       ).length;
       const inProgress = entries.filter(
-        (e: QueueEntryWithStatus) => e.status === QueueStatus.IN_PROGRESS,
+        (e: QueueEntryWithStatus) => e.status === QueueStatus.IN_PROGRESS
       ).length;
       const completed = entries.filter(
-        (e: QueueEntryWithStatus) => e.status === QueueStatus.COMPLETED,
+        (e: QueueEntryWithStatus) => e.status === QueueStatus.COMPLETED
       ).length;
 
       // Calculate average wait time for completed entries
       const completedEntries = entries.filter(
-        (e: QueueEntryWithStatus) =>
-          e.status === QueueStatus.COMPLETED && e.actualWaitTime,
+        (e: QueueEntryWithStatus) => e.status === QueueStatus.COMPLETED && e.actualWaitTime
       );
       const averageWaitTime =
         completedEntries.length > 0
           ? completedEntries.reduce(
-              (sum: number, e: { actualWaitTime?: number | null }) =>
-                sum + (e.actualWaitTime || 0),
-              0,
+              (sum: number, e: { actualWaitTime?: number | null }) => sum + (e.actualWaitTime || 0),
+              0
             ) / completedEntries.length
           : 0;
 
       const currentCapacity = waiting + inProgress;
       const utilizationRate = (currentCapacity / queue.maxCapacity) * 100;
 
-      const stats: QueueStats = {
+      const stats: TherapyQueueStats = {
         queueId: queue.id,
         therapyType: queue.therapyType,
         totalEntries: entries.length,
@@ -791,22 +796,18 @@ export class TherapyQueueService {
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(stats),
-        this.STATS_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(stats), this.STATS_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Queue stats retrieved successfully",
-        "TherapyQueueService",
+        'Queue stats retrieved successfully',
+        'TherapyQueueService',
         {
           queueId,
           stats,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return stats;
@@ -815,11 +816,11 @@ export class TherapyQueueService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get queue stats: ${error instanceof Error ? error.message : String(error)}`,
-        "TherapyQueueService",
+        'TherapyQueueService',
         {
           queueId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -829,57 +830,84 @@ export class TherapyQueueService {
    * Reorder queue entries
    */
   async reorderQueue(queueId: string): Promise<void> {
-    const entries = await this.databaseService
-      .getPrismaClient()
-      .queueEntry.findMany({
+    // Use executeHealthcareRead to get entries
+    const entries = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.queueEntry.findMany({
         where: {
           queueId,
           status: {
             in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
           },
         },
-        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+        orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
       });
+    });
 
-    // Update positions
+    // Update positions using executeHealthcareWrite
     for (let i = 0; i < entries.length; i++) {
-      await this.databaseService.getPrismaClient().queueEntry.update({
-        where: { id: entries[i].id },
-        data: { position: i + 1 },
-      });
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.queueEntry.update({
+            where: { id: (entries[i] as { id: string }).id },
+            data: { position: i + 1 },
+          });
+        },
+        {
+          userId: 'system',
+          clinicId: '',
+          resourceType: 'QUEUE_ENTRY',
+          operation: 'UPDATE',
+          resourceId: (entries[i] as { id: string }).id,
+          userRole: 'system',
+          details: { updatedField: 'position', newPosition: i + 1 },
+        }
+      );
     }
   }
 
   /**
    * Calculate position in queue based on priority
    */
-  private async calculatePosition(
-    queueId: string,
-    priority: number,
-  ): Promise<number> {
-    const entries = await this.databaseService
-      .getPrismaClient()
-      .queueEntry.findMany({
+  private async calculatePosition(queueId: string, priority: number): Promise<number> {
+    // Use executeHealthcareRead to get entries
+    const entries = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.queueEntry.findMany({
         where: {
           queueId,
           status: {
             in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
           },
         },
-        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+        orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
       });
+    });
 
     // Find position based on priority
     let position = entries.length + 1;
     for (let i = 0; i < entries.length; i++) {
-      if (priority > entries[i].priority) {
+      const entry = entries[i] as { priority: number; id: string };
+      if (priority > entry.priority) {
         position = i + 1;
-        // Update positions of entries after this one
+        // Update positions of entries after this one using executeHealthcareWrite
         for (let j = i; j < entries.length; j++) {
-          await this.databaseService.getPrismaClient().queueEntry.update({
-            where: { id: entries[j].id },
-            data: { position: j + 2 },
-          });
+          const entryToUpdate = entries[j] as { id: string };
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              return await client.queueEntry.update({
+                where: { id: entryToUpdate.id },
+                data: { position: j + 2 },
+              });
+            },
+            {
+              userId: 'system',
+              clinicId: '',
+              resourceType: 'QUEUE_ENTRY',
+              operation: 'UPDATE',
+              resourceId: entryToUpdate.id,
+              userRole: 'system',
+              details: { updatedField: 'position', newPosition: j + 2 },
+            }
+          );
         }
         break;
       }
@@ -891,10 +919,7 @@ export class TherapyQueueService {
   /**
    * Calculate estimated wait time
    */
-  private calculateEstimatedWaitTime(
-    position: number,
-    therapyType: TherapyType,
-  ): number {
+  private calculateEstimatedWaitTime(position: number, therapyType: TherapyType): number {
     // Base wait time varies by therapy type
     const baseWaitTimes: Record<TherapyType, number> = {
       [TherapyType.SHODHANA]: 30, // Purification therapies
@@ -910,17 +935,11 @@ export class TherapyQueueService {
   /**
    * Invalidate queue-related cache
    */
-  private async invalidateQueueCache(
-    clinicId: string,
-    queueId: string,
-  ): Promise<void> {
+  private async invalidateQueueCache(clinicId: string, queueId: string): Promise<void> {
     await Promise.all([
-      this.cacheService.invalidateByPattern(
-        `therapy-queues:clinic:${clinicId}*`,
-      ),
+      this.cacheService.invalidateByPattern(`therapy-queues:clinic:${clinicId}*`),
       this.cacheService.invalidateByPattern(`therapy-queue:*:${queueId}*`),
       this.cacheService.del(`therapy-queue-stats:${queueId}`),
     ]);
   }
 }
-/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */

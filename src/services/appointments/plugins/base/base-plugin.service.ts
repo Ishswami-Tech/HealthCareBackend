@@ -1,10 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
-import { Injectable, Logger } from "@nestjs/common";
-import {
-  BasePlugin,
-  PluginContext,
-  PluginHealth,
-} from "../../../../libs/core/plugin-interface";
+import { Injectable, Logger } from '@nestjs/common';
+import type { BasePlugin, PluginContext, PluginHealth } from '@core/types';
 
 @Injectable()
 export abstract class BaseAppointmentPlugin implements BasePlugin {
@@ -20,14 +15,14 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
   }
 
   async validate(data: unknown): Promise<boolean> {
-    const pluginData = data as any;
+    const pluginData = data as Record<string, unknown>;
     this.logger.log(`✅ Validating data for plugin: ${this.name}`);
     // Default implementation - can be overridden
-    return true;
+    return Boolean(pluginData);
   }
 
   async process(data: unknown): Promise<unknown> {
-    const pluginData = data as any;
+    const pluginData = data as Record<string, unknown>;
     this.logger.log(`🔧 Processing data for plugin: ${this.name}`);
     // Default implementation - can be overridden
     return data;
@@ -51,14 +46,11 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
     // Default implementation - can be overridden
   }
 
-  protected createContext(
-    config: unknown,
-    metadata: Record<string, unknown> = {},
-  ): PluginContext {
+  protected createContext(config: unknown, metadata: Record<string, unknown> = {}): PluginContext {
     return {
-      clinicId: metadata["clinicId"] as string,
-      userId: metadata["userId"] as string,
-      sessionId: metadata["sessionId"] as string,
+      clinicId: metadata['clinicId'] as string,
+      userId: metadata['userId'] as string,
+      sessionId: metadata['sessionId'] as string,
       metadata: {
         config: {
           enabled: true,
@@ -78,4 +70,3 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
     this.logger.error(`❌ Plugin ${this.name} - ${error}`, data);
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */

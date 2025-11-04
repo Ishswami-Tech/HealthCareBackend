@@ -16,11 +16,14 @@
  * ```
  */
 
-export { SessionManagementService } from "./session-management.service";
-export { SessionModule } from "./session.module";
+export { SessionManagementService } from './session-management.service';
+export { SessionModule } from './session.module';
+// All types are now in @core/types/session.types.ts
 export type {
   SessionData,
   SessionConfig,
   CreateSessionDto,
   SessionSummary,
-} from "./session-management.service";
+  RedisSessionData,
+  LockoutStatus,
+} from '@core/types/session.types';

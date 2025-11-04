@@ -1,48 +1,38 @@
-import { Logger } from "@nestjs/common";
-import { exec } from "child_process";
-import * as path from "path";
-import { promisify } from "util";
-import * as fs from "fs";
+import { Logger } from '@nestjs/common';
+import { exec } from 'child_process';
+import * as path from 'path';
+import { promisify } from 'util';
+import * as fs from 'fs';
 
 const execAsync = promisify(exec);
-const logger = new Logger("DatabaseInit");
+const logger = new Logger('DatabaseInit');
 
 /**
  * Initialize the database with the schema
  */
 export async function initDatabase() {
   try {
-    logger.log("Initializing database...");
+    logger.log('Initializing database...');
 
     // Use the PRISMA_SCHEMA_PATH environment variable directly (already resolved in DatabaseModule)
-    let schemaPath = process.env["PRISMA_SCHEMA_PATH"];
+    let schemaPath = process.env['PRISMA_SCHEMA_PATH'];
 
     // Final validation to ensure schema exists
     if (!schemaPath || !fs.existsSync(schemaPath)) {
-      logger.warn(
-        `Schema path ${schemaPath} not valid or does not exist, falling back to search`,
-      );
+      logger.warn(`Schema path ${schemaPath} not valid or does not exist, falling back to search`);
 
       // If not set or doesn't exist, try to find it
-      const isDocker = fs.existsSync("/.dockerenv");
-      const isProduction = process.env["NODE_ENV"] === "production";
-      const isWindows = process.platform === "win32";
+      const isDocker = fs.existsSync('/.dockerenv');
+      const isProduction = process.env['NODE_ENV'] === 'production';
+      const isWindows = process.platform === 'win32';
 
       // Find the first path that exists
       const possiblePaths = [
-        path.resolve(
-          process.cwd(),
-          "src/libs/infrastructure/database/prisma/schema.prisma",
-        ),
-        path.resolve(
-          process.cwd(),
-          "dist/shared/database/prisma/schema.prisma",
-        ),
-        path.resolve(__dirname, "../prisma/schema.prisma"),
-        isDocker
-          ? "/app/src/libs/infrastructure/database/prisma/schema.prisma"
-          : null,
-        isDocker ? "/app/dist/shared/database/prisma/schema.prisma" : null,
+        path.resolve(process.cwd(), 'src/libs/infrastructure/database/prisma/schema.prisma'),
+        path.resolve(process.cwd(), 'dist/shared/database/prisma/schema.prisma'),
+        path.resolve(__dirname, '../prisma/schema.prisma'),
+        isDocker ? '/app/src/libs/infrastructure/database/prisma/schema.prisma' : null,
+        isDocker ? '/app/dist/shared/database/prisma/schema.prisma' : null,
       ].filter(Boolean);
 
       for (const potentialPath of possiblePaths) {
@@ -59,100 +49,83 @@ export async function initDatabase() {
     }
 
     if (!schemaPath) {
-      throw new Error(
-        "Could not find valid Prisma schema file. Check application configuration.",
-      );
+      throw new Error('Could not find valid Prisma schema file. Check application configuration.');
     }
 
     // Log platform info for debugging
-    logger.log(
-      `Platform: ${process.platform}, Docker: ${fs.existsSync("/.dockerenv")}`,
-    );
+    logger.log(`Platform: ${process.platform}, Docker: ${fs.existsSync('/.dockerenv')}`);
     logger.log(`Working directory: ${process.cwd()}`);
     logger.log(`Schema path: ${schemaPath}`);
 
     // On Windows, handle paths with spaces
     const schemaPathForCommand =
-      process.platform === "win32" ? `"${schemaPath}"` : `"${schemaPath}"`; // Use double quotes for all platforms for consistency
+      process.platform === 'win32' ? `"${schemaPath}"` : `"${schemaPath}"`; // Use double quotes for all platforms for consistency
 
     // Run Prisma generate to ensure client is up-to-date
     logger.log(`Generating Prisma client with schema: ${schemaPath}...`);
     try {
       // Check if Prisma client already exists
-      const clientPath = path.join(
-        process.cwd(),
-        "node_modules",
-        ".prisma",
-        "client",
-      );
+      const clientPath = path.join(process.cwd(), 'node_modules', '.prisma', 'client');
       const clientExists = fs.existsSync(clientPath);
 
       if (clientExists) {
-        logger.log("Prisma client already exists, skipping generation");
+        logger.log('Prisma client already exists, skipping generation');
       } else {
         const { stdout, stderr } = await execAsync(
-          `npx prisma generate --schema=${schemaPathForCommand}`,
+          `npx prisma generate --schema=${schemaPathForCommand}`
         );
-        logger.log("Prisma client generation output: " + stdout);
-        if (stderr) logger.warn("Prisma client generation warnings: " + stderr);
+        logger.log('Prisma client generation output: ' + stdout);
+        if (stderr) logger.warn('Prisma client generation warnings: ' + stderr);
       }
     } catch (_error) {
-      logger.error(
-        `Failed to generate Prisma client: ${(_error as Error).message}`,
-      );
-      logger.error(`Command output: ${(_error as any).stdout || "No output"}`);
-      logger.error(
-        `Command _error: ${(_error as any).stderr || "No _error details"}`,
-      );
+      logger.error(`Failed to generate Prisma client: ${(_error as Error).message}`);
+      const execError = _error as { stdout?: string; stderr?: string };
+      logger.error(`Command output: ${execError.stdout || 'No output'}`);
+      logger.error(`Command _error: ${execError.stderr || 'No _error details'}`);
       throw _error;
     }
 
     // Check if DATABASE_URL is set
-    if (!process.env["DATABASE_URL"]) {
-      logger.error("DATABASE_URL is not set");
+    if (!process.env['DATABASE_URL']) {
+      logger.error('DATABASE_URL is not set');
       throw new Error(
-        "DATABASE_URL environment variable is not set. Database connection cannot be established.",
+        'DATABASE_URL environment variable is not set. Database connection cannot be established.'
       );
     }
 
     // Run Prisma migrate to apply any pending migrations
-    logger.log("Applying database migrations...");
+    logger.log('Applying database migrations...');
     try {
       const { stdout, stderr } = await execAsync(
-        `npx prisma migrate deploy --schema=${schemaPathForCommand}`,
+        `npx prisma migrate deploy --schema=${schemaPathForCommand}`
       );
-      logger.log("Migration output: " + stdout);
-      if (stderr) logger.warn("Migration warnings: " + stderr);
+      logger.log('Migration output: ' + stdout);
+      if (stderr) logger.warn('Migration warnings: ' + stderr);
     } catch (_error) {
-      logger.warn(
-        `Migration failed, falling back to prisma db push: ${(_error as Error).message}`,
-      );
+      logger.warn(`Migration failed, falling back to prisma db push: ${(_error as Error).message}`);
       // If migration fails, try db push as a fallback (useful for development)
       try {
         const { stdout, stderr } = await execAsync(
-          `npx prisma db push --schema=${schemaPathForCommand}`,
+          `npx prisma db push --schema=${schemaPathForCommand}`
         );
-        logger.log("DB Push output: " + stdout);
-        if (stderr) logger.warn("DB Push warnings: " + stderr);
+        logger.log('DB Push output: ' + stdout);
+        if (stderr) logger.warn('DB Push warnings: ' + stderr);
       } catch (pushError) {
-        logger.error(`DB Push also failed: ${(pushError as any).message}`);
-        logger.error(
-          `Command output: ${(pushError as any).stdout || "No output"}`,
-        );
-        logger.error(
-          `Command _error: ${(pushError as any).stderr || "No _error details"}`,
-        );
+        const pushExecError = pushError as { message: string; stdout?: string; stderr?: string };
+        logger.error(`DB Push also failed: ${pushExecError.message}`);
+        logger.error(`Command output: ${pushExecError.stdout || 'No output'}`);
+        logger.error(`Command _error: ${pushExecError.stderr || 'No _error details'}`);
         throw pushError;
       }
     }
 
-    logger.log("Database initialization complete!");
+    logger.log('Database initialization complete!');
 
     return true;
   } catch (_error) {
     logger.error(
       `Database initialization failed: ${(_error as Error).message}`,
-      (_error as Error).stack,
+      (_error as Error).stack
     );
     throw _error;
   }
@@ -161,7 +134,7 @@ export async function initDatabase() {
 // Allow running directly
 if (require.main === module) {
   initDatabase()
-    .catch((e) => {
+    .catch(e => {
       console.error(e);
       process.exit(1);
     })

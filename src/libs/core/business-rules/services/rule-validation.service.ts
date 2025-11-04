@@ -8,7 +8,9 @@
  * @module RuleValidationService
  */
 
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import type {
   BusinessRule,
   RuleCondition,
@@ -17,7 +19,7 @@ import type {
   ValidationResult,
   RuleConditionType,
   RuleActionType,
-} from "../types/business-rules.types";
+} from '@core/types';
 
 /**
  * Business rule validation service
@@ -26,7 +28,7 @@ import type {
  */
 @Injectable()
 export class RuleValidationService {
-  private readonly logger = new Logger(RuleValidationService.name);
+  constructor(private readonly loggingService: LoggingService) {}
 
   /**
    * Validates a business rule
@@ -43,10 +45,18 @@ export class RuleValidationService {
       this.validateBasicProperties(rule, errors, warnings, suggestions);
 
       // Validate conditions
-      this.validateConditions(rule.conditions, errors, warnings, suggestions);
+      if (Array.isArray(rule.conditions)) {
+        this.validateConditions(rule.conditions, errors, warnings, suggestions);
+      } else {
+        errors.push('Rule conditions must be an array');
+      }
 
       // Validate actions
-      this.validateActions(rule.actions, errors, warnings, suggestions);
+      if (Array.isArray(rule.actions)) {
+        this.validateActions(rule.actions, errors, warnings, suggestions);
+      } else {
+        errors.push('Rule actions must be an array');
+      }
 
       // Validate rule consistency
       this.validateRuleConsistency(rule, errors, warnings, suggestions);
@@ -58,24 +68,27 @@ export class RuleValidationService {
         suggestions,
         metadata: {
           validatedAt: new Date(),
-          validatedBy: "RuleValidationService",
+          validatedBy: 'RuleValidationService',
           validationDuration: 0, // Could be measured if needed
         },
       };
     } catch (error) {
-      this.logger.error("Rule validation failed", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        ruleId: rule.id,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Rule validation failed',
+        'RuleValidationService',
+        { error: (error as Error)?.message, ruleId: rule.id }
+      );
 
       return {
         isValid: false,
-        errors: [error instanceof Error ? error.message : "Validation failed"],
+        errors: [error instanceof Error ? error.message : 'Validation failed'],
         warnings: [],
         suggestions: [],
         metadata: {
           validatedAt: new Date(),
-          validatedBy: "RuleValidationService",
+          validatedBy: 'RuleValidationService',
           validationDuration: 0,
         },
       };
@@ -94,74 +107,66 @@ export class RuleValidationService {
     rule: BusinessRule,
     errors: string[],
     warnings: string[],
-    suggestions: string[],
+    suggestions: string[]
   ): void {
     // Validate ID
     if (!rule.id || rule.id.trim().length === 0) {
-      errors.push("Rule ID is required and cannot be empty");
+      errors.push('Rule ID is required and cannot be empty');
     } else if (!/^[a-zA-Z0-9_-]+$/.test(rule.id)) {
-      errors.push(
-        "Rule ID must contain only alphanumeric characters, underscores, and hyphens",
-      );
+      errors.push('Rule ID must contain only alphanumeric characters, underscores, and hyphens');
     }
 
     // Validate name
     if (!rule.name || rule.name.trim().length === 0) {
-      errors.push("Rule name is required and cannot be empty");
+      errors.push('Rule name is required and cannot be empty');
     } else if (rule.name.length > 100) {
-      warnings.push(
-        "Rule name is longer than 100 characters, consider shortening it",
-      );
+      warnings.push('Rule name is longer than 100 characters, consider shortening it');
     }
 
     // Validate description
     if (!rule.description || rule.description.trim().length === 0) {
-      errors.push("Rule description is required and cannot be empty");
+      errors.push('Rule description is required and cannot be empty');
     } else if (rule.description.length < 10) {
-      warnings.push(
-        "Rule description is very short, consider adding more details",
-      );
+      warnings.push('Rule description is very short, consider adding more details');
     }
 
     // Validate priority
-    if (typeof rule.priority !== "number" || rule.priority < 0) {
-      errors.push("Rule priority must be a non-negative number");
+    if (typeof rule.priority !== 'number' || rule.priority < 0) {
+      errors.push('Rule priority must be a non-negative number');
     } else if (rule.priority > 1000) {
-      warnings.push("Rule priority is very high, ensure this is intentional");
+      warnings.push('Rule priority is very high, ensure this is intentional');
     }
 
     // Validate category
     if (!rule.category || rule.category.trim().length === 0) {
-      errors.push("Rule category is required");
+      errors.push('Rule category is required');
     }
 
     // Validate version
     if (!rule.version || rule.version.trim().length === 0) {
-      errors.push("Rule version is required");
+      errors.push('Rule version is required');
     } else if (!/^\d+\.\d+\.\d+$/.test(rule.version)) {
-      warnings.push(
-        "Rule version should follow semantic versioning (e.g., 1.0.0)",
-      );
+      warnings.push('Rule version should follow semantic versioning (e.g., 1.0.0)');
     }
 
     // Validate dates
     if (!rule.createdAt || !(rule.createdAt instanceof Date)) {
-      errors.push("Rule creation date is required and must be a valid Date");
+      errors.push('Rule creation date is required and must be a valid Date');
     }
 
     if (!rule.updatedAt || !(rule.updatedAt instanceof Date)) {
-      errors.push("Rule update date is required and must be a valid Date");
+      errors.push('Rule update date is required and must be a valid Date');
     }
 
     if (rule.updatedAt && rule.createdAt && rule.updatedAt < rule.createdAt) {
-      errors.push("Rule update date cannot be earlier than creation date");
+      errors.push('Rule update date cannot be earlier than creation date');
     }
 
     // Validate tags
     if (!Array.isArray(rule.tags)) {
-      errors.push("Rule tags must be an array");
+      errors.push('Rule tags must be an array');
     } else if (rule.tags.length === 0) {
-      suggestions.push("Consider adding tags to improve rule categorization");
+      suggestions.push('Consider adding tags to improve rule categorization');
     }
   }
 
@@ -177,17 +182,15 @@ export class RuleValidationService {
     conditions: readonly RuleCondition[],
     errors: string[],
     warnings: string[],
-    suggestions: string[],
+    suggestions: string[]
   ): void {
     if (!conditions || conditions.length === 0) {
-      errors.push("At least one condition is required");
+      errors.push('At least one condition is required');
       return;
     }
 
     if (conditions.length > 20) {
-      warnings.push(
-        "Rule has many conditions, consider breaking it into smaller rules",
-      );
+      warnings.push('Rule has many conditions, consider breaking it into smaller rules');
     }
 
     conditions.forEach((condition, index) => {
@@ -209,15 +212,13 @@ export class RuleValidationService {
     index: number,
     errors: string[],
     warnings: string[],
-    suggestions: string[],
+    suggestions: string[]
   ): void {
     const prefix = `Condition ${index + 1}:`;
 
     // Validate condition type
     if (!condition.type || !this.isValidConditionType(condition.type)) {
-      errors.push(
-        `${prefix} Invalid condition type: ${String(condition.type)}`,
-      );
+      errors.push(`${prefix} Invalid condition type: ${String(condition.type)}`);
     }
 
     // Validate field
@@ -225,29 +226,21 @@ export class RuleValidationService {
       errors.push(`${prefix} Field is required and cannot be empty`);
     } else if (!/^[a-zA-Z0-9._-]+$/.test(condition.field)) {
       errors.push(
-        `${prefix} Field must contain only alphanumeric characters, dots, underscores, and hyphens`,
+        `${prefix} Field must contain only alphanumeric characters, dots, underscores, and hyphens`
       );
     }
 
     // Validate value based on condition type
-    this.validateConditionValue(
-      condition,
-      prefix,
-      errors,
-      warnings,
-      suggestions,
-    );
+    this.validateConditionValue(condition, prefix, errors, warnings, suggestions);
 
     // Validate operator
-    if (condition.operator && !["AND", "OR"].includes(condition.operator)) {
+    if (condition.operator && !['AND', 'OR'].includes(condition.operator)) {
       errors.push(`${prefix} Operator must be 'AND' or 'OR'`);
     }
 
     // Validate custom function
-    if (condition.customFunction && condition.type !== "custom") {
-      warnings.push(
-        `${prefix} Custom function is specified but condition type is not 'custom'`,
-      );
+    if (condition.customFunction && condition.type !== 'custom') {
+      warnings.push(`${prefix} Custom function is specified but condition type is not 'custom'`);
     }
   }
 
@@ -265,41 +258,35 @@ export class RuleValidationService {
     prefix: string,
     errors: string[],
     warnings: string[],
-    _suggestions: string[],
+    _suggestions: string[]
   ): void {
     switch (condition.type) {
-      case "greater_than":
-      case "less_than":
-        if (typeof condition.value !== "number") {
-          errors.push(
-            `${prefix} Value must be a number for ${condition.type} condition`,
-          );
+      case 'greater_than':
+      case 'less_than':
+        if (typeof condition.value !== 'number') {
+          errors.push(`${prefix} Value must be a number for ${condition.type} condition`);
         }
         break;
 
-      case "contains":
-      case "not_contains":
-        if (typeof condition.value !== "string") {
-          errors.push(
-            `${prefix} Value must be a string for ${condition.type} condition`,
-          );
+      case 'contains':
+      case 'not_contains':
+        if (typeof condition.value !== 'string') {
+          errors.push(`${prefix} Value must be a string for ${condition.type} condition`);
         }
         break;
 
-      case "is_empty":
-      case "is_not_empty":
+      case 'is_empty':
+      case 'is_not_empty':
         if (condition.value !== null && condition.value !== undefined) {
           warnings.push(
-            `${prefix} Value should be null or undefined for ${condition.type} condition`,
+            `${prefix} Value should be null or undefined for ${condition.type} condition`
           );
         }
         break;
 
-      case "custom":
+      case 'custom':
         if (!condition.customFunction) {
-          errors.push(
-            `${prefix} Custom function is required for custom condition type`,
-          );
+          errors.push(`${prefix} Custom function is required for custom condition type`);
         }
         break;
 
@@ -321,17 +308,15 @@ export class RuleValidationService {
     actions: readonly RuleAction[],
     errors: string[],
     warnings: string[],
-    suggestions: string[],
+    suggestions: string[]
   ): void {
     if (!actions || actions.length === 0) {
-      errors.push("At least one action is required");
+      errors.push('At least one action is required');
       return;
     }
 
     if (actions.length > 10) {
-      warnings.push(
-        "Rule has many actions, consider breaking it into smaller rules",
-      );
+      warnings.push('Rule has many actions, consider breaking it into smaller rules');
     }
 
     actions.forEach((action, index) => {
@@ -353,7 +338,7 @@ export class RuleValidationService {
     index: number,
     errors: string[],
     warnings: string[],
-    _suggestions: string[],
+    _suggestions: string[]
   ): void {
     const prefix = `Action ${index + 1}:`;
 
@@ -366,9 +351,7 @@ export class RuleValidationService {
     if (!action.message || action.message.trim().length === 0) {
       errors.push(`${prefix} Message is required and cannot be empty`);
     } else if (action.message.length > 500) {
-      warnings.push(
-        `${prefix} Message is longer than 500 characters, consider shortening it`,
-      );
+      warnings.push(`${prefix} Message is longer than 500 characters, consider shortening it`);
     }
 
     // Validate severity
@@ -377,14 +360,12 @@ export class RuleValidationService {
     }
 
     // Validate custom function
-    if (action.customFunction && action.type !== "custom") {
-      warnings.push(
-        `${prefix} Custom function is specified but action type is not 'custom'`,
-      );
+    if (action.customFunction && action.type !== 'custom') {
+      warnings.push(`${prefix} Custom function is specified but action type is not 'custom'`);
     }
 
     // Validate parameters
-    if (action.parameters && typeof action.parameters !== "object") {
+    if (action.parameters && typeof action.parameters !== 'object') {
       errors.push(`${prefix} Parameters must be an object`);
     }
   }
@@ -401,39 +382,31 @@ export class RuleValidationService {
     rule: BusinessRule,
     errors: string[],
     warnings: string[],
-    suggestions: string[],
+    suggestions: string[]
   ): void {
     // Check for conflicting actions
-    const hasBlockAction = rule.actions.some(
-      (action) => action.type === "block",
-    );
-    const hasAllowAction = rule.actions.some(
-      (action) => action.type === "allow",
-    );
+    if (Array.isArray(rule.actions)) {
+      const hasBlockAction = rule.actions.some((action: RuleAction) => action.type === 'block');
+      const hasAllowAction = rule.actions.some((action: RuleAction) => action.type === 'allow');
 
-    if (hasBlockAction && hasAllowAction) {
-      warnings.push(
-        "Rule has both block and allow actions, which may be conflicting",
-      );
-    }
+      if (hasBlockAction && hasAllowAction) {
+        warnings.push('Rule has both block and allow actions, which may be conflicting');
+      }
 
-    // Check for high priority rules without critical actions
-    if (rule.priority > 500) {
-      const hasCriticalAction = rule.actions.some(
-        (action) => action.severity === "critical",
-      );
-      if (!hasCriticalAction) {
-        suggestions.push(
-          "High priority rule should have critical severity actions",
+      // Check for high priority rules without critical actions
+      if (rule.priority > 500) {
+        const hasCriticalAction = rule.actions.some(
+          (action: RuleAction) => action.severity === 'critical'
         );
+        if (!hasCriticalAction) {
+          suggestions.push('High priority rule should have critical severity actions');
+        }
       }
     }
 
     // Check for inactive rules
     if (!rule.isActive) {
-      suggestions.push(
-        "Rule is inactive, consider removing it if no longer needed",
-      );
+      suggestions.push('Rule is inactive, consider removing it if no longer needed');
     }
   }
 
@@ -450,22 +423,17 @@ export class RuleValidationService {
     try {
       // Validate user ID
       if (!context.userId || context.userId.trim().length === 0) {
-        errors.push("User ID is required in rule context");
+        errors.push('User ID is required in rule context');
       }
 
       // Validate data
-      if (!context.data || typeof context.data !== "object") {
-        errors.push("Context data must be an object");
+      if (!context.data || typeof context.data !== 'object') {
+        errors.push('Context data must be an object');
       }
 
       // Validate metadata if present
       if (context.metadata) {
-        this.validateContextMetadata(
-          context.metadata,
-          errors,
-          warnings,
-          suggestions,
-        );
+        this.validateContextMetadata(context.metadata, errors, warnings, suggestions);
       }
 
       return {
@@ -475,26 +443,27 @@ export class RuleValidationService {
         suggestions,
         metadata: {
           validatedAt: new Date(),
-          validatedBy: "RuleValidationService",
+          validatedBy: 'RuleValidationService',
           validationDuration: 0,
         },
       };
     } catch (error) {
-      this.logger.error("Context validation failed", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        userId: context.userId,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Context validation failed',
+        'RuleValidationService',
+        { error: (error as Error)?.message, userId: context.userId }
+      );
 
       return {
         isValid: false,
-        errors: [
-          error instanceof Error ? error.message : "Context validation failed",
-        ],
+        errors: [error instanceof Error ? error.message : 'Context validation failed'],
         warnings: [],
         suggestions: [],
         metadata: {
           validatedAt: new Date(),
-          validatedBy: "RuleValidationService",
+          validatedBy: 'RuleValidationService',
           validationDuration: 0,
         },
       };
@@ -510,29 +479,29 @@ export class RuleValidationService {
    * @private
    */
   private validateContextMetadata(
-    metadata: NonNullable<RuleContext["metadata"]>,
+    metadata: NonNullable<RuleContext['metadata']>,
     errors: string[],
     _warnings: string[],
-    _suggestions: string[],
+    _suggestions: string[]
   ): void {
     // Validate user role
-    if (metadata.userRole && typeof metadata.userRole !== "string") {
-      errors.push("User role must be a string");
+    if (metadata.userRole && typeof metadata.userRole !== 'string') {
+      errors.push('User role must be a string');
     }
 
     // Validate user permissions
     if (metadata.userPermissions && !Array.isArray(metadata.userPermissions)) {
-      errors.push("User permissions must be an array");
+      errors.push('User permissions must be an array');
     }
 
     // Validate request source
-    if (metadata.requestSource && typeof metadata.requestSource !== "string") {
-      errors.push("Request source must be a string");
+    if (metadata.requestSource && typeof metadata.requestSource !== 'string') {
+      errors.push('Request source must be a string');
     }
 
     // Validate timestamp
     if (metadata.timestamp && !(metadata.timestamp instanceof Date)) {
-      errors.push("Timestamp must be a valid Date");
+      errors.push('Timestamp must be a valid Date');
     }
   }
 
@@ -544,16 +513,16 @@ export class RuleValidationService {
    */
   private isValidConditionType(type: string): type is RuleConditionType {
     const validTypes: RuleConditionType[] = [
-      "equals",
-      "not_equals",
-      "greater_than",
-      "less_than",
-      "contains",
-      "not_contains",
-      "in_range",
-      "is_empty",
-      "is_not_empty",
-      "custom",
+      'equals',
+      'not_equals',
+      'greater_than',
+      'less_than',
+      'contains',
+      'not_contains',
+      'in_range',
+      'is_empty',
+      'is_not_empty',
+      'custom',
     ];
     return validTypes.includes(type as RuleConditionType);
   }
@@ -566,14 +535,14 @@ export class RuleValidationService {
    */
   private isValidActionType(type: string): type is RuleActionType {
     const validTypes: RuleActionType[] = [
-      "block",
-      "allow",
-      "warn",
-      "log",
-      "notify",
-      "auto_correct",
-      "require_approval",
-      "custom",
+      'block',
+      'allow',
+      'warn',
+      'log',
+      'notify',
+      'auto_correct',
+      'require_approval',
+      'custom',
     ];
     return validTypes.includes(type as RuleActionType);
   }
@@ -585,7 +554,7 @@ export class RuleValidationService {
    * @private
    */
   private isValidSeverity(severity: string): boolean {
-    const validSeverities = ["low", "medium", "high", "critical"];
+    const validSeverities = ['low', 'medium', 'high', 'critical'];
     return validSeverities.includes(severity);
   }
 }

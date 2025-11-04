@@ -10,16 +10,18 @@
  * @since 2024
  */
 
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  OnModuleDestroy,
-  Inject,
-} from "@nestjs/common";
-import { Queue, Job, JobsOptions, Worker, JobState } from "bullmq";
-import { ConfigService } from "@nestjs/config";
-import { QueueMonitoringService } from "./monitoring/queue-monitoring.service";
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject } from '@nestjs/common';
+import { Queue, Job, JobsOptions, Worker, JobState } from 'bullmq';
+import { ConfigService } from '@nestjs/config';
+import { QueueMonitoringService } from './monitoring/queue-monitoring.service';
+
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { LogType, LogLevel } from '@core/types';
 import {
   SERVICE_QUEUE,
   APPOINTMENT_QUEUE,
@@ -40,94 +42,41 @@ import {
   REMINDER_QUEUE,
   FOLLOW_UP_QUEUE,
   RECURRING_APPOINTMENT_QUEUE,
-} from "./queue.constants";
+} from './queue.constants';
 
-// Types and Enums for compatibility
+// Internal imports - Types
+import type {
+  DetailedQueueMetrics,
+  QueueHealthStatus,
+  QueueMetrics,
+  JobData,
+  QueueFilters,
+  ClientSession,
+  EnterpriseJobOptions,
+  BulkJobData,
+  AuditAction,
+} from '@core/types/queue.types';
+
+// Re-export for backward compatibility
 export type JobType = string;
+export type { JobData, QueueFilters, ClientSession, EnterpriseJobOptions, BulkJobData };
+export { AuditAction };
 
+// Job priority enum (keep local as it's queue-specific)
 export enum JobPriority {
-  LOW = "low",
-  NORMAL = "normal",
-  HIGH = "high",
-  CRITICAL = "critical",
+  LOW = 'low',
+  NORMAL = 'normal',
+  HIGH = 'high',
+  CRITICAL = 'critical',
 }
 
+// Domain type enum (keep local as it's queue-specific)
 export enum DomainType {
-  CLINIC = "clinic",
-  WORKER = "worker",
+  CLINIC = 'clinic',
+  WORKER = 'worker',
 }
 
-export interface JobData {
-  [key: string]: unknown;
-}
-
-export interface QueueFilters {
-  status?: string[];
-  priority?: JobPriority[];
-  tenantId?: string;
-  domain?: DomainType;
-}
-
-export interface ClientSession {
-  clientId: string;
-  tenantId: string;
-  userId: string;
-  domain: DomainType;
-  connectedAt: Date;
-  subscribedQueues: Set<string>;
-  messageCount: number;
-  lastActivity: Date;
-}
-
-export enum AuditAction {
-  CREATE = "create",
-  READ = "read",
-  UPDATE = "update",
-  DELETE = "delete",
-}
-
-// Interfaces
-export interface EnterpriseJobOptions {
-  tenantId?: string;
-  correlationId?: string;
-  priority?: number;
-  classification?: "public" | "internal" | "confidential" | "restricted";
-  auditLevel?: "none" | "basic" | "detailed" | "comprehensive";
-  timeout?: number;
-  delay?: number;
-  attempts?: number;
-  removeOnComplete?: boolean | number;
-  removeOnFail?: boolean | number;
-  domain?: DomainType;
-}
-
-export interface BulkJobData<T = unknown> {
-  jobType: string;
-  data: T;
-  options?: EnterpriseJobOptions;
-}
-
-export interface QueueMetrics {
-  queueName: string;
-  domain: DomainType;
-  waiting: number;
-  active: number;
-  completed: number;
-  failed: number;
-  delayed: number;
-  throughputPerMinute: number;
-  averageProcessingTime: number;
-  errorRate: number;
-}
-
-export interface QueueHealthStatus {
-  isHealthy: boolean;
-  domain: DomainType;
-  queues: QueueMetrics[];
-  totalJobs: number;
-  errorRate: number;
-  averageResponseTime: number;
-}
+// Types moved to @core/types
 
 /**
  * Enterprise Queue Service for Healthcare Applications
@@ -169,11 +118,10 @@ export interface QueueHealthStatus {
  */
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(QueueService.name);
   private readonly queues = new Map<string, Queue>();
   private readonly workers = new Map<string, Worker[]>();
   private readonly connectedClients = new Map<string, ClientSession>();
-  private readonly queueMetrics = new Map<string, QueueMetrics>();
+  private readonly queueMetrics = new Map<string, DetailedQueueMetrics>();
   private healthCheckInterval!: NodeJS.Timeout;
   private metricsUpdateInterval!: NodeJS.Timeout;
   private autoScalingInterval!: NodeJS.Timeout;
@@ -191,15 +139,24 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   constructor(
     private readonly configService: ConfigService,
-    @Inject("BULLMQ_QUEUES") private readonly bullQueues: Queue[],
-    @Inject("BULLMQ_WORKERS") private readonly bullWorkers: Worker[] = [],
+    @Inject('BULLMQ_QUEUES') private readonly bullQueues: Queue[],
+    @Inject('BULLMQ_WORKERS') private readonly bullWorkers: Worker[] = [],
     private readonly monitoringService: QueueMonitoringService,
+    private readonly loggingService: LoggingService
   ) {
-    this.logger.log(
-      `🚀 QueueService constructor called for ${process.env["SERVICE_NAME"] || "unknown"} service`,
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `🚀 QueueService constructor called for ${process.env['SERVICE_NAME'] || 'unknown'} service`,
+      'QueueService',
+      {}
     );
-    this.logger.log(
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
       `📊 Received ${this.bullQueues?.length || 0} queues and ${this.bullWorkers?.length || 0} workers`,
+      'QueueService',
+      {}
     );
 
     const _currentDomain = this.getCurrentDomain();
@@ -208,16 +165,24 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       this.initializeQueues();
     } catch (_error) {
-      this.logger.error(
-        `Failed to initialize queues: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to initialize queues`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
     }
 
     try {
       this.initializeWorkers();
     } catch (_error) {
-      this.logger.error(
-        `Failed to initialize workers: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to initialize workers`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
     }
 
@@ -238,11 +203,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getCurrentDomain(): DomainType {
-    const serviceName = process.env["SERVICE_NAME"] || "clinic";
+    const serviceName = process.env['SERVICE_NAME'] || 'clinic';
     switch (serviceName) {
-      case "clinic":
+      case 'clinic':
         return DomainType.CLINIC;
-      case "worker":
+      case 'worker':
         return DomainType.WORKER;
       default:
         return DomainType.CLINIC;
@@ -314,8 +279,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private initializeQueues(): void {
     // Initialize queues based on domain with error handling
     if (!this.bullQueues || !Array.isArray(this.bullQueues)) {
-      this.logger.warn(
-        `⚠️  No bullQueues provided or invalid format. Received: ${typeof this.bullQueues}`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `No bullQueues provided or invalid format`,
+        'QueueService',
+        { receivedType: typeof this.bullQueues }
       );
       return;
     }
@@ -324,34 +293,54 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     this.bullQueues.forEach((queue, index) => {
       try {
         if (!queue || !queue.name) {
-          this.logger.warn(
-            `⚠️  Skipping invalid queue at index ${index}: ${JSON.stringify(queue)}`,
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Skipping invalid queue at index ${index}`,
+            'QueueService',
+            { index, queue: JSON.stringify(queue) }
           );
           return;
         }
 
         this.queues.set(queue.name, queue);
-        this.logger.log(
-          `✅ Initialized queue: ${queue.name} for domain: ${this.getCurrentDomain()}`,
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Initialized queue: ${queue.name} for domain: ${this.getCurrentDomain()}`,
+          'QueueService',
+          { queueName: queue.name, domain: this.getCurrentDomain() }
         );
         initializedCount++;
       } catch (_error) {
-        this.logger.error(
-          `❌ Failed to initialize queue at index ${index}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Failed to initialize queue at index ${index}`,
+          'QueueService',
+          { index, error: _error instanceof Error ? _error.message : String(_error) }
         );
       }
     });
 
-    this.logger.log(
-      `🎯 Successfully initialized ${initializedCount}/${this.bullQueues.length} queues for ${this.getCurrentDomain()} domain`,
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `Successfully initialized ${initializedCount}/${this.bullQueues.length} queues for ${this.getCurrentDomain()} domain`,
+      'QueueService',
+      { initializedCount, totalQueues: this.bullQueues.length, domain: this.getCurrentDomain() }
     );
   }
 
   private initializeWorkers(): void {
     // Initialize workers based on domain with error handling
     if (!this.bullWorkers || !Array.isArray(this.bullWorkers)) {
-      this.logger.log(
-        `ℹ️  No bullWorkers provided or invalid format for ${this.getCurrentDomain()} service (this is normal for non-worker services)`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `No bullWorkers provided or invalid format for ${this.getCurrentDomain()} service (this is normal for non-worker services)`,
+        'QueueService',
+        { domain: this.getCurrentDomain() }
       );
       return;
     }
@@ -360,26 +349,42 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     this.bullWorkers.forEach((worker, index) => {
       try {
         if (!worker || !worker.name) {
-          this.logger.warn(
-            `⚠️  Skipping invalid worker at index ${index}: ${JSON.stringify(worker)}`,
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Skipping invalid worker at index ${index}`,
+            'QueueService',
+            { index, worker: JSON.stringify(worker) }
           );
           return;
         }
 
         this.workers.set(worker.name, [worker]);
-        this.logger.log(
-          `✅ Initialized worker: ${worker.name} for domain: ${this.getCurrentDomain()}`,
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Initialized worker: ${worker.name} for domain: ${this.getCurrentDomain()}`,
+          'QueueService',
+          { workerName: worker.name, domain: this.getCurrentDomain() }
         );
         initializedCount++;
       } catch (_error) {
-        this.logger.error(
-          `❌ Failed to initialize worker at index ${index}: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Failed to initialize worker at index ${index}`,
+          'QueueService',
+          { index, error: _error instanceof Error ? _error.message : String(_error) }
         );
       }
     });
 
-    this.logger.log(
-      `🎯 Successfully initialized ${initializedCount}/${this.bullWorkers.length} workers for ${this.getCurrentDomain()} domain`,
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `Successfully initialized ${initializedCount}/${this.bullWorkers.length} workers for ${this.getCurrentDomain()} domain`,
+      'QueueService',
+      { initializedCount, totalWorkers: this.bullWorkers.length, domain: this.getCurrentDomain() }
     );
   }
 
@@ -412,15 +417,19 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     queueName: string,
     jobType: string,
     data: T,
-    options: EnterpriseJobOptions = {},
+    options: EnterpriseJobOptions = {}
   ): Promise<Job> {
     const startTime = Date.now();
 
     try {
       const queue = this.queues.get(queueName);
       if (!queue) {
-        throw new Error(
+        throw new HealthcareError(
+          ErrorCode.QUEUE_NOT_FOUND,
           `Queue ${queueName} not found for domain ${this.getCurrentDomain()}`,
+          undefined,
+          { queueName, domain: this.getCurrentDomain() },
+          'QueueService'
         );
       }
 
@@ -430,7 +439,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         delay: options.delay || 0,
         attempts: options.attempts || 3,
         backoff: {
-          type: "exponential",
+          type: 'exponential',
           delay: 2000,
         },
         removeOnComplete: options.removeOnComplete ?? 100,
@@ -448,32 +457,39 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           _tenantId: options.tenantId,
           _correlationId: options.correlationId,
         },
-        enhancedOptions,
+        enhancedOptions
       );
 
       // Update monitoring metrics
       void this.updateMonitoringMetrics(queueName);
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Job added to queue ${queueName}: ${job.id} for domain ${this.getCurrentDomain()}`,
+        'QueueService',
         {
           jobId: job.id,
           queueName,
           domain: this.getCurrentDomain(),
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return job;
     } catch (_error) {
-      this.logger.error(
-        `Failed to add job to queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to add job to queue ${queueName}`,
+        'QueueService',
         {
           queueName,
           domain: this.getCurrentDomain(),
-          _error: _error instanceof Error ? _error.stack : String(_error),
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
       throw _error;
     }
@@ -482,22 +498,23 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Add multiple jobs in bulk for high-throughput operations
    */
-  async addBulkJobs<T = unknown>(
-    queueName: string,
-    jobs: BulkJobData<T>[],
-  ): Promise<Job[]> {
+  async addBulkJobs<T = unknown>(queueName: string, jobs: BulkJobData<T>[]): Promise<Job[]> {
     const startTime = Date.now();
 
     try {
       const queue = this.queues.get(queueName);
       if (!queue) {
-        throw new Error(
+        throw new HealthcareError(
+          ErrorCode.QUEUE_NOT_FOUND,
           `Queue ${queueName} not found for domain ${this.getCurrentDomain()}`,
+          undefined,
+          { queueName, domain: this.getCurrentDomain() },
+          'QueueService'
         );
       }
 
       // Enhanced bulk job processing for 1M users
-      const enhancedJobs = jobs.map((job) => ({
+      const enhancedJobs = jobs.map(job => ({
         name: job.jobType,
         data: {
           ...job.data,
@@ -510,7 +527,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           delay: job.options?.delay || 0,
           attempts: job.options?.attempts || 3,
           backoff: {
-            type: "exponential",
+            type: 'exponential',
             delay: 2000,
           },
           removeOnComplete: job.options?.removeOnComplete ?? 100,
@@ -522,8 +539,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           metadata: {
             domain: this.getCurrentDomain(),
             tenantId: job.options?.tenantId,
-            auditLevel: job.options?.auditLevel || "basic",
-            classification: job.options?.classification || "internal",
+            auditLevel: job.options?.auditLevel || 'basic',
+            classification: job.options?.classification || 'internal',
             createdAt: new Date().toISOString(),
             correlationId: job.options?.correlationId,
           },
@@ -532,26 +549,33 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       const addedJobs = await queue.addBulk(enhancedJobs);
 
-      this.logger.log(
-        `Bulk jobs added to queue ${queueName}: ${addedJobs.length} jobs for domain ${"clinic"}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Bulk jobs added to queue ${queueName}: ${addedJobs.length} jobs for domain ${this.getCurrentDomain()}`,
+        'QueueService',
         {
           queueName,
           domain: this.getCurrentDomain(),
           jobCount: addedJobs.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return addedJobs;
     } catch (_error) {
-      this.logger.error(
-        `Failed to add bulk jobs to queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to add bulk jobs to queue ${queueName}`,
+        'QueueService',
         {
           queueName,
           domain: this.getCurrentDomain(),
-          _error: _error instanceof Error ? _error.stack : String(_error),
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
       throw _error;
     }
@@ -564,18 +588,22 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       const queue = this.queues.get(queueName);
       if (!queue) {
-        throw new Error(
+        throw new HealthcareError(
+          ErrorCode.QUEUE_NOT_FOUND,
           `Queue ${queueName} not found for domain ${this.getCurrentDomain()}`,
+          undefined,
+          { queueName, domain: this.getCurrentDomain() },
+          'QueueService'
         );
       }
 
       // Enhanced job filtering for 1M users
       const jobStates: JobState[] = (filters.status as JobState[]) || [
-        "waiting",
-        "active",
-        "completed",
-        "failed",
-        "delayed",
+        'waiting',
+        'active',
+        'completed',
+        'failed',
+        'delayed',
       ];
       const jobs: Job[] = [];
 
@@ -585,7 +613,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Apply additional filters
-      const filteredJobs = jobs.filter((job) => {
+      const filteredJobs = jobs.filter(job => {
         if (
           filters.priority &&
           job.opts.priority !== this.getJobPriority(Number(filters.priority[0]))
@@ -603,13 +631,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       return filteredJobs;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get jobs from queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get jobs from queue ${queueName}`,
+        'QueueService',
         {
           queueName,
           domain: this.getCurrentDomain(),
-          _error: _error instanceof Error ? _error.stack : String(_error),
-        },
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -618,12 +650,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get queue metrics for domain-specific monitoring
    */
-  async getQueueMetrics(queueName: string): Promise<QueueMetrics> {
+  async getQueueMetrics(queueName: string): Promise<DetailedQueueMetrics> {
     try {
       const queue = this.queues.get(queueName);
       if (!queue) {
-        throw new Error(
+        throw new HealthcareError(
+          ErrorCode.QUEUE_NOT_FOUND,
           `Queue ${queueName} not found for domain ${this.getCurrentDomain()}`,
+          undefined,
+          { queueName, domain: this.getCurrentDomain() },
+          'QueueService'
         );
       }
 
@@ -635,7 +671,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         queue.getDelayed(),
       ]);
 
-      const metrics: QueueMetrics = {
+      const metrics: DetailedQueueMetrics = {
         queueName,
         domain: this.getCurrentDomain(),
         waiting: waiting.length,
@@ -651,13 +687,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.queueMetrics.set(queueName, metrics);
       return metrics;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get metrics for queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get metrics for queue ${queueName}`,
+        'QueueService',
         {
           queueName,
           domain: this.getCurrentDomain(),
-          _error: _error instanceof Error ? _error.stack : String(_error),
-        },
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -669,25 +709,19 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async getHealthStatus(): Promise<QueueHealthStatus> {
     try {
       const queueMetrics = await Promise.all(
-        Array.from(this.queues.keys()).map((queueName) =>
-          this.getQueueMetrics(queueName),
-        ),
+        Array.from(this.queues.keys()).map(queueName => this.getQueueMetrics(queueName))
       );
 
       const totalJobs = queueMetrics.reduce(
-        (sum, metrics) =>
-          sum + metrics.waiting + metrics.active + metrics.delayed,
-        0,
+        (sum, metrics) => sum + metrics.waiting + metrics.active + metrics.delayed,
+        0
       );
 
       const errorRate =
-        queueMetrics.reduce((sum, metrics) => sum + metrics.errorRate, 0) /
-        queueMetrics.length;
+        queueMetrics.reduce((sum, metrics) => sum + metrics.errorRate, 0) / queueMetrics.length;
       const averageResponseTime =
-        queueMetrics.reduce(
-          (sum, metrics) => sum + metrics.averageProcessingTime,
-          0,
-        ) / queueMetrics.length;
+        queueMetrics.reduce((sum, metrics) => sum + metrics.averageProcessingTime, 0) /
+        queueMetrics.length;
 
       return {
         isHealthy: errorRate < 0.05, // 5% error rate threshold
@@ -698,12 +732,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         averageResponseTime,
       };
     } catch (_error) {
-      this.logger.error(
-        `Failed to get health status: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get health status`,
+        'QueueService',
         {
           domain: this.getCurrentDomain(),
-          _error: _error instanceof Error ? _error.stack : String(_error),
-        },
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -712,22 +750,28 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Update an existing job in the queue
    */
-  async updateJob(
-    queueName: string,
-    jobId: string,
-    data: unknown,
-  ): Promise<boolean> {
+  async updateJob(queueName: string, jobId: string, data: unknown): Promise<boolean> {
     try {
       const queue = this.queues.get(queueName);
       if (!queue) {
-        throw new Error(
+        throw new HealthcareError(
+          ErrorCode.QUEUE_NOT_FOUND,
           `Queue ${queueName} not found for domain ${this.getCurrentDomain()}`,
+          undefined,
+          { queueName, domain: this.getCurrentDomain() },
+          'QueueService'
         );
       }
 
       const job = await queue.getJob(jobId);
       if (!job) {
-        throw new Error(`Job ${jobId} not found in queue ${queueName}`);
+        throw new HealthcareError(
+          ErrorCode.QUEUE_JOB_NOT_FOUND,
+          `Job ${jobId} not found in queue ${queueName}`,
+          undefined,
+          { jobId, queueName },
+          'QueueService.getJob'
+        );
       }
 
       // Update job data
@@ -740,11 +784,25 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       await queue.remove(jobId);
       await queue.add(job.name, job.data, job.opts);
 
-      this.logger.log(`Job ${jobId} updated in queue ${queueName}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Job ${jobId} updated in queue ${queueName}`,
+        'QueueService',
+        { jobId, queueName }
+      );
       return true;
     } catch (_error) {
-      this.logger.error(
-        `Failed to update job ${jobId} in queue ${queueName}: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to update job ${jobId} in queue ${queueName}`,
+        'QueueService',
+        {
+          jobId,
+          queueName,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
       throw _error;
     }
@@ -758,11 +816,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get doctor queue for appointments
    */
-  async getDoctorQueue(
-    doctorId: string,
-    date: string,
-    domain: string,
-  ): Promise<unknown> {
+  async getDoctorQueue(doctorId: string, date: string, domain: string): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
@@ -771,17 +825,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       const queue = jobs
         .filter(
-          (job) =>
-            (job.data as { doctorId: string; date: string }).doctorId ===
-              doctorId &&
-            (job.data as { doctorId: string; date: string }).date === date,
+          job =>
+            (job.data as { doctorId: string; date: string }).doctorId === doctorId &&
+            (job.data as { doctorId: string; date: string }).date === date
         )
         .map((job, index) => ({
           id: job.id,
           appointmentId: (job.data as { appointmentId: string }).appointmentId,
           position: index + 1,
           estimatedWaitTime: this.calculateEstimatedWaitTime(index + 1, domain),
-          status: (job.data as { status?: string }).status || "WAITING",
+          status: (job.data as { status?: string }).status || 'WAITING',
           priority: job.opts.priority || 3,
           checkedInAt: (job.data as { checkedInAt?: string }).checkedInAt,
           startedAt: (job.data as { startedAt?: string }).startedAt,
@@ -795,12 +848,15 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         queue,
         totalLength: queue.length,
         averageWaitTime: this.calculateAppointmentQueueAverageWaitTime(queue),
-        estimatedNextWaitTime:
-          queue.length > 0 ? this.calculateEstimatedWaitTime(1, domain) : 0,
+        estimatedNextWaitTime: queue.length > 0 ? this.calculateEstimatedWaitTime(1, domain) : 0,
       };
     } catch (_error) {
-      this.logger.error(
-        `Failed to get doctor queue: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get doctor queue`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
       throw _error;
     }
@@ -809,10 +865,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get patient queue position
    */
-  async getPatientQueuePosition(
-    appointmentId: string,
-    domain: string,
-  ): Promise<unknown> {
+  async getPatientQueuePosition(appointmentId: string, domain: string): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
@@ -820,18 +873,20 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
 
       const job = jobs.find(
-        (j) =>
-          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+        j => (j.data as { appointmentId: string }).appointmentId === appointmentId
       );
       if (!job) {
-        throw new Error("Appointment not found in queue");
+        throw new HealthcareError(
+          ErrorCode.QUEUE_JOB_NOT_FOUND,
+          'Appointment not found in queue',
+          undefined,
+          {},
+          'QueueService'
+        );
       }
 
       const position = jobs.indexOf(job) + 1;
-      const estimatedWaitTime = this.calculateEstimatedWaitTime(
-        position,
-        domain,
-      );
+      const estimatedWaitTime = this.calculateEstimatedWaitTime(position, domain);
 
       return {
         appointmentId,
@@ -842,8 +897,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         doctorId: (job.data as { doctorId: string }).doctorId,
       };
     } catch (_error) {
-      this.logger.error(
-        `Failed to get patient queue position: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get patient queue position`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
       throw _error;
     }
@@ -852,10 +911,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Confirm appointment in queue
    */
-  async confirmAppointment(
-    appointmentId: string,
-    domain: string,
-  ): Promise<unknown> {
+  async confirmAppointment(appointmentId: string, domain: string): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
@@ -863,26 +919,33 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
 
       const job = jobs.find(
-        (j) =>
-          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+        j => (j.data as { appointmentId: string }).appointmentId === appointmentId
       );
       if (!job) {
-        throw new Error("Appointment not found in queue");
+        throw new HealthcareError(
+          ErrorCode.QUEUE_JOB_NOT_FOUND,
+          'Appointment not found in queue',
+          undefined,
+          {},
+          'QueueService'
+        );
       }
 
       // Update job data
-      (job.data as { status: string; confirmedAt: string }).status =
-        "CONFIRMED";
-      (job.data as { status: string; confirmedAt: string }).confirmedAt =
-        new Date().toISOString();
+      (job.data as { status: string; confirmedAt: string }).status = 'CONFIRMED';
+      (job.data as { status: string; confirmedAt: string }).confirmedAt = new Date().toISOString();
 
       // Update the job in the queue
       await this.updateJob(queueName, job.id as string, job.data);
 
-      return { success: true, message: "Appointment confirmed" };
+      return { success: true, message: 'Appointment confirmed' };
     } catch (_error) {
-      this.logger.error(
-        `Failed to confirm appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to confirm appointment`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
       throw _error;
     }
@@ -894,7 +957,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async startConsultation(
     appointmentId: string,
     doctorId: string,
-    domain: string,
+    domain: string
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
@@ -903,11 +966,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
 
       const job = jobs.find(
-        (j) =>
-          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+        j => (j.data as { appointmentId: string }).appointmentId === appointmentId
       );
       if (!job) {
-        throw new Error("Appointment not found in queue");
+        throw new HealthcareError(
+          ErrorCode.QUEUE_JOB_NOT_FOUND,
+          'Appointment not found in queue',
+          undefined,
+          {},
+          'QueueService'
+        );
       }
 
       // Update job data
@@ -918,7 +986,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           actualWaitTime: number;
           checkedInAt: string;
         }
-      ).status = "IN_PROGRESS";
+      ).status = 'IN_PROGRESS';
       (
         job.data as {
           status: string;
@@ -942,16 +1010,20 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
             actualWaitTime: number;
             checkedInAt: string;
           }
-        ).checkedInAt,
+        ).checkedInAt
       );
 
       // Update the job in the queue
       await this.updateJob(queueName, job.id as string, job.data);
 
-      return { success: true, message: "Consultation started" };
+      return { success: true, message: 'Consultation started' };
     } catch (_error) {
-      this.logger.error(
-        `Failed to start consultation: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to start consultation`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
       throw _error;
     }
@@ -963,7 +1035,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async handleEmergencyAppointment(
     appointmentId: string,
     priority: number,
-    domain: string,
+    domain: string
   ): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
@@ -972,31 +1044,35 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
 
       const job = jobs.find(
-        (j) =>
-          (j.data as { appointmentId: string }).appointmentId === appointmentId,
+        j => (j.data as { appointmentId: string }).appointmentId === appointmentId
       );
       if (!job) {
-        throw new Error("Appointment not found in queue");
+        throw new HealthcareError(
+          ErrorCode.QUEUE_JOB_NOT_FOUND,
+          'Appointment not found in queue',
+          undefined,
+          {},
+          'QueueService'
+        );
       }
 
       // Update job data with emergency priority
-      (
-        job.data as { priority: number; status: string; emergencyAt: string }
-      ).priority = priority;
-      (
-        job.data as { priority: number; status: string; emergencyAt: string }
-      ).status = "EMERGENCY";
-      (
-        job.data as { priority: number; status: string; emergencyAt: string }
-      ).emergencyAt = new Date().toISOString();
+      (job.data as { priority: number; status: string; emergencyAt: string }).priority = priority;
+      (job.data as { priority: number; status: string; emergencyAt: string }).status = 'EMERGENCY';
+      (job.data as { priority: number; status: string; emergencyAt: string }).emergencyAt =
+        new Date().toISOString();
 
       // Remove and re-add with higher priority
       await this.updateJob(queueName, job.id as string, job.data);
 
-      return { success: true, message: "Emergency appointment prioritized" };
+      return { success: true, message: 'Emergency appointment prioritized' };
     } catch (_error) {
-      this.logger.error(
-        `Failed to handle emergency appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to handle emergency appointment`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
       throw _error;
     }
@@ -1005,10 +1081,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get location queue stats
    */
-  async getLocationQueueStats(
-    locationId: string,
-    domain: string,
-  ): Promise<unknown> {
+  async getLocationQueueStats(locationId: string, domain: string): Promise<unknown> {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
@@ -1016,13 +1089,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
 
       const locationJobs = jobs.filter(
-        (j) => (j.data as { locationId: string }).locationId === locationId,
+        j => (j.data as { locationId: string }).locationId === locationId
       );
       const waitingJobs = locationJobs.filter(
-        (j) => (j.data as { status: string }).status === "WAITING",
+        j => (j.data as { status: string }).status === 'WAITING'
       );
       const completedJobs = locationJobs.filter(
-        (j) => (j.data as { status: string }).status === "COMPLETED",
+        j => (j.data as { status: string }).status === 'COMPLETED'
       );
 
       const totalWaiting = waitingJobs.length;
@@ -1030,19 +1103,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       const averageWaitTime =
         waitingJobs.length > 0
           ? waitingJobs.reduce(
-              (sum, j) =>
-                sum +
-                ((j.data as { estimatedWaitTime?: number }).estimatedWaitTime ||
-                  0),
-              0,
+              (sum, j) => sum + ((j.data as { estimatedWaitTime?: number }).estimatedWaitTime || 0),
+              0
             ) / waitingJobs.length
           : 0;
       const efficiency =
-        completedCount > 0
-          ? (completedCount / (completedCount + totalWaiting)) * 100
-          : 0;
-      const utilization =
-        totalWaiting > 0 ? Math.min((totalWaiting / 50) * 100, 100) : 0;
+        completedCount > 0 ? (completedCount / (completedCount + totalWaiting)) * 100 : 0;
+      const utilization = totalWaiting > 0 ? Math.min((totalWaiting / 50) * 100, 100) : 0;
 
       return {
         locationId,
@@ -1056,8 +1123,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         },
       };
     } catch (_error) {
-      this.logger.error(
-        `Failed to get location queue stats: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get location queue stats`,
+        'QueueService',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
       throw _error;
     }
@@ -1065,26 +1136,22 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   // Helper methods for appointment queues
   private getAppointmentQueueName(domain: string): string {
-    return domain === "clinic"
-      ? "clinic-appointment-queue"
-      : "appointment-queue";
+    return domain === 'clinic' ? 'clinic-appointment-queue' : 'appointment-queue';
   }
 
   private calculateEstimatedWaitTime(position: number, domain: string): number {
-    const baseWaitTime = domain === "healthcare" ? 15 : 10; // minutes
+    const baseWaitTime = domain === 'healthcare' ? 15 : 10; // minutes
     return position * baseWaitTime;
   }
 
   private calculateAverageWaitTime(
-    queue: Array<{ processedOn?: number; timestamp?: number }>,
+    queue: Array<{ processedOn?: number; timestamp?: number }>
   ): number {
     if (queue.length === 0) return 0;
     const totalWaitTime = queue.reduce(
       (sum: number, entry) =>
-        sum +
-        (((entry as Record<string, unknown>)["estimatedWaitTime"] as number) ||
-          0),
-      0,
+        sum + (((entry as Record<string, unknown>)['estimatedWaitTime'] as number) || 0),
+      0
     );
     return totalWaitTime / queue.length;
   }
@@ -1100,13 +1167,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       checkedInAt: string | undefined;
       startedAt: string | undefined;
       completedAt: string | undefined;
-    }>,
+    }>
   ): number {
     if (queue.length === 0) return 0;
-    const totalWaitTime = queue.reduce(
-      (sum: number, entry) => sum + entry.estimatedWaitTime,
-      0,
-    );
+    const totalWaitTime = queue.reduce((sum: number, entry) => sum + entry.estimatedWaitTime, 0);
     return totalWaitTime / queue.length;
   }
 
@@ -1151,20 +1215,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         throughput: 25, // Placeholder - jobs per minute
         averageProcessingTime: 120000, // Placeholder - 2 minutes in milliseconds
         errorRate:
-          failed.length > 0
-            ? (failed.length / (completed.length + failed.length)) * 100
-            : 0,
+          failed.length > 0 ? (failed.length / (completed.length + failed.length)) * 100 : 0,
       };
 
-      this.monitoringService.updateMetrics(
-        queueName,
-        this.getCurrentDomain(),
-        metrics,
-      );
+      this.monitoringService.updateMetrics(queueName, this.getCurrentDomain(), metrics);
     } catch (_error) {
-      this.logger.error(
-        `Failed to update monitoring metrics for queue ${queueName}:`,
-        _error,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to update monitoring metrics for queue ${queueName}`,
+        'QueueService',
+        { queueName, error: _error instanceof Error ? _error.message : String(_error) }
       );
     }
   }
@@ -1172,10 +1233,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Domain validation removed - single application access
    */
-  private validateDomainAccess(
-    _queueName: string,
-    _requestedDomain?: DomainType,
-  ): void {
+  private validateDomainAccess(_queueName: string, _requestedDomain?: DomainType): void {
     // No domain restrictions - single application can access all queues
     return;
   }
@@ -1213,12 +1271,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.getHealthStatus();
     } catch (_error) {
-      this.logger.error(
-        `Failed to update health status: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to update health status`,
+        'QueueService',
         {
           domain: this.getCurrentDomain(),
-          _error: _error instanceof Error ? _error.stack : String(_error),
-        },
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
     }
   }
@@ -1232,12 +1294,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         await this.getQueueMetrics(queueName);
       }
     } catch (_error) {
-      this.logger.error(
-        `Failed to update queue metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to update queue metrics`,
+        'QueueService',
         {
           domain: this.getCurrentDomain(),
-          _error: _error instanceof Error ? _error.stack : String(_error),
-        },
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
     }
   }
@@ -1255,7 +1321,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         lastUpdated: new Date().toISOString(),
       };
     } catch (_error) {
-      this.logger.error(`Failed to get queue status for ${queueName}:`, _error);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get queue status for ${queueName}`,
+        'QueueService',
+        { queueName, error: _error instanceof Error ? _error.message : String(_error) }
+      );
       throw _error;
     }
   }
@@ -1280,7 +1352,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         throughput: metrics.throughputPerMinute,
       };
     } catch (_error) {
-      this.logger.error(`Failed to get queue health for ${queueName}:`, _error);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to get queue health for ${queueName}`,
+        'QueueService',
+        { queueName, error: _error instanceof Error ? _error.message : String(_error) }
+      );
       throw _error;
     }
   }
@@ -1302,15 +1380,18 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
             lastUpdated: new Date().toISOString(),
           };
         } catch (_error) {
-          this.logger.error(
-            `Failed to get status for queue ${queueName}:`,
-            _error,
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.ERROR,
+            `Failed to get status for queue ${queueName}`,
+            'QueueService',
+            { queueName, error: _error instanceof Error ? _error.message : String(_error) }
           );
           statuses[queueName] = {
             queueName,
             metrics: null,
             isHealthy: false,
-            _error: _error instanceof Error ? _error.message : "Unknown _error",
+            _error: _error instanceof Error ? _error.message : 'Unknown error',
             lastUpdated: new Date().toISOString(),
           };
         }
@@ -1318,7 +1399,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
       return statuses;
     } catch (error) {
-      this.logger.error("Failed to get all queue statuses:", error);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to get all queue statuses',
+        'QueueService',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
       throw error;
     }
   }
@@ -1334,22 +1421,22 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
         // Scale up if queue is overloaded
         if (metrics.waiting > 100 && currentWorkers < 10) {
-          await this.scaleUpWorkers(
-            queueName,
-            Math.min(2, 10 - currentWorkers),
-          );
+          await this.scaleUpWorkers(queueName, Math.min(2, 10 - currentWorkers));
         }
 
         // Scale down if queue is underutilized
         if (metrics.waiting < 10 && currentWorkers > 2) {
-          await this.scaleDownWorkers(
-            queueName,
-            Math.min(1, currentWorkers - 2),
-          );
+          await this.scaleDownWorkers(queueName, Math.min(1, currentWorkers - 2));
         }
       }
     } catch (error) {
-      this.logger.error("Auto-scaling failed:", error);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Auto-scaling failed',
+        'QueueService',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
     }
   }
 
@@ -1367,11 +1454,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           },
           {
             connection: {
-              host: this.configService.get("REDIS_HOST", "localhost"),
-              port: this.configService.get("REDIS_PORT", 6379),
+              host: this.configService.get('REDIS_HOST', 'localhost'),
+              port: this.configService.get('REDIS_PORT', 6379),
             },
             concurrency: 5,
-          },
+          }
         );
 
         if (!this.workers.has(queueName)) {
@@ -1380,23 +1467,30 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.workers.get(queueName)!.push(worker);
       }
 
-      this.logger.log(`Scaled up ${count} workers for queue: ${queueName}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Scaled up ${count} workers for queue: ${queueName}`,
+        'QueueService',
+        { queueName, count }
+      );
       return Promise.resolve();
     } catch (_error) {
-      this.logger.error(`Failed to scale up workers for ${queueName}:`, _error);
-      return Promise.reject(
-        _error instanceof Error ? _error : new Error(String(_error)),
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to scale up workers for ${queueName}`,
+        'QueueService',
+        { queueName, error: _error instanceof Error ? _error.message : String(_error) }
       );
+      return Promise.reject(_error instanceof Error ? _error : new Error(String(_error)));
     }
   }
 
   /**
    * Scale down workers for a specific queue
    */
-  private async scaleDownWorkers(
-    queueName: string,
-    count: number,
-  ): Promise<void> {
+  private async scaleDownWorkers(queueName: string, count: number): Promise<void> {
     try {
       const queueWorkers = this.workers.get(queueName) || [];
       const workersToRemove = queueWorkers.splice(-count);
@@ -1405,11 +1499,20 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         await worker.close();
       }
 
-      this.logger.log(`Scaled down ${count} workers for queue: ${queueName}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Scaled down ${count} workers for queue: ${queueName}`,
+        'QueueService',
+        { queueName, count }
+      );
     } catch (_error) {
-      this.logger.error(
-        `Failed to scale down workers for ${queueName}:`,
-        _error,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to scale down workers for ${queueName}`,
+        'QueueService',
+        { queueName, error: _error instanceof Error ? _error.message : String(_error) }
       );
     }
   }
@@ -1420,24 +1523,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async batchProcessJobs<T>(
     queueName: string,
     jobs: Array<{ data: T; options?: EnterpriseJobOptions }>,
-    batchSize: number = 100,
+    batchSize: number = 100
   ): Promise<Job[]> {
     const results: Job[] = [];
 
     for (let i = 0; i < jobs.length; i += batchSize) {
       const batch = jobs.slice(i, i + batchSize);
-      const batchPromises = batch.map((job) =>
-        this.addJob(queueName, "batch-job", job.data, job.options),
+      const batchPromises = batch.map(job =>
+        this.addJob(queueName, 'batch-job', job.data, job.options)
       );
 
       const batchResults = await Promise.allSettled(batchPromises);
       results.push(
         ...batchResults
-          .filter(
-            (result): result is PromiseFulfilledResult<Job> =>
-              result.status === "fulfilled",
-          )
-          .map((result) => result.value),
+          .filter((result): result is PromiseFulfilledResult<Job> => result.status === 'fulfilled')
+          .map(result => result.value)
       );
     }
 
@@ -1462,8 +1562,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     for (const [queueName] of Array.from(this.queues.entries())) {
       const metrics = await this.getQueueMetrics(queueName);
-      totalJobs +=
-        metrics.waiting + metrics.active + metrics.completed + metrics.failed;
+      totalJobs += metrics.waiting + metrics.active + metrics.completed + metrics.failed;
       totalProcessingTime += metrics.averageProcessingTime || 0;
       totalErrors += metrics.failed;
       totalCompleted += metrics.completed;
@@ -1471,7 +1570,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     const totalWorkers = Array.from(this.workers.values()).reduce(
       (sum, workers) => sum + workers.length,
-      0,
+      0
     );
 
     return {
@@ -1485,8 +1584,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit() {
-    this.logger.log(
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
       `Queue Service initialized for domain: ${this.getCurrentDomain()}`,
+      'QueueService',
+      { domain: this.getCurrentDomain() }
     );
   }
 
@@ -1512,8 +1615,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    this.logger.log(
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
       `Queue Service destroyed for domain: ${this.getCurrentDomain()}`,
+      'QueueService',
+      { domain: this.getCurrentDomain() }
     );
   }
 }

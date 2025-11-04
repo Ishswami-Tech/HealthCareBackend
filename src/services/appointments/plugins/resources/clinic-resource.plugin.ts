@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unused-vars */
-import { Injectable, Logger } from "@nestjs/common";
-import { BaseAppointmentPlugin } from "../base/base-plugin.service";
-import { AppointmentResourceService } from "./appointment-resource.service";
+import { Injectable, Logger } from '@nestjs/common';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentResourceService } from './appointment-resource.service';
 
 @Injectable()
 export class ClinicResourcePlugin extends BaseAppointmentPlugin {
@@ -12,26 +11,26 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
   }
 
   get name(): string {
-    return "clinic-resource";
+    return 'clinic-resource';
   }
 
   get version(): string {
-    return "1.0.0";
+    return '1.0.0';
   }
 
   get features(): string[] {
-    return ["resources", "booking", "conflicts"];
+    return ['resources', 'booking', 'conflicts'];
   }
 
   getSupportedOperations(): string[] {
     return [
-      "createResource",
-      "getClinicResources",
-      "bookResource",
-      "checkResourceConflicts",
-      "getResourceBookings",
-      "cancelResourceBooking",
-      "getAlternativeResources",
+      'createResource',
+      'getClinicResources',
+      'bookResource',
+      'checkResourceConflicts',
+      'getResourceBookings',
+      'cancelResourceBooking',
+      'getAlternativeResources',
     ];
   }
 
@@ -47,47 +46,40 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
 
     try {
       switch (operation) {
-        case "createResource":
+        case 'createResource':
           return await this.resourceService.createResource(params.resourceData);
 
-        case "getClinicResources":
-          return await this.resourceService.getClinicResources(
-            params.clinicId,
-            params.type,
-          );
+        case 'getClinicResources':
+          return await this.resourceService.getClinicResources(params.clinicId, params.type);
 
-        case "bookResource":
+        case 'bookResource':
           return await this.resourceService.bookResource(
             params.resourceId,
             params.appointmentId,
             params.startTime,
             params.endTime,
-            params.notes,
+            params.notes
           );
 
-        case "checkResourceConflicts":
+        case 'checkResourceConflicts':
           return await this.resourceService.checkResourceConflicts(
             params.resourceId,
             params.startTime,
-            params.endTime,
+            params.endTime
           );
 
-        case "getResourceBookings":
+        case 'getResourceBookings':
           return await this.resourceService.getResourceBookings(
             params.resourceId,
             params.startTime,
-            params.endTime,
+            params.endTime
           );
 
-        case "cancelResourceBooking":
-          return await this.resourceService.cancelResourceBooking(
-            params.bookingId,
-          );
+        case 'cancelResourceBooking':
+          return await this.resourceService.cancelResourceBooking(params.bookingId);
 
-        case "getAlternativeResources":
-          return await this.resourceService.getAlternativeResources(
-            params.resourceId,
-          );
+        case 'getAlternativeResources':
+          return await this.resourceService.getAlternativeResources(params.resourceId);
 
         default:
           throw new Error(`Unsupported operation: ${operation}`);
@@ -107,41 +99,34 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
 
     // Validate required parameters based on operation
     switch (operation) {
-      case "createResource":
+      case 'createResource':
         return Promise.resolve(
           !!(
             params.resourceData &&
             params.resourceData.name &&
             params.resourceData.type &&
             params.resourceData.clinicId
-          ),
+          )
         );
 
-      case "getClinicResources":
+      case 'getClinicResources':
         return Promise.resolve(!!params.clinicId);
 
-      case "bookResource":
+      case 'bookResource':
         return Promise.resolve(
-          !!(
-            params.resourceId &&
-            params.appointmentId &&
-            params.startTime &&
-            params.endTime
-          ),
+          !!(params.resourceId && params.appointmentId && params.startTime && params.endTime)
         );
 
-      case "checkResourceConflicts":
-        return Promise.resolve(
-          !!(params.resourceId && params.startTime && params.endTime),
-        );
+      case 'checkResourceConflicts':
+        return Promise.resolve(!!(params.resourceId && params.startTime && params.endTime));
 
-      case "getResourceBookings":
+      case 'getResourceBookings':
         return Promise.resolve(!!params.resourceId);
 
-      case "cancelResourceBooking":
+      case 'cancelResourceBooking':
         return Promise.resolve(!!params.bookingId);
 
-      case "getAlternativeResources":
+      case 'getAlternativeResources':
         return Promise.resolve(!!params.resourceId);
 
       default:
@@ -151,20 +136,20 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
 
   getRequiredParameters(operation: string): string[] {
     switch (operation) {
-      case "createResource":
-        return ["resourceData"];
-      case "getClinicResources":
-        return ["clinicId"];
-      case "bookResource":
-        return ["resourceId", "appointmentId", "startTime", "endTime"];
-      case "checkResourceConflicts":
-        return ["resourceId", "startTime", "endTime"];
-      case "getResourceBookings":
-        return ["resourceId"];
-      case "cancelResourceBooking":
-        return ["bookingId"];
-      case "getAlternativeResources":
-        return ["resourceId"];
+      case 'createResource':
+        return ['resourceData'];
+      case 'getClinicResources':
+        return ['clinicId'];
+      case 'bookResource':
+        return ['resourceId', 'appointmentId', 'startTime', 'endTime'];
+      case 'checkResourceConflicts':
+        return ['resourceId', 'startTime', 'endTime'];
+      case 'getResourceBookings':
+        return ['resourceId'];
+      case 'cancelResourceBooking':
+        return ['bookingId'];
+      case 'getAlternativeResources':
+        return ['resourceId'];
       default:
         return [];
     }
@@ -174,10 +159,9 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
     return {
       plugin: this.name,
       version: this.version,
-      status: "healthy",
+      status: 'healthy',
       operations: this.getSupportedOperations().length,
       lastCheck: new Date().toISOString(),
     };
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unused-vars */

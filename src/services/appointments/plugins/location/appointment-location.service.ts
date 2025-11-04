@@ -1,60 +1,22 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
-import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
-import { PrismaService } from "../../../../libs/infrastructure/database/prisma/prisma.service";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { DatabaseService } from '@infrastructure/database';
 // import type { Doctor } from "../../../../libs/infrastructure/database/prisma/prisma.types";
 
-export interface Location {
-  id: string;
-  name: string;
-  address: string;
-  city: string;
-  state: string;
-  country: string;
-  postalCode: string;
-  phone: string;
-  email?: string;
-  type: "clinic" | "studio" | "hospital" | "outpatient";
-  capacity: number;
-  isActive: boolean;
-  coordinates?: {
-    latitude: number;
-    longitude: number;
-  };
-  amenities: string[];
-  operatingHours: {
-    [key: string]: {
-      open: string;
-      close: string;
-      isOpen: boolean;
-    };
-  };
-}
+import type {
+  AppointmentLocation,
+  LocationStats,
+  AppointmentLocationDoctor,
+} from '@core/types/appointment.types';
 
-export interface LocationStats {
-  totalAppointments: number;
-  totalDoctors: number;
-  averageWaitTime: number;
-  efficiency: number;
-  utilization: number;
-  patientSatisfaction: number;
-}
-
-export interface LocationDoctor {
-  id: string;
-  name: string;
-  specialization: string;
-  licenseNumber?: string;
-  experience: number;
-  rating: number;
-  isAvailable: boolean;
-  nextAvailableSlot?: string;
-}
+// Re-export types for backward compatibility (with alias for Location)
+export type { LocationStats, AppointmentLocationDoctor as LocationDoctor };
+export type Location = AppointmentLocation;
 
 @Injectable()
 export class AppointmentLocationService {
-  private readonly logger = new Logger(AppointmentLocationService.name);
   private readonly LOCATION_CACHE_TTL = 3600; // 1 hour
   private readonly DOCTORS_CACHE_TTL = 1800; // 30 minutes
   private readonly STATS_CACHE_TTL = 300; // 5 minutes
@@ -62,7 +24,7 @@ export class AppointmentLocationService {
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService
   ) {}
 
   async getAllLocations(domain: string): Promise<unknown> {
@@ -76,9 +38,9 @@ export class AppointmentLocationService {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          "Locations retrieved from cache",
-          "AppointmentLocationService",
-          { domain, responseTime: Date.now() - startTime },
+          'Locations retrieved from cache',
+          'AppointmentLocationService',
+          { domain, responseTime: Date.now() - startTime }
         );
         return JSON.parse(cached as string);
       }
@@ -94,22 +56,18 @@ export class AppointmentLocationService {
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(result),
-        this.LOCATION_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(result), this.LOCATION_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Locations retrieved successfully",
-        "AppointmentLocationService",
+        'Locations retrieved successfully',
+        'AppointmentLocationService',
         {
           domain,
           count: locations.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return result;
@@ -118,11 +76,11 @@ export class AppointmentLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get locations: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentLocationService",
+        'AppointmentLocationService',
         {
           domain,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -153,18 +111,14 @@ export class AppointmentLocationService {
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(result),
-        this.LOCATION_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(result), this.LOCATION_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Location retrieved successfully",
-        "AppointmentLocationService",
-        { locationId, domain, responseTime: Date.now() - startTime },
+        'Location retrieved successfully',
+        'AppointmentLocationService',
+        { locationId, domain, responseTime: Date.now() - startTime }
       );
 
       return result;
@@ -173,21 +127,18 @@ export class AppointmentLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentLocationService",
+        'AppointmentLocationService',
         {
           locationId,
           domain,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
   }
 
-  async getDoctorsByLocation(
-    locationId: string,
-    domain: string,
-  ): Promise<unknown> {
+  async getDoctorsByLocation(locationId: string, domain: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `doctors:location:${locationId}:${domain}`;
 
@@ -210,23 +161,19 @@ export class AppointmentLocationService {
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(result),
-        this.DOCTORS_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(result), this.DOCTORS_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Doctors retrieved successfully",
-        "AppointmentLocationService",
+        'Doctors retrieved successfully',
+        'AppointmentLocationService',
         {
           locationId,
           domain,
           count: doctors.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return result;
@@ -235,12 +182,12 @@ export class AppointmentLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get doctors: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentLocationService",
+        'AppointmentLocationService',
         {
           locationId,
           domain,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -268,18 +215,14 @@ export class AppointmentLocationService {
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(result),
-        this.STATS_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(result), this.STATS_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Location stats calculated successfully",
-        "AppointmentLocationService",
-        { locationId, domain, responseTime: Date.now() - startTime },
+        'Location stats calculated successfully',
+        'AppointmentLocationService',
+        { locationId, domain, responseTime: Date.now() - startTime }
       );
 
       return result;
@@ -288,12 +231,12 @@ export class AppointmentLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location stats: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentLocationService",
+        'AppointmentLocationService',
         {
           locationId,
           domain,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -311,40 +254,33 @@ export class AppointmentLocationService {
         `stats:location:*:${domain}`,
       ];
 
-      await Promise.all(
-        patterns.map((pattern) =>
-          this.cacheService.invalidateByPattern(pattern),
-        ),
-      );
+      await Promise.all(patterns.map(pattern => this.cacheService.invalidateByPattern(pattern)));
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Location cache invalidated successfully",
-        "AppointmentLocationService",
-        { domain, responseTime: Date.now() - startTime },
+        'Location cache invalidated successfully',
+        'AppointmentLocationService',
+        { domain, responseTime: Date.now() - startTime }
       );
 
-      return { success: true, message: "Location cache invalidated" };
+      return { success: true, message: 'Location cache invalidated' };
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to invalidate location cache: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentLocationService",
+        'AppointmentLocationService',
         {
           domain,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
   }
 
-  async invalidateDoctorsCache(
-    locationId: string,
-    domain: string,
-  ): Promise<unknown> {
+  async invalidateDoctorsCache(locationId: string, domain: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -354,32 +290,28 @@ export class AppointmentLocationService {
         `stats:location:${locationId}:${domain}`,
       ];
 
-      await Promise.all(
-        patterns.map((pattern) =>
-          this.cacheService.invalidateByPattern(pattern),
-        ),
-      );
+      await Promise.all(patterns.map(pattern => this.cacheService.invalidateByPattern(pattern)));
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Doctors cache invalidated successfully",
-        "AppointmentLocationService",
-        { locationId, domain, responseTime: Date.now() - startTime },
+        'Doctors cache invalidated successfully',
+        'AppointmentLocationService',
+        { locationId, domain, responseTime: Date.now() - startTime }
       );
 
-      return { success: true, message: "Doctors cache invalidated" };
+      return { success: true, message: 'Doctors cache invalidated' };
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to invalidate doctors cache: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentLocationService",
+        'AppointmentLocationService',
         {
           locationId,
           domain,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -391,59 +323,59 @@ export class AppointmentLocationService {
     // For now, return mock data
     const mockLocations: Location[] = [
       {
-        id: "loc-1",
-        name: "Main Clinic",
-        address: "123 Healthcare Ave",
-        city: "Mumbai",
-        state: "Maharashtra",
-        country: "India",
-        postalCode: "400001",
-        phone: "+91-22-12345678",
-        email: "main@clinic.com",
-        type: domain === "healthcare" ? "clinic" : "studio",
+        id: 'loc-1',
+        name: 'Main Clinic',
+        address: '123 Healthcare Ave',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        postalCode: '400001',
+        phone: '+91-22-12345678',
+        email: 'main@clinic.com',
+        type: domain === 'healthcare' ? 'clinic' : 'studio',
         capacity: 50,
         isActive: true,
         coordinates: {
           latitude: 19.076,
           longitude: 72.8777,
         },
-        amenities: ["Parking", "Wheelchair Access", "WiFi", "Cafeteria"],
+        amenities: ['Parking', 'Wheelchair Access', 'WiFi', 'Cafeteria'],
         operatingHours: {
-          monday: { open: "09:00", close: "18:00", isOpen: true },
-          tuesday: { open: "09:00", close: "18:00", isOpen: true },
-          wednesday: { open: "09:00", close: "18:00", isOpen: true },
-          thursday: { open: "09:00", close: "18:00", isOpen: true },
-          friday: { open: "09:00", close: "18:00", isOpen: true },
-          saturday: { open: "09:00", close: "14:00", isOpen: true },
-          sunday: { open: "00:00", close: "00:00", isOpen: false },
+          monday: { open: '09:00', close: '18:00', isOpen: true },
+          tuesday: { open: '09:00', close: '18:00', isOpen: true },
+          wednesday: { open: '09:00', close: '18:00', isOpen: true },
+          thursday: { open: '09:00', close: '18:00', isOpen: true },
+          friday: { open: '09:00', close: '18:00', isOpen: true },
+          saturday: { open: '09:00', close: '14:00', isOpen: true },
+          sunday: { open: '00:00', close: '00:00', isOpen: false },
         },
       },
       {
-        id: "loc-2",
-        name: "Downtown Branch",
-        address: "456 Business District",
-        city: "Mumbai",
-        state: "Maharashtra",
-        country: "India",
-        postalCode: "400002",
-        phone: "+91-22-87654321",
-        email: "downtown@clinic.com",
-        type: domain === "healthcare" ? "clinic" : "studio",
+        id: 'loc-2',
+        name: 'Downtown Branch',
+        address: '456 Business District',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        postalCode: '400002',
+        phone: '+91-22-87654321',
+        email: 'downtown@clinic.com',
+        type: domain === 'healthcare' ? 'clinic' : 'studio',
         capacity: 30,
         isActive: true,
         coordinates: {
           latitude: 19.017,
           longitude: 72.8478,
         },
-        amenities: ["Parking", "WiFi"],
+        amenities: ['Parking', 'WiFi'],
         operatingHours: {
-          monday: { open: "08:00", close: "20:00", isOpen: true },
-          tuesday: { open: "08:00", close: "20:00", isOpen: true },
-          wednesday: { open: "08:00", close: "20:00", isOpen: true },
-          thursday: { open: "08:00", close: "20:00", isOpen: true },
-          friday: { open: "08:00", close: "20:00", isOpen: true },
-          saturday: { open: "08:00", close: "16:00", isOpen: true },
-          sunday: { open: "00:00", close: "00:00", isOpen: false },
+          monday: { open: '08:00', close: '20:00', isOpen: true },
+          tuesday: { open: '08:00', close: '20:00', isOpen: true },
+          wednesday: { open: '08:00', close: '20:00', isOpen: true },
+          thursday: { open: '08:00', close: '20:00', isOpen: true },
+          friday: { open: '08:00', close: '20:00', isOpen: true },
+          saturday: { open: '08:00', close: '16:00', isOpen: true },
+          sunday: { open: '00:00', close: '00:00', isOpen: false },
         },
       },
     ];
@@ -451,42 +383,33 @@ export class AppointmentLocationService {
     return mockLocations;
   }
 
-  private fetchLocationFromDatabase(
-    locationId: string,
-    domain: string,
-  ): Location | null {
+  private fetchLocationFromDatabase(locationId: string, domain: string): Location | null {
     const locations = this.fetchLocationsFromDatabase(domain);
-    return locations.find((loc) => loc.id === locationId) || null;
+    return locations.find(loc => loc.id === locationId) || null;
   }
 
   private fetchDoctorsFromDatabase(
     locationId: string,
-    domain: string,
-  ): LocationDoctor[] {
+    domain: string
+  ): AppointmentLocationDoctor[] {
     // This would integrate with the actual database service
     // For now, return mock data
-    const mockDoctors: LocationDoctor[] = [
+    const mockDoctors: AppointmentLocationDoctor[] = [
       {
-        id: "doc-1",
-        name: "Dr. John Smith",
-        specialization:
-          domain === "healthcare" ? "Cardiology" : "Fashion Design",
-        licenseNumber: "MED123456",
+        id: 'doc-1',
+        name: 'Dr. John Smith',
+        specialization: domain === 'healthcare' ? 'Cardiology' : 'Fashion Design',
+        licenseNumber: 'MED123456',
         experience: 15,
         rating: 4.8,
-        isAvailable: true,
-        nextAvailableSlot: "2024-01-15T10:00:00Z",
       },
       {
-        id: "doc-2",
-        name: "Dr. Sarah Johnson",
-        specialization:
-          domain === "healthcare" ? "Dermatology" : "Fashion Styling",
-        licenseNumber: "MED789012",
+        id: 'doc-2',
+        name: 'Dr. Sarah Johnson',
+        specialization: domain === 'healthcare' ? 'Dermatology' : 'Fashion Styling',
+        licenseNumber: 'MED789012',
         experience: 12,
         rating: 4.9,
-        isAvailable: true,
-        nextAvailableSlot: "2024-01-15T14:00:00Z",
       },
     ];
 

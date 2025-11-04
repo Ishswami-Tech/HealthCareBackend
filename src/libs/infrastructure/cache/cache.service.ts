@@ -1,237 +1,38 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { RedisService } from "./redis/redis.service";
-import { EventEmitter2 } from "@nestjs/event-emitter";
+// External imports
+import { Injectable, OnModuleInit, OnModuleDestroy, HttpStatus } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
-/**
- * Healthcare cache configuration interface
- * @interface HealthcareCacheConfig
- * @description Configuration options for healthcare-specific caching with enterprise features
- * @example
- * ```typescript
- * const config: HealthcareCacheConfig = {
- *   patientRecordsTTL: 3600,
- *   appointmentsTTL: 1800,
- *   enableCompression: true,
- *   maxCacheSize: 1024
- * };
- * ```
- */
-export interface HealthcareCacheConfig {
-  /** TTL for patient records cache in seconds */
-  patientRecordsTTL: number;
-  /** TTL for appointments cache in seconds */
-  appointmentsTTL: number;
-  /** TTL for doctor profiles cache in seconds */
-  doctorProfilesTTL: number;
-  /** TTL for clinic data cache in seconds */
-  clinicDataTTL: number;
-  /** TTL for medical history cache in seconds */
-  medicalHistoryTTL: number;
-  /** TTL for prescriptions cache in seconds */
-  prescriptionsTTL: number;
-  /** TTL for emergency data cache in seconds */
-  emergencyDataTTL: number;
-  /** Whether to enable compression for large values */
-  enableCompression: boolean;
-  /** Whether to enable cache metrics collection */
-  enableMetrics: boolean;
-  /** Default TTL for cache entries in seconds */
-  defaultTTL: number;
-  /** Maximum cache size in MB */
-  maxCacheSize: number;
-  /** Whether to enable batch cache operations */
-  enableBatchOperations: boolean;
-  /** Compress values larger than this size in bytes */
-  compressionThreshold: number;
+// Internal imports - Infrastructure
+import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
-  // Enterprise-grade configurations for 10M+ users
-  /** Connection pool size for Redis connections */
-  connectionPoolSize: number;
-  /** Maximum number of connections */
-  maxConnections: number;
-  /** Connection timeout in milliseconds */
-  connectionTimeout: number;
-  /** Command timeout in milliseconds */
-  commandTimeout: number;
-  /** Number of retry attempts for failed operations */
-  retryAttempts: number;
-  /** Delay between retry attempts in milliseconds */
-  retryDelay: number;
-  /** Circuit breaker failure threshold */
-  circuitBreakerThreshold: number;
-  /** Circuit breaker timeout in milliseconds */
-  circuitBreakerTimeout: number;
-  /** Whether adaptive caching is enabled */
-  adaptiveCachingEnabled: boolean;
-  /** Whether load balancing is enabled */
-  loadBalancingEnabled: boolean;
-  /** Whether sharding is enabled */
-  shardingEnabled: boolean;
-  /** Whether replication is enabled */
-  replicationEnabled: boolean;
-  /** Whether memory optimization is enabled */
-  memoryOptimizationEnabled: boolean;
-  /** Whether performance monitoring is enabled */
-  performanceMonitoringEnabled: boolean;
-  /** Whether auto-scaling is enabled */
-  autoScalingEnabled: boolean;
-  /** Whether cache warming is enabled */
-  cacheWarmingEnabled: boolean;
-  /** Whether predictive caching is enabled */
-  predictiveCachingEnabled: boolean;
-  /** Compression level (1-9) */
-  compressionLevel: number;
-  /** Whether encryption is enabled */
-  encryptionEnabled: boolean;
-  /** Whether audit logging is enabled */
-  auditLoggingEnabled: boolean;
-}
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
-/**
- * Cache invalidation event interface
- * @interface CacheInvalidationEvent
- * @description Represents a cache invalidation event for healthcare entities
- * @example
- * ```typescript
- * const event: CacheInvalidationEvent = {
- *   type: 'patient_updated',
- *   entityId: 'patient-123',
- *   clinicId: 'clinic-456',
- *   timestamp: new Date(),
- *   affectedPatterns: ['patient:*', 'clinic:456:*']
- * };
- * ```
- */
-export interface CacheInvalidationEvent {
-  /** Type of invalidation event */
-  type:
-    | "patient_updated"
-    | "appointment_changed"
-    | "doctor_updated"
-    | "clinic_updated"
-    | "prescription_created";
-  /** ID of the affected entity */
-  entityId: string;
-  /** Optional clinic ID for clinic-specific invalidation */
-  clinicId?: string;
-  /** Optional user ID for user-specific invalidation */
-  userId?: string;
-  /** Timestamp when the invalidation occurred */
-  timestamp: Date;
-  /** Cache key patterns affected by this invalidation */
-  affectedPatterns: string[];
-}
+// Internal imports - Types
+import type { HealthcareCacheConfig, CacheInvalidationEvent, CacheShard } from '@core/types';
+import type {
+  CircuitBreakerState as CacheCircuitBreakerState,
+  CachePerformanceMetrics,
+} from '@core/types/cache.types';
 
-/**
- * Circuit breaker state interface
- * @interface CircuitBreakerState
- * @description Represents the current state of the circuit breaker pattern
- * @example
- * ```typescript
- * const state: CircuitBreakerState = {
- *   isOpen: false,
- *   failureCount: 0,
- *   lastFailureTime: 0,
- *   nextAttemptTime: 0
- * };
- * ```
- */
-export interface CircuitBreakerState {
-  /** Whether the circuit breaker is currently open */
-  isOpen: boolean;
-  /** Number of consecutive failures */
+// Mutable versions for internal state management
+type MutableCircuitBreakerState = {
+  -readonly [K in keyof CacheCircuitBreakerState]: CacheCircuitBreakerState[K];
+} & {
   failureCount: number;
-  /** Timestamp of the last failure */
   lastFailureTime: number;
-  /** Timestamp when the next attempt is allowed */
   nextAttemptTime: number;
-}
+};
 
-/**
- * Performance metrics interface
- * @interface PerformanceMetrics
- * @description Comprehensive performance metrics for cache operations
- * @example
- * ```typescript
- * const metrics: PerformanceMetrics = {
- *   totalRequests: 1000,
- *   successfulRequests: 950,
- *   failedRequests: 50,
- *   averageResponseTime: 10.5,
- *   cacheHitRate: 0.85,
- *   timestamp: new Date()
- * };
- * ```
- */
-export interface PerformanceMetrics {
-  /** Total number of requests */
-  totalRequests: number;
-  /** Number of successful requests */
-  successfulRequests: number;
-  /** Number of failed requests */
-  failedRequests: number;
-  /** Average response time in milliseconds */
-  averageResponseTime: number;
-  /** 95th percentile response time in milliseconds */
-  p95ResponseTime: number;
-  /** 99th percentile response time in milliseconds */
-  p99ResponseTime: number;
-  /** Cache hit rate as a decimal (0-1) */
-  cacheHitRate: number;
-  /** Memory usage in MB */
-  memoryUsage: number;
-  /** Connection pool utilization as a decimal (0-1) */
-  connectionPoolUtilization: number;
-  /** Throughput in requests per second */
-  throughput: number;
-  /** Error rate as a decimal (0-1) */
-  errorRate: number;
-  /** Timestamp when metrics were collected */
-  timestamp: Date;
-}
+type MutablePerformanceMetrics = {
+  -readonly [K in keyof CachePerformanceMetrics]: CachePerformanceMetrics[K];
+};
 
-/**
- * Cache shard interface
- * @interface CacheShard
- * @description Represents a cache shard in a distributed cache setup
- * @example
- * ```typescript
- * const shard: CacheShard = {
- *   id: 'shard-1',
- *   host: 'redis-1.example.com',
- *   port: 6379,
- *   weight: 1.0,
- *   isHealthy: true,
- *   lastHealthCheck: new Date(),
- *   connectionCount: 10,
- *   loadFactor: 0.5
- * };
- * ```
- */
-export interface CacheShard {
-  /** Unique identifier for the shard */
-  id: string;
-  /** Host address of the shard */
-  host: string;
-  /** Port number of the shard */
-  port: number;
-  /** Weight for load balancing */
-  weight: number;
-  /** Whether the shard is currently healthy */
-  isHealthy: boolean;
-  /** Timestamp of the last health check */
-  lastHealthCheck: Date;
-  /** Current number of connections */
-  connectionCount: number;
-  /** Current load factor (0-1) */
-  loadFactor: number;
-}
+// Note: All types are now imported from @types. See cache.types.ts for type definitions.
 
 /**
  * Enterprise-grade cache service for healthcare applications
@@ -257,18 +58,19 @@ export interface CacheShard {
  */
 @Injectable()
 export class CacheService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(CacheService.name);
   private readonly config: HealthcareCacheConfig;
 
   // Enterprise-grade state management
-  private circuitBreaker: CircuitBreakerState = {
+  private circuitBreaker: MutableCircuitBreakerState = {
     isOpen: false,
+    failures: 0,
     failureCount: 0,
+    successCount: 0,
     lastFailureTime: 0,
     nextAttemptTime: 0,
   };
 
-  private performanceMetrics: PerformanceMetrics = {
+  private performanceMetrics: MutablePerformanceMetrics = {
     totalRequests: 0,
     successfulRequests: 0,
     failedRequests: 0,
@@ -298,7 +100,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     operation: string;
     key: string;
     userId?: string;
-    result: "success" | "failure";
+    result: 'success' | 'failure';
   }> = [];
 
   // Healthcare-specific cache key patterns
@@ -309,8 +111,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     PATIENT_APPOINTMENTS: (patientId: string, clinicId: string) =>
       `patient:${patientId}:clinic:${clinicId}:appointments`,
     DOCTOR_PROFILE: (doctorId: string) => `doctor:${doctorId}:profile`,
-    DOCTOR_SCHEDULE: (doctorId: string, date: string) =>
-      `doctor:${doctorId}:schedule:${date}`,
+    DOCTOR_SCHEDULE: (doctorId: string, date: string) => `doctor:${doctorId}:schedule:${date}`,
     DOCTOR_APPOINTMENTS: (doctorId: string, clinicId: string) =>
       `doctor:${doctorId}:clinic:${clinicId}:appointments`,
     CLINIC_INFO: (clinicId: string) => `clinic:${clinicId}:info`,
@@ -320,14 +121,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       `medical:${patientId}:clinic:${clinicId}:history`,
     PRESCRIPTIONS: (patientId: string, clinicId: string) =>
       `prescriptions:${patientId}:clinic:${clinicId}`,
-    APPOINTMENT_DETAILS: (appointmentId: string) =>
-      `appointment:${appointmentId}:details`,
+    APPOINTMENT_DETAILS: (appointmentId: string) => `appointment:${appointmentId}:details`,
     USER_PERMISSIONS: (userId: string, clinicId: string) =>
       `user:${userId}:clinic:${clinicId}:permissions`,
-    EMERGENCY_CONTACTS: (patientId: string) =>
-      `patient:${patientId}:emergency_contacts`,
-    VITAL_SIGNS: (patientId: string, date: string) =>
-      `patient:${patientId}:vitals:${date}`,
+    EMERGENCY_CONTACTS: (patientId: string) => `patient:${patientId}:emergency_contacts`,
+    VITAL_SIGNS: (patientId: string, date: string) => `patient:${patientId}:vitals:${date}`,
     LAB_RESULTS: (patientId: string, clinicId: string) =>
       `lab:${patientId}:clinic:${clinicId}:results`,
   };
@@ -341,130 +139,87 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     APPOINTMENT: (appointmentId: string) => `appointment:${appointmentId}`,
     MEDICAL_RECORD: (recordId: string) => `medical_record:${recordId}`,
     PRESCRIPTION: (prescriptionId: string) => `prescription:${prescriptionId}`,
-    EMERGENCY_DATA: "emergency_data",
-    CRITICAL_PATIENT_DATA: "critical_patient_data",
-    PHI_DATA: "phi_data", // Protected Health Information
+    EMERGENCY_DATA: 'emergency_data',
+    CRITICAL_PATIENT_DATA: 'critical_patient_data',
+    PHI_DATA: 'phi_data', // Protected Health Information
   };
 
   constructor(
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly loggingService: LoggingService
   ) {
     this.config = {
       // Basic cache configurations
-      patientRecordsTTL: this.configService.get(
-        "CACHE_PATIENT_RECORDS_TTL",
-        3600,
-      ), // 1 hour
-      appointmentsTTL: this.configService.get("CACHE_APPOINTMENTS_TTL", 1800), // 30 minutes
-      doctorProfilesTTL: this.configService.get(
-        "CACHE_DOCTOR_PROFILES_TTL",
-        7200,
-      ), // 2 hours
-      clinicDataTTL: this.configService.get("CACHE_CLINIC_DATA_TTL", 14400), // 4 hours
-      medicalHistoryTTL: this.configService.get(
-        "CACHE_MEDICAL_HISTORY_TTL",
-        7200,
-      ), // 2 hours
-      prescriptionsTTL: this.configService.get("CACHE_PRESCRIPTIONS_TTL", 1800), // 30 minutes
-      emergencyDataTTL: this.configService.get("CACHE_EMERGENCY_DATA_TTL", 300), // 5 minutes
-      enableCompression: this.configService.get(
-        "CACHE_ENABLE_COMPRESSION",
-        true,
-      ),
-      enableMetrics: this.configService.get("CACHE_ENABLE_METRICS", true),
-      defaultTTL: this.configService.get("CACHE_DEFAULT_TTL", 3600), // 1 hour
-      maxCacheSize: this.configService.get("CACHE_MAX_SIZE_MB", 1024), // 1GB
-      enableBatchOperations: this.configService.get("CACHE_ENABLE_BATCH", true),
-      compressionThreshold: this.configService.get(
-        "CACHE_COMPRESSION_THRESHOLD",
-        1024,
-      ), // 1KB
+      patientRecordsTTL: this.configService.get('CACHE_PATIENT_RECORDS_TTL', 3600), // 1 hour
+      appointmentsTTL: this.configService.get('CACHE_APPOINTMENTS_TTL', 1800), // 30 minutes
+      doctorProfilesTTL: this.configService.get('CACHE_DOCTOR_PROFILES_TTL', 7200), // 2 hours
+      clinicDataTTL: this.configService.get('CACHE_CLINIC_DATA_TTL', 14400), // 4 hours
+      medicalHistoryTTL: this.configService.get('CACHE_MEDICAL_HISTORY_TTL', 7200), // 2 hours
+      prescriptionsTTL: this.configService.get('CACHE_PRESCRIPTIONS_TTL', 1800), // 30 minutes
+      emergencyDataTTL: this.configService.get('CACHE_EMERGENCY_DATA_TTL', 300), // 5 minutes
+      enableCompression: this.configService.get('CACHE_ENABLE_COMPRESSION', true),
+      enableMetrics: this.configService.get('CACHE_ENABLE_METRICS', true),
+      defaultTTL: this.configService.get('CACHE_DEFAULT_TTL', 3600), // 1 hour
+      maxCacheSize: this.configService.get('CACHE_MAX_SIZE_MB', 1024), // 1GB
+      enableBatchOperations: this.configService.get('CACHE_ENABLE_BATCH', true),
+      compressionThreshold: this.configService.get('CACHE_COMPRESSION_THRESHOLD', 1024), // 1KB
 
       // Enterprise-grade configurations for 10M+ users
-      connectionPoolSize: this.configService.get(
-        "CACHE_CONNECTION_POOL_SIZE",
-        100,
-      ),
-      maxConnections: this.configService.get("CACHE_MAX_CONNECTIONS", 1000),
-      connectionTimeout: this.configService.get(
-        "CACHE_CONNECTION_TIMEOUT",
-        5000,
-      ),
-      commandTimeout: this.configService.get("CACHE_COMMAND_TIMEOUT", 3000),
-      retryAttempts: this.configService.get("CACHE_RETRY_ATTEMPTS", 3),
-      retryDelay: this.configService.get("CACHE_RETRY_DELAY", 1000),
-      circuitBreakerThreshold: this.configService.get(
-        "CACHE_CIRCUIT_BREAKER_THRESHOLD",
-        10,
-      ),
-      circuitBreakerTimeout: this.configService.get(
-        "CACHE_CIRCUIT_BREAKER_TIMEOUT",
-        30000,
-      ),
-      adaptiveCachingEnabled: this.configService.get(
-        "CACHE_ADAPTIVE_ENABLED",
-        true,
-      ),
-      loadBalancingEnabled: this.configService.get(
-        "CACHE_LOAD_BALANCING_ENABLED",
-        true,
-      ),
-      shardingEnabled: this.configService.get("CACHE_SHARDING_ENABLED", true),
-      replicationEnabled: this.configService.get(
-        "CACHE_REPLICATION_ENABLED",
-        true,
-      ),
-      memoryOptimizationEnabled: this.configService.get(
-        "CACHE_MEMORY_OPTIMIZATION_ENABLED",
-        true,
-      ),
+      connectionPoolSize: this.configService.get('CACHE_CONNECTION_POOL_SIZE', 100),
+      maxConnections: this.configService.get('CACHE_MAX_CONNECTIONS', 1000),
+      connectionTimeout: this.configService.get('CACHE_CONNECTION_TIMEOUT', 5000),
+      commandTimeout: this.configService.get('CACHE_COMMAND_TIMEOUT', 3000),
+      retryAttempts: this.configService.get('CACHE_RETRY_ATTEMPTS', 3),
+      retryDelay: this.configService.get('CACHE_RETRY_DELAY', 1000),
+      circuitBreakerThreshold: this.configService.get('CACHE_CIRCUIT_BREAKER_THRESHOLD', 10),
+      circuitBreakerTimeout: this.configService.get('CACHE_CIRCUIT_BREAKER_TIMEOUT', 30000),
+      adaptiveCachingEnabled: this.configService.get('CACHE_ADAPTIVE_ENABLED', true),
+      loadBalancingEnabled: this.configService.get('CACHE_LOAD_BALANCING_ENABLED', true),
+      shardingEnabled: this.configService.get('CACHE_SHARDING_ENABLED', true),
+      replicationEnabled: this.configService.get('CACHE_REPLICATION_ENABLED', true),
+      memoryOptimizationEnabled: this.configService.get('CACHE_MEMORY_OPTIMIZATION_ENABLED', true),
       performanceMonitoringEnabled: this.configService.get(
-        "CACHE_PERFORMANCE_MONITORING_ENABLED",
-        true,
+        'CACHE_PERFORMANCE_MONITORING_ENABLED',
+        true
       ),
-      autoScalingEnabled: this.configService.get(
-        "CACHE_AUTO_SCALING_ENABLED",
-        true,
-      ),
-      cacheWarmingEnabled: this.configService.get(
-        "CACHE_WARMING_ENABLED",
-        true,
-      ),
-      predictiveCachingEnabled: this.configService.get(
-        "CACHE_PREDICTIVE_ENABLED",
-        true,
-      ),
-      compressionLevel: this.configService.get("CACHE_COMPRESSION_LEVEL", 6),
-      encryptionEnabled: this.configService.get(
-        "CACHE_ENCRYPTION_ENABLED",
-        true,
-      ),
-      auditLoggingEnabled: this.configService.get(
-        "CACHE_AUDIT_LOGGING_ENABLED",
-        true,
-      ),
+      autoScalingEnabled: this.configService.get('CACHE_AUTO_SCALING_ENABLED', true),
+      cacheWarmingEnabled: this.configService.get('CACHE_WARMING_ENABLED', true),
+      predictiveCachingEnabled: this.configService.get('CACHE_PREDICTIVE_ENABLED', true),
+      compressionLevel: this.configService.get('CACHE_COMPRESSION_LEVEL', 6),
+      encryptionEnabled: this.configService.get('CACHE_ENCRYPTION_ENABLED', true),
+      auditLoggingEnabled: this.configService.get('CACHE_AUDIT_LOGGING_ENABLED', true),
     };
   }
 
   async onModuleInit() {
-    this.logger.log(
-      "🚀 Enterprise Cache Service initializing for 10M+ users...",
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Enterprise Cache Service initializing for 10M+ users',
+      'CacheService',
+      {}
     );
 
     try {
       // Initialize enterprise features
-      this.initializeSharding();
-      this.initializeConnectionPool();
+      await this.initializeSharding();
+      await this.initializeConnectionPool();
       this.startPerformanceMonitoring();
       this.initializeCircuitBreaker();
       this.startAdaptiveCaching();
       this.startPredictiveCaching();
       await this.initializeCacheWarming();
 
-      this.logger.log("✅ Enterprise Cache Service initialized successfully");
-      this.eventEmitter.emit("cache.service.initialized", {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Enterprise Cache Service initialized successfully',
+        'CacheService',
+        {}
+      );
+      this.eventEmitter.emit('cache.service.initialized', {
         timestamp: new Date(),
         features: {
           sharding: this.config.shardingEnabled,
@@ -476,16 +231,28 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         },
       });
     } catch (error) {
-      this.logger.error(
-        "❌ Failed to initialize Enterprise Cache Service:",
-        error,
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to initialize Enterprise Cache Service',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
       throw error;
     }
   }
 
-  onModuleDestroy() {
-    this.logger.log("🔄 Enterprise Cache Service shutting down gracefully...");
+  async onModuleDestroy(): Promise<void> {
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Enterprise Cache Service shutting down gracefully',
+      'CacheService',
+      {}
+    );
 
     try {
       // Graceful shutdown
@@ -494,176 +261,316 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       this.stopPredictiveCaching();
       this.closeConnectionPool();
 
-      this.logger.log("✅ Enterprise Cache Service shutdown complete");
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Enterprise Cache Service shutdown complete',
+        'CacheService',
+        {}
+      );
     } catch (error) {
-      this.logger.error("❌ Error during cache service shutdown:", error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error during cache service shutdown',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
     }
   }
 
   // ===== ENTERPRISE-GRADE INITIALIZATION METHODS =====
 
-  private initializeSharding(): void {
+  private async initializeSharding(): Promise<void> {
     if (!this.config.shardingEnabled) return;
 
-    this.logger.log("🔧 Initializing cache sharding...");
-
-    // Initialize shards based on configuration
-    const shardConfigs = this.configService.get("CACHE_SHARDS", []);
-    this.cacheShards = shardConfigs.map(
-      (config: Record<string, unknown>, index: number) => {
-        const shardConfig = config;
-        return {
-          id: `shard-${index}`,
-          host: (shardConfig["host"] as string) || "localhost",
-          port: (shardConfig["port"] as number) || 6379,
-          weight: (shardConfig["weight"] as number) || 1,
-          isHealthy: true,
-          lastHealthCheck: new Date(),
-          connectionCount: 0,
-          loadFactor: 0,
-        };
-      },
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Initializing cache sharding',
+      'CacheService',
+      {}
     );
 
-    this.logger.log(`✅ Initialized ${this.cacheShards.length} cache shards`);
+    // Initialize shards based on configuration
+    const shardConfigs = this.configService.get<Array<Record<string, unknown>>>('CACHE_SHARDS', []);
+    this.cacheShards = shardConfigs.map((config: Record<string, unknown>, index: number) => {
+      const shardConfig = config;
+      return {
+        id: `shard-${index}`,
+        host: (shardConfig['host'] as string) || 'localhost',
+        port: (shardConfig['port'] as number) || 6379,
+        weight: (shardConfig['weight'] as number) || 1,
+        isHealthy: true,
+        lastHealthCheck: new Date(),
+        connectionCount: 0,
+        loadFactor: 0,
+      };
+    });
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Initialized cache shards',
+      'CacheService',
+      { shardCount: this.cacheShards.length }
+    );
   }
 
-  private initializeConnectionPool(): void {
-    this.logger.log("🔧 Initializing connection pool...");
+  private async initializeConnectionPool(): Promise<void> {
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Initializing connection pool',
+      'CacheService',
+      {}
+    );
 
     // Connection pool is managed by RedisService
     // This method can be extended for custom pool management
     this.activeConnections = 0;
 
-    this.logger.log(
-      `✅ Connection pool initialized with max ${this.config.maxConnections} connections`,
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Connection pool initialized',
+      'CacheService',
+      { maxConnections: this.config.maxConnections }
     );
   }
 
   private startPerformanceMonitoring(): void {
     if (!this.config.performanceMonitoringEnabled) return;
 
-    this.logger.log("📊 Starting performance monitoring...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Starting performance monitoring',
+      'CacheService',
+      {}
+    );
 
     // Start monitoring interval
     setInterval(() => {
       this.updatePerformanceMetrics();
     }, 5000); // Update every 5 seconds
 
-    this.logger.log("✅ Performance monitoring started");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Performance monitoring started',
+      'CacheService',
+      {}
+    );
   }
 
   private initializeCircuitBreaker(): void {
-    this.logger.log("⚡ Initializing circuit breaker...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Initializing circuit breaker',
+      'CacheService',
+      {}
+    );
 
     this.circuitBreaker = {
       isOpen: false,
+      failures: 0,
       failureCount: 0,
+      successCount: 0,
       lastFailureTime: 0,
       nextAttemptTime: 0,
     };
 
-    this.logger.log("✅ Circuit breaker initialized");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Circuit breaker initialized',
+      'CacheService',
+      {}
+    );
   }
 
   private startAdaptiveCaching(): void {
     if (!this.config.adaptiveCachingEnabled) return;
 
-    this.logger.log("🧠 Starting adaptive caching...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Starting adaptive caching',
+      'CacheService',
+      {}
+    );
 
     // Start adaptive TTL adjustment
     setInterval(() => {
       this.adjustAdaptiveTTL();
     }, 60000); // Adjust every minute
 
-    this.logger.log("✅ Adaptive caching started");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Adaptive caching started',
+      'CacheService',
+      {}
+    );
   }
 
   private startPredictiveCaching(): void {
     if (!this.config.predictiveCachingEnabled) return;
 
-    this.logger.log("🔮 Starting predictive caching...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Starting predictive caching',
+      'CacheService',
+      {}
+    );
 
     // Start predictive cache warming
     setInterval(() => {
       this.performPredictiveCaching();
     }, 300000); // Run every 5 minutes
 
-    this.logger.log("✅ Predictive caching started");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Predictive caching started',
+      'CacheService',
+      {}
+    );
   }
 
   private async initializeCacheWarming(): Promise<void> {
     if (!this.config.cacheWarmingEnabled) return;
 
-    this.logger.log("🔥 Initializing cache warming...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Initializing cache warming',
+      'CacheService',
+      {}
+    );
 
     // Perform initial cache warming
     await this.performCacheWarming();
 
-    this.logger.log("✅ Cache warming initialized");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Cache warming initialized',
+      'CacheService',
+      {}
+    );
   }
 
   private stopPerformanceMonitoring(): void {
-    this.logger.log("📊 Stopping performance monitoring...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Stopping performance monitoring',
+      'CacheService',
+      {}
+    );
     // Cleanup monitoring resources
   }
 
   private stopAdaptiveCaching(): void {
-    this.logger.log("🧠 Stopping adaptive caching...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Stopping adaptive caching',
+      'CacheService',
+      {}
+    );
     // Cleanup adaptive caching resources
   }
 
   private stopPredictiveCaching(): void {
-    this.logger.log("🔮 Stopping predictive caching...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Stopping predictive caching',
+      'CacheService',
+      {}
+    );
     // Cleanup predictive caching resources
   }
 
   private closeConnectionPool(): void {
-    this.logger.log("🔌 Closing connection pool...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Closing connection pool',
+      'CacheService',
+      {}
+    );
     this.activeConnections = 0;
   }
 
   // ===== ENTERPRISE-GRADE CORE METHODS =====
 
-  private async executeWithCircuitBreaker<T>(
-    operation: () => Promise<T>,
-  ): Promise<T> {
+  private async executeWithCircuitBreaker<T>(operation: () => Promise<T>): Promise<T> {
     if (this.circuitBreaker.isOpen) {
-      if (Date.now() < this.circuitBreaker.nextAttemptTime) {
-        throw new Error("Circuit breaker is open");
+      const nextAttemptTime =
+        this.circuitBreaker.nextAttemptTime || this.circuitBreaker.nextAttempt?.getTime() || 0;
+      if (Date.now() < nextAttemptTime) {
+        throw new HealthcareError(
+          ErrorCode.CACHE_OPERATION_FAILED,
+          'Circuit breaker is open - cache service temporarily unavailable',
+          HttpStatus.SERVICE_UNAVAILABLE,
+          {
+            circuitBreakerState: this.circuitBreaker,
+            nextAttemptTime: nextAttemptTime,
+          },
+          'CacheService.executeWithCircuitBreaker'
+        );
       } else {
         // Try to close the circuit
         this.circuitBreaker.isOpen = false;
         this.circuitBreaker.failureCount = 0;
+        this.circuitBreaker.failures = 0;
       }
     }
 
     try {
       const result = await operation();
       this.circuitBreaker.failureCount = 0;
+      this.circuitBreaker.failures = 0;
+      this.circuitBreaker.successCount++;
       return result;
     } catch (error) {
       this.circuitBreaker.failureCount++;
+      this.circuitBreaker.failures++;
       this.circuitBreaker.lastFailureTime = Date.now();
+      this.circuitBreaker.lastFailure = new Date();
 
-      if (
-        this.circuitBreaker.failureCount >= this.config.circuitBreakerThreshold
-      ) {
+      if (this.circuitBreaker.failureCount >= this.config.circuitBreakerThreshold) {
         this.circuitBreaker.isOpen = true;
-        this.circuitBreaker.nextAttemptTime =
-          Date.now() + this.config.circuitBreakerTimeout;
-        this.logger.warn("🚨 Circuit breaker opened due to failures");
+        const nextAttempt = Date.now() + this.config.circuitBreakerTimeout;
+        this.circuitBreaker.nextAttemptTime = nextAttempt;
+        this.circuitBreaker.nextAttempt = new Date(nextAttempt);
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Circuit breaker opened due to failures',
+          'CacheService',
+          {
+            failureCount: this.circuitBreaker.failureCount,
+            threshold: this.config.circuitBreakerThreshold,
+          }
+        );
       }
 
       throw error;
     }
   }
 
-  private async executeWithRetry<T>(
-    operation: () => Promise<T>,
-    context: string,
-  ): Promise<T> {
-    let lastError: Error;
+  private async executeWithRetry<T>(operation: () => Promise<T>, context: string): Promise<T> {
+    let lastError: Error | undefined = undefined;
 
     for (let attempt = 1; attempt <= this.config.retryAttempts; attempt++) {
       try {
@@ -673,16 +580,33 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
         if (attempt < this.config.retryAttempts) {
           const delay = this.config.retryDelay * Math.pow(2, attempt - 1); // Exponential backoff
-          this.logger.warn(
-            `⚠️ ${context} failed (attempt ${attempt}/${this.config.retryAttempts}), retrying in ${delay}ms`,
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Operation failed, retrying',
+            'CacheService',
+            {
+              context,
+              attempt,
+              maxAttempts: this.config.retryAttempts,
+              retryDelay: delay,
+            }
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
 
-    this.logger.error(
-      `❌ ${context} failed after ${this.config.retryAttempts} attempts`,
+    await this.loggingService.log(
+      LogType.ERROR,
+      LogLevel.ERROR,
+      'Operation failed after all retry attempts',
+      'CacheService',
+      {
+        context,
+        attempts: this.config.retryAttempts,
+        error: lastError instanceof Error ? lastError.message : 'Unknown error',
+      }
     );
     throw lastError!;
   }
@@ -693,27 +617,20 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     // Reserved for future time-based metric calculations
 
     // Update metrics based on recent activity
-    this.performanceMetrics.timestamp = new Date();
-    this.performanceMetrics.connectionPoolUtilization =
-      (this.activeConnections / this.config.maxConnections) * 100;
-    this.performanceMetrics.cacheHitRate =
-      this.performanceMetrics.totalRequests > 0
-        ? (this.performanceMetrics.successfulRequests /
-            this.performanceMetrics.totalRequests) *
-          100
-        : 0;
-    this.performanceMetrics.errorRate =
-      this.performanceMetrics.totalRequests > 0
-        ? (this.performanceMetrics.failedRequests /
-            this.performanceMetrics.totalRequests) *
-          100
-        : 0;
+    const totalRequests = this.performanceMetrics['totalRequests'];
+    const successfulRequests = this.performanceMetrics['successfulRequests'];
+    const failedRequests = this.performanceMetrics['failedRequests'];
+
+    this.performanceMetrics = {
+      ...this.performanceMetrics,
+      timestamp: new Date(),
+      connectionPoolUtilization: (this.activeConnections / this.config.maxConnections) * 100,
+      cacheHitRate: totalRequests > 0 ? (successfulRequests / totalRequests) * 100 : 0,
+      errorRate: totalRequests > 0 ? (failedRequests / totalRequests) * 100 : 0,
+    };
 
     // Emit metrics event
-    this.eventEmitter.emit(
-      "cache.performance.metrics",
-      this.performanceMetrics,
-    );
+    this.eventEmitter.emit('cache.performance.metrics', this.performanceMetrics);
   }
 
   private adjustAdaptiveTTL(): void {
@@ -723,17 +640,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       if (accessInfo) {
         // Increase TTL for frequently accessed items
         if (accessInfo.accessCount > 10) {
-          this.adaptiveTTLMap.set(
-            key,
-            Math.min(currentTTL * 1.2, this.config.defaultTTL * 2),
-          );
+          this.adaptiveTTLMap.set(key, Math.min(currentTTL * 1.2, this.config.defaultTTL * 2));
         }
         // Decrease TTL for rarely accessed items
         else if (accessInfo.accessCount < 2) {
-          this.adaptiveTTLMap.set(
-            key,
-            Math.max(currentTTL * 0.8, this.config.defaultTTL * 0.5),
-          );
+          this.adaptiveTTLMap.set(key, Math.max(currentTTL * 0.8, this.config.defaultTTL * 0.5));
         }
       }
     }
@@ -751,40 +662,75 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         // Pre-warm cache for high-priority items
         await this.warmCacheForKey(key);
       } catch (error) {
-        this.logger.warn(`Failed to warm cache for key ${key}:`, error);
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Failed to warm cache for key',
+          'CacheService',
+          {
+            key,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
       }
     }
   }
 
   private async performCacheWarming(): Promise<void> {
-    this.logger.log("🔥 Performing cache warming...");
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.INFO,
+      'Performing cache warming',
+      'CacheService',
+      {}
+    );
 
     // Warm critical healthcare data
     const criticalKeys = [
-      "clinic:active:doctors",
-      "clinic:active:patients",
-      "system:health:status",
-      "cache:performance:metrics",
+      'clinic:active:doctors',
+      'clinic:active:patients',
+      'system:health:status',
+      'cache:performance:metrics',
     ];
 
     for (const key of criticalKeys) {
       try {
         await this.warmCacheForKey(key);
       } catch (error) {
-        this.logger.warn(
-          `Failed to warm cache for critical key ${key}:`,
-          error,
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Failed to warm cache for critical key',
+          'CacheService',
+          {
+            key,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
+          }
         );
       }
     }
 
-    this.logger.log("✅ Cache warming completed");
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.INFO,
+      'Cache warming completed',
+      'CacheService',
+      {}
+    );
   }
 
   private warmCacheForKey(key: string): Promise<void> {
     // This would typically fetch and cache data for the key
     // Implementation depends on the specific data type
-    this.logger.debug(`Warming cache for key: ${key}`);
+    void this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.DEBUG,
+      'Warming cache for key',
+      'CacheService',
+      { key }
+    );
     return Promise.resolve();
   }
 
@@ -813,7 +759,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     operation: string,
     key: string,
     userId?: string,
-    result: "success" | "failure" = "success",
+    result: 'success' | 'failure' = 'success'
   ): void {
     if (!this.config.auditLoggingEnabled) return;
 
@@ -833,7 +779,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Emit audit event
-    this.eventEmitter.emit("cache.audit.event", auditEntry);
+    this.eventEmitter.emit('cache.audit.event', auditEntry);
   }
 
   /**
@@ -847,7 +793,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       includeHistory?: boolean;
       includePrescriptions?: boolean;
       includeVitals?: boolean;
-    } = {},
+    } = {}
   ): Promise<T> {
     const cacheKey = this.CACHE_PATTERNS.PATIENT_RECORDS(patientId, clinicId);
     const tags = [
@@ -860,7 +806,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.patientRecordsTTL,
       compress: this.config.enableCompression,
-      priority: "high",
+      priority: 'high',
       tags,
       enableSwr: true,
     });
@@ -876,16 +822,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     options: {
       date?: string;
       includePatientData?: boolean;
-    } = {},
+    } = {}
   ): Promise<T> {
-    const cacheKey = this.CACHE_PATTERNS.DOCTOR_APPOINTMENTS(
-      doctorId,
-      clinicId,
-    );
-    const tags = [
-      this.CACHE_TAGS.DOCTOR(doctorId),
-      this.CACHE_TAGS.CLINIC(clinicId),
-    ];
+    const cacheKey = this.CACHE_PATTERNS.DOCTOR_APPOINTMENTS(doctorId, clinicId);
+    const tags = [this.CACHE_TAGS.DOCTOR(doctorId), this.CACHE_TAGS.CLINIC(clinicId)];
 
     if (options.includePatientData) {
       tags.push(this.CACHE_TAGS.PHI_DATA);
@@ -894,7 +834,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.appointmentsTTL,
       staleTime: 300, // 5 minutes stale time for real-time updates
-      priority: "high",
+      priority: 'high',
       tags,
       enableSwr: true,
     });
@@ -911,7 +851,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       timeRange?: { start: Date; end: Date };
       includeTests?: boolean;
       includeImages?: boolean;
-    } = {},
+    } = {}
   ): Promise<T> {
     const cacheKey = this.CACHE_PATTERNS.MEDICAL_HISTORY(patientId, clinicId);
     const tags = [
@@ -923,7 +863,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.medicalHistoryTTL,
       compress: true, // Medical history can be large
-      priority: "high",
+      priority: 'high',
       tags,
       enableSwr: true,
     });
@@ -932,10 +872,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   /**
    * Cache emergency data with minimal TTL for critical scenarios
    */
-  async cacheEmergencyData<T>(
-    patientId: string,
-    fetchFn: () => Promise<T>,
-  ): Promise<T> {
+  async cacheEmergencyData<T>(patientId: string, fetchFn: () => Promise<T>): Promise<T> {
     const cacheKey = this.CACHE_PATTERNS.EMERGENCY_CONTACTS(patientId);
     const tags = [
       this.CACHE_TAGS.PATIENT(patientId),
@@ -945,7 +882,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.emergencyDataTTL,
-      priority: "high",
+      priority: 'high',
       tags,
       enableSwr: false, // No SWR for emergency data - always fresh
     });
@@ -961,7 +898,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     _options: {
       includeHistory?: boolean;
       activeOnly?: boolean;
-    } = {},
+    } = {}
   ): Promise<T> {
     const cacheKey = this.CACHE_PATTERNS.PRESCRIPTIONS(patientId, clinicId);
     const tags = [
@@ -972,7 +909,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.prescriptionsTTL,
-      priority: "high",
+      priority: 'high',
       tags,
       enableSwr: true,
     });
@@ -981,17 +918,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   /**
    * Cache vital signs with time-series optimization
    */
-  async cacheVitalSigns<T>(
-    patientId: string,
-    date: string,
-    fetchFn: () => Promise<T>,
-  ): Promise<T> {
+  async cacheVitalSigns<T>(patientId: string, date: string, fetchFn: () => Promise<T>): Promise<T> {
     const cacheKey = this.CACHE_PATTERNS.VITAL_SIGNS(patientId, date);
     const tags = [this.CACHE_TAGS.PATIENT(patientId), this.CACHE_TAGS.PHI_DATA];
 
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.patientRecordsTTL,
-      priority: "high",
+      priority: 'high',
       tags,
       enableSwr: true,
     });
@@ -1007,7 +940,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     options: {
       includeImages?: boolean;
       includeReports?: boolean;
-    } = {},
+    } = {}
   ): Promise<T> {
     const cacheKey = this.CACHE_PATTERNS.LAB_RESULTS(patientId, clinicId);
     const tags = [
@@ -1018,10 +951,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     return this.redisService.cache(cacheKey, fetchFn, {
       ttl: this.config.medicalHistoryTTL,
-      ...(options.includeImages || options.includeReports
-        ? { compress: true }
-        : {}),
-      priority: "high",
+      ...(options.includeImages || options.includeReports ? { compress: true } : {}),
+      priority: 'high',
       tags,
       enableSwr: true,
     });
@@ -1030,10 +961,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   /**
    * Invalidate patient-related cache when patient data changes
    */
-  async invalidatePatientCache(
-    patientId: string,
-    clinicId?: string,
-  ): Promise<void> {
+  async invalidatePatientCache(patientId: string, clinicId?: string): Promise<void> {
     const patterns = [
       `patient:${patientId}:*`,
       `medical:${patientId}:*`,
@@ -1051,36 +979,33 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Invalidate by tags
-    await this.redisService.invalidateCacheByTag(
-      this.CACHE_TAGS.PATIENT(patientId),
-    );
+    await this.redisService.invalidateCacheByTag(this.CACHE_TAGS.PATIENT(patientId));
     if (clinicId) {
-      await this.redisService.invalidateCacheByTag(
-        this.CACHE_TAGS.CLINIC(clinicId),
-      );
+      await this.redisService.invalidateCacheByTag(this.CACHE_TAGS.CLINIC(clinicId));
     }
 
     // Emit invalidation event
     await this.emitCacheInvalidationEvent({
-      type: "patient_updated",
+      type: 'patient_updated',
       entityId: patientId,
       ...(clinicId && { clinicId }),
       timestamp: new Date(),
       affectedPatterns: patterns,
     });
 
-    this.logger.debug(
-      `Invalidated patient cache for patient: ${patientId}, clinic: ${clinicId || "all"}`,
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.DEBUG,
+      'Invalidated patient cache',
+      'CacheService',
+      { patientId, clinicId: clinicId || 'all' }
     );
   }
 
   /**
    * Invalidate doctor-related cache when doctor data changes
    */
-  async invalidateDoctorCache(
-    doctorId: string,
-    clinicId?: string,
-  ): Promise<void> {
+  async invalidateDoctorCache(doctorId: string, clinicId?: string): Promise<void> {
     const patterns = [`doctor:${doctorId}:*`];
 
     if (clinicId) {
@@ -1093,25 +1018,25 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Invalidate by tags
-    await this.redisService.invalidateCacheByTag(
-      this.CACHE_TAGS.DOCTOR(doctorId),
-    );
+    await this.redisService.invalidateCacheByTag(this.CACHE_TAGS.DOCTOR(doctorId));
     if (clinicId) {
-      await this.redisService.invalidateCacheByTag(
-        this.CACHE_TAGS.CLINIC(clinicId),
-      );
+      await this.redisService.invalidateCacheByTag(this.CACHE_TAGS.CLINIC(clinicId));
     }
 
     await this.emitCacheInvalidationEvent({
-      type: "doctor_updated",
+      type: 'doctor_updated',
       entityId: doctorId,
       ...(clinicId && { clinicId }),
       timestamp: new Date(),
       affectedPatterns: patterns,
     });
 
-    this.logger.debug(
-      `Invalidated doctor cache for doctor: ${doctorId}, clinic: ${clinicId || "all"}`,
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.DEBUG,
+      'Invalidated doctor cache',
+      'CacheService',
+      { doctorId, clinicId: clinicId || 'all' }
     );
   }
 
@@ -1122,7 +1047,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     appointmentId: string,
     patientId?: string,
     doctorId?: string,
-    clinicId?: string,
+    clinicId?: string
   ): Promise<void> {
     const patterns = [`appointment:${appointmentId}:*`];
 
@@ -1144,12 +1069,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Invalidate by tags
-    await this.redisService.invalidateCacheByTag(
-      this.CACHE_TAGS.APPOINTMENT(appointmentId),
-    );
+    await this.redisService.invalidateCacheByTag(this.CACHE_TAGS.APPOINTMENT(appointmentId));
 
     await this.emitCacheInvalidationEvent({
-      type: "appointment_changed",
+      type: 'appointment_changed',
       entityId: appointmentId,
       ...(clinicId && { clinicId }),
       ...(patientId && { userId: patientId }),
@@ -1158,8 +1081,12 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       affectedPatterns: patterns,
     });
 
-    this.logger.debug(
-      `Invalidated appointment cache for appointment: ${appointmentId}`,
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.DEBUG,
+      'Invalidated appointment cache',
+      'CacheService',
+      { appointmentId }
     );
   }
 
@@ -1175,19 +1102,23 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Invalidate by tag
-    await this.redisService.invalidateCacheByTag(
-      this.CACHE_TAGS.CLINIC(clinicId),
-    );
+    await this.redisService.invalidateCacheByTag(this.CACHE_TAGS.CLINIC(clinicId));
 
     await this.emitCacheInvalidationEvent({
-      type: "clinic_updated",
+      type: 'clinic_updated',
       entityId: clinicId,
       clinicId,
       timestamp: new Date(),
       affectedPatterns: patterns,
     });
 
-    this.logger.debug(`Invalidated clinic cache for clinic: ${clinicId}`);
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.DEBUG,
+      'Invalidated clinic cache',
+      'CacheService',
+      { clinicId }
+    );
   }
 
   /**
@@ -1195,13 +1126,23 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    * Used for compliance and emergency scenarios
    */
   async clearPHICache(): Promise<number> {
-    this.logger.warn("Clearing all PHI data from cache for compliance");
-
-    const clearedCount = await this.redisService.invalidateCacheByTag(
-      this.CACHE_TAGS.PHI_DATA,
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.WARN,
+      'Clearing all PHI data from cache for compliance',
+      'CacheService',
+      {}
     );
 
-    this.logger.log(`Cleared ${clearedCount} PHI cache entries`);
+    const clearedCount = await this.redisService.invalidateCacheByTag(this.CACHE_TAGS.PHI_DATA);
+
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.INFO,
+      'Cleared PHI cache entries',
+      'CacheService',
+      { clearedCount }
+    );
     return clearedCount;
   }
 
@@ -1235,7 +1176,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    * Warm cache with frequently accessed healthcare data
    */
   warmHealthcareCache(clinicId: string): void {
-    this.logger.log(`Warming healthcare cache for clinic: ${clinicId}`);
+    void this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.INFO,
+      'Warming healthcare cache for clinic',
+      'CacheService',
+      { clinicId }
+    );
 
     try {
       // This would typically pre-load common data like:
@@ -1245,20 +1192,32 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       // - Clinic configuration
 
       // For now, we'll just log the warming process
-      this.logger.debug(
-        "Cache warming completed - this would pre-load common healthcare data",
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Cache warming completed - this would pre-load common healthcare data',
+        'CacheService',
+        { clinicId }
       );
     } catch (error) {
-      this.logger.error("Error warming healthcare cache:", error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error warming healthcare cache',
+        'CacheService',
+        {
+          clinicId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
     }
   }
 
   /**
    * Emit cache invalidation event for cross-service coordination
    */
-  private async emitCacheInvalidationEvent(
-    event: CacheInvalidationEvent,
-  ): Promise<void> {
+  private async emitCacheInvalidationEvent(event: CacheInvalidationEvent): Promise<void> {
     try {
       // Store the invalidation event for audit purposes
       const eventKey = `cache:invalidation:events`;
@@ -1268,25 +1227,41 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       // Set expiry for events (30 days)
       await this.redisService.expire(eventKey, 30 * 24 * 60 * 60);
     } catch (error) {
-      this.logger.error("Error emitting cache invalidation event:", error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error emitting cache invalidation event',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          eventType: event.type,
+        }
+      );
     }
   }
 
   /**
    * Get cache invalidation event history
    */
-  async getCacheInvalidationHistory(
-    limit: number = 100,
-  ): Promise<CacheInvalidationEvent[]> {
+  async getCacheInvalidationHistory(limit: number = 100): Promise<CacheInvalidationEvent[]> {
     try {
       const eventKey = `cache:invalidation:events`;
       const events = await this.redisService.lRange(eventKey, -limit, -1);
 
-      return events.map(
-        (eventStr) => JSON.parse(eventStr) as CacheInvalidationEvent,
-      );
+      return events.map(eventStr => JSON.parse(eventStr) as CacheInvalidationEvent);
     } catch (error) {
-      this.logger.error("Error getting cache invalidation history:", error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error getting cache invalidation history',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          limit,
+        }
+      );
       return [];
     }
   }
@@ -1299,22 +1274,30 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Use Promise.all for concurrent operations
-      const promises = keys.map(async (key) => {
+      const promises = keys.map(async key => {
         const value = await this.redisService.get(key);
         return { key, value: value ? (JSON.parse(value) as T) : null };
       });
 
       const batchResults = await Promise.all(promises);
 
-      batchResults.forEach(
-        ({ key, value }: { key: string; value: T | null }) => {
-          results.set(key, value);
-        },
-      );
+      batchResults.forEach(({ key, value }: { key: string; value: T | null }) => {
+        results.set(key, value);
+      });
 
       return results;
     } catch (error) {
-      this.logger.error("Batch get operation failed:", error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Batch get operation failed',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          keyCount: keys.length,
+        }
+      );
       throw error;
     }
   }
@@ -1322,22 +1305,26 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   /**
    * Batch set operations for better performance
    */
-  async batchSet<T>(
-    keyValuePairs: Array<{ key: string; value: T; ttl?: number }>,
-  ): Promise<void> {
+  async batchSet<T>(keyValuePairs: Array<{ key: string; value: T; ttl?: number }>): Promise<void> {
     try {
       // Use Promise.all for concurrent operations
       const promises = keyValuePairs.map(async ({ key, value, ttl }) => {
-        await this.redisService.set(
-          key,
-          JSON.stringify(value),
-          ttl || this.config.defaultTTL,
-        );
+        await this.redisService.set(key, JSON.stringify(value), ttl || this.config.defaultTTL);
       });
 
       await Promise.all(promises);
     } catch (error) {
-      this.logger.error("Batch set operation failed:", error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Batch set operation failed',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          pairCount: keyValuePairs.length,
+        }
+      );
       throw error;
     }
   }
@@ -1348,7 +1335,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   async batchDelete(keys: string[]): Promise<number> {
     try {
       // Use Promise.all for concurrent operations
-      const promises = keys.map(async (key) => {
+      const promises = keys.map(async key => {
         await this.redisService.del(key);
         return 1; // Each successful delete counts as 1
       });
@@ -1356,7 +1343,17 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       const results = await Promise.all(promises);
       return results.reduce((sum, count) => sum + count, 0);
     } catch (error) {
-      this.logger.error("Batch delete operation failed:", error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Batch delete operation failed',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          keyCount: keys.length,
+        }
+      );
       throw error;
     }
   }
@@ -1369,7 +1366,17 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       await this.redisService.del(key);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to delete cache key ${key}:`, error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to delete cache key',
+        'CacheService',
+        {
+          key,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       return false;
     }
   }
@@ -1378,7 +1385,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    * Warm cache for a clinic with frequently accessed data
    */
   async warmClinicCache(clinicId: string): Promise<void> {
-    this.logger.log(`Starting cache warming for clinic: ${clinicId}`);
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.INFO,
+      'Starting cache warming for clinic',
+      'CacheService',
+      { clinicId }
+    );
 
     try {
       // Warm clinic information
@@ -1387,23 +1400,35 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         clinicInfoKey,
         JSON.stringify({
           id: clinicId,
-          name: "Clinic",
-          status: "active",
+          name: 'Clinic',
+          status: 'active',
         }),
-        this.config.clinicDataTTL,
+        this.config.clinicDataTTL
       );
 
       // Warm doctor profiles
       const doctorsKey = this.CACHE_PATTERNS.CLINIC_DOCTORS(clinicId);
-      await this.redisService.set(
-        doctorsKey,
-        JSON.stringify([]),
-        this.config.doctorProfilesTTL,
-      );
+      await this.redisService.set(doctorsKey, JSON.stringify([]), this.config.doctorProfilesTTL);
 
-      this.logger.log(`Cache warming completed for clinic: ${clinicId}`);
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.INFO,
+        'Cache warming completed for clinic',
+        'CacheService',
+        { clinicId }
+      );
     } catch (error) {
-      this.logger.error(`Cache warming failed for clinic: ${clinicId}`, error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Cache warming failed for clinic',
+        'CacheService',
+        {
+          clinicId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       throw error;
     }
   }
@@ -1412,7 +1437,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    * Get cache health status
    */
   async getCacheHealth(): Promise<{
-    status: "healthy" | "warning" | "critical";
+    status: 'healthy' | 'warning' | 'critical';
     memoryUsage: number;
     hitRate: number;
     connectionStatus: boolean;
@@ -1424,9 +1449,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
       const hitRate = stats.hits / (stats.hits + stats.misses) || 0;
 
-      let status: "healthy" | "warning" | "critical" = "healthy";
-      if (hitRate < 0.7) status = "warning";
-      if (hitRate < 0.5 || !connectionStatus) status = "critical";
+      let status: 'healthy' | 'warning' | 'critical' = 'healthy';
+      if (hitRate < 0.7) status = 'warning';
+      if (hitRate < 0.5 || !connectionStatus) status = 'critical';
 
       return {
         status,
@@ -1436,9 +1461,18 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         lastHealthCheck: new Date(),
       };
     } catch (error) {
-      this.logger.error("Cache health check failed:", error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Cache health check failed',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       return {
-        status: "critical",
+        status: 'critical',
         memoryUsage: 0,
         hitRate: 0,
         connectionStatus: false,
@@ -1504,20 +1538,12 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.zcard(key);
   }
 
-  async zremrangebyscore(
-    key: string,
-    min: number,
-    max: number,
-  ): Promise<number> {
+  async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
     return this.redisService.zremrangebyscore(key, min, max);
   }
 
   // Hash operations
-  async hincrby(
-    key: string,
-    field: string,
-    increment: number,
-  ): Promise<number> {
+  async hincrby(key: string, field: string, increment: number): Promise<number> {
     return this.redisService.hincrby(key, field, increment);
   }
 
@@ -1563,16 +1589,16 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       staleTime?: number; // When data becomes stale
       forceRefresh?: boolean; // Force refresh regardless of cache
       compress?: boolean; // Compress large data
-      priority?: "critical" | "high" | "normal" | "low"; // Operation priority
+      priority?: 'critical' | 'high' | 'normal' | 'low'; // Operation priority
       enableSwr?: boolean; // Enable SWR (defaults to true)
       tags?: string[]; // Cache tags for grouped invalidation
       containsPHI?: boolean; // Contains Protected Health Information
-      complianceLevel?: "standard" | "sensitive" | "restricted"; // Compliance level
+      complianceLevel?: 'standard' | 'sensitive' | 'restricted'; // Compliance level
       emergencyData?: boolean; // Emergency data flag
       patientSpecific?: boolean; // Patient-specific data
       doctorSpecific?: boolean; // Doctor-specific data
       clinicSpecific?: boolean; // Clinic-specific data
-    } = {},
+    } = {}
   ): Promise<T> {
     return this.redisService.cache(key, fetchFn, options);
   }
@@ -1586,7 +1612,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       burst?: number; // Allow burst requests
       cost?: number; // Request cost (default: 1)
       bypassDev?: boolean; // Override development mode bypass
-    } = {},
+    } = {}
   ): Promise<boolean> {
     return this.redisService.isRateLimited(key, limit, windowSeconds, options);
   }
@@ -1594,7 +1620,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   async getRateLimit(
     key: string,
     limit?: number,
-    windowSeconds?: number,
+    windowSeconds?: number
   ): Promise<{
     remaining: number;
     reset: number;
@@ -1608,10 +1634,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.clearRateLimit(key);
   }
 
-  updateRateLimits(
-    type: string,
-    config: { limit: number; window: number },
-  ): Promise<void> {
+  updateRateLimits(type: string, config: { limit: number; window: number }): Promise<void> {
     return this.redisService.updateRateLimits(type, config);
   }
 
@@ -1632,7 +1655,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.getCacheStats();
   }
 
-  async getCacheMetrics(): Promise<Record<string, unknown>> {
+  async getCacheMetrics(): Promise<import('@core/types').CacheMetrics> {
     return this.redisService.getCacheMetrics();
   }
 
@@ -1649,15 +1672,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ===== SECURITY AND AUDIT =====
-  async trackSecurityEvent(
-    identifier: string,
-    eventType: string,
-    details: unknown,
-  ): Promise<void> {
+  async trackSecurityEvent(identifier: string, eventType: string, details: unknown): Promise<void> {
     return this.redisService.trackSecurityEvent(identifier, eventType, details);
   }
 
-  async getSecurityEvents(identifier: string, limit?: number): Promise<any[]> {
+  async getSecurityEvents(identifier: string, limit?: number): Promise<unknown[]> {
     return this.redisService.getSecurityEvents(identifier, limit);
   }
 
@@ -1700,10 +1719,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.publish(channel, message);
   }
 
-  async subscribe(
-    channel: string,
-    callback: (message: string) => void,
-  ): Promise<void> {
+  async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
     return this.redisService.subscribe(channel, callback);
   }
 
@@ -1712,11 +1728,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.zrevrange(key, start, stop);
   }
 
-  async zrangebyscore(
-    key: string,
-    min: string | number,
-    max: string | number,
-  ): Promise<string[]> {
+  async zrangebyscore(key: string, min: string | number, max: string | number): Promise<string[]> {
     return this.redisService.zrangebyscore(key, min, max);
   }
 
@@ -1733,7 +1745,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.incr(key);
   }
 
-  async multi(commands: unknown[]): Promise<unknown> {
+  async multi(
+    commands: Array<{ command: string; args: unknown[] }>
+  ): Promise<Array<[Error | null, unknown]>> {
     return this.redisService.multi(commands);
   }
 

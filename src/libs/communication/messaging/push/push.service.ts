@@ -1,6 +1,8 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import * as admin from "firebase-admin";
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as admin from 'firebase-admin';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 /**
  * Push notification data interface
@@ -40,7 +42,6 @@ export interface PushNotificationResult {
  */
 @Injectable()
 export class PushNotificationService implements OnModuleInit {
-  private readonly logger = new Logger(PushNotificationService.name);
   private firebaseApp: admin.app.App | null = null;
   private isInitialized = false;
 
@@ -48,7 +49,10 @@ export class PushNotificationService implements OnModuleInit {
    * Creates an instance of PushNotificationService
    * @param configService - Configuration service for environment variables
    */
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly loggingService: LoggingService
+  ) {}
 
   /**
    * Initializes Firebase on module startup
@@ -63,15 +67,16 @@ export class PushNotificationService implements OnModuleInit {
    */
   private initializeFirebase(): void {
     try {
-      const projectId = this.configService.get<string>("FIREBASE_PROJECT_ID");
-      const privateKey = this.configService.get<string>("FIREBASE_PRIVATE_KEY");
-      const clientEmail = this.configService.get<string>(
-        "FIREBASE_CLIENT_EMAIL",
-      );
+      const projectId = this.configService.get<string>('FIREBASE_PROJECT_ID');
+      const privateKey = this.configService.get<string>('FIREBASE_PRIVATE_KEY');
+      const clientEmail = this.configService.get<string>('FIREBASE_CLIENT_EMAIL');
 
       if (!projectId || !privateKey || !clientEmail) {
-        this.logger.warn(
-          "Firebase credentials not provided, push notification service will be disabled",
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Firebase credentials not provided, push notification service will be disabled',
+          'PushNotificationService'
         );
         this.isInitialized = false;
         return;
@@ -82,7 +87,7 @@ export class PushNotificationService implements OnModuleInit {
         this.firebaseApp = admin.initializeApp({
           credential: admin.credential.cert({
             projectId,
-            privateKey: privateKey.replace(/\\n/g, "\n"),
+            privateKey: privateKey.replace(/\\n/g, '\n'),
             clientEmail,
           }),
         });
@@ -91,14 +96,23 @@ export class PushNotificationService implements OnModuleInit {
       }
 
       this.isInitialized = true;
-      this.logger.log(
-        "Firebase push notification service initialized successfully",
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Firebase push notification service initialized successfully',
+        'PushNotificationService'
       );
     } catch (error) {
-      this.logger.error("Failed to initialize Firebase:", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to initialize Firebase',
+        'PushNotificationService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       this.isInitialized = false;
     }
   }
@@ -111,13 +125,16 @@ export class PushNotificationService implements OnModuleInit {
    */
   async sendToDevice(
     deviceToken: string,
-    notification: PushNotificationData,
+    notification: PushNotificationData
   ): Promise<PushNotificationResult> {
     if (!this.isInitialized || !this.firebaseApp) {
-      this.logger.warn(
-        "Push notification service is not initialized, skipping notification",
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Push notification service is not initialized, skipping notification',
+        'PushNotificationService'
       );
-      return { success: false, error: "Service not initialized" };
+      return { success: false, error: 'Service not initialized' };
     }
 
     try {
@@ -130,15 +147,15 @@ export class PushNotificationService implements OnModuleInit {
         data: notification.data || {},
         android: {
           notification: {
-            channelId: "healthcare_notifications",
-            priority: "high" as const,
+            channelId: 'healthcare_notifications',
+            priority: 'high' as const,
           },
         },
         apns: {
           payload: {
             aps: {
               badge: 1,
-              sound: "default",
+              sound: 'default',
             },
           },
         },
@@ -146,24 +163,36 @@ export class PushNotificationService implements OnModuleInit {
 
       const response = await admin.messaging().send(message);
 
-      this.logger.log("Push notification sent successfully", {
-        messageId: response,
-        deviceToken: this.maskToken(deviceToken),
-        title: notification.title,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Push notification sent successfully',
+        'PushNotificationService',
+        {
+          messageId: response,
+          deviceToken: this.maskToken(deviceToken),
+          title: notification.title,
+        }
+      );
 
       return { success: true, messageId: response };
     } catch (error) {
-      this.logger.error("Failed to send push notification", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-        deviceToken: this.maskToken(deviceToken),
-        title: notification.title,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.ERROR,
+        'Failed to send push notification',
+        'PushNotificationService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          deviceToken: this.maskToken(deviceToken),
+          title: notification.title,
+        }
+      );
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
@@ -176,13 +205,16 @@ export class PushNotificationService implements OnModuleInit {
    */
   async sendToMultipleDevices(
     deviceTokens: string[],
-    notification: PushNotificationData,
+    notification: PushNotificationData
   ): Promise<PushNotificationResult> {
     if (!this.isInitialized || !this.firebaseApp) {
-      this.logger.warn(
-        "Push notification service is not initialized, skipping notification",
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Push notification service is not initialized, skipping notification',
+        'PushNotificationService'
       );
-      return { success: false, error: "Service not initialized" };
+      return { success: false, error: 'Service not initialized' };
     }
 
     try {
@@ -195,15 +227,15 @@ export class PushNotificationService implements OnModuleInit {
         data: notification.data || {},
         android: {
           notification: {
-            channelId: "healthcare_notifications",
-            priority: "high" as const,
+            channelId: 'healthcare_notifications',
+            priority: 'high' as const,
           },
         },
         apns: {
           payload: {
             aps: {
               badge: 1,
-              sound: "default",
+              sound: 'default',
             },
           },
         },
@@ -211,21 +243,33 @@ export class PushNotificationService implements OnModuleInit {
 
       const response = await admin.messaging().sendEachForMulticast(message);
 
-      this.logger.log("Push notifications sent to multiple devices", {
-        successCount: response.successCount,
-        failureCount: response.failureCount,
-        totalTokens: deviceTokens.length,
-        title: notification.title,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Push notifications sent to multiple devices',
+        'PushNotificationService',
+        {
+          successCount: response.successCount,
+          failureCount: response.failureCount,
+          totalTokens: deviceTokens.length,
+          title: notification.title,
+        }
+      );
 
       // Log failed tokens for debugging
       if (response.failureCount > 0) {
         response.responses.forEach((resp, idx: number) => {
           if (!resp.success && resp.error) {
-            this.logger.warn("Failed to send to device", {
-              deviceToken: this.maskToken(deviceTokens[idx] || ""),
-              error: resp.error.message,
-            });
+            void this.loggingService.log(
+              LogType.NOTIFICATION,
+              LogLevel.WARN,
+              'Failed to send to device',
+              'PushNotificationService',
+              {
+                deviceToken: this.maskToken(deviceTokens[idx] || ''),
+                error: resp.error.message,
+              }
+            );
           }
         });
       }
@@ -236,19 +280,22 @@ export class PushNotificationService implements OnModuleInit {
         failureCount: response.failureCount,
       };
     } catch (error) {
-      this.logger.error(
-        "Failed to send push notifications to multiple devices",
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.ERROR,
+        'Failed to send push notifications to multiple devices',
+        'PushNotificationService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           stack: error instanceof Error ? error.stack : undefined,
           tokenCount: deviceTokens.length,
           title: notification.title,
-        },
+        }
       );
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
@@ -261,13 +308,16 @@ export class PushNotificationService implements OnModuleInit {
    */
   async sendToTopic(
     topic: string,
-    notification: PushNotificationData,
+    notification: PushNotificationData
   ): Promise<PushNotificationResult> {
     if (!this.isInitialized || !this.firebaseApp) {
-      this.logger.warn(
-        "Push notification service is not initialized, skipping notification",
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Push notification service is not initialized, skipping notification',
+        'PushNotificationService'
       );
-      return { success: false, error: "Service not initialized" };
+      return { success: false, error: 'Service not initialized' };
     }
 
     try {
@@ -280,15 +330,15 @@ export class PushNotificationService implements OnModuleInit {
         data: notification.data || {},
         android: {
           notification: {
-            channelId: "healthcare_notifications",
-            priority: "high" as const,
+            channelId: 'healthcare_notifications',
+            priority: 'high' as const,
           },
         },
         apns: {
           payload: {
             aps: {
               badge: 1,
-              sound: "default",
+              sound: 'default',
             },
           },
         },
@@ -296,24 +346,36 @@ export class PushNotificationService implements OnModuleInit {
 
       const response = await admin.messaging().send(message);
 
-      this.logger.log("Push notification sent to topic", {
-        messageId: response,
-        topic,
-        title: notification.title,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Push notification sent to topic',
+        'PushNotificationService',
+        {
+          messageId: response,
+          topic,
+          title: notification.title,
+        }
+      );
 
       return { success: true, messageId: response };
     } catch (error) {
-      this.logger.error("Failed to send push notification to topic", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-        topic,
-        title: notification.title,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.ERROR,
+        'Failed to send push notification to topic',
+        'PushNotificationService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          topic,
+          title: notification.title,
+        }
+      );
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
@@ -326,25 +388,42 @@ export class PushNotificationService implements OnModuleInit {
    */
   async subscribeToTopic(deviceToken: string, topic: string): Promise<boolean> {
     if (!this.isInitialized || !this.firebaseApp) {
-      this.logger.warn("Push notification service is not initialized");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Push notification service is not initialized',
+        'PushNotificationService'
+      );
       return false;
     }
 
     try {
       await admin.messaging().subscribeToTopic([deviceToken], topic);
 
-      this.logger.log("Device subscribed to topic", {
-        deviceToken: this.maskToken(deviceToken),
-        topic,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Device subscribed to topic',
+        'PushNotificationService',
+        {
+          deviceToken: this.maskToken(deviceToken),
+          topic,
+        }
+      );
 
       return true;
     } catch (error) {
-      this.logger.error("Failed to subscribe device to topic", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        deviceToken: this.maskToken(deviceToken),
-        topic,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.ERROR,
+        'Failed to subscribe device to topic',
+        'PushNotificationService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          deviceToken: this.maskToken(deviceToken),
+          topic,
+        }
+      );
       return false;
     }
   }
@@ -355,30 +434,44 @@ export class PushNotificationService implements OnModuleInit {
    * @param topic - Topic name to unsubscribe from
    * @returns Promise resolving to true if successful
    */
-  async unsubscribeFromTopic(
-    deviceToken: string,
-    topic: string,
-  ): Promise<boolean> {
+  async unsubscribeFromTopic(deviceToken: string, topic: string): Promise<boolean> {
     if (!this.isInitialized || !this.firebaseApp) {
-      this.logger.warn("Push notification service is not initialized");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Push notification service is not initialized',
+        'PushNotificationService'
+      );
       return false;
     }
 
     try {
       await admin.messaging().unsubscribeFromTopic([deviceToken], topic);
 
-      this.logger.log("Device unsubscribed from topic", {
-        deviceToken: this.maskToken(deviceToken),
-        topic,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Device unsubscribed from topic',
+        'PushNotificationService',
+        {
+          deviceToken: this.maskToken(deviceToken),
+          topic,
+        }
+      );
 
       return true;
     } catch (error) {
-      this.logger.error("Failed to unsubscribe device from topic", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        deviceToken: this.maskToken(deviceToken),
-        topic,
-      });
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.ERROR,
+        'Failed to unsubscribe device from topic',
+        'PushNotificationService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          deviceToken: this.maskToken(deviceToken),
+          topic,
+        }
+      );
       return false;
     }
   }
@@ -390,7 +483,7 @@ export class PushNotificationService implements OnModuleInit {
    * @private
    */
   private maskToken(token: string): string {
-    if (!token || token.length < 10) return "INVALID_TOKEN";
+    if (!token || token.length < 10) return 'INVALID_TOKEN';
     return `${token.substring(0, 6)}...${token.substring(token.length - 4)}`;
   }
 

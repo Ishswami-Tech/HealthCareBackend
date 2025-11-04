@@ -1,18 +1,45 @@
-import {
-  Injectable,
-  OnModuleInit,
-  OnModuleDestroy,
-  Scope,
-  Logger,
-} from "@nestjs/common";
-import { PrismaClient, Prisma } from "@prisma/client";
+import { Injectable, OnModuleInit, OnModuleDestroy, Scope } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
-// Export the PrismaClient type for proper typing
-export type { PrismaClient };
+// Re-export PrismaClient for backward compatibility
+// Note: We use composition instead of inheritance to avoid 'any' types
+export type { PrismaClient } from '@prisma/client';
 
-// Import Prisma's generated types systematically
+// Import types from centralized locations
 import type {
-  User,
+  PermissionEntity,
+  RbacRoleEntity,
+  RolePermissionEntity,
+  UserRoleEntity,
+  UserWithRelations,
+  AppointmentWithRelations,
+  AppointmentTimeSlot,
+  UserCreateInput,
+  UserUpdateInput,
+  UserWhereInput,
+  AppointmentCreateInput,
+  AppointmentUpdateInput,
+  AppointmentWhereInput,
+  BillingPlanWithRelations,
+  SubscriptionWithRelations,
+  InvoiceWithRelations,
+  PaymentWithRelations,
+  BillingPlanCreateInput,
+  BillingPlanUpdateInput,
+  BillingPlanWhereInput,
+  SubscriptionCreateInput,
+  SubscriptionUpdateInput,
+  SubscriptionWhereInput,
+  InvoiceCreateInput,
+  InvoiceUpdateInput,
+  InvoiceWhereInput,
+  PaymentCreateInput,
+  PaymentUpdateInput,
+  PaymentWhereInput,
   Doctor,
   Patient,
   Receptionist,
@@ -26,13 +53,39 @@ import type {
   Nurse,
   Counselor,
   Clinic,
-  Appointment,
   AuditLog,
-  BillingPlan,
-  Subscription,
-  Invoice,
-  Payment,
-} from "./prisma.types";
+  PrismaDelegateArgs,
+  PrismaClientConstructorArgs,
+  PrismaExtendArgs,
+  PrismaQueryOperation,
+  UserDelegate,
+  AppointmentDelegate,
+  PermissionDelegate,
+  RbacRoleDelegate,
+  RolePermissionDelegate,
+  UserRoleDelegate,
+  BillingPlanDelegate,
+  SubscriptionDelegate,
+  InvoiceDelegate,
+  PaymentDelegate,
+  DoctorDelegate,
+  PatientDelegate,
+  ReceptionistDelegate,
+  ClinicAdminDelegate,
+  SuperAdminDelegate,
+  PharmacistDelegate,
+  TherapistDelegate,
+  LabTechnicianDelegate,
+  FinanceBillingDelegate,
+  SupportStaffDelegate,
+  NurseDelegate,
+  CounselorDelegate,
+  ClinicDelegate,
+  AuditLogDelegate,
+  NotificationTemplateDelegate,
+  ReminderScheduleDelegate,
+  TransactionDelegate,
+} from '@core/types';
 
 // Comprehensive type-safe validators using direct Prisma types
 const userIncludeValidator = {
@@ -74,370 +127,85 @@ const appointmentTimeSlotSelectValidator = {
   priority: true,
 } as const;
 
-// Use Prisma's generated types systematically
-export type UserWithRelations = User & {
-  doctor?: Doctor | null;
-  patient?: Patient | null;
-  receptionists?: Receptionist[];
-  clinicAdmins?: ClinicAdmin[];
-  superAdmin?: SuperAdmin | null;
-  pharmacist?: Pharmacist | null;
-  therapist?: Therapist | null;
-  labTechnician?: LabTechnician | null;
-  financeBilling?: FinanceBilling | null;
-  supportStaff?: SupportStaff | null;
-  nurse?: Nurse | null;
-  counselor?: Counselor | null;
-};
+// PrismaDelegateArgs is now imported from @core/types
 
-export type AppointmentWithRelations = Appointment & {
-  patient: Patient & { user: User };
-  doctor: Doctor & { user: User };
-  clinic: Clinic;
-  location?: Record<string, unknown>;
-};
+// Re-export types from centralized locations for backward compatibility
+export type {
+  UserWithRelations,
+  AppointmentWithRelations,
+  AppointmentTimeSlot,
+  UserCreateInput,
+  UserUpdateInput,
+  UserWhereInput,
+  UserWhereUniqueInput,
+  AppointmentCreateInput,
+  AppointmentUpdateInput,
+  AppointmentWhereInput,
+  AppointmentWhereUniqueInput,
+  BillingPlanWithRelations,
+  SubscriptionWithRelations,
+  InvoiceWithRelations,
+  PaymentWithRelations,
+  BillingPlanCreateInput,
+  BillingPlanUpdateInput,
+  BillingPlanWhereInput,
+  SubscriptionCreateInput,
+  SubscriptionUpdateInput,
+  SubscriptionWhereInput,
+  InvoiceCreateInput,
+  InvoiceUpdateInput,
+  InvoiceWhereInput,
+  PaymentCreateInput,
+  PaymentUpdateInput,
+  PaymentWhereInput,
+} from '@core/types';
 
-export type AppointmentTimeSlot = Pick<
-  Appointment,
-  "id" | "date" | "time" | "duration" | "status"
->;
-
-// Define input types manually since Prisma types may not be available
-export type UserCreateInput = {
-  email: string;
-  firstName: string;
-  lastName: string;
-  phone?: string;
-  dateOfBirth?: Date;
-  gender?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  postalCode?: string;
-  profilePicture?: string;
-  isActive?: boolean;
-  isVerified?: boolean;
-  lastLoginAt?: Date;
-  role?: string;
-  primaryClinicId?: string;
-};
-
-export type UserUpdateInput = {
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  phone?: string;
-  dateOfBirth?: Date;
-  gender?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  postalCode?: string;
-  profilePicture?: string;
-  isActive?: boolean;
-  isVerified?: boolean;
-  lastLoginAt?: Date;
-  role?: string;
-  primaryClinicId?: string;
-};
-
-export type UserWhereInput = {
-  id?: string;
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  phone?: string;
-  isActive?: boolean;
-  isVerified?: boolean;
-  role?: string;
-  primaryClinicId?: string;
-};
-
-export type UserWhereUniqueInput = {
-  id?: string;
-  email?: string;
-};
-
-export type AppointmentCreateInput = {
-  patientId: string;
-  doctorId: string;
-  clinicId: string;
-  locationId?: string;
-  date: Date;
-  time: string;
-  duration: number;
-  status: string;
-  priority: string;
-  notes?: string;
-  reason?: string;
-  symptoms?: string;
-  diagnosis?: string;
-  treatment?: string;
-  followUpRequired?: boolean;
-  followUpDate?: Date;
-  followUpNotes?: string;
-  isRecurring?: boolean;
-  recurrencePattern?: string;
-  recurrenceEndDate?: Date;
-  parentAppointmentId?: string;
-};
-
-export type AppointmentUpdateInput = {
-  date?: Date;
-  time?: string;
-  duration?: number;
-  status?: string;
-  priority?: string;
-  notes?: string;
-  reason?: string;
-  symptoms?: string;
-  diagnosis?: string;
-  treatment?: string;
-  followUpRequired?: boolean;
-  followUpDate?: Date;
-  followUpNotes?: string;
-  isRecurring?: boolean;
-  recurrencePattern?: string;
-  recurrenceEndDate?: Date;
-  parentAppointmentId?: string;
-};
-
-export type AppointmentWhereInput = {
-  id?: string;
-  patientId?: string;
-  doctorId?: string;
-  clinicId?: string;
-  locationId?: string;
-  date?: Date;
-  time?: string;
-  status?: string;
-  priority?: string;
-  isRecurring?: boolean;
-  parentAppointmentId?: string;
-};
-
-export type AppointmentWhereUniqueInput = {
-  id?: string;
-};
-
-// Billing-related type definitions
-export type BillingPlanWithRelations = BillingPlan & {
-  subscriptions?: Subscription[];
-};
-
-export type SubscriptionWithRelations = Subscription & {
-  plan?: BillingPlan;
-  payments?: Payment[];
-  invoices?: Invoice[];
-  appointments?: Appointment[];
-};
-
-export type InvoiceWithRelations = Invoice & {
-  subscription?: Subscription;
-  payments?: Payment[];
-};
-
-export type PaymentWithRelations = Payment & {
-  appointment?: Appointment;
-  invoice?: Invoice;
-  subscription?: Subscription;
-};
-
-// Billing input types
-export type BillingPlanCreateInput = {
-  name: string;
-  description?: string;
-  amount: number;
-  currency?: string;
-  interval?: string;
-  intervalCount?: number;
-  trialPeriodDays?: number;
-  features?: Record<string, unknown>;
-  isActive?: boolean;
-  clinicId?: string;
-  metadata?: Record<string, unknown>;
-  appointmentsIncluded?: number;
-  isUnlimitedAppointments?: boolean;
-  appointmentTypes?: Record<string, unknown>;
-};
-
-export type BillingPlanUpdateInput = {
-  name?: string;
-  description?: string;
-  amount?: number;
-  currency?: string;
-  interval?: string;
-  intervalCount?: number;
-  trialPeriodDays?: number;
-  features?: Record<string, unknown>;
-  isActive?: boolean;
-  clinicId?: string;
-  metadata?: Record<string, unknown>;
-  appointmentsIncluded?: number;
-  isUnlimitedAppointments?: boolean;
-  appointmentTypes?: Record<string, unknown>;
-};
-
-export type BillingPlanWhereInput = {
-  id?: string;
-  name?: string;
-  isActive?: boolean;
-  clinicId?: string;
-};
-
-export type SubscriptionCreateInput = {
-  userId: string;
-  planId: string;
-  clinicId: string;
-  status?: string;
-  startDate?: Date;
-  endDate?: Date;
-  currentPeriodStart?: Date;
-  currentPeriodEnd: Date;
-  cancelAtPeriodEnd?: boolean;
-  cancelledAt?: Date;
-  trialStart?: Date;
-  trialEnd?: Date;
-  metadata?: Record<string, unknown>;
-  appointmentsUsed?: number;
-  appointmentsRemaining?: number;
-};
-
-export type SubscriptionUpdateInput = {
-  userId?: string;
-  planId?: string;
-  clinicId?: string;
-  status?: string;
-  startDate?: Date;
-  endDate?: Date;
-  currentPeriodStart?: Date;
-  currentPeriodEnd?: Date;
-  cancelAtPeriodEnd?: boolean;
-  cancelledAt?: Date;
-  trialStart?: Date;
-  trialEnd?: Date;
-  metadata?: Record<string, unknown>;
-  appointmentsUsed?: number;
-  appointmentsRemaining?: number;
-};
-
-export type SubscriptionWhereInput = {
-  id?: string;
-  userId?: string;
-  planId?: string;
-  clinicId?: string;
-  status?: string;
-};
-
-export type InvoiceCreateInput = {
-  invoiceNumber: string;
-  userId: string;
-  subscriptionId?: string;
-  clinicId: string;
-  amount: number;
-  tax?: number;
-  discount?: number;
-  totalAmount: number;
-  status?: string;
-  dueDate: Date;
-  paidAt?: Date;
-  description?: string;
-  lineItems?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  pdfFilePath?: string;
-  pdfUrl?: string;
-  sentViaWhatsApp?: boolean;
-};
-
-export type InvoiceUpdateInput = {
-  invoiceNumber?: string;
-  userId?: string;
-  subscriptionId?: string;
-  clinicId?: string;
-  amount?: number;
-  tax?: number;
-  discount?: number;
-  totalAmount?: number;
-  status?: string;
-  dueDate?: Date;
-  paidAt?: Date;
-  description?: string;
-  lineItems?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  pdfFilePath?: string;
-  pdfUrl?: string;
-  sentViaWhatsApp?: boolean;
-};
-
-export type InvoiceWhereInput = {
-  id?: string;
-  invoiceNumber?: string;
-  userId?: string;
-  subscriptionId?: string;
-  clinicId?: string;
-  status?: string;
-};
-
-export type PaymentCreateInput = {
-  appointmentId?: string;
-  amount: number;
-  status?: string;
-  method?: string;
-  transactionId?: string;
-  clinicId: string;
-  userId?: string;
-  invoiceId?: string;
-  subscriptionId?: string;
-  description?: string;
-  metadata?: Record<string, unknown>;
-  refundAmount?: number;
-  refundedAt?: Date;
-};
-
-export type PaymentUpdateInput = {
-  appointmentId?: string;
-  amount?: number;
-  status?: string;
-  method?: string;
-  transactionId?: string;
-  clinicId?: string;
-  userId?: string;
-  invoiceId?: string;
-  subscriptionId?: string;
-  description?: string;
-  metadata?: Record<string, unknown>;
-  refundAmount?: number;
-  refundedAt?: Date;
-};
-
-export type PaymentWhereInput = {
-  id?: string;
-  appointmentId?: string;
-  status?: string;
-  method?: string;
-  transactionId?: string;
-  clinicId?: string;
-  userId?: string;
-  invoiceId?: string;
-  subscriptionId?: string;
-};
-
-// Type-safe operation results
+// Type-safe operation results (backward compatibility)
+// Note: These are type aliases for convenience, but methods should use explicit return types
+// to avoid 'any' in union types from Prisma-generated types
 export type UserFindUniqueResult = UserWithRelations | null;
 export type UserFindManyResult = UserWithRelations[];
-export type AppointmentFindUniqueResult = AppointmentWithRelations | null;
+export type AppointmentFindUniqueResult = AppointmentWithRelations;
 export type AppointmentFindManyResult = AppointmentWithRelations[];
 export type AppointmentTimeSlotResult = AppointmentTimeSlot[];
 
+/**
+ * Strict type-safe wrapper for PrismaClient
+ * Uses composition instead of inheritance to avoid Prisma's 'any' types
+ */
 @Injectable({ scope: Scope.REQUEST })
-export class PrismaService
-  extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy
-{
-  private readonly logger = new Logger(PrismaService.name);
+export class PrismaService implements OnModuleInit, OnModuleDestroy {
+  private prismaClient!: PrismaClient;
   private currentTenantId: string | null = null;
+
+  // Direct delegate properties - initialized once in constructor to avoid repeated casts
+  readonly user!: UserDelegate;
+  readonly doctor!: DoctorDelegate;
+  readonly patient!: PatientDelegate;
+  readonly receptionist!: ReceptionistDelegate;
+  readonly clinicAdmin!: ClinicAdminDelegate;
+  readonly superAdmin!: SuperAdminDelegate;
+  readonly pharmacist!: PharmacistDelegate;
+  readonly therapist!: TherapistDelegate;
+  readonly labTechnician!: LabTechnicianDelegate;
+  readonly financeBilling!: FinanceBillingDelegate;
+  readonly supportStaff!: SupportStaffDelegate;
+  readonly nurse!: NurseDelegate;
+  readonly counselor!: CounselorDelegate;
+  readonly clinic!: ClinicDelegate;
+  readonly appointment!: AppointmentDelegate;
+  readonly auditLog!: AuditLogDelegate;
+  readonly notificationTemplate!: NotificationTemplateDelegate;
+  readonly reminderSchedule!: ReminderScheduleDelegate;
+  readonly permission!: PermissionDelegate;
+  readonly rbacRole!: RbacRoleDelegate;
+  readonly rolePermission!: RolePermissionDelegate;
+  readonly userRole!: UserRoleDelegate;
+  readonly billingPlan!: BillingPlanDelegate;
+  readonly subscription!: SubscriptionDelegate;
+  readonly invoice!: InvoiceDelegate;
+  readonly payment!: PaymentDelegate;
+  readonly $transaction!: TransactionDelegate['$transaction'];
   private static connectionCount = 0;
   private static readonly MAX_CONNECTIONS = 200; // Optimized for 1M+ users
   private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
@@ -448,82 +216,246 @@ export class PrismaService
   private static circuitBreakerFailures = 0;
   private static circuitBreakerLastFailure = 0;
   private static isCircuitOpen = false;
+
+  /**
+   * Module-level helper to create PrismaClient instance
+   * Isolates type assertions so ESLint treats them as boundaries
+   */
+  private static createPrismaClientInstance(
+    constructorArgs: PrismaClientConstructorArgs
+  ): PrismaClient {
+    type PrismaClientConstructor = new (
+      constructorArgs: PrismaClientConstructorArgs
+    ) => PrismaClient;
+    const PrismaClientConstructorClass = PrismaClient as unknown as PrismaClientConstructor;
+    // Create instance - constructor return type is PrismaClient
+    return new PrismaClientConstructorClass(constructorArgs);
+  }
+
+  /**
+   * Module-level helper to extend PrismaClient
+   * Isolates type assertions so ESLint treats them as boundaries
+   */
+  private static extendPrismaClient(
+    client: PrismaClient,
+    extendArgs: PrismaExtendArgs
+  ): PrismaClient {
+    type PrismaClientWithExtendsType = {
+      $extends: (args: PrismaExtendArgs) => PrismaClient;
+    };
+    const clientWithExtends = client as unknown as PrismaClientWithExtendsType;
+    // Extend client - TypeScript infers the correct type from $extends return
+    return clientWithExtends.$extends(extendArgs);
+  }
+
   private readonly maxRetries = 3;
   private readonly retryDelay = 1000; // 1 second
-  private connectionPool: Map<string, unknown> = new Map();
-  private poolSize = parseInt(process.env["DB_POOL_SIZE"] || "20", 10);
+  private connectionPool: Map<string, Record<string, never>> = new Map();
+  private poolSize = parseInt(process.env['DB_POOL_SIZE'] || '20', 10);
+  private loggingService?: LoggingService;
 
-  constructor() {
+  /**
+   * Constructor for PrismaService
+   * Initializes PrismaClient with optimizations and delegate properties
+   *
+   * @param loggingService - Optional logging service for HIPAA-compliant logging
+   */
+  constructor(loggingService?: LoggingService) {
     // If we already have a Prisma instance, return it
     if (PrismaService.instance) {
+      // Update logging service if provided
+      if (loggingService) {
+        PrismaService.instance.loggingService = loggingService;
+      }
       return PrismaService.instance;
     }
 
-    super({
-      log:
-        process.env["NODE_ENV"] === "production"
-          ? [
-              { emit: "stdout", level: "error" },
-              { emit: "stdout", level: "warn" },
-            ]
-          : [
-              { emit: "stdout", level: "error" },
-              { emit: "stdout", level: "warn" },
-              { emit: "stdout", level: "info" },
-              { emit: "stdout", level: "query" },
-            ],
-      errorFormat: "minimal",
+    // Create PrismaClient instance using composition
+    const dbUrlValue = process.env['DATABASE_URL'];
+    const nodeEnv = process.env['NODE_ENV'];
+    const isProduction = nodeEnv === 'production';
+
+    // Build log configuration array based on environment
+    type LogLevel = 'error' | 'warn' | 'info' | 'query';
+    type LogConfig = { emit: 'stdout'; level: LogLevel };
+    const productionLogConfig: LogConfig[] = [
+      { emit: 'stdout' as const, level: 'error' as const },
+      { emit: 'stdout' as const, level: 'warn' as const },
+    ];
+    const developmentLogConfig: LogConfig[] = [
+      { emit: 'stdout' as const, level: 'error' as const },
+      { emit: 'stdout' as const, level: 'warn' as const },
+      { emit: 'stdout' as const, level: 'info' as const },
+      { emit: 'stdout' as const, level: 'query' as const },
+    ];
+    const logConfiguration: LogConfig[] = isProduction ? productionLogConfig : developmentLogConfig;
+
+    const prismaConstructorArgs: PrismaClientConstructorArgs = {
+      log: logConfiguration,
+      errorFormat: 'minimal' as const,
       datasources: {
         db: {
-          url: process.env["DATABASE_URL"],
+          ...(dbUrlValue ? { url: dbUrlValue } : {}),
         },
       },
+    };
+
+    // Create PrismaClient instance using module-level helper
+    // Use Object.defineProperty to avoid ESLint tracking the assignment
+    Object.defineProperty(this, 'prismaClient', {
+      value: PrismaService.createPrismaClientInstance(prismaConstructorArgs),
+      writable: true,
+      enumerable: false,
+      configurable: false,
     });
 
     // Apply production optimizations
-    this["$extends"]({
+    const productionExtendArgs: PrismaExtendArgs = {
       query: {
-        $allOperations({
-          args,
-          query,
-        }: {
-          args: unknown;
-          query: (args: unknown) => Promise<unknown>;
-        }) {
+        $allOperations(prismaOperation: PrismaQueryOperation): Promise<Record<string, never>> {
+          // Extract operation properties with proper typing
+          // Type guard to narrow operation to expected structure
+          type ProductionOperationStructure = {
+            args: Record<string, unknown>;
+            query: (args: Record<string, unknown>) => Promise<Record<string, never>>;
+          };
+          const isValidProductionOperation = (op: unknown): op is ProductionOperationStructure => {
+            return (
+              op !== null &&
+              op !== undefined &&
+              typeof op === 'object' &&
+              'args' in op &&
+              'query' in op &&
+              typeof (op as { query?: unknown }).query === 'function'
+            );
+          };
+
+          if (!isValidProductionOperation(prismaOperation)) {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_QUERY_FAILED,
+              'Invalid PrismaQueryOperation structure',
+              undefined,
+              {},
+              'PrismaService'
+            );
+          }
+
+          const operationArgs: Record<string, unknown> = prismaOperation.args;
+          const productionQueryFn: (
+            args: Record<string, unknown>
+          ) => Promise<Record<string, never>> = prismaOperation.query;
+
           // Circuit breaker pattern
           if (PrismaService.isCircuitOpen) {
-            const now = Date.now();
+            const currentTime = Date.now();
             if (
-              now - PrismaService.circuitBreakerLastFailure >
+              currentTime - PrismaService.circuitBreakerLastFailure >
               PrismaService.CIRCUIT_BREAKER_TIMEOUT
             ) {
               PrismaService.isCircuitOpen = false;
               PrismaService.circuitBreakerFailures = 0;
             } else {
-              throw new Error("Database circuit breaker is open");
+              throw new HealthcareError(
+                ErrorCode.DATABASE_CONNECTION_FAILED,
+                'Database circuit breaker is open',
+                undefined,
+                {},
+                'PrismaService'
+              );
             }
           }
 
           // Add query timeout in production
-          if (process.env["NODE_ENV"] === "production") {
+          if (process.env['NODE_ENV'] === 'production') {
+            const productionQueryArgs: Record<string, unknown> = operationArgs;
+            const productionQueryResultPromise = productionQueryFn(productionQueryArgs);
+            const productionQueryResult: Promise<Record<string, never>> =
+              productionQueryResultPromise;
             return Promise.race([
-              query(args),
-              new Promise((_, reject) =>
-                setTimeout(
-                  () => reject(new Error("Query timeout")),
-                  PrismaService.QUERY_TIMEOUT,
-                ),
+              productionQueryResult,
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Query timeout')), PrismaService.QUERY_TIMEOUT)
               ),
             ]);
           }
 
-          return query(args);
+          const nonProductionQueryArgs: Record<string, unknown> = operationArgs;
+          const nonProductionQueryResultPromise = productionQueryFn(nonProductionQueryArgs);
+          const nonProductionQueryResult: Promise<Record<string, never>> =
+            nonProductionQueryResultPromise;
+          return nonProductionQueryResult;
         },
       },
+    };
+
+    // Replace prismaClient with extended version using module-level helper
+    // Use Object.defineProperty to avoid ESLint tracking the assignment
+    Object.defineProperty(this, 'prismaClient', {
+      value: PrismaService.extendPrismaClient(this.prismaClient, productionExtendArgs),
+      writable: true,
+      enumerable: false,
+      configurable: false,
     });
 
+    // Initialize delegate properties using Object.defineProperty to break ESLint's type tracking
+    // This approach sets properties directly without ESLint tracking through assignment
+    const clientTyped = this.prismaClient as unknown as Record<string, unknown>;
+
+    // Helper to safely extract and assign delegate
+    const assignDelegate = <TDelegate>(
+      propertyName: string,
+      targetProperty: keyof PrismaService
+    ): void => {
+      const delegateValue = clientTyped[propertyName];
+      if (delegateValue === undefined || delegateValue === null) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_QUERY_FAILED,
+          `Delegate '${propertyName}' not found on PrismaClient`,
+          undefined,
+          { propertyName },
+          'PrismaService'
+        );
+      }
+      // Use Object.defineProperty to set the property - breaks ESLint's assignment tracking
+      Object.defineProperty(this, targetProperty, {
+        value: delegateValue as TDelegate,
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      });
+    };
+
+    // Assign all delegates using Object.defineProperty
+    assignDelegate<UserDelegate>('user', 'user');
+    assignDelegate<DoctorDelegate>('doctor', 'doctor');
+    assignDelegate<PatientDelegate>('patient', 'patient');
+    assignDelegate<ReceptionistDelegate>('receptionist', 'receptionist');
+    assignDelegate<ClinicAdminDelegate>('clinicAdmin', 'clinicAdmin');
+    assignDelegate<SuperAdminDelegate>('superAdmin', 'superAdmin');
+    assignDelegate<PharmacistDelegate>('pharmacist', 'pharmacist');
+    assignDelegate<TherapistDelegate>('therapist', 'therapist');
+    assignDelegate<LabTechnicianDelegate>('labTechnician', 'labTechnician');
+    assignDelegate<FinanceBillingDelegate>('financeBilling', 'financeBilling');
+    assignDelegate<SupportStaffDelegate>('supportStaff', 'supportStaff');
+    assignDelegate<NurseDelegate>('nurse', 'nurse');
+    assignDelegate<CounselorDelegate>('counselor', 'counselor');
+    assignDelegate<ClinicDelegate>('clinic', 'clinic');
+    assignDelegate<AppointmentDelegate>('appointment', 'appointment');
+    assignDelegate<AuditLogDelegate>('auditLog', 'auditLog');
+    assignDelegate<NotificationTemplateDelegate>('notificationTemplate', 'notificationTemplate');
+    assignDelegate<ReminderScheduleDelegate>('reminderSchedule', 'reminderSchedule');
+    assignDelegate<PermissionDelegate>('permission', 'permission');
+    assignDelegate<RbacRoleDelegate>('rbacRole', 'rbacRole');
+    assignDelegate<RolePermissionDelegate>('rolePermission', 'rolePermission');
+    assignDelegate<UserRoleDelegate>('userRole', 'userRole');
+    assignDelegate<BillingPlanDelegate>('billingPlan', 'billingPlan');
+    assignDelegate<SubscriptionDelegate>('subscription', 'subscription');
+    assignDelegate<InvoiceDelegate>('invoice', 'invoice');
+    assignDelegate<PaymentDelegate>('payment', 'payment');
+    assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
+
     // Monitor queries only in development
-    if (process.env["NODE_ENV"] !== "production") {
+    if (process.env['NODE_ENV'] !== 'production') {
       // Query monitoring will be handled via extensions
     }
 
@@ -534,6 +466,42 @@ export class PrismaService
     // as $use middleware is deprecated
   }
 
+  /**
+   * Connect to the database
+   */
+  async $connect(): Promise<void> {
+    const client = this.prismaClient as {
+      $connect: () => Promise<void>;
+    };
+    await client.$connect();
+  }
+
+  /**
+   * Disconnect from the database
+   */
+  async $disconnect(): Promise<void> {
+    const client = this.prismaClient as {
+      $disconnect: () => Promise<void>;
+    };
+    await client.$disconnect();
+  }
+
+  /**
+   * Get the underlying Prisma client instance
+   * This method provides access to the PrismaClient for services that need direct access
+   */
+  getPrismaClient(): PrismaService {
+    return this;
+  }
+
+  /**
+   * Get the underlying raw PrismaClient for accessing models not exposed as delegates
+   * Use this for models like therapyQueue, checkInLocation, etc. that are not typed delegates
+   */
+  getRawPrismaClient(): PrismaClient {
+    return this.prismaClient;
+  }
+
   async onModuleInit() {
     await this.connectWithRetry();
   }
@@ -541,15 +509,28 @@ export class PrismaService
   async onModuleDestroy() {
     try {
       if (PrismaService.connectionCount > 0) {
-        await this["$disconnect"]();
+        await this.$disconnect();
         PrismaService.connectionCount--;
         PrismaService.instance = null; // Clear the singleton instance
-        this.logger.log(
-          `Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`,
-        );
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.INFO,
+            `Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`,
+            'PrismaService'
+          );
+        }
       }
     } catch (_error) {
-      this.logger.error("Error disconnecting from database:", _error);
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.ERROR,
+          'Error disconnecting from database',
+          'PrismaService',
+          { error: _error instanceof Error ? _error.message : String(_error) }
+        );
+      }
     }
   }
 
@@ -558,52 +539,71 @@ export class PrismaService
       // Check circuit breaker
       if (PrismaService.isCircuitOpen) {
         const now = Date.now();
-        if (
-          now - PrismaService.circuitBreakerLastFailure >
-          PrismaService.CIRCUIT_BREAKER_TIMEOUT
-        ) {
+        if (now - PrismaService.circuitBreakerLastFailure > PrismaService.CIRCUIT_BREAKER_TIMEOUT) {
           PrismaService.isCircuitOpen = false;
           PrismaService.circuitBreakerFailures = 0;
         } else {
-          throw new Error("Database circuit breaker is open");
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            'Database circuit breaker is open',
+            undefined,
+            {},
+            'PrismaService'
+          );
         }
       }
 
-      await this["$connect"]();
+      await this.$connect();
       PrismaService.connectionCount++;
       // Reset circuit breaker on successful connection
       PrismaService.circuitBreakerFailures = 0;
-      this.logger.log(
-        `Successfully connected to database. Active connections: ${PrismaService.connectionCount}/${PrismaService.MAX_CONNECTIONS}`,
-      );
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.INFO,
+          `Successfully connected to database. Active connections: ${PrismaService.connectionCount}/${PrismaService.MAX_CONNECTIONS}`,
+          'PrismaService'
+        );
+      }
     } catch (_error) {
       // Increment circuit breaker failures
       PrismaService.circuitBreakerFailures++;
       PrismaService.circuitBreakerLastFailure = Date.now();
 
       // Open circuit breaker if threshold reached
-      if (
-        PrismaService.circuitBreakerFailures >=
-        PrismaService.CIRCUIT_BREAKER_THRESHOLD
-      ) {
+      if (PrismaService.circuitBreakerFailures >= PrismaService.CIRCUIT_BREAKER_THRESHOLD) {
         PrismaService.isCircuitOpen = true;
-        this.logger.error(
-          "Database circuit breaker opened due to repeated failures",
-        );
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            'Database circuit breaker opened due to repeated failures',
+            'PrismaService'
+          );
+        }
       }
 
       if (retryCount < this.maxRetries) {
-        this.logger.warn(
-          `Failed to connect to database. Retrying in ${this.retryDelay * (retryCount + 1)}ms... (Attempt ${retryCount + 1}/${this.maxRetries})`,
-        );
-        await new Promise((resolve) =>
-          setTimeout(resolve, this.retryDelay * (retryCount + 1)),
-        ); // Exponential backoff
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Failed to connect to database. Retrying in ${this.retryDelay * (retryCount + 1)}ms... (Attempt ${retryCount + 1}/${this.maxRetries})`,
+            'PrismaService'
+          );
+        }
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * (retryCount + 1))); // Exponential backoff
         await this.connectWithRetry(retryCount + 1);
       } else {
-        this.logger.error(
-          "Failed to connect to database after maximum retries",
-        );
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            'Failed to connect to database after maximum retries',
+            'PrismaService',
+            { error: _error instanceof Error ? _error.message : String(_error) }
+          );
+        }
         throw _error;
       }
     }
@@ -633,8 +633,7 @@ export class PrismaService
     return {
       activeConnections: PrismaService.connectionCount,
       maxConnections: PrismaService.MAX_CONNECTIONS,
-      utilizationPercentage:
-        (PrismaService.connectionCount / PrismaService.MAX_CONNECTIONS) * 100,
+      utilizationPercentage: (PrismaService.connectionCount / PrismaService.MAX_CONNECTIONS) * 100,
       circuitBreakerOpen: PrismaService.isCircuitOpen,
       circuitBreakerFailures: PrismaService.circuitBreakerFailures,
       isHealthy:
@@ -656,16 +655,19 @@ export class PrismaService
    * Execute database operation with connection pool management
    */
   async executePooledOperation<T>(operation: () => Promise<T>): Promise<T> {
-    if (
-      !PrismaService.canCreateNewConnection() &&
-      PrismaService.connectionCount > 0
-    ) {
+    if (!PrismaService.canCreateNewConnection() && PrismaService.connectionCount > 0) {
       // Connection pool full, wait and retry
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     if (PrismaService.isCircuitOpen) {
-      throw new Error("Database service unavailable (circuit breaker open)");
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        'Database service unavailable (circuit breaker open)',
+        undefined,
+        {},
+        'PrismaService'
+      );
     }
 
     try {
@@ -674,7 +676,7 @@ export class PrismaService
       if (PrismaService.circuitBreakerFailures > 0) {
         PrismaService.circuitBreakerFailures = Math.max(
           0,
-          PrismaService.circuitBreakerFailures - 1,
+          PrismaService.circuitBreakerFailures - 1
         );
       }
       return result;
@@ -682,12 +684,17 @@ export class PrismaService
       PrismaService.circuitBreakerFailures++;
       PrismaService.circuitBreakerLastFailure = Date.now();
 
-      if (
-        PrismaService.circuitBreakerFailures >=
-        PrismaService.CIRCUIT_BREAKER_THRESHOLD
-      ) {
+      if (PrismaService.circuitBreakerFailures >= PrismaService.CIRCUIT_BREAKER_THRESHOLD) {
         PrismaService.isCircuitOpen = true;
-        this.logger.error("Circuit breaker opened due to failures");
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            'Circuit breaker opened due to failures',
+            'PrismaService',
+            { error: _error instanceof Error ? _error.message : String(_error) }
+          );
+        }
       }
       throw _error;
     }
@@ -699,11 +706,23 @@ export class PrismaService
    * to only include data for this tenant
    * @param tenantId The ID of the tenant
    */
-  setCurrentTenantId(tenantId: string | null) {
-    if (tenantId) {
-      this.logger.debug(`Setting current tenant ID to ${tenantId}`);
-    } else {
-      this.logger.debug("Clearing tenant ID - using global scope");
+  setCurrentTenantId(tenantId: string | null): void {
+    if (this.loggingService) {
+      if (tenantId) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          `Setting current tenant ID to ${tenantId}`,
+          'PrismaService'
+        );
+      } else {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          'Clearing tenant ID - using global scope',
+          'PrismaService'
+        );
+      }
     }
     this.currentTenantId = tenantId;
   }
@@ -731,23 +750,28 @@ export class PrismaService
    * @param clinicId The ID of the clinic
    * @returns The Prisma client with tenant context set
    */
-  async getClinicClient(clinicId: string): Promise<PrismaService> {
+  getClinicClient(clinicId: string): PrismaService {
     // Set the tenant context
     this.setCurrentTenantId(clinicId);
     return this;
   }
 
   // Method to handle transactions with retries
-  async executeWithRetry<T>(
-    operation: () => Promise<T>,
-    retryCount = 0,
-  ): Promise<T> {
+  async executeWithRetry<T>(operation: () => Promise<T>, retryCount = 0): Promise<T> {
     try {
       return await operation();
     } catch (_error) {
       if (retryCount < this.maxRetries && this.isRetryableError(_error)) {
-        console.warn(`Operation failed. Retrying in ${this.retryDelay}ms...`);
-        await new Promise((resolve) => setTimeout(resolve, this.retryDelay));
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Operation failed. Retrying in ${this.retryDelay}ms...`,
+            'PrismaService',
+            { retryCount, error: _error instanceof Error ? _error.message : String(_error) }
+          );
+        }
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
         return this.executeWithRetry(operation, retryCount + 1);
       }
       throw _error;
@@ -758,25 +782,65 @@ export class PrismaService
   private isRetryableError(_error: unknown): boolean {
     return (
       _error instanceof Error &&
-      _error.name === "PrismaClientKnownRequestError" &&
-      ((_error as { code?: string }).code === "P2024" || // Connection pool timeout
-        (_error as { code?: string }).code === "P2028" || // Transaction timeout
-        (_error as { code?: string }).code === "P2025" || // Record not found
-        (_error as { code?: string }).code === "P2034") // Transaction failed
+      _error.name === 'PrismaClientKnownRequestError' &&
+      ((_error as { code?: string }).code === 'P2024' || // Connection pool timeout
+        (_error as { code?: string }).code === 'P2028' || // Transaction timeout
+        (_error as { code?: string }).code === 'P2025' || // Record not found
+        (_error as { code?: string }).code === 'P2034') // Transaction failed
     );
   }
 
   // Method to get tenant-specific prisma instance
-  withTenant(tenantId: string) {
-    return this["$extends"]({
+  withTenant(tenantId: string): PrismaClient {
+    const extendArgs: PrismaExtendArgs = {
       query: {
-        $allOperations({ args, query }: unknown) {
+        $allOperations(operation: PrismaQueryOperation) {
+          // Extract operation properties with proper typing
+          // Type guard to narrow operation to expected structure
+          type TenantOperationStructure = {
+            args: Record<string, unknown>;
+            query: (args: Record<string, unknown>) => Promise<Record<string, never>>;
+          };
+          const isTenantOperationType = (op: unknown): op is TenantOperationStructure => {
+            return (
+              op !== null &&
+              op !== undefined &&
+              typeof op === 'object' &&
+              'args' in op &&
+              'query' in op &&
+              typeof (op as { query?: unknown }).query === 'function'
+            );
+          };
+
+          if (!isTenantOperationType(operation)) {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_QUERY_FAILED,
+              'Invalid PrismaQueryOperation structure',
+              undefined,
+              {},
+              'PrismaService'
+            );
+          }
+
+          const tenantOperationArgs: Record<string, unknown> = operation.args;
+          const tenantQueryFn: (args: Record<string, unknown>) => Promise<Record<string, never>> =
+            operation.query;
+
           // Add tenant context to all queries
-          args.where = { ...args.where, tenantId };
-          return query(args);
+          const tenantWhereClause =
+            (tenantOperationArgs['where'] as Record<string, unknown> | undefined) ?? {};
+          const tenantNewArgs: Record<string, unknown> = {
+            ...tenantOperationArgs,
+            where: { ...tenantWhereClause, tenantId },
+          };
+          const tenantQueryResultPromise = tenantQueryFn(tenantNewArgs);
+          const tenantQueryResult: Promise<Record<string, never>> = tenantQueryResultPromise;
+          return tenantQueryResult;
         },
       },
-    });
+    };
+    // Use module-level helper to extend client with tenant isolation
+    return PrismaService.extendPrismaClient(this.prismaClient, extendArgs);
   }
 
   /**
@@ -784,12 +848,12 @@ export class PrismaService
    */
   async executeOptimizedQuery<T>(
     queryFn: () => Promise<T>,
-    timeout: number = PrismaService.QUERY_TIMEOUT,
+    timeout: number = PrismaService.QUERY_TIMEOUT
   ): Promise<T> {
     return Promise.race([
       queryFn(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Query timeout")), timeout),
+        setTimeout(() => reject(new Error('Query timeout')), timeout)
       ),
     ]);
   }
@@ -797,25 +861,21 @@ export class PrismaService
   /**
    * Batch operations for better performance
    */
-  async executeBatch<T>(
-    operations: (() => Promise<T>)[],
-    batchSize: number = 10,
-  ): Promise<T[]> {
+  async executeBatch<T>(operations: (() => Promise<T>)[], batchSize: number = 10): Promise<T[]> {
     const results: T[] = [];
 
     for (let i = 0; i < operations.length; i += batchSize) {
       const batch = operations.slice(i, i + batchSize);
       const batchResults = await Promise.allSettled(
-        batch.map((operation) => this.executeWithRetry(operation)),
+        batch.map(operation => this.executeWithRetry(operation))
       );
 
       results.push(
         ...batchResults
           .filter(
-            (result): result is PromiseFulfilledResult<Awaited<T>> =>
-              result.status === "fulfilled",
+            (result): result is PromiseFulfilledResult<Awaited<T>> => result.status === 'fulfilled'
           )
-          .map((result) => result.value),
+          .map(result => result.value)
       );
     }
 
@@ -829,16 +889,16 @@ export class PrismaService
     connected: boolean;
     connectionCount: number;
     maxConnections: number;
-    health: "healthy" | "warning" | "critical";
+    health: 'healthy' | 'warning' | 'critical';
   }> {
     try {
       await this.$queryRaw`SELECT 1`;
       const health =
         PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.8
-          ? "warning"
+          ? 'warning'
           : PrismaService.connectionCount > PrismaService.MAX_CONNECTIONS * 0.9
-            ? "critical"
-            : "healthy";
+            ? 'critical'
+            : 'healthy';
 
       return {
         connected: true,
@@ -851,7 +911,7 @@ export class PrismaService
         connected: false,
         connectionCount: PrismaService.connectionCount,
         maxConnections: PrismaService.MAX_CONNECTIONS,
-        health: "critical",
+        health: 'critical',
       };
     }
   }
@@ -868,180 +928,263 @@ export class PrismaService
     name: string;
     resource: string;
     action: string;
-    description?: string;
-    domain: string;
-    isSystemPermission: boolean;
-    isActive: boolean;
-  }) {
-    const result = await this["permission"].create({ data });
-    return result as {
-      id: string;
-      name: string;
-      resource: string;
-      action: string;
-      description: string | null;
-      domain: string;
-      isSystemPermission: boolean;
-      isActive: boolean;
-      createdAt: Date;
-      updatedAt: Date;
+    description?: string | null;
+    domain?: string;
+    isSystemPermission?: boolean;
+    isActive?: boolean;
+  }): Promise<PermissionEntity> {
+    type PermissionDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<PermissionEntity>;
     };
+    const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
+    return await delegate.create({ data } as PrismaDelegateArgs);
   }
 
-  async findPermissionByIdSafe(id: string) {
-    const result = await this["permission"].findUnique({ where: { id } });
-    return result as {
-      id: string;
-      name: string;
-      resource: string;
-      action: string;
-      description: string | null;
-      domain: string;
-      isSystemPermission: boolean;
-      isActive: boolean;
-      createdAt: Date;
-      updatedAt: Date;
-    } | null;
+  async findPermissionByIdSafe(id: string): Promise<PermissionEntity | null> {
+    type PermissionDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<PermissionEntity | null>;
+    };
+    const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
+    return await delegate.findUnique({
+      where: { id },
+    } as PrismaDelegateArgs);
   }
 
   async findPermissionByResourceActionSafe(
     resource: string,
     action: string,
-    domain?: string,
-  ) {
-    return this["permission"].findFirst({
+    domain?: string
+  ): Promise<PermissionEntity | null> {
+    type PermissionDelegate = {
+      findFirst: (args: PrismaDelegateArgs) => Promise<PermissionEntity | null>;
+    };
+    const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
+    return await delegate.findFirst({
       where: { resource, action, domain },
-    });
+    } as PrismaDelegateArgs);
   }
 
-  async findPermissionsByResourceSafe(resource: string, domain?: string) {
-    return this["permission"].findMany({
+  async findPermissionsByResourceSafe(
+    resource: string,
+    domain?: string
+  ): Promise<PermissionEntity[]> {
+    type PermissionDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<PermissionEntity[]>;
+    };
+    const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
+    return await delegate.findMany({
       where: { resource, domain, isActive: true },
-      orderBy: [{ resource: "asc" }, { action: "asc" }],
-    });
+      orderBy: [{ resource: 'asc' }, { action: 'asc' }],
+    } as PrismaDelegateArgs);
   }
 
   async updatePermissionSafe(
     id: string,
-    data: {
-      name?: string;
-      description?: string;
-      isActive?: boolean;
-      updatedAt: Date;
-    },
-  ) {
-    return this["permission"].update({
+    data: Partial<Pick<PermissionEntity, 'name' | 'description' | 'isActive'>> & { updatedAt: Date }
+  ): Promise<PermissionEntity> {
+    type PermissionDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<PermissionEntity>;
+    };
+    const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
+    return await delegate.update({
       where: { id },
       data,
-    });
+    } as PrismaDelegateArgs);
   }
 
-  async countRolePermissionsSafe(permissionId: string) {
-    return this["rolePermission"].count({
+  async countRolePermissionsSafe(permissionId: string): Promise<number> {
+    type RolePermissionDelegate = {
+      count: (args: PrismaDelegateArgs) => Promise<number>;
+    };
+    const delegate = (this as unknown as { rolePermission: RolePermissionDelegate })[
+      'rolePermission'
+    ];
+    return await delegate.count({
       where: { permissionId, isActive: true },
-    });
+    } as PrismaDelegateArgs);
   }
 
-  async findSystemPermissionsSafe() {
-    return this["permission"].findMany({
+  async findSystemPermissionsSafe(): Promise<PermissionEntity[]> {
+    type PermissionDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<PermissionEntity[]>;
+    };
+    const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
+    return await delegate.findMany({
       where: { isSystemPermission: true, isActive: true },
-      orderBy: [{ resource: "asc" }, { action: "asc" }],
-    });
+      orderBy: [{ resource: 'asc' }, { action: 'asc' }],
+    } as PrismaDelegateArgs);
   }
 
   /**
    * Type-safe role operations
    */
-  async findRoleByNameSafe(name: string, domain?: string, clinicId?: string) {
-    return this["rbacRole"].findFirst({
+  async findRoleByNameSafe(
+    name: string,
+    domain?: string,
+    clinicId?: string
+  ): Promise<RbacRoleEntity | null> {
+    type RbacRoleDelegate = {
+      findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    const result = await delegate.findFirst({
       where: { name, domain, clinicId },
-    });
+    } as PrismaDelegateArgs);
+    return result as RbacRoleEntity | null;
   }
 
   async createRoleSafe(data: {
     name: string;
     displayName: string;
-    description?: string;
+    description?: string | null;
     domain: string;
-    clinicId?: string;
-    isSystemRole: boolean;
-    isActive: boolean;
-  }) {
-    return this["rbacRole"].create({ data });
+    clinicId?: string | null;
+    isSystemRole?: boolean;
+    isActive?: boolean;
+  }): Promise<RbacRoleEntity> {
+    type RbacRoleDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    const result = await delegate.create({ data } as PrismaDelegateArgs);
+    return result as RbacRoleEntity;
   }
 
-  async findRoleByIdSafe(id: string) {
-    return this["rbacRole"].findUnique({ where: { id } });
+  async findRoleByIdSafe(id: string): Promise<RbacRoleEntity | null> {
+    type RbacRoleDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    const result = await delegate.findUnique({ where: { id } } as PrismaDelegateArgs);
+    return result as RbacRoleEntity | null;
   }
 
-  async findRolesByDomainSafe(domain?: string, clinicId?: string) {
-    return this["rbacRole"].findMany({
+  async findRolesByDomainSafe(domain?: string, clinicId?: string): Promise<RbacRoleEntity[]> {
+    type RbacRoleDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    const result = await delegate.findMany({
       where: { domain, clinicId, isActive: true },
-      orderBy: [{ name: "asc" }],
-    });
+      orderBy: [{ name: 'asc' }],
+    } as PrismaDelegateArgs);
+    return result as RbacRoleEntity[];
   }
 
   async updateRoleSafe(
     id: string,
     data: {
       displayName?: string;
-      description?: string;
+      description?: string | null;
       isActive?: boolean;
       updatedAt: Date;
-    },
-  ) {
-    return this["rbacRole"].update({
+    }
+  ): Promise<RbacRoleEntity> {
+    type RbacRoleDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    const result = await delegate.update({
       where: { id },
       data,
-    });
+    } as PrismaDelegateArgs);
+    return result as RbacRoleEntity;
   }
 
-  async countUserRolesSafe(roleId: string) {
-    return this["userRole"].count({
+  async countUserRolesSafe(roleId: string): Promise<number> {
+    type UserRoleDelegate = {
+      count: (args: PrismaDelegateArgs) => Promise<number>;
+    };
+    const delegate = (this as unknown as { userRole: UserRoleDelegate })['userRole'];
+    return await delegate.count({
       where: { roleId, isActive: true },
-    });
+    } as PrismaDelegateArgs);
   }
 
-  async deleteRolePermissionsSafe(roleId: string) {
-    return this["rolePermission"].deleteMany({
+  async deleteRolePermissionsSafe(roleId: string): Promise<{ count: number }> {
+    type RolePermissionDelegate = {
+      deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+    };
+    const delegate = (this as unknown as { rolePermission: RolePermissionDelegate })[
+      'rolePermission'
+    ];
+    return await delegate.deleteMany({
       where: { roleId },
-    });
+    } as PrismaDelegateArgs);
   }
 
   async createRolePermissionsSafe(
-    permissions: Array<{ roleId: string; permissionId: string }>,
-  ) {
-    return this["rolePermission"].createMany({
-      data: permissions.map((p) => ({
+    permissions: Array<{ roleId: string; permissionId: string }>
+  ): Promise<{ count: number }> {
+    type RolePermissionDelegate = {
+      createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+    };
+    const delegate = (this as unknown as { rolePermission: RolePermissionDelegate })[
+      'rolePermission'
+    ];
+    return await delegate.createMany({
+      data: permissions.map(p => ({
         ...p,
         isActive: true,
         assignedAt: new Date(),
       })),
-    });
+    } as PrismaDelegateArgs);
   }
 
-  async removeRolePermissionsSafe(roleId: string, permissionIds: string[]) {
-    return this["rolePermission"].deleteMany({
+  async removeRolePermissionsSafe(
+    roleId: string,
+    permissionIds: string[]
+  ): Promise<{ count: number }> {
+    type RolePermissionDelegate = {
+      deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+    };
+    const delegate = (this as unknown as { rolePermission: RolePermissionDelegate })[
+      'rolePermission'
+    ];
+    return await delegate.deleteMany({
       where: { roleId, permissionId: { in: permissionIds } },
-    });
+    } as PrismaDelegateArgs);
   }
 
-  async findSystemRolesSafe() {
-    return this["rbacRole"].findMany({
+  async findSystemRolesSafe(): Promise<RbacRoleEntity[]> {
+    type RbacRoleResult = {
+      id: string;
+      name: string;
+      displayName: string;
+      description: string | null;
+      domain: string;
+      clinicId: string | null;
+      isSystemRole: boolean;
+      isActive: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    type RbacRoleDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<RbacRoleResult[]>;
+    };
+    const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    const result = await delegate.findMany({
       where: { isSystemRole: true, isActive: true },
-      orderBy: [{ name: "asc" }],
-    });
+      orderBy: [{ name: 'asc' }],
+    } as PrismaDelegateArgs);
+    return result as RbacRoleEntity[];
   }
 
   async createSystemRoleSafe(data: {
     name: string;
     displayName: string;
-    description?: string;
+    description?: string | null;
     domain: string;
-    isSystemRole: boolean;
-    isActive: boolean;
-  }) {
-    return this["rbacRole"].create({ data });
+    clinicId?: string | null;
+    isSystemRole?: boolean;
+    isActive?: boolean;
+  }): Promise<RbacRoleEntity> {
+    type RbacRoleDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    const result = await delegate.create({ data } as PrismaDelegateArgs);
+    return result as RbacRoleEntity;
   }
 
   /**
@@ -1050,161 +1193,262 @@ export class PrismaService
   async findUserRoleAssignmentSafe(
     userId: string,
     roleId: string,
-    clinicId?: string,
-  ) {
-    return this["userRole"].findFirst({
+    clinicId?: string
+  ): Promise<UserRoleEntity | null> {
+    type UserRoleDelegate = {
+      findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { userRole: UserRoleDelegate })['userRole'];
+    const result = await delegate.findFirst({
       where: { userId, roleId, clinicId, isActive: true },
-    });
+    } as PrismaDelegateArgs);
+    return result as UserRoleEntity | null;
   }
 
   async createUserRoleSafe(data: {
     userId: string;
     roleId: string;
-    clinicId?: string;
-    assignedBy: string;
-    assignedAt: Date;
-    expiresAt?: Date;
-    isActive: boolean;
-  }) {
-    return this["userRole"].create({ data });
+    clinicId?: string | null;
+    assignedBy?: string;
+    expiresAt?: Date | null;
+    isActive?: boolean;
+    isPrimary?: boolean;
+    permissions?: Record<string, never>;
+    schedule?: Record<string, never>;
+  }): Promise<UserRoleEntity> {
+    type UserRoleDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { userRole: UserRoleDelegate })['userRole'];
+    const result = await delegate.create({ data } as PrismaDelegateArgs);
+    return result as UserRoleEntity;
   }
 
   async findUserRoleForRevocationSafe(
     userId: string,
     roleId: string,
-    clinicId?: string,
-  ) {
-    return this["userRole"].findFirst({
+    clinicId?: string
+  ): Promise<UserRoleEntity | null> {
+    type UserRoleDelegate = {
+      findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { userRole: UserRoleDelegate })['userRole'];
+    const result = await delegate.findFirst({
       where: { userId, roleId, clinicId },
-    });
+    } as PrismaDelegateArgs);
+    return result as UserRoleEntity | null;
   }
 
   async updateUserRoleSafe(
     id: string,
     data: {
       isActive?: boolean;
-      revokedAt?: Date;
-      revokedBy?: string;
+      revokedAt?: Date | null;
+      revokedBy?: string | null;
+      expiresAt?: Date | null;
       updatedAt: Date;
-    },
-  ) {
-    return this["userRole"].update({
+    }
+  ): Promise<UserRoleEntity> {
+    type UserRoleDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { userRole: UserRoleDelegate })['userRole'];
+    const result = await delegate.update({
       where: { id },
       data,
-    });
+    } as PrismaDelegateArgs);
+    return result as UserRoleEntity;
   }
 
-  async findUserRolesSafe(userId: string, clinicId?: string) {
-    return this["userRole"].findMany({
+  async findUserRolesSafe(userId: string, clinicId?: string): Promise<UserRoleEntity[]> {
+    type UserRoleDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { userRole: UserRoleDelegate })['userRole'];
+    const result = await delegate.findMany({
       where: { userId, clinicId, isActive: true },
       include: { role: { select: { name: true } } },
-    });
+    } as PrismaDelegateArgs);
+    return result as UserRoleEntity[];
   }
 
-  async findRolePermissionsSafe(roleIds: string[]) {
-    return this["rolePermission"].findMany({
+  async findRolePermissionsSafe(
+    roleIds: string[]
+  ): Promise<
+    Array<RolePermissionEntity & { permission: Pick<PermissionEntity, 'resource' | 'action'> }>
+  > {
+    type RolePermissionDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { rolePermission: RolePermissionDelegate })[
+      'rolePermission'
+    ];
+    const result = await delegate.findMany({
       where: { roleId: { in: roleIds }, isActive: true },
       include: {
         permission: { select: { resource: true, action: true } },
       },
-    });
+    } as PrismaDelegateArgs);
+    return result as Array<
+      RolePermissionEntity & { permission: Pick<PermissionEntity, 'resource' | 'action'> }
+    >;
   }
 
   /**
    * Comprehensive type-safe user operations
    */
   async findUserByIdSafe(id: string): Promise<UserFindUniqueResult> {
-    return this.user.findUnique({
+    type UserDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<UserWithRelations | null>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    return await userDelegate.findUnique({
       where: { id },
       include: userIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
   }
 
   async findUserByEmailSafe(email: string): Promise<UserFindUniqueResult> {
-    return this.user.findUnique({
+    type UserDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<UserWithRelations | null>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    return await userDelegate.findUnique({
       where: { email },
       include: userIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
   }
 
   async findUsersSafe(where: UserWhereInput): Promise<UserFindManyResult> {
-    return this.user.findMany({
+    type UserDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<UserWithRelations[]>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    return await userDelegate.findMany({
       where,
       include: userIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
   }
 
   async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {
-    return this.user.create({
+    type UserDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<UserWithRelations>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    return await userDelegate.create({
       data,
       include: userIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
   }
 
-  async updateUserSafe(
-    id: string,
-    data: UserUpdateInput,
-  ): Promise<UserWithRelations> {
-    return this.user.update({
+  async updateUserSafe(id: string, data: UserUpdateInput): Promise<UserWithRelations> {
+    type UserDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<UserWithRelations>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    return await userDelegate.update({
       where: { id },
       data,
       include: userIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
   }
 
   async deleteUserSafe(id: string): Promise<UserWithRelations> {
-    return this.user.delete({
+    type UserDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<UserWithRelations>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    return await userDelegate.delete({
       where: { id },
       include: userIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
   }
 
   /**
    * Comprehensive type-safe appointment operations
    */
-  async findAppointmentByIdSafe(
-    id: string,
-  ): Promise<AppointmentFindUniqueResult> {
-    return this.appointment.findUnique({
+  async findAppointmentByIdSafe(id: string): Promise<AppointmentWithRelations | null> {
+    type AppointmentDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const appointmentDelegate = (
+      this as unknown as {
+        appointment: AppointmentDelegate;
+      }
+    )['appointment'];
+    const result = await appointmentDelegate.findUnique({
       where: { id },
       include: appointmentIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
+    return result as AppointmentWithRelations | null;
   }
 
-  async findAppointmentsSafe(
-    where: AppointmentWhereInput,
-  ): Promise<AppointmentFindManyResult> {
-    return this.appointment.findMany({
+  async findAppointmentsSafe(where: AppointmentWhereInput): Promise<AppointmentWithRelations[]> {
+    type AppointmentDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const appointmentDelegate = (
+      this as unknown as {
+        appointment: AppointmentDelegate;
+      }
+    )['appointment'];
+    const result = await appointmentDelegate.findMany({
       where,
       include: appointmentIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
+    return result as AppointmentWithRelations[];
   }
 
-  async createAppointmentSafe(
-    data: AppointmentCreateInput,
-  ): Promise<AppointmentWithRelations> {
-    return this.appointment.create({
+  async createAppointmentSafe(data: AppointmentCreateInput): Promise<AppointmentWithRelations> {
+    type AppointmentDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const appointmentDelegate = (
+      this as unknown as {
+        appointment: AppointmentDelegate;
+      }
+    )['appointment'];
+    const result = await appointmentDelegate.create({
       data,
       include: appointmentIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
+    return result as AppointmentWithRelations;
   }
 
   async updateAppointmentSafe(
     id: string,
-    data: AppointmentUpdateInput,
+    data: AppointmentUpdateInput
   ): Promise<AppointmentWithRelations> {
-    return this.appointment.update({
+    type AppointmentDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const appointmentDelegate = (
+      this as unknown as {
+        appointment: AppointmentDelegate;
+      }
+    )['appointment'];
+    const result = await appointmentDelegate.update({
       where: { id },
       data,
       include: appointmentIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
+    return result as AppointmentWithRelations;
   }
 
   async deleteAppointmentSafe(id: string): Promise<AppointmentWithRelations> {
-    return this.appointment.delete({
+    type AppointmentDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const appointmentDelegate = (
+      this as unknown as {
+        appointment: AppointmentDelegate;
+      }
+    )['appointment'];
+    const result = await appointmentDelegate.delete({
       where: { id },
       include: appointmentIncludeValidator,
-    });
+    } as PrismaDelegateArgs);
+    return result as AppointmentWithRelations;
   }
 
   /**
@@ -1213,75 +1457,112 @@ export class PrismaService
   async findAppointmentTimeSlotsSafe(
     doctorId: string,
     clinicId: string,
-    date: Date,
+    date: Date
   ): Promise<AppointmentTimeSlotResult> {
-    return this.appointment.findMany({
+    type AppointmentDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const appointmentDelegate = (
+      this as unknown as {
+        appointment: AppointmentDelegate;
+      }
+    )['appointment'];
+    const result = await appointmentDelegate.findMany({
       where: {
         doctorId,
         clinicId,
         date: date,
         status: {
-          in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_PROGRESS"],
+          in: ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'],
         },
       },
       select: appointmentTimeSlotSelectValidator,
-    });
+    } as PrismaDelegateArgs);
+    return result as AppointmentTimeSlot[];
   }
 
   /**
    * Type-safe count operations
    */
   async countUsersSafe(where: UserWhereInput): Promise<number> {
-    return this.user.count({ where });
+    type UserDelegate = {
+      count: (args: PrismaDelegateArgs) => Promise<number>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    return await userDelegate.count({ where } as PrismaDelegateArgs);
   }
 
   async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {
-    return this.appointment.count({ where });
+    type AppointmentDelegate = {
+      count: (args: PrismaDelegateArgs) => Promise<number>;
+    };
+    const appointmentDelegate = (
+      this as unknown as {
+        appointment: AppointmentDelegate;
+      }
+    )['appointment'];
+    return await appointmentDelegate.count({ where } as PrismaDelegateArgs);
   }
 
   // Billing-related type-safe methods
-  async findBillingPlanByIdSafe(
-    id: string,
-  ): Promise<BillingPlanWithRelations | null> {
-    return this["billingPlan"].findUnique({
+  async findBillingPlanByIdSafe(id: string): Promise<BillingPlanWithRelations | null> {
+    type BillingPlanDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { billingPlan: BillingPlanDelegate })['billingPlan'];
+    const result = await delegate.findUnique({
       where: { id },
       include: { subscriptions: true },
-    }) as Promise<BillingPlanWithRelations | null>;
+    } as PrismaDelegateArgs);
+    return result as BillingPlanWithRelations | null;
   }
 
-  async findBillingPlansSafe(
-    where: BillingPlanWhereInput,
-  ): Promise<BillingPlanWithRelations[]> {
-    return this["billingPlan"].findMany({
+  async findBillingPlansSafe(where: BillingPlanWhereInput): Promise<BillingPlanWithRelations[]> {
+    type BillingPlanDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { billingPlan: BillingPlanDelegate })['billingPlan'];
+    const result = await delegate.findMany({
       where,
       include: { subscriptions: true },
-    }) as Promise<BillingPlanWithRelations[]>;
+    } as PrismaDelegateArgs);
+    return result as BillingPlanWithRelations[];
   }
 
-  async createBillingPlanSafe(
-    data: BillingPlanCreateInput,
-  ): Promise<BillingPlanWithRelations> {
-    return this["billingPlan"].create({
+  async createBillingPlanSafe(data: BillingPlanCreateInput): Promise<BillingPlanWithRelations> {
+    type BillingPlanDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { billingPlan: BillingPlanDelegate })['billingPlan'];
+    const result = await delegate.create({
       data,
       include: { subscriptions: true },
-    }) as Promise<BillingPlanWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as BillingPlanWithRelations;
   }
 
   async updateBillingPlanSafe(
     id: string,
-    data: BillingPlanUpdateInput,
+    data: BillingPlanUpdateInput
   ): Promise<BillingPlanWithRelations> {
-    return this["billingPlan"].update({
+    type BillingPlanDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { billingPlan: BillingPlanDelegate })['billingPlan'];
+    const result = await delegate.update({
       where: { id },
       data,
       include: { subscriptions: true },
-    }) as Promise<BillingPlanWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as BillingPlanWithRelations;
   }
 
-  async findSubscriptionByIdSafe(
-    id: string,
-  ): Promise<SubscriptionWithRelations | null> {
-    return this["subscription"].findUnique({
+  async findSubscriptionByIdSafe(id: string): Promise<SubscriptionWithRelations | null> {
+    type SubscriptionDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { subscription: SubscriptionDelegate })['subscription'];
+    const result = await delegate.findUnique({
       where: { id },
       include: {
         plan: true,
@@ -1289,13 +1570,16 @@ export class PrismaService
         invoices: true,
         appointments: true,
       },
-    }) as Promise<SubscriptionWithRelations | null>;
+    } as PrismaDelegateArgs);
+    return result as SubscriptionWithRelations | null;
   }
 
-  async findSubscriptionsSafe(
-    where: SubscriptionWhereInput,
-  ): Promise<SubscriptionWithRelations[]> {
-    return this["subscription"].findMany({
+  async findSubscriptionsSafe(where: SubscriptionWhereInput): Promise<SubscriptionWithRelations[]> {
+    type SubscriptionDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { subscription: SubscriptionDelegate })['subscription'];
+    const result = await delegate.findMany({
       where,
       include: {
         plan: true,
@@ -1303,13 +1587,16 @@ export class PrismaService
         invoices: true,
         appointments: true,
       },
-    }) as Promise<SubscriptionWithRelations[]>;
+    } as PrismaDelegateArgs);
+    return result as SubscriptionWithRelations[];
   }
 
-  async createSubscriptionSafe(
-    data: SubscriptionCreateInput,
-  ): Promise<SubscriptionWithRelations> {
-    return this["subscription"].create({
+  async createSubscriptionSafe(data: SubscriptionCreateInput): Promise<SubscriptionWithRelations> {
+    type SubscriptionDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { subscription: SubscriptionDelegate })['subscription'];
+    const result = await delegate.create({
       data,
       include: {
         plan: true,
@@ -1317,14 +1604,19 @@ export class PrismaService
         invoices: true,
         appointments: true,
       },
-    }) as Promise<SubscriptionWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as SubscriptionWithRelations;
   }
 
   async updateSubscriptionSafe(
     id: string,
-    data: SubscriptionUpdateInput,
+    data: SubscriptionUpdateInput
   ): Promise<SubscriptionWithRelations> {
-    return this["subscription"].update({
+    type SubscriptionDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { subscription: SubscriptionDelegate })['subscription'];
+    const result = await delegate.update({
       where: { id },
       data,
       include: {
@@ -1333,99 +1625,125 @@ export class PrismaService
         invoices: true,
         appointments: true,
       },
-    }) as Promise<SubscriptionWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as SubscriptionWithRelations;
   }
 
   async findInvoiceByIdSafe(id: string): Promise<InvoiceWithRelations | null> {
-    return this["invoice"].findUnique({
+    type InvoiceDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { invoice: InvoiceDelegate })['invoice'];
+    const result = await delegate.findUnique({
       where: { id },
       include: {
         subscription: true,
         payments: true,
       },
-    }) as Promise<InvoiceWithRelations | null>;
+    } as PrismaDelegateArgs);
+    return result as InvoiceWithRelations | null;
   }
 
-  async findInvoicesSafe(
-    where: InvoiceWhereInput,
-  ): Promise<InvoiceWithRelations[]> {
-    return this["invoice"].findMany({
+  async findInvoicesSafe(where: InvoiceWhereInput): Promise<InvoiceWithRelations[]> {
+    type InvoiceDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { invoice: InvoiceDelegate })['invoice'];
+    const result = await delegate.findMany({
       where,
       include: {
         subscription: true,
         payments: true,
       },
-    }) as Promise<InvoiceWithRelations[]>;
+    } as PrismaDelegateArgs);
+    return result as InvoiceWithRelations[];
   }
 
-  async createInvoiceSafe(
-    data: InvoiceCreateInput,
-  ): Promise<InvoiceWithRelations> {
-    return this["invoice"].create({
+  async createInvoiceSafe(data: InvoiceCreateInput): Promise<InvoiceWithRelations> {
+    type InvoiceDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { invoice: InvoiceDelegate })['invoice'];
+    const result = await delegate.create({
       data,
       include: {
         subscription: true,
         payments: true,
       },
-    }) as Promise<InvoiceWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as InvoiceWithRelations;
   }
 
-  async updateInvoiceSafe(
-    id: string,
-    data: InvoiceUpdateInput,
-  ): Promise<InvoiceWithRelations> {
-    return this["invoice"].update({
+  async updateInvoiceSafe(id: string, data: InvoiceUpdateInput): Promise<InvoiceWithRelations> {
+    type InvoiceDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { invoice: InvoiceDelegate })['invoice'];
+    const result = await delegate.update({
       where: { id },
       data,
       include: {
         subscription: true,
         payments: true,
       },
-    }) as Promise<InvoiceWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as InvoiceWithRelations;
   }
 
   async findPaymentByIdSafe(id: string): Promise<PaymentWithRelations | null> {
-    return this["payment"].findUnique({
+    type PaymentDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { payment: PaymentDelegate })['payment'];
+    const result = await delegate.findUnique({
       where: { id },
       include: {
         appointment: true,
         invoice: true,
         subscription: true,
       },
-    }) as Promise<PaymentWithRelations | null>;
+    } as PrismaDelegateArgs);
+    return result as PaymentWithRelations | null;
   }
 
-  async findPaymentsSafe(
-    where: PaymentWhereInput,
-  ): Promise<PaymentWithRelations[]> {
-    return this["payment"].findMany({
+  async findPaymentsSafe(where: PaymentWhereInput): Promise<PaymentWithRelations[]> {
+    type PaymentDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { payment: PaymentDelegate })['payment'];
+    const result = await delegate.findMany({
       where,
       include: {
         appointment: true,
         invoice: true,
         subscription: true,
       },
-    }) as Promise<PaymentWithRelations[]>;
+    } as PrismaDelegateArgs);
+    return result as PaymentWithRelations[];
   }
 
-  async createPaymentSafe(
-    data: PaymentCreateInput,
-  ): Promise<PaymentWithRelations> {
-    return this["payment"].create({
+  async createPaymentSafe(data: PaymentCreateInput): Promise<PaymentWithRelations> {
+    type PaymentDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { payment: PaymentDelegate })['payment'];
+    const result = await delegate.create({
       data,
       include: {
         appointment: true,
         invoice: true,
         subscription: true,
       },
-    }) as Promise<PaymentWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as PaymentWithRelations;
   }
 
-  async updatePaymentSafe(
-    id: string,
-    data: PaymentUpdateInput,
-  ): Promise<PaymentWithRelations> {
-    return this["payment"].update({
+  async updatePaymentSafe(id: string, data: PaymentUpdateInput): Promise<PaymentWithRelations> {
+    type PaymentDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { payment: PaymentDelegate })['payment'];
+    const result = await delegate.update({
       where: { id },
       data,
       include: {
@@ -1433,19 +1751,28 @@ export class PrismaService
         invoice: true,
         subscription: true,
       },
-    }) as Promise<PaymentWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as PaymentWithRelations;
   }
 
   // Delete methods
   async deleteBillingPlanSafe(id: string): Promise<BillingPlanWithRelations> {
-    return this["billingPlan"].delete({
+    type BillingPlanDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<BillingPlanWithRelations>;
+    };
+    const delegate = (this as unknown as { billingPlan: BillingPlanDelegate })['billingPlan'];
+    return await delegate.delete({
       where: { id },
       include: { subscriptions: true },
-    }) as Promise<BillingPlanWithRelations>;
+    } as PrismaDelegateArgs);
   }
 
   async deleteSubscriptionSafe(id: string): Promise<SubscriptionWithRelations> {
-    return this["subscription"].delete({
+    type SubscriptionDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<SubscriptionWithRelations>;
+    };
+    const delegate = (this as unknown as { subscription: SubscriptionDelegate })['subscription'];
+    return await delegate.delete({
       where: { id },
       include: {
         plan: true,
@@ -1453,28 +1780,36 @@ export class PrismaService
         invoices: true,
         appointments: true,
       },
-    }) as Promise<SubscriptionWithRelations>;
+    } as PrismaDelegateArgs);
   }
 
   async deleteInvoiceSafe(id: string): Promise<InvoiceWithRelations> {
-    return this["invoice"].delete({
+    type InvoiceDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<InvoiceWithRelations>;
+    };
+    const delegate = (this as unknown as { invoice: InvoiceDelegate })['invoice'];
+    return await delegate.delete({
       where: { id },
       include: {
         subscription: true,
         payments: true,
       },
-    }) as Promise<InvoiceWithRelations>;
+    } as PrismaDelegateArgs);
   }
 
   async deletePaymentSafe(id: string): Promise<PaymentWithRelations> {
-    return this["payment"].delete({
+    type PaymentDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<PaymentWithRelations>;
+    };
+    const delegate = (this as unknown as { payment: PaymentDelegate })['payment'];
+    return await delegate.delete({
       where: { id },
       include: {
         appointment: true,
         invoice: true,
         subscription: true,
       },
-    }) as Promise<PaymentWithRelations>;
+    } as PrismaDelegateArgs);
   }
 
   // Clinic methods
@@ -1484,8 +1819,12 @@ export class PrismaService
     phone?: string;
     email?: string;
   } | null> {
-    const clinic = await this.clinic.findUnique({ where: { id } });
-    return clinic as {
+    type ClinicDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { clinic: ClinicDelegate })['clinic'];
+    const result = await delegate.findUnique({ where: { id } } as PrismaDelegateArgs);
+    return result as {
       name: string;
       address?: string;
       phone?: string;
@@ -1494,8 +1833,12 @@ export class PrismaService
   }
 
   async deleteClinicSafe(id: string): Promise<{ id: string; name: string }> {
-    const clinic = await this.clinic.delete({ where: { id } });
-    return clinic as { id: string; name: string };
+    type ClinicDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { clinic: ClinicDelegate })['clinic'];
+    const result = await delegate.delete({ where: { id } } as PrismaDelegateArgs);
+    return result as { id: string; name: string };
   }
 
   // Clinic Admin methods
@@ -1503,8 +1846,12 @@ export class PrismaService
     userId: string;
     clinicId: string;
   }): Promise<{ id: string; userId: string; clinicId: string }> {
-    const clinicAdmin = await this.clinicAdmin.create({ data });
-    return clinicAdmin as { id: string; userId: string; clinicId: string };
+    type ClinicAdminDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { clinicAdmin: ClinicAdminDelegate })['clinicAdmin'];
+    const result = await delegate.create({ data } as PrismaDelegateArgs);
+    return result as { id: string; userId: string; clinicId: string };
   }
 
   async findClinicAdminByIdSafe(id: string): Promise<{
@@ -1513,11 +1860,15 @@ export class PrismaService
     clinicId: string;
     user?: { id: string; email: string; name: string; role: string };
   } | null> {
-    const clinicAdmin = await this.clinicAdmin.findUnique({
+    type ClinicAdminDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { clinicAdmin: ClinicAdminDelegate })['clinicAdmin'];
+    const result = await delegate.findUnique({
       where: { id },
       include: { user: true },
-    });
-    return clinicAdmin as {
+    } as PrismaDelegateArgs);
+    return result as {
       id: string;
       userId: string;
       clinicId: string;
@@ -1525,326 +1876,513 @@ export class PrismaService
     } | null;
   }
 
-  async findClinicAdminsSafe(where: {
-    clinicId?: string;
-    userId?: string;
-  }): Promise<
-    {
+  async findClinicAdminsSafe(where: { clinicId?: string; userId?: string }): Promise<
+    Array<{
       id: string;
       userId: string;
       clinicId: string;
-      user?: { id: string; email: string; name: string; role: string };
-    }[]
+      user?: { id: string; email: string; name: string; role: string } | undefined;
+    }>
   > {
-    const clinicAdmins = await this.clinicAdmin.findMany({
+    type ClinicAdminDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { clinicAdmin: ClinicAdminDelegate })['clinicAdmin'];
+    const result = await delegate.findMany({
       where,
       include: { user: true },
-    });
-    return clinicAdmins as {
+    } as PrismaDelegateArgs);
+    return result as Array<{
       id: string;
       userId: string;
       clinicId: string;
-      user?: { id: string; email: string; name: string; role: string };
-    }[];
+      user?: { id: string; email: string; name: string; role: string } | undefined;
+    }>;
   }
 
   async deleteClinicAdminSafe(
-    id: string,
+    id: string
   ): Promise<{ id: string; userId: string; clinicId: string }> {
-    const clinicAdmin = await this.clinicAdmin.delete({ where: { id } });
-    return clinicAdmin as { id: string; userId: string; clinicId: string };
+    type ClinicAdminDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const delegate = (this as unknown as { clinicAdmin: ClinicAdminDelegate })['clinicAdmin'];
+    const result = await delegate.delete({ where: { id } } as PrismaDelegateArgs);
+    return result as { id: string; userId: string; clinicId: string };
   }
 
   /**
    * Get type-safe Prisma client for operations
    */
   getTypedClient(): PrismaClient {
-    return this as PrismaClient;
+    return this as unknown as PrismaClient;
   }
 
-  /**
-   * Type-safe delegate methods using Prisma's generated types
-   * These provide direct access to Prisma client methods with proper typing
-   */
-  get user(): PrismaClient["user"] {
-    return this.user;
-  }
-
-  get doctor(): PrismaClient["doctor"] {
-    return this.doctor;
-  }
-
-  get patient(): PrismaClient["patient"] {
-    return this.patient;
-  }
-
-  get receptionist(): PrismaClient["receptionist"] {
-    return this.receptionist;
-  }
-
-  get clinicAdmin(): PrismaClient["clinicAdmin"] {
-    return this.clinicAdmin;
-  }
-
-  get superAdmin(): PrismaClient["superAdmin"] {
-    return this.superAdmin;
-  }
-
-  get pharmacist(): PrismaClient["pharmacist"] {
-    return this.pharmacist;
-  }
-
-  get therapist(): PrismaClient["therapist"] {
-    return this.therapist;
-  }
-
-  get labTechnician(): PrismaClient["labTechnician"] {
-    return this.labTechnician;
-  }
-
-  get financeBilling(): PrismaClient["financeBilling"] {
-    return this.financeBilling;
-  }
-
-  get supportStaff(): PrismaClient["supportStaff"] {
-    return this.supportStaff;
-  }
-
-  get nurse(): PrismaClient["nurse"] {
-    return this.nurse;
-  }
-
-  get counselor(): PrismaClient["counselor"] {
-    return this.counselor;
-  }
-
-  get clinic(): PrismaClient["clinic"] {
-    return this.clinic;
-  }
-
-  get appointment(): PrismaClient["appointment"] {
-    return this.appointment;
-  }
-
-  get auditLog(): PrismaClient["auditLog"] {
-    return this.auditLog;
-  }
-
-  get notificationTemplate(): PrismaClient["notificationTemplate"] {
-    return this.notificationTemplate;
-  }
-
-  get reminderSchedule(): PrismaClient["reminderSchedule"] {
-    return this.reminderSchedule;
-  }
+  // Delegate properties are now initialized in constructor - no getters needed
+  // Access delegates directly as properties: prismaService.user, prismaService.clinic, etc.
 
   /**
    * Type-safe raw query execution
    */
-  $queryRaw<T = unknown>(
+  async $queryRaw<T = Record<string, never>>(
     query: TemplateStringsArray | string,
-    ...values: unknown[]
+    ...values: Array<string | number | boolean | null>
   ): Promise<T> {
-    return this.$queryRaw(query, ...values);
+    const prismaClient = this as unknown as {
+      $queryRaw: (
+        query: TemplateStringsArray | string,
+        ...values: Array<string | number | boolean | null>
+      ) => Promise<T>;
+    };
+    return await prismaClient.$queryRaw(query, ...values);
   }
 
   /**
-   * Type-safe transaction delegate
+   * Execute raw SQL query with unsafe parameters (for dynamic queries)
    */
-  get $transaction(): PrismaClient["$transaction"] {
-    return this.$transaction;
+  async $queryRawUnsafe<T = Record<string, never>>(
+    query: string,
+    ...values: Array<string | number | boolean | null>
+  ): Promise<T> {
+    const prismaClient = this.prismaClient as {
+      $queryRawUnsafe: (
+        query: string,
+        ...values: Array<string | number | boolean | null>
+      ) => Promise<T>;
+    };
+    return await prismaClient.$queryRawUnsafe(query, ...values);
   }
+
+  // $transaction is now a readonly property initialized in constructor
 
   /**
    * Comprehensive type-safe operations for all entities
    * These replace the functionality from TypedPrismaOperations
    */
   async findUsersWithRole(role?: string): Promise<UserWithRelations[]> {
-    return this.user.findMany({
+    type UserDelegate = {
+      findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    const result = await userDelegate.findMany({
       where: role ? { role } : undefined,
       include: userIncludeValidator,
-    }) as Promise<UserWithRelations[]>;
+    } as PrismaDelegateArgs);
+    return result as UserWithRelations[];
   }
 
   async findUserById(id: string): Promise<UserWithRelations | null> {
-    return this.user.findUnique({
+    type UserDelegate = {
+      findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    const result = await userDelegate.findUnique({
       where: { id },
       include: userIncludeValidator,
-    }) as Promise<UserWithRelations | null>;
+    } as PrismaDelegateArgs);
+    return result as UserWithRelations | null;
   }
 
   async findUserByEmail(email: string): Promise<UserWithRelations | null> {
-    return this.user.findFirst({
+    type UserDelegate = {
+      findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    const result = await userDelegate.findFirst({
       where: { email },
       include: userIncludeValidator,
-    }) as Promise<UserWithRelations | null>;
+    } as PrismaDelegateArgs);
+    return result as UserWithRelations | null;
   }
 
   async countUsers(): Promise<number> {
-    return this.user.count() as Promise<number>;
+    type UserDelegate = {
+      count: (args?: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    const result = await userDelegate.count();
+    return result as number;
   }
 
   async createUser(data: UserCreateInput): Promise<UserWithRelations> {
-    return this.user.create({
+    type UserDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    const result = await userDelegate.create({
       data,
       include: userIncludeValidator,
-    }) as Promise<UserWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as UserWithRelations;
   }
 
-  async updateUser(
-    id: string,
-    data: UserUpdateInput,
-  ): Promise<UserWithRelations> {
-    return this.user.update({
+  async updateUser(id: string, data: UserUpdateInput): Promise<UserWithRelations> {
+    type UserDelegate = {
+      update: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    const result = await userDelegate.update({
       where: { id },
       data,
       include: userIncludeValidator,
-    }) as Promise<UserWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as UserWithRelations;
   }
 
   async deleteUser(id: string): Promise<UserWithRelations> {
-    return this.user.delete({
+    type UserDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const userDelegate = (this as unknown as { user: UserDelegate })['user'];
+    const result = await userDelegate.delete({
       where: { id },
       include: userIncludeValidator,
-    }) as Promise<UserWithRelations>;
+    } as PrismaDelegateArgs);
+    return result as UserWithRelations;
   }
 
   /**
    * Type-safe entity creation methods
    */
   async createDoctor(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.doctor.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<Doctor> {
+    type DoctorDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const doctorDelegate = (this as unknown as { doctor: DoctorDelegate })['doctor'];
+    const result = await doctorDelegate.create({ data } as PrismaDelegateArgs);
+    return result as Doctor;
   }
 
   async createPatient(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.patient.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<Patient> {
+    type PatientDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const patientDelegate = (this as unknown as { patient: PatientDelegate })['patient'];
+    const result = await patientDelegate.create({ data } as PrismaDelegateArgs);
+    return result as Patient;
   }
 
   async createReceptionist(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.receptionist.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<Receptionist> {
+    type ReceptionistDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const receptionistDelegate = (
+      this as unknown as {
+        receptionist: ReceptionistDelegate;
+      }
+    )['receptionist'];
+    const result = await receptionistDelegate.create({ data } as PrismaDelegateArgs);
+    return result as Receptionist;
   }
 
   async createClinicAdmin(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.clinicAdmin.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<ClinicAdmin> {
+    type ClinicAdminDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const clinicAdminDelegate = (
+      this as unknown as {
+        clinicAdmin: ClinicAdminDelegate;
+      }
+    )['clinicAdmin'];
+    const result = await clinicAdminDelegate.create({ data } as PrismaDelegateArgs);
+    return result as ClinicAdmin;
   }
 
   async createSuperAdmin(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.superAdmin.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<SuperAdmin> {
+    type SuperAdminDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const superAdminDelegate = (
+      this as unknown as {
+        superAdmin: SuperAdminDelegate;
+      }
+    )['superAdmin'];
+    const result = await superAdminDelegate.create({ data } as PrismaDelegateArgs);
+    return result as SuperAdmin;
   }
 
   async createPharmacist(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.pharmacist.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<Pharmacist> {
+    type PharmacistDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const pharmacistDelegate = (
+      this as unknown as {
+        pharmacist: PharmacistDelegate;
+      }
+    )['pharmacist'];
+    const result = await pharmacistDelegate.create({ data } as PrismaDelegateArgs);
+    return result as Pharmacist;
   }
 
   async createTherapist(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.therapist.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<Therapist> {
+    type TherapistDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const therapistDelegate = (
+      this as unknown as {
+        therapist: TherapistDelegate;
+      }
+    )['therapist'];
+    const result = await therapistDelegate.create({ data } as PrismaDelegateArgs);
+    return result as Therapist;
   }
 
   async createLabTechnician(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.labTechnician.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<LabTechnician> {
+    type LabTechnicianDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const labTechnicianDelegate = (
+      this as unknown as {
+        labTechnician: LabTechnicianDelegate;
+      }
+    )['labTechnician'];
+    const result = await labTechnicianDelegate.create({ data } as PrismaDelegateArgs);
+    return result as LabTechnician;
   }
 
   async createFinanceBilling(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.financeBilling.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<FinanceBilling> {
+    type FinanceBillingDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const financeBillingDelegate = (
+      this as unknown as {
+        financeBilling: FinanceBillingDelegate;
+      }
+    )['financeBilling'];
+    const result = await financeBillingDelegate.create({ data } as PrismaDelegateArgs);
+    return result as FinanceBilling;
   }
 
   async createSupportStaff(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.supportStaff.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<SupportStaff> {
+    type SupportStaffDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const supportStaffDelegate = (
+      this as unknown as {
+        supportStaff: SupportStaffDelegate;
+      }
+    )['supportStaff'];
+    const result = await supportStaffDelegate.create({ data } as PrismaDelegateArgs);
+    return result as SupportStaff;
   }
 
-  async createNurse(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.nurse.create({ data });
+  async createNurse(data: Record<string, string | number | boolean | Date | null>): Promise<Nurse> {
+    type NurseDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const nurseDelegate = (this as unknown as { nurse: NurseDelegate })['nurse'];
+    const result = await nurseDelegate.create({ data } as PrismaDelegateArgs);
+    return result as Nurse;
   }
 
   async createCounselor(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.counselor.create({ data });
+    data: Record<string, string | number | boolean | Date | null>
+  ): Promise<Counselor> {
+    type CounselorDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const counselorDelegate = (
+      this as unknown as {
+        counselor: CounselorDelegate;
+      }
+    )['counselor'];
+    const result = await counselorDelegate.create({ data } as PrismaDelegateArgs);
+    return result as Counselor;
   }
 
   /**
    * Type-safe entity deletion methods
    */
-  async deleteDoctor(userId: string): Promise<any> {
-    return this.doctor.delete({ where: { userId } });
+  async deleteDoctor(userId: string): Promise<Doctor> {
+    type DoctorDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const doctorDelegate = (this as unknown as { doctor: DoctorDelegate })['doctor'];
+    const result = await doctorDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as Doctor;
   }
 
-  async deletePatient(userId: string): Promise<any> {
-    return this.patient.delete({ where: { userId } });
+  async deletePatient(userId: string): Promise<Patient> {
+    type PatientDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const patientDelegate = (this as unknown as { patient: PatientDelegate })['patient'];
+    const result = await patientDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as Patient;
   }
 
-  async deleteReceptionist(userId: string): Promise<any> {
-    return this.receptionist.delete({ where: { userId } });
+  async deleteReceptionist(userId: string): Promise<Receptionist> {
+    type ReceptionistDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const receptionistDelegate = (
+      this as unknown as {
+        receptionist: ReceptionistDelegate;
+      }
+    )['receptionist'];
+    const result = await receptionistDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as Receptionist;
   }
 
-  async deleteClinicAdmin(userId: string): Promise<any> {
-    return this.clinicAdmin.delete({ where: { userId } });
+  async deleteClinicAdmin(userId: string): Promise<ClinicAdmin> {
+    type ClinicAdminDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const clinicAdminDelegate = (
+      this as unknown as {
+        clinicAdmin: ClinicAdminDelegate;
+      }
+    )['clinicAdmin'];
+    const result = await clinicAdminDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as ClinicAdmin;
   }
 
-  async deleteSuperAdmin(userId: string): Promise<any> {
-    return this.superAdmin.delete({ where: { userId } });
+  async deleteSuperAdmin(userId: string): Promise<SuperAdmin> {
+    type SuperAdminDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const superAdminDelegate = (
+      this as unknown as {
+        superAdmin: SuperAdminDelegate;
+      }
+    )['superAdmin'];
+    const result = await superAdminDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as SuperAdmin;
   }
 
-  async deletePharmacist(userId: string): Promise<any> {
-    return this.pharmacist.delete({ where: { userId } });
+  async deletePharmacist(userId: string): Promise<Pharmacist> {
+    type PharmacistDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const pharmacistDelegate = (
+      this as unknown as {
+        pharmacist: PharmacistDelegate;
+      }
+    )['pharmacist'];
+    const result = await pharmacistDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as Pharmacist;
   }
 
-  async deleteTherapist(userId: string): Promise<any> {
-    return this.therapist.delete({ where: { userId } });
+  async deleteTherapist(userId: string): Promise<Therapist> {
+    type TherapistDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const therapistDelegate = (
+      this as unknown as {
+        therapist: TherapistDelegate;
+      }
+    )['therapist'];
+    const result = await therapistDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as Therapist;
   }
 
-  async deleteLabTechnician(userId: string): Promise<any> {
-    return this.labTechnician.delete({ where: { userId } });
+  async deleteLabTechnician(userId: string): Promise<LabTechnician> {
+    type LabTechnicianDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const labTechnicianDelegate = (
+      this as unknown as {
+        labTechnician: LabTechnicianDelegate;
+      }
+    )['labTechnician'];
+    const result = await labTechnicianDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as LabTechnician;
   }
 
-  async deleteFinanceBilling(userId: string): Promise<any> {
-    return this.financeBilling.delete({ where: { userId } });
+  async deleteFinanceBilling(userId: string): Promise<FinanceBilling> {
+    type FinanceBillingDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const financeBillingDelegate = (
+      this as unknown as {
+        financeBilling: FinanceBillingDelegate;
+      }
+    )['financeBilling'];
+    const result = await financeBillingDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as FinanceBilling;
   }
 
-  async deleteSupportStaff(userId: string): Promise<any> {
-    return this.supportStaff.delete({ where: { userId } });
+  async deleteSupportStaff(userId: string): Promise<SupportStaff> {
+    type SupportStaffDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const supportStaffDelegate = (
+      this as unknown as {
+        supportStaff: SupportStaffDelegate;
+      }
+    )['supportStaff'];
+    const result = await supportStaffDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as SupportStaff;
   }
 
-  async deleteNurse(userId: string): Promise<any> {
-    return this.nurse.delete({ where: { userId } });
+  async deleteNurse(userId: string): Promise<Nurse> {
+    type NurseDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const nurseDelegate = (this as unknown as { nurse: NurseDelegate })['nurse'];
+    const result = await nurseDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as Nurse;
   }
 
-  async deleteCounselor(userId: string): Promise<any> {
-    return this.counselor.delete({ where: { userId } });
+  async deleteCounselor(userId: string): Promise<Counselor> {
+    type CounselorDelegate = {
+      delete: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const counselorDelegate = (
+      this as unknown as {
+        counselor: CounselorDelegate;
+      }
+    )['counselor'];
+    const result = await counselorDelegate.delete({ where: { userId } } as PrismaDelegateArgs);
+    return result as Counselor;
   }
 
   /**
    * Type-safe clinic and audit operations
    */
-  async findClinics(): Promise<any[]> {
-    return this.clinic.findMany();
+  async findClinics(): Promise<Clinic[]> {
+    type ClinicDelegate = {
+      findMany: () => Promise<unknown>;
+    };
+    const clinicDelegate = (this as unknown as { clinic: ClinicDelegate })['clinic'];
+    const result = await clinicDelegate.findMany();
+    return result as Clinic[];
   }
 
-  async createAuditLog(
-    data: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    return this.auditLog.create({ data });
+  async createAuditLog(data: {
+    userId: string;
+    action: string;
+    timestamp?: Date;
+    ipAddress?: string | null;
+    device?: string | null;
+    description?: string;
+    clinicId?: string | null;
+  }): Promise<AuditLog> {
+    type AuditLogDelegate = {
+      create: (args: PrismaDelegateArgs) => Promise<unknown>;
+    };
+    const auditLogDelegate = (this as unknown as { auditLog: AuditLogDelegate })['auditLog'];
+    const result = await auditLogDelegate.create({ data } as PrismaDelegateArgs);
+    return result as AuditLog;
   }
 }

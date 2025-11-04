@@ -9,33 +9,33 @@ export const CACHE_TTL = 3600 as const;
  */
 export const REDIS_PREFIX = {
   /** All users cache key */
-  USERS_ALL: "users:all",
+  USERS_ALL: 'users:all',
   /** Single user cache key */
-  USERS_ONE: "users:one",
+  USERS_ONE: 'users:one',
   /** All clinics cache key */
-  CLINICS_ALL: "clinics:all",
+  CLINICS_ALL: 'clinics:all',
   /** Single clinic cache key */
-  CLINICS_ONE: "clinics:one",
+  CLINICS_ONE: 'clinics:one',
   /** All doctors cache key */
-  DOCTORS_ALL: "doctors:all",
+  DOCTORS_ALL: 'doctors:all',
   /** Single doctor cache key */
-  DOCTORS_ONE: "doctors:one",
+  DOCTORS_ONE: 'doctors:one',
   /** All patients cache key */
-  PATIENTS_ALL: "patients:all",
+  PATIENTS_ALL: 'patients:all',
   /** Single patient cache key */
-  PATIENTS_ONE: "patients:one",
+  PATIENTS_ONE: 'patients:one',
   /** All appointments cache key */
-  APPOINTMENTS_ALL: "appointments:all",
+  APPOINTMENTS_ALL: 'appointments:all',
   /** Single appointment cache key */
-  APPOINTMENTS_ONE: "appointments:one",
+  APPOINTMENTS_ONE: 'appointments:one',
   /** User sessions prefix */
-  SESSIONS: "sessions:",
+  SESSIONS: 'sessions:',
   /** Authentication attempts prefix */
-  AUTH_ATTEMPTS: "auth:attempts:",
+  AUTH_ATTEMPTS: 'auth:attempts:',
   /** Application logs prefix */
-  LOGS: "logs:",
+  LOGS: 'logs:',
   /** System events prefix */
-  EVENTS: "events:",
+  EVENTS: 'events:',
 } as const;
 
 /**
@@ -55,11 +55,11 @@ export const DEFAULT_CONFIG = {
   /** Default port */
   PORT: 8088,
   /** Default API prefix */
-  API_PREFIX: "/api/v1",
+  API_PREFIX: '/api/v1',
   /** Default environment */
-  ENVIRONMENT: "development" as const,
+  ENVIRONMENT: 'development' as const,
   /** Default JWT expiration */
-  JWT_EXPIRATION: "24h",
+  JWT_EXPIRATION: '24h',
   /** Default Redis TTL */
   REDIS_TTL: 3600,
   /** Default rate limit TTL */
@@ -72,21 +72,21 @@ export const DEFAULT_CONFIG = {
  * Environment variable names
  */
 export const ENV_VARS = {
-  NODE_ENV: "NODE_ENV",
-  PORT: "PORT",
-  DATABASE_URL: "DATABASE_URL",
-  REDIS_HOST: "REDIS_HOST",
-  REDIS_PORT: "REDIS_PORT",
-  JWT_SECRET: "JWT_SECRET",
-  JWT_EXPIRATION: "JWT_EXPIRATION",
-  LOG_LEVEL: "LOG_LEVEL",
-  EMAIL_HOST: "EMAIL_HOST",
-  EMAIL_PORT: "EMAIL_PORT",
-  EMAIL_USER: "EMAIL_USER",
-  EMAIL_PASSWORD: "EMAIL_PASSWORD",
-  CORS_ORIGIN: "CORS_ORIGIN",
-  WHATSAPP_ENABLED: "WHATSAPP_ENABLED",
-  WHATSAPP_API_KEY: "WHATSAPP_API_KEY",
+  NODE_ENV: 'NODE_ENV',
+  PORT: 'PORT',
+  DATABASE_URL: 'DATABASE_URL',
+  REDIS_HOST: 'REDIS_HOST',
+  REDIS_PORT: 'REDIS_PORT',
+  JWT_SECRET: 'JWT_SECRET',
+  JWT_EXPIRATION: 'JWT_EXPIRATION',
+  LOG_LEVEL: 'LOG_LEVEL',
+  EMAIL_HOST: 'EMAIL_HOST',
+  EMAIL_PORT: 'EMAIL_PORT',
+  EMAIL_USER: 'EMAIL_USER',
+  EMAIL_PASSWORD: 'EMAIL_PASSWORD',
+  CORS_ORIGIN: 'CORS_ORIGIN',
+  WHATSAPP_ENABLED: 'WHATSAPP_ENABLED',
+  WHATSAPP_API_KEY: 'WHATSAPP_API_KEY',
 } as const;
 
 /**

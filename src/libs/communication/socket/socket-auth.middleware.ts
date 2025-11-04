@@ -5,10 +5,14 @@
  * Extracts user data for automatic room joining
  */
 
-import { Injectable, Logger } from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
-import type { IncomingMessage } from "http";
-import { Socket } from "socket.io";
+import { Injectable } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import type { IncomingMessage } from 'http';
+import { Socket } from 'socket.io';
 
 export interface AuthenticatedUser {
   userId: string;
@@ -56,9 +60,10 @@ interface SocketHandshake {
 
 @Injectable()
 export class SocketAuthMiddleware {
-  private readonly logger = new Logger(SocketAuthMiddleware.name);
-
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly loggingService: LoggingService
+  ) {}
 
   /**
    * Validate WebSocket connection with JWT token or session
@@ -70,8 +75,11 @@ export class SocketAuthMiddleware {
       // Try session-based auth first (if available)
       const sessionUser = this.extractFromSession(client);
       if (sessionUser) {
-        this.logger.log(
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.INFO,
           `Client authenticated via session: ${client.id} (User: ${sessionUser.userId})`,
+          'SocketAuthMiddleware'
         );
         return sessionUser;
       }
@@ -80,10 +88,19 @@ export class SocketAuthMiddleware {
       const token = this.extractToken(client);
 
       if (!token) {
-        this.logger.warn(
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.WARN,
           `Connection rejected: No token or session (${client.id})`,
+          'SocketAuthMiddleware'
         );
-        throw new Error("Authentication required - no token or session");
+        throw new HealthcareError(
+          ErrorCode.AUTH_TOKEN_INVALID,
+          'Authentication required - no token or session',
+          undefined,
+          { clientId: client.id },
+          'SocketAuthMiddleware.validateConnection'
+        );
       }
 
       // Verify JWT token
@@ -92,10 +109,19 @@ export class SocketAuthMiddleware {
       // Extract user data from token
       const userId = payload.sub || payload.userId || payload.id;
       if (!userId) {
-        this.logger.warn(
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.WARN,
           `Invalid token payload: Missing userId (${client.id})`,
+          'SocketAuthMiddleware'
         );
-        throw new Error("Invalid token - missing user ID");
+        throw new HealthcareError(
+          ErrorCode.AUTH_TOKEN_INVALID,
+          'Invalid token - missing user ID',
+          undefined,
+          { clientId: client.id },
+          'SocketAuthMiddleware.validateConnection'
+        );
       }
 
       const user: AuthenticatedUser = {
@@ -107,18 +133,33 @@ export class SocketAuthMiddleware {
         ...(payload.lastName && { lastName: payload.lastName }),
       };
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
         `Client authenticated via JWT: ${client.id} (User: ${user.userId}, Role: ${user.role})`,
+        'SocketAuthMiddleware'
       );
 
       return user;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.ERROR,
         `Authentication failed for ${client.id}: ${errorMessage}`,
+        'SocketAuthMiddleware',
+        { clientId: client.id, error: errorMessage }
       );
-      throw new Error(`Authentication failed: ${errorMessage}`);
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.AUTH_TOKEN_INVALID,
+        `Authentication failed: ${errorMessage}`,
+        undefined,
+        { clientId: client.id, originalError: errorMessage },
+        'SocketAuthMiddleware.validateConnection'
+      );
     }
   }
 
@@ -151,10 +192,7 @@ export class SocketAuthMiddleware {
 
   private isSocketSession(request: IncomingMessage): request is SocketSession {
     const potentialSession = request as SocketSession;
-    return (
-      typeof potentialSession.session === "object" &&
-      potentialSession.session !== null
-    );
+    return typeof potentialSession.session === 'object' && potentialSession.session !== null;
   }
 
   /**
@@ -168,16 +206,12 @@ export class SocketAuthMiddleware {
       return authToken;
     }
 
-    const queryToken = this.normalizeTokenValue(
-      handshake.query?.["token"] ?? null,
-    );
+    const queryToken = this.normalizeTokenValue(handshake.query?.['token'] ?? null);
     if (queryToken) {
       return queryToken;
     }
 
-    const headerToken = this.normalizeAuthorizationHeader(
-      handshake.headers?.authorization,
-    );
+    const headerToken = this.normalizeAuthorizationHeader(handshake.headers?.authorization);
     if (headerToken) {
       return headerToken;
     }
@@ -185,18 +219,15 @@ export class SocketAuthMiddleware {
     return null;
   }
 
-  private normalizeTokenValue(
-    value: string | string[] | null | undefined,
-  ): string | null {
-    if (typeof value === "string") {
+  private normalizeTokenValue(value: string | string[] | null | undefined): string | null {
+    if (typeof value === 'string') {
       const trimmedValue = value.trim();
       return trimmedValue.length > 0 ? trimmedValue : null;
     }
 
     if (Array.isArray(value)) {
       const firstToken = value.find(
-        (item): item is string =>
-          typeof item === "string" && item.trim().length > 0,
+        (item): item is string => typeof item === 'string' && item.trim().length > 0
       );
 
       return firstToken ? firstToken.trim() : null;
@@ -205,23 +236,18 @@ export class SocketAuthMiddleware {
     return null;
   }
 
-  private normalizeAuthorizationHeader(
-    value: string | string[] | undefined,
-  ): string | null {
+  private normalizeAuthorizationHeader(value: string | string[] | undefined): string | null {
     if (Array.isArray(value)) {
       const headerToken = value.find(
-        (item): item is string =>
-          typeof item === "string" && item.trim().length > 0,
+        (item): item is string => typeof item === 'string' && item.trim().length > 0
       );
 
-      return headerToken ? headerToken.replace(/^Bearer\s+/i, "").trim() : null;
+      return headerToken ? headerToken.replace(/^Bearer\s+/i, '').trim() : null;
     }
 
-    if (typeof value === "string") {
+    if (typeof value === 'string') {
       const trimmedValue = value.trim();
-      return trimmedValue.length > 0
-        ? trimmedValue.replace(/^Bearer\s+/i, "").trim()
-        : null;
+      return trimmedValue.length > 0 ? trimmedValue.replace(/^Bearer\s+/i, '').trim() : null;
     }
 
     return null;
@@ -234,12 +260,13 @@ export class SocketAuthMiddleware {
     try {
       return await this.validateConnection(client);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-      this.logger.debug(
-        `Optional auth failed for ${client.id}, allowing anonymous connection`,
-        errorMessage,
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.DEBUG,
+        `Optional auth failed for ${client.id}, allowing anonymous connection: ${errorMessage}`,
+        'SocketAuthMiddleware'
       );
       return null;
     }
