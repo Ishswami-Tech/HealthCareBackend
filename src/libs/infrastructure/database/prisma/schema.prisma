@@ -618,17 +618,27 @@ model HealthRecord {
 }
 
 model AuditLog {
-  id          String   @id @default(uuid())
-  userId      String
-  action      String
-  timestamp   DateTime @default(now())
-  ipAddress   String?
-  device      String?
-  description String   @default("")
-  clinicId    String?
-  user        User     @relation(fields: [userId], references: [id])
+  id           String   @id @default(uuid())
+  userId       String
+  action       String
+  timestamp    DateTime @default(now())
+  ipAddress    String?
+  device       String?
+  userAgent    String?
+  description  String   @default("")
+  resourceType String?
+  resourceId   String?
+  metadata     Json?
+  clinicId     String?
+  user         User     @relation(fields: [userId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([clinicId])
+  @@index([resourceType])
+  @@index([resourceId])
+  @@index([userId])
+  @@index([timestamp])
 }
 
 model Review {
@@ -850,6 +860,9 @@ model MedicalHistory {
   userId    String
   clinicId  String?
   condition String
+  diagnosis String?
+  treatment String?
+  doctorId  String?
   notes     String?
   date      DateTime
   createdAt DateTime @default(now())
@@ -857,6 +870,7 @@ model MedicalHistory {
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 model LabReport {
@@ -868,12 +882,16 @@ model LabReport {
   result      String
   unit        String?
   normalRange String?
+  labName     String?
+  doctorId    String?
+  notes       String?
   date        DateTime
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 model RadiologyReport {
@@ -884,12 +902,15 @@ model RadiologyReport {
   imageType  String
   findings   String
   conclusion String
+  doctorId   String?
+  notes      String?
   date       DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 model SurgicalRecord {
@@ -899,6 +920,7 @@ model SurgicalRecord {
   clinicId    String?
   surgeryName String
   surgeon     String
+  doctorId    String?
   notes       String?
   date        DateTime
   createdAt   DateTime @default(now())
@@ -906,6 +928,7 @@ model SurgicalRecord {
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 model MentalHealthNote {
@@ -930,12 +953,16 @@ model Vital {
   clinicId   String?
   type       String
   value      String
+  unit       String?
+  doctorId   String?
+  notes      String?
   recordedAt DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 
@@ -996,12 +1023,14 @@ model Immunization {
   batchNumber      String?
   administrator    String?
   location         String?
+  doctorId         String?
   notes            String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 model Allergy {
@@ -1013,32 +1042,39 @@ model Allergy {
   severity      String // Mild, Moderate, Severe
   reaction      String
   diagnosedDate DateTime
+  doctorId      String?
   notes         String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 model FamilyHistory {
   id           String   @id @default(uuid())
   user         User     @relation(fields: [userId], references: [id])
   userId       String
+  clinicId     String?
   relation     String // Father, Mother, Sibling, etc.
   condition    String
   diagnosedAge Int?
+  doctorId     String?
   notes        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
 }
 
 model LifestyleAssessment {
   id         String   @id @default(uuid())
   user       User     @relation(fields: [userId], references: [id])
   userId     String
+  clinicId   String?
   diet       String?
   exercise   String?
   smoking    String? // Never, Former, Current
@@ -1046,10 +1082,14 @@ model LifestyleAssessment {
   sleep      String?
   stress     String?
   occupation String?
+  doctorId   String?
+  notes      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
 }
 
 model EmergencyContact {
@@ -1100,12 +1140,15 @@ model Medication {
   prescribedBy String
   purpose      String?
   sideEffects  String?
+  doctorId     String?
+  notes        String?
   isActive     Boolean   @default(true)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   @@index([userId])
   @@index([clinicId])
+  @@index([doctorId])
 }
 
 model DietaryRestriction {

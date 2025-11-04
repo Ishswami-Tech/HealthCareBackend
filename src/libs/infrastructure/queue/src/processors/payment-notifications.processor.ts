@@ -1,118 +1,189 @@
-import { Processor, Process } from "@nestjs/bull";
-import { Logger } from "@nestjs/common";
-import { Job } from "bull";
-import { PaymentData } from "../types/queue-job.types";
+import { Processor, Process } from '@nestjs/bull';
+import { Job } from 'bull';
 
-@Processor("payment-notifications")
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Types
+import type { PaymentData } from '@core/types';
+
+// Internal imports - Core
+import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+
+@Processor('payment-notifications')
 export class PaymentNotificationsProcessor {
-  private readonly logger = new Logger(PaymentNotificationsProcessor.name);
+  constructor(private readonly loggingService: LoggingService) {}
 
-  @Process("payment-notification")
+  @Process('payment-notification')
   handlePaymentNotification(
     job: Job<{
       payment: PaymentData;
       status: string;
       timestamp: Date;
-    }>,
+    }>
   ) {
     const { payment, status } = job.data;
 
     try {
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Sending payment notification: ${payment.id} - ${status}`,
+        'PaymentNotificationsProcessor'
       );
 
       // Notification processing logic will integrate with existing communication service
       this.processPaymentNotification(payment, status);
 
-      this.logger.log(`Payment notification sent successfully: ${payment.id}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Payment notification sent successfully: ${payment.id}`,
+        'PaymentNotificationsProcessor'
+      );
     } catch (_error) {
-      this.logger.error(
-        `Payment notification failed for ${payment.id}: ${(_error as Error).message}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Payment notification failed for ${payment.id}: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'PaymentNotificationsProcessor',
+        {
+          paymentId: payment.id,
+          status,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
       throw _error;
     }
   }
 
-  @Process("webhook-notification")
+  @Process('webhook-notification')
   async handleWebhookNotification(
     job: Job<{
       payment: PaymentData;
       status: string;
       webhookUrl: string;
       attempts: number;
-    }>,
+    }>
   ) {
     const { payment, status, webhookUrl, attempts = 0 } = job.data;
 
     try {
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Sending webhook notification: ${payment.id} to ${webhookUrl}, attempt ${attempts + 1}`,
+        'PaymentNotificationsProcessor'
       );
 
       await this.sendWebhookNotification(payment, status, webhookUrl);
 
-      this.logger.log(`Webhook notification sent successfully: ${payment.id}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Webhook notification sent successfully: ${payment.id}`,
+        'PaymentNotificationsProcessor'
+      );
     } catch (_error) {
-      this.logger.error(
-        `Webhook notification failed for ${payment.id}: ${(_error as Error).message}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Webhook notification failed for ${payment.id}: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'PaymentNotificationsProcessor',
+        {
+          paymentId: payment.id,
+          webhookUrl,
+          attempts,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
 
       if (attempts < 3) {
         const delay = Math.pow(2, attempts) * 1000;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await new Promise(resolve => setTimeout(resolve, delay));
         throw _error;
       } else {
-        this.logger.error(
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
           `Webhook notification failed permanently for ${payment.id} after ${attempts + 1} attempts`,
+          'PaymentNotificationsProcessor',
+          {
+            paymentId: payment.id,
+            attempts: attempts + 1,
+          }
         );
       }
     }
   }
 
-  @Process("alert-notification")
+  @Process('alert-notification')
   handleAlertNotification(
     job: Job<{
-      alertType: "security" | "performance" | "system" | "compliance";
-      severity: "low" | "medium" | "high" | "critical";
+      alertType: 'security' | 'performance' | 'system' | 'compliance';
+      severity: 'low' | 'medium' | 'high' | 'critical';
       message: string;
       details: unknown;
-    }>,
+    }>
   ) {
     const { alertType, severity, message, details } = job.data;
 
     try {
-      this.logger.log(`Sending alert notification: ${alertType} - ${severity}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Sending alert notification: ${alertType} - ${severity}`,
+        'PaymentNotificationsProcessor'
+      );
 
       // Alert processing logic
       this.processAlert(alertType, severity, message, details);
 
-      this.logger.log(`Alert notification sent successfully: ${alertType}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Alert notification sent successfully: ${alertType}`,
+        'PaymentNotificationsProcessor'
+      );
     } catch (_error) {
-      this.logger.error(
-        `Alert notification failed: ${(_error as Error).message}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Alert notification failed: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'PaymentNotificationsProcessor',
+        {
+          alertType,
+          severity,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
       throw _error;
     }
   }
 
-  private processPaymentNotification(
-    payment: PaymentData,
-    status: string,
-  ): void {
+  private processPaymentNotification(payment: PaymentData, status: string): void {
     // Integrate with existing communication service
-    this.logger.debug(
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.DEBUG,
       `Processing payment notification for ${payment.id} with status ${status}`,
+      'PaymentNotificationsProcessor',
+      {
+        paymentId: payment.id,
+        status,
+      }
     );
   }
 
   private async sendWebhookNotification(
     payment: PaymentData,
     status: string,
-    webhookUrl: string,
+    webhookUrl: string
   ): Promise<void> {
     const payload = {
-      event: "payment.status.updated",
+      event: 'payment.status.updated',
       payment: {
         id: payment.id,
         status,
@@ -127,17 +198,25 @@ export class PaymentNotificationsProcessor {
     };
 
     const response = await fetch(webhookUrl, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "HealthCare-Payment-Webhook/1.0",
+        'Content-Type': 'application/json',
+        'User-Agent': 'HealthCare-Payment-Webhook/1.0',
       },
       body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
-      throw new Error(
+      throw new HealthcareError(
+        ErrorCode.EXTERNAL_SERVICE_INVALID_RESPONSE,
         `Webhook failed with status ${response.status}: ${response.statusText}`,
+        undefined,
+        {
+          webhookUrl,
+          status: response.status,
+          statusText: response.statusText,
+        },
+        'PaymentNotificationsProcessor.sendWebhookNotification'
       );
     }
   }
@@ -146,11 +225,19 @@ export class PaymentNotificationsProcessor {
     alertType: string,
     severity: string,
     message: string,
-    _details: unknown,
+    _details: unknown
   ): void {
     // Integrate with existing alerting infrastructure
-    this.logger.debug(
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.DEBUG,
       `Processing alert: ${alertType} - ${severity}: ${message}`,
+      'PaymentNotificationsProcessor',
+      {
+        alertType,
+        severity,
+        message,
+      }
     );
   }
 }

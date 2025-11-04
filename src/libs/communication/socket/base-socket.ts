@@ -8,14 +8,18 @@ import {
   MessageBody,
   ConnectedSocket,
   WsResponse,
-} from "@nestjs/websockets";
-import { Logger, Injectable, Inject, Optional } from "@nestjs/common";
-import { Server, Socket } from "socket.io";
-import { SocketService, type SocketEventData } from "./socket.service";
+} from '@nestjs/websockets';
+import { Injectable, Inject, Optional } from '@nestjs/common';
+import { Server, Socket } from 'socket.io';
+import { SocketService, type SocketEventData } from '@communication/socket/socket.service';
 import {
   SocketAuthMiddleware,
   type AuthenticatedUser,
-} from "./socket-auth.middleware";
+} from '@communication/socket/socket-auth.middleware';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 interface ConnectionSuccessData {
   clientId: string;
@@ -48,27 +52,19 @@ type RoomEventData = RoomSuccessData | RoomErrorData;
 @Injectable()
 @WebSocketGateway({
   cors: {
-    origin: "*",
+    origin: '*',
   },
-  transports: ["websocket", "polling"],
+  transports: ['websocket', 'polling'],
   pingInterval: 25000,
   pingTimeout: 60000,
 })
-export class BaseSocket
-  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
-{
+export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer()
   protected server!: Server;
 
-  protected logger: Logger;
-  protected readonly roomsByClient: Map<string, Set<string>> = new Map<
-    string,
-    Set<string>
-  >();
-  protected readonly clientsByRoom: Map<string, Set<string>> = new Map<
-    string,
-    Set<string>
-  >();
+  protected readonly serviceName: string;
+  protected readonly roomsByClient: Map<string, Set<string>> = new Map<string, Set<string>>();
+  protected readonly clientsByRoom: Map<string, Set<string>> = new Map<string, Set<string>>();
   private readonly reconnectAttempts: Map<string, number> = new Map();
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly RECONNECT_INTERVAL = 5000; // 5 seconds
@@ -77,24 +73,41 @@ export class BaseSocket
   private readonly MAX_INITIALIZATION_ATTEMPTS = 3;
 
   constructor(
-    @Inject("SOCKET_SERVICE")
+    @Inject('SOCKET_SERVICE')
     @Optional()
     protected readonly socketService: SocketService,
-    protected readonly serviceName: string,
-    @Inject("SOCKET_AUTH_MIDDLEWARE")
+    protected readonly providedServiceName: string,
+    @Inject('SOCKET_AUTH_MIDDLEWARE')
     @Optional()
-    protected readonly authMiddleware?: SocketAuthMiddleware,
+    protected readonly authMiddleware: SocketAuthMiddleware | undefined,
+    private readonly loggingService: LoggingService
   ) {
-    this.logger = new Logger(serviceName || "BaseSocket");
+    this.serviceName = providedServiceName || 'BaseSocket';
   }
 
   async afterInit(server: Server): Promise<void> {
     try {
-      this.logger.log("Initializing WebSocket server...");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Initializing WebSocket server...',
+        this.serviceName
+      );
 
       if (!server) {
-        this.logger.error("WebSocket server instance not provided");
-        throw new Error("WebSocket server instance not provided");
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          'WebSocket server instance not provided',
+          this.serviceName
+        );
+        throw new HealthcareError(
+          ErrorCode.SERVICE_UNAVAILABLE,
+          'WebSocket server instance not provided',
+          undefined,
+          {},
+          'BaseSocket.afterInit'
+        );
       }
 
       this.server = server;
@@ -104,27 +117,31 @@ export class BaseSocket
         this.server.engine.opts.pingTimeout = 60000;
         this.server.engine.opts.pingInterval = 25000;
         this.server.engine.opts.maxHttpBufferSize = 1e8;
-        this.server.engine.opts.transports = ["websocket", "polling"];
+        this.server.engine.opts.transports = ['websocket', 'polling'];
       }
 
       // Set up error handling for the server
-      this.server.on("error", (error: Error) => {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        const errorStack = error instanceof Error ? error.stack || "" : "";
-        this.logger.error(
+      this.server.on('error', (error: Error) => {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack || '' : '';
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
           `Socket.IO server error: ${errorMessage}`,
-          errorStack,
+          this.serviceName,
+          { stack: errorStack }
         );
       });
 
-      this.server.on("connection_error", (error: Error) => {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        const errorStack = error instanceof Error ? error.stack || "" : "";
-        this.logger.error(
+      this.server.on('connection_error', (error: Error) => {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack || '' : '';
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
           `Socket.IO connection error: ${errorMessage}`,
-          errorStack,
+          this.serviceName,
+          { stack: errorStack }
         );
       });
 
@@ -132,22 +149,35 @@ export class BaseSocket
       if (this.socketService) {
         await this.initializeSocketService();
       } else {
-        this.logger.warn(
-          "SocketService is not available, continuing with limited functionality",
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'SocketService is not available, continuing with limited functionality',
+          this.serviceName
         );
       }
 
-      this.logger.log("WebSocket server initialized successfully");
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      const errorStack = error instanceof Error ? error.stack || "" : "";
-      this.logger.error(
-        `Failed to initialize WebSocket server: ${errorMessage}`,
-        errorStack,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WebSocket server initialized successfully',
+        this.serviceName
       );
-      this.logger.warn(
-        "Continuing with limited functionality due to initialization failure",
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack || '' : '';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to initialize WebSocket server: ${errorMessage}`,
+        this.serviceName,
+        { stack: errorStack }
+      );
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Continuing with limited functionality due to initialization failure',
+        this.serviceName
       );
     }
   }
@@ -156,35 +186,46 @@ export class BaseSocket
     while (this.initializationAttempts < this.MAX_INITIALIZATION_ATTEMPTS) {
       try {
         this.socketService.setServer(this.server);
-        this.logger.log("SocketService initialized successfully");
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'SocketService initialized successfully',
+          this.serviceName
+        );
         return;
       } catch (error) {
         this.initializationAttempts++;
-        this.logger.warn(
-          `Failed to initialize SocketService (attempt ${this.initializationAttempts}/${this.MAX_INITIALIZATION_ATTEMPTS}):`,
-          error instanceof Error ? error.message : "Unknown error",
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Failed to initialize SocketService (attempt ${this.initializationAttempts}/${this.MAX_INITIALIZATION_ATTEMPTS}): ${error instanceof Error ? error.message : 'Unknown error'}`,
+          this.serviceName
         );
 
         if (this.initializationAttempts < this.MAX_INITIALIZATION_ATTEMPTS) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 1000 * this.initializationAttempts),
-          );
+          await new Promise(resolve => setTimeout(resolve, 1000 * this.initializationAttempts));
         }
       }
     }
 
-    this.logger.warn(
-      "Continuing with limited functionality after failed SocketService initialization attempts",
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      'Continuing with limited functionality after failed SocketService initialization attempts',
+      this.serviceName
     );
   }
 
-  async handleConnection(
-    client: Socket,
-  ): Promise<WsResponse<ConnectionEventData>> {
+  async handleConnection(client: Socket): Promise<WsResponse<ConnectionEventData>> {
     try {
       if (!this.server) {
-        this.logger.error("WebSocket server not initialized");
-        return { event: "error", data: { message: "Server not initialized" } };
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          'WebSocket server not initialized',
+          this.serviceName
+        );
+        return { event: 'error', data: { message: 'Server not initialized' } };
       }
 
       const clientId = client.id;
@@ -201,34 +242,52 @@ export class BaseSocket
           // Auto-join user to appropriate rooms
           await this.autoJoinRooms(client, user);
 
-          this.logger.log(
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
             `Client ${clientId} authenticated and joined rooms (User: ${user.userId}, Role: ${user.role})`,
+            this.serviceName
           );
         } catch (authError) {
-          this.logger.error(
-            `Authentication failed for ${clientId}: ${authError instanceof Error ? authError.message : "Unknown error"}`,
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.ERROR,
+            `Authentication failed for ${clientId}: ${authError instanceof Error ? authError.message : 'Unknown error'}`,
+            this.serviceName
           );
           client.disconnect();
           return {
-            event: "error",
-            data: { message: "Authentication failed" },
+            event: 'error',
+            data: { message: 'Authentication failed' },
           };
         }
       } else {
-        this.logger.log(`Client connected (no auth): ${clientId}`);
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Client connected (no auth): ${clientId}`,
+          this.serviceName
+        );
       }
 
       // Send connection confirmation
       if (this.socketService?.getInitializationState()) {
-        this.socketService.sendToUser(clientId, "connection_confirmed", {
-          status: "connected",
+        this.socketService.sendToUser(clientId, 'connection_confirmed', {
+          status: 'connected',
           authenticated: !!user,
-          user: user ? { userId: user.userId, role: user.role } : null,
+          ...(user
+            ? {
+                user: {
+                  userId: user.userId,
+                  ...(user.role ? { role: user.role } : {}),
+                },
+              }
+            : {}),
         });
       }
 
       return {
-        event: "connected",
+        event: 'connected',
         data: {
           clientId,
           authenticated: !!user,
@@ -241,20 +300,21 @@ export class BaseSocket
         },
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error handling connection: ${errorMessage}`);
-      return { event: "error", data: { message: "Connection error" } };
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error handling connection: ${errorMessage}`,
+        this.serviceName
+      );
+      return { event: 'error', data: { message: 'Connection error' } };
     }
   }
 
   /**
    * Automatically join user to appropriate rooms based on their data
    */
-  protected async autoJoinRooms(
-    client: Socket,
-    user: AuthenticatedUser,
-  ): Promise<void> {
+  protected async autoJoinRooms(client: Socket, user: AuthenticatedUser): Promise<void> {
     try {
       const rooms: string[] = [];
 
@@ -277,14 +337,19 @@ export class BaseSocket
         }
       }
 
-      this.logger.log(
-        `Client ${client.id} auto-joined ${rooms.length} rooms: ${rooms.join(", ")}`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Client ${client.id} auto-joined ${rooms.length} rooms: ${rooms.join(', ')}`,
+        this.serviceName
       );
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Error auto-joining rooms for ${client.id}: ${errorMessage}`,
+        this.serviceName
       );
     }
   }
@@ -292,7 +357,12 @@ export class BaseSocket
   handleDisconnect(client: Socket): void {
     try {
       const clientId = client.id;
-      this.logger.log(`Client disconnected: ${clientId}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Client disconnected: ${clientId}`,
+        this.serviceName
+      );
 
       // Clean up client data
       this.roomsByClient.delete(clientId);
@@ -300,9 +370,7 @@ export class BaseSocket
       this.reconnectAttempts.delete(clientId);
 
       // Remove client from all rooms
-      for (const [roomId, clients] of Array.from(
-        this.clientsByRoom.entries(),
-      )) {
+      for (const [roomId, clients] of Array.from(this.clientsByRoom.entries())) {
         if (clients.has(clientId)) {
           clients.delete(clientId);
           if (clients.size === 0) {
@@ -311,9 +379,13 @@ export class BaseSocket
         }
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error handling disconnection: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error handling disconnection: ${errorMessage}`,
+        this.serviceName
+      );
     }
   }
 
@@ -325,21 +397,31 @@ export class BaseSocket
         this.reconnectAttempts.set(client.id, attempts + 1);
 
         setTimeout(() => {
-          this.logger.log(
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
             `Attempting to reconnect client ${client.id} (attempt ${attempts + 1})`,
+            this.serviceName
           );
           client.disconnect(true);
         }, delay);
       } else {
-        this.logger.error(
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
           `Max reconnection attempts reached for client ${client.id}`,
+          this.serviceName
         );
         client.disconnect();
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error in handleSocketError: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error in handleSocketError: ${errorMessage}`,
+        this.serviceName
+      );
     }
   }
 
@@ -350,72 +432,85 @@ export class BaseSocket
         this.reconnectAttempts.set(client.id, attempts + 1);
 
         setTimeout(() => {
-          this.logger.log(
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
             `Attempting to reconnect client ${client.id} (attempt ${attempts + 1})`,
+            this.serviceName
           );
           client.disconnect(true);
         }, this.RECONNECT_INTERVAL);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error in handleReconnection: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error in handleReconnection: ${errorMessage}`,
+        this.serviceName
+      );
     }
   }
 
-  @SubscribeMessage("joinRoom")
+  @SubscribeMessage('joinRoom')
   async handleJoinRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: RoomPayload,
+    @MessageBody() data: RoomPayload
   ): Promise<WsResponse<RoomEventData>> {
     try {
       const { room } = data;
       await this.joinRoom(client, room);
-      return { event: "joinRoom", data: { success: true, room } };
+      return { event: 'joinRoom', data: { success: true, room } };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      const errorStack = error instanceof Error ? error.stack || "" : "";
-      this.logger.error(`Error joining room: ${errorMessage}`, errorStack);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack || '' : '';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error joining room: ${errorMessage}`,
+        this.serviceName,
+        { stack: errorStack }
+      );
       return {
-        event: "joinRoom",
+        event: 'joinRoom',
         data: { success: false, error: errorMessage },
       };
     }
   }
 
-  @SubscribeMessage("leaveRoom")
+  @SubscribeMessage('leaveRoom')
   async handleLeaveRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: RoomPayload,
+    @MessageBody() data: RoomPayload
   ): Promise<WsResponse<RoomEventData>> {
     try {
       const { room } = data;
       await this.leaveRoom(client, room);
-      return { event: "leaveRoom", data: { success: true, room } };
+      return { event: 'leaveRoom', data: { success: true, room } };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      const errorStack = error instanceof Error ? error.stack || "" : "";
-      this.logger.error(`Error leaving room: ${errorMessage}`, errorStack);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack || '' : '';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error leaving room: ${errorMessage}`,
+        this.serviceName,
+        { stack: errorStack }
+      );
       return {
-        event: "leaveRoom",
+        event: 'leaveRoom',
         data: { success: false, error: errorMessage },
       };
     }
   }
 
-  protected async joinRoom(
-    client: Socket,
-    room: string,
-  ): Promise<{ success: boolean }> {
+  protected async joinRoom(client: Socket, room: string): Promise<{ success: boolean }> {
     try {
       // Add client to room
       await client.join(room);
 
       // Track room membership
-      const clientRooms =
-        this.roomsByClient.get(client.id) ?? new Set<string>();
+      const clientRooms = this.roomsByClient.get(client.id) ?? new Set<string>();
       clientRooms.add(room);
       this.roomsByClient.set(client.id, clientRooms);
 
@@ -425,20 +520,26 @@ export class BaseSocket
       }
       this.clientsByRoom.get(room)?.add(client.id);
 
-      this.logger.log(`Client ${client.id} joined room: ${room}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Client ${client.id} joined room: ${room}`,
+        this.serviceName
+      );
       return { success: true };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error in joinRoom: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error in joinRoom: ${errorMessage}`,
+        this.serviceName
+      );
       return { success: false };
     }
   }
 
-  protected async leaveRoom(
-    client: Socket,
-    room: string,
-  ): Promise<{ success: boolean }> {
+  protected async leaveRoom(client: Socket, room: string): Promise<{ success: boolean }> {
     try {
       // Remove client from room
       await client.leave(room);
@@ -457,12 +558,21 @@ export class BaseSocket
         }
       }
 
-      this.logger.log(`Client ${client.id} left room: ${room}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Client ${client.id} left room: ${room}`,
+        this.serviceName
+      );
       return { success: true };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error in leaveRoom: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error in leaveRoom: ${errorMessage}`,
+        this.serviceName
+      );
       return { success: false };
     }
   }
@@ -480,9 +590,13 @@ export class BaseSocket
         await this.leaveRoom(client, room);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error in leaveAllRooms: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error in leaveAllRooms: ${errorMessage}`,
+        this.serviceName
+      );
     }
   }
 
@@ -494,38 +608,55 @@ export class BaseSocket
     return this.clientMetadata.get(clientId);
   }
 
-  protected broadcastToRoom(
-    room: string,
-    event: string,
-    data: SocketEventData,
-  ): void {
+  protected broadcastToRoom(room: string, event: string, data: SocketEventData): void {
     try {
       this.server.to(room).emit(event, data);
-      this.logger.debug(`Broadcasted ${event} to room ${room}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
+        `Broadcasted ${event} to room ${room}`,
+        this.serviceName,
+        { room, event }
+      );
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error in broadcastToRoom: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error in broadcastToRoom: ${errorMessage}`,
+        this.serviceName
+      );
     }
   }
 
-  protected sendToUser(
-    clientId: string,
-    event: string,
-    data: SocketEventData,
-  ): void {
+  protected sendToUser(clientId: string, event: string, data: SocketEventData): void {
     try {
       const socket = this.server.sockets.sockets.get(clientId);
       if (socket) {
         socket.emit(event, data);
-        this.logger.debug(`Sent ${event} to client ${clientId}`);
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `Sent ${event} to client ${clientId}`,
+          this.serviceName,
+          { clientId, event }
+        );
       } else {
-        this.logger.warn(`Client ${clientId} not found for sending ${event}`);
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Client ${clientId} not found for sending ${event}`,
+          this.serviceName
+        );
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Error in sendToUser: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Error in sendToUser: ${errorMessage}`,
+        this.serviceName
+      );
     }
   }
 }

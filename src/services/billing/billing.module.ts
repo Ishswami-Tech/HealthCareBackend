@@ -1,16 +1,16 @@
-import { Module } from "@nestjs/common";
-import { BillingService } from "./billing.service";
-import { InvoicePDFService } from "./invoice-pdf.service";
-import { BillingEventsListener } from "./billing.events";
-import { BillingController } from "./controllers/billing.controller";
-import { DatabaseModule } from "../../libs/infrastructure/database/database.module";
-import { GuardsModule } from "../../libs/core/guards/guards.module";
-import { RateLimitModule } from "../../libs/security/rate-limit/rate-limit.module";
-import { EventsModule } from "../../libs/infrastructure/events/events.module";
-import { RbacModule } from "../../libs/core/rbac/rbac.module";
-import { LoggingServiceModule } from "../../libs/infrastructure/logging/logging-service.module";
-import { ErrorsModule } from "../../libs/core/errors/errors.module";
-import { WhatsAppModule } from "../../libs/communication/messaging/whatsapp/whatsapp.module";
+import { Module } from '@nestjs/common';
+import { BillingService } from './billing.service';
+import { InvoicePDFService } from './invoice-pdf.service';
+import { BillingEventsListener } from './billing.events';
+import { BillingController } from './controllers/billing.controller';
+import { DatabaseModule } from '@infrastructure/database/database.module';
+import { GuardsModule } from '@core/guards/guards.module';
+import { EventsModule } from '@infrastructure/events/events.module';
+import { RbacModule } from '@core/rbac/rbac.module';
+import { LoggingModule } from '@infrastructure/logging';
+import { ErrorsModule } from '@core/errors/errors.module';
+import { WhatsAppModule } from '@communication/messaging/whatsapp/whatsapp.module';
+import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 
 @Module({
   imports: [
@@ -19,7 +19,7 @@ import { WhatsAppModule } from "../../libs/communication/messaging/whatsapp/what
     RateLimitModule,
     EventsModule,
     RbacModule,
-    LoggingServiceModule,
+    LoggingModule,
     ErrorsModule,
     WhatsAppModule,
   ],

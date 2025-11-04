@@ -40,15 +40,15 @@
  */
 
 // Core services
-export { RbacService } from "./rbac.service";
-export { RoleService } from "./role.service";
-export { PermissionService } from "./permission.service";
+export { RbacService } from './rbac.service';
+export { RoleService } from './role.service';
+export { PermissionService } from './permission.service';
 
 // Guards
-export { RbacGuard } from "./rbac.guard";
+export { RbacGuard } from './rbac.guard';
 
 // Decorators
-export { RbacDecorators } from "./rbac.decorators";
+export { RbacDecorators } from './rbac.decorators';
 export {
   RequirePermission,
   RequireResourcePermission,
@@ -116,29 +116,44 @@ export {
   RequireEmergencyAccess,
   RequireBusinessHoursAccess,
   RequireEmergencyHoursAccess,
-} from "./rbac.decorators";
+} from './rbac.decorators';
 
 // Module
-export { RbacModule } from "./rbac.module";
+export { RbacModule } from './rbac.module';
 
-// Types and interfaces
+// Types and interfaces (re-export from centralized locations)
 export type {
   RbacContext,
   RoleAssignment,
   PermissionCheck,
-} from "./rbac.service";
+  RbacRequirement,
+} from '@core/types/rbac.types';
 
 export type {
   Role,
-  Permission as RolePermission,
-  CreateRoleDto,
-  UpdateRoleDto,
-} from "./role.service";
-
-export type {
+  RoleRecord,
+  RoleEntity,
+  RolePermission,
+  PermissionRecord,
+  PermissionEntity,
   Permission,
-  CreatePermissionDto,
-  UpdatePermissionDto,
-} from "./permission.service";
+  PrismaPermissionEntity,
+  UserPermissions,
+  PermissionCheckParams,
+  ResourceType,
+} from '@core/types/rbac.types';
 
-export type { RbacRequirement } from "./rbac.guard";
+export type { CreateRoleDto, UpdateRoleDto } from '@dtos/role.dto';
+export type { CreatePermissionDto, UpdatePermissionDto } from '@dtos/permission.dto';
+
+// Backward compatibility exports
+export type {
+  RoleRecord as RoleServiceRole,
+  Permission as RoleServicePermission,
+} from './role.service';
+export type { Permission as PermissionServicePermission } from './permission.service';
+export type {
+  RbacContext as RbacServiceContext,
+  RoleAssignment as RbacServiceRoleAssignment,
+  PermissionCheck as RbacServicePermissionCheck,
+} from './rbac.service';

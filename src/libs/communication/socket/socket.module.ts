@@ -1,21 +1,23 @@
-import { Global, Module } from "@nestjs/common";
-import { EventEmitterModule } from "@nestjs/event-emitter";
-import { JwtModule } from "@nestjs/jwt";
-import { ConfigModule, ConfigService } from "@nestjs/config";
-import { SocketService } from "./socket.service";
-import { AppGateway } from "./app.gateway";
-import { EventSocketBroadcaster } from "./event-socket.broadcaster";
-import { SocketAuthMiddleware } from "./socket-auth.middleware";
+import { Global, Module } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { LoggingModule } from '@infrastructure/logging';
+import { SocketService } from '@communication/socket/socket.service';
+import { AppGateway } from '@communication/socket/app.gateway';
+import { EventSocketBroadcaster } from '@communication/socket/event-socket.broadcaster';
+import { SocketAuthMiddleware } from '@communication/socket/socket-auth.middleware';
 
 @Global()
 @Module({
   imports: [
     EventEmitterModule,
+    LoggingModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>("JWT_SECRET") || "default-secret-key",
-        signOptions: { expiresIn: "7d" },
+        secret: configService.get<string>('JWT_SECRET') || 'default-secret-key',
+        signOptions: { expiresIn: '7d' },
       }),
       inject: [ConfigService],
     }),
@@ -26,21 +28,21 @@ import { SocketAuthMiddleware } from "./socket-auth.middleware";
     EventSocketBroadcaster,
     SocketAuthMiddleware,
     {
-      provide: "SOCKET_SERVICE",
+      provide: 'SOCKET_SERVICE',
       useFactory: (socketService: SocketService) => {
         return socketService;
       },
       inject: [SocketService],
     },
     {
-      provide: "SOCKET_AUTH_MIDDLEWARE",
+      provide: 'SOCKET_AUTH_MIDDLEWARE',
       useFactory: (authMiddleware: SocketAuthMiddleware) => {
         return authMiddleware;
       },
       inject: [SocketAuthMiddleware],
     },
     {
-      provide: "WEBSOCKET_SERVER",
+      provide: 'WEBSOCKET_SERVER',
       useFactory: () => {
         return null; // Will be set by the gateway
       },
@@ -48,12 +50,12 @@ import { SocketAuthMiddleware } from "./socket-auth.middleware";
   ],
   exports: [
     SocketService,
-    "SOCKET_SERVICE",
+    'SOCKET_SERVICE',
     AppGateway,
-    "WEBSOCKET_SERVER",
+    'WEBSOCKET_SERVER',
     EventSocketBroadcaster,
     SocketAuthMiddleware,
-    "SOCKET_AUTH_MIDDLEWARE",
+    'SOCKET_AUTH_MIDDLEWARE',
   ],
 })
 export class SocketModule {}

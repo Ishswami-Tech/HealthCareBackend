@@ -1,17 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
-import * as bcrypt from "bcryptjs";
+import { Injectable, Logger } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
 
-export interface PasswordValidationResult {
-  isValid: boolean;
-  errors: string[];
-  score: number; // 0-100
-}
-
-export interface PasswordStrength {
-  score: number;
-  feedback: string[];
-  suggestions: string[];
-}
+import type { PasswordValidationResult, PasswordStrength } from '@core/types/auth.types';
 
 @Injectable()
 export class PasswordService {
@@ -26,8 +16,8 @@ export class PasswordService {
       return await bcrypt.hash(password, this.saltRounds);
     } catch (_error) {
       this.logger.error(
-        "Failed to hash password",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to hash password',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -41,8 +31,8 @@ export class PasswordService {
       return await bcrypt.compare(password, hash);
     } catch (_error) {
       this.logger.error(
-        "Failed to compare password",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to compare password',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       return false;
     }
@@ -57,7 +47,7 @@ export class PasswordService {
 
     // Length check
     if (password.length < 8) {
-      errors.push("Password must be at least 8 characters long");
+      errors.push('Password must be at least 8 characters long');
     } else if (password.length >= 12) {
       score += 20;
     } else {
@@ -66,62 +56,60 @@ export class PasswordService {
 
     // Uppercase check
     if (!/[A-Z]/.test(password)) {
-      errors.push("Password must contain at least one uppercase letter");
+      errors.push('Password must contain at least one uppercase letter');
     } else {
       score += 20;
     }
 
     // Lowercase check
     if (!/[a-z]/.test(password)) {
-      errors.push("Password must contain at least one lowercase letter");
+      errors.push('Password must contain at least one lowercase letter');
     } else {
       score += 20;
     }
 
     // Number check
     if (!/\d/.test(password)) {
-      errors.push("Password must contain at least one number");
+      errors.push('Password must contain at least one number');
     } else {
       score += 20;
     }
 
     // Special character check
     if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
-      errors.push("Password must contain at least one special character");
+      errors.push('Password must contain at least one special character');
     } else {
       score += 20;
     }
 
     // Common password check
     const commonPasswords = [
-      "password",
-      "123456",
-      "123456789",
-      "qwerty",
-      "abc123",
-      "password123",
-      "admin",
-      "letmein",
-      "welcome",
-      "monkey",
+      'password',
+      '123456',
+      '123456789',
+      'qwerty',
+      'abc123',
+      'password123',
+      'admin',
+      'letmein',
+      'welcome',
+      'monkey',
     ];
 
-    if (
-      commonPasswords.some((common) => password.toLowerCase().includes(common))
-    ) {
-      errors.push("Password contains common words or patterns");
+    if (commonPasswords.some(common => password.toLowerCase().includes(common))) {
+      errors.push('Password contains common words or patterns');
       score -= 10;
     }
 
     // Sequential characters check
     if (this.hasSequentialCharacters(password)) {
-      errors.push("Password should not contain sequential characters");
+      errors.push('Password should not contain sequential characters');
       score -= 5;
     }
 
     // Repeated characters check
     if (this.hasRepeatedCharacters(password)) {
-      errors.push("Password should not contain repeated characters");
+      errors.push('Password should not contain repeated characters');
       score -= 5;
     }
 
@@ -141,35 +129,35 @@ export class PasswordService {
     const suggestions: string[] = [];
 
     if (validation.score < 30) {
-      feedback.push("Very weak password");
-      suggestions.push("Add more characters, mix case, numbers, and symbols");
+      feedback.push('Very weak password');
+      suggestions.push('Add more characters, mix case, numbers, and symbols');
     } else if (validation.score < 50) {
-      feedback.push("Weak password");
-      suggestions.push("Consider adding more complexity");
+      feedback.push('Weak password');
+      suggestions.push('Consider adding more complexity');
     } else if (validation.score < 70) {
-      feedback.push("Moderate password");
-      suggestions.push("Good, but could be stronger");
+      feedback.push('Moderate password');
+      suggestions.push('Good, but could be stronger');
     } else if (validation.score < 90) {
-      feedback.push("Strong password");
+      feedback.push('Strong password');
     } else {
-      feedback.push("Very strong password");
+      feedback.push('Very strong password');
     }
 
     // Add specific suggestions based on validation errors
     if (password.length < 8) {
-      suggestions.push("Use at least 8 characters");
+      suggestions.push('Use at least 8 characters');
     }
     if (!/[A-Z]/.test(password)) {
-      suggestions.push("Add uppercase letters");
+      suggestions.push('Add uppercase letters');
     }
     if (!/[a-z]/.test(password)) {
-      suggestions.push("Add lowercase letters");
+      suggestions.push('Add lowercase letters');
     }
     if (!/\d/.test(password)) {
-      suggestions.push("Add numbers");
+      suggestions.push('Add numbers');
     }
     if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
-      suggestions.push("Add special characters");
+      suggestions.push('Add special characters');
     }
 
     return {
@@ -184,14 +172,14 @@ export class PasswordService {
    */
   generateSecurePassword(length: number = 16): string {
     const charset =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?";
-    let password = "";
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
+    let password = '';
 
     // Ensure at least one character from each category
-    const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const lowercase = "abcdefghijklmnopqrstuvwxyz";
-    const numbers = "0123456789";
-    const symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+    const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const lowercase = 'abcdefghijklmnopqrstuvwxyz';
+    const numbers = '0123456789';
+    const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
 
     password += uppercase[Math.floor(Math.random() * uppercase.length)];
     password += lowercase[Math.floor(Math.random() * lowercase.length)];
@@ -205,19 +193,19 @@ export class PasswordService {
 
     // Shuffle the password
     return password
-      .split("")
+      .split('')
       .sort(() => Math.random() - 0.5)
-      .join("");
+      .join('');
   }
 
   /**
    * Check if password has sequential characters
    */
   private hasSequentialCharacters(password: string): boolean {
-    const sequences = ["123", "abc", "qwe", "asd", "zxc"];
+    const sequences = ['123', 'abc', 'qwe', 'asd', 'zxc'];
     const lowerPassword = password.toLowerCase();
 
-    return sequences.some((seq) => lowerPassword.includes(seq));
+    return sequences.some(seq => lowerPassword.includes(seq));
   }
 
   /**
@@ -225,10 +213,7 @@ export class PasswordService {
    */
   private hasRepeatedCharacters(password: string): boolean {
     for (let i = 0; i < password.length - 2; i++) {
-      if (
-        password[i] === password[i + 1] &&
-        password[i + 1] === password[i + 2]
-      ) {
+      if (password[i] === password[i + 1] && password[i + 1] === password[i + 2]) {
         return true;
       }
     }

@@ -1,17 +1,14 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
-import { ConfigService } from "@nestjs/config";
-import { CacheService } from "../../../libs/infrastructure/cache/cache.service";
-import { TokenPayload, AuthTokens } from "../../../libs/core/types";
-import * as crypto from "crypto";
+import { Injectable, Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { TokenPayload, AuthTokens } from '@core/types';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class JwtAuthService {
   private readonly logger = new Logger(JwtAuthService.name);
-  private readonly rateLimitMap = new Map<
-    string,
-    { count: number; resetTime: number }
-  >();
+  private readonly rateLimitMap = new Map<string, { count: number; resetTime: number }>();
   private readonly deviceTrackingMap = new Map<string, Set<string>>();
 
   // Advanced JWT Configuration
@@ -25,9 +22,9 @@ export class JwtAuthService {
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly cacheService: CacheService,
+    private readonly cacheService: CacheService
   ) {
-    this.logger.log("🔐 Advanced JWT Service initializing for 100K+ users...");
+    this.logger.log('🔐 Advanced JWT Service initializing for 100K+ users...');
     this.initializeCleanupTasks();
   }
 
@@ -37,12 +34,12 @@ export class JwtAuthService {
   async generateAccessToken(payload: TokenPayload): Promise<string> {
     try {
       return await this.jwtService.signAsync(payload, {
-        expiresIn: this.configService.get("JWT_ACCESS_EXPIRES_IN") || "15m",
+        expiresIn: this.configService.get('JWT_ACCESS_EXPIRES_IN') || '15m',
       });
     } catch (_error) {
       this.logger.error(
-        "Failed to generate access token",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to generate access token',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -54,12 +51,12 @@ export class JwtAuthService {
   async generateRefreshToken(payload: TokenPayload): Promise<string> {
     try {
       return await this.jwtService.signAsync(payload, {
-        expiresIn: this.configService.get("JWT_REFRESH_EXPIRES_IN") || "7d",
+        expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN') || '7d',
       });
     } catch (_error) {
       this.logger.error(
-        "Failed to generate refresh token",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to generate refresh token',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -79,12 +76,12 @@ export class JwtAuthService {
         accessToken,
         refreshToken,
         expiresIn: 15 * 60, // 15 minutes
-        sessionId: payload.sessionId || "",
+        sessionId: payload.sessionId || '',
       };
     } catch (_error) {
       this.logger.error(
-        "Failed to generate tokens",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to generate tokens',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -98,8 +95,8 @@ export class JwtAuthService {
       return await this.jwtService.verifyAsync(token);
     } catch (_error) {
       this.logger.error(
-        "Failed to verify token",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to verify token',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -113,8 +110,8 @@ export class JwtAuthService {
       return this.jwtService.decode(token);
     } catch (_error) {
       this.logger.error(
-        "Failed to decode token",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to decode token',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       return null;
     }
@@ -132,8 +129,8 @@ export class JwtAuthService {
       return null;
     } catch (_error) {
       this.logger.error(
-        "Failed to get token expiration",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to get token expiration',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       return null;
     }
@@ -149,8 +146,8 @@ export class JwtAuthService {
       return expiration < new Date();
     } catch (_error) {
       this.logger.error(
-        "Failed to check token expiration",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to check token expiration',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       return true;
     }
@@ -167,7 +164,7 @@ export class JwtAuthService {
     payload: TokenPayload,
     deviceFingerprint?: string,
     userAgent?: string,
-    ipAddress?: string,
+    ipAddress?: string
   ): Promise<AuthTokens> {
     try {
       // Rate limiting check
@@ -182,9 +179,9 @@ export class JwtAuthService {
       const enhancedPayload: TokenPayload = {
         ...payload,
         jti: this.generateJTI(), // JWT ID for blacklist tracking
-        deviceFingerprint: deviceFingerprint || "",
-        userAgent: userAgent?.substring(0, 100) || "",
-        ipAddress: ipAddress || "",
+        deviceFingerprint: deviceFingerprint || '',
+        userAgent: userAgent?.substring(0, 100) || '',
+        ipAddress: ipAddress || '',
         iat: Math.floor(Date.now() / 1000),
       };
 
@@ -200,13 +197,13 @@ export class JwtAuthService {
         accessToken,
         refreshToken,
         expiresIn: this.ACCESS_TOKEN_CACHE_TTL,
-        sessionId: payload.sessionId || "",
-        tokenType: "Bearer",
+        sessionId: payload.sessionId || '',
+        tokenType: 'Bearer',
       };
     } catch (_error) {
       this.logger.error(
-        "Failed to generate enhanced tokens",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to generate enhanced tokens',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -220,13 +217,13 @@ export class JwtAuthService {
       // Check if token is blacklisted
       const jti = this.extractJTI(token);
       if (jti && (await this.isTokenBlacklisted(jti))) {
-        throw new Error("Token has been revoked");
+        throw new Error('Token has been revoked');
       }
 
       // Try cache first for performance
       const cachedPayload = await this.getCachedTokenPayload(token);
       if (cachedPayload) {
-        this.logger.debug("Token verified from cache");
+        this.logger.debug('Token verified from cache');
         return cachedPayload;
       }
 
@@ -239,8 +236,8 @@ export class JwtAuthService {
       return payload;
     } catch (_error) {
       this.logger.error(
-        "Enhanced token verification failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Enhanced token verification failed',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -253,7 +250,7 @@ export class JwtAuthService {
     try {
       const jti = this.extractJTI(token);
       if (!jti) {
-        this.logger.warn("Cannot blacklist token without JTI");
+        this.logger.warn('Cannot blacklist token without JTI');
         return;
       }
 
@@ -262,21 +259,19 @@ export class JwtAuthService {
         blacklistKey,
         {
           blacklistedAt: new Date().toISOString(),
-          reason: reason || "User logout",
+          reason: reason || 'User logout',
         },
-        this.BLACKLIST_CACHE_TTL,
+        this.BLACKLIST_CACHE_TTL
       );
 
       // Remove from token cache
       await this.removeCachedToken(token);
 
-      this.logger.log(
-        `Token blacklisted: ${jti} - Reason: ${reason || "User logout"}`,
-      );
+      this.logger.log(`Token blacklisted: ${jti} - Reason: ${reason || 'User logout'}`);
     } catch (_error) {
       this.logger.error(
-        "Failed to blacklist token",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to blacklist token',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -289,7 +284,7 @@ export class JwtAuthService {
     refreshToken: string,
     deviceFingerprint?: string,
     userAgent?: string,
-    ipAddress?: string,
+    ipAddress?: string
   ): Promise<AuthTokens> {
     try {
       // Verify refresh token
@@ -310,17 +305,17 @@ export class JwtAuthService {
         payload,
         deviceFingerprint || payload.deviceFingerprint,
         userAgent,
-        ipAddress,
+        ipAddress
       );
 
       // Blacklist old refresh token
-      await this.blacklistToken(refreshToken, "Token refresh");
+      await this.blacklistToken(refreshToken, 'Token refresh');
 
       return newTokens;
     } catch (_error) {
       this.logger.error(
-        "Enhanced token refresh failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Enhanced token refresh failed',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -336,8 +331,8 @@ export class JwtAuthService {
       return tokens.length;
     } catch (_error) {
       this.logger.error(
-        "Failed to get user active tokens count",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to get user active tokens count',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       return 0;
     }
@@ -353,21 +348,19 @@ export class JwtAuthService {
 
       // Blacklist all tokens
       await Promise.all(
-        tokens.map((token) =>
-          this.blacklistToken(token, reason || "Security incident"),
-        ),
+        tokens.map(token => this.blacklistToken(token, reason || 'Security incident'))
       );
 
       // Clear user tokens cache
       await this.cacheService.delete(cacheKey);
 
       this.logger.log(
-        `Revoked ${tokens.length} tokens for user ${userId} - Reason: ${reason || "Security incident"}`,
+        `Revoked ${tokens.length} tokens for user ${userId} - Reason: ${reason || 'Security incident'}`
       );
     } catch (_error) {
       this.logger.error(
-        "Failed to revoke all user tokens",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to revoke all user tokens',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -378,7 +371,7 @@ export class JwtAuthService {
   // ==========================================
 
   private generateJTI(): string {
-    return crypto.randomBytes(16).toString("hex");
+    return crypto.randomBytes(16).toString('hex');
   }
 
   private extractJTI(token: string): string | null {
@@ -403,7 +396,7 @@ export class JwtAuthService {
   private async cacheTokens(
     accessToken: string,
     refreshToken: string,
-    userId: string,
+    userId: string
   ): Promise<void> {
     try {
       // Cache individual tokens
@@ -411,44 +404,31 @@ export class JwtAuthService {
       const refreshKey = `jwt:token:${this.hashToken(refreshToken)}`;
 
       await Promise.all([
-        this.cacheService.set(
-          accessKey,
-          { type: "access", userId },
-          this.ACCESS_TOKEN_CACHE_TTL,
-        ),
+        this.cacheService.set(accessKey, { type: 'access', userId }, this.ACCESS_TOKEN_CACHE_TTL),
         this.cacheService.set(
           refreshKey,
-          { type: "refresh", userId },
-          this.REFRESH_TOKEN_CACHE_TTL,
+          { type: 'refresh', userId },
+          this.REFRESH_TOKEN_CACHE_TTL
         ),
       ]);
 
       // Track user tokens
       const userTokensKey = `jwt:user_tokens:${userId}`;
-      const existingTokens =
-        (await this.cacheService.get<string[]>(userTokensKey)) || [];
-      const updatedTokens = [
-        ...existingTokens,
-        accessToken,
-        refreshToken,
-      ].slice(-this.MAX_TOKENS_PER_USER);
-
-      await this.cacheService.set(
-        userTokensKey,
-        updatedTokens,
-        this.REFRESH_TOKEN_CACHE_TTL,
+      const existingTokens = (await this.cacheService.get<string[]>(userTokensKey)) || [];
+      const updatedTokens = [...existingTokens, accessToken, refreshToken].slice(
+        -this.MAX_TOKENS_PER_USER
       );
+
+      await this.cacheService.set(userTokensKey, updatedTokens, this.REFRESH_TOKEN_CACHE_TTL);
     } catch (_error) {
       this.logger.error(
-        "Failed to cache tokens",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to cache tokens',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
     }
   }
 
-  private async getCachedTokenPayload(
-    token: string,
-  ): Promise<TokenPayload | null> {
+  private async getCachedTokenPayload(token: string): Promise<TokenPayload | null> {
     try {
       const cacheKey = `jwt:payload:${this.hashToken(token)}`;
       return (await this.cacheService.get<TokenPayload>(cacheKey)) || null;
@@ -457,21 +437,14 @@ export class JwtAuthService {
     }
   }
 
-  private async cacheTokenPayload(
-    token: string,
-    payload: TokenPayload,
-  ): Promise<void> {
+  private async cacheTokenPayload(token: string, payload: TokenPayload): Promise<void> {
     try {
       const cacheKey = `jwt:payload:${this.hashToken(token)}`;
-      await this.cacheService.set(
-        cacheKey,
-        payload,
-        this.ACCESS_TOKEN_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, payload, this.ACCESS_TOKEN_CACHE_TTL);
     } catch (_error) {
       this.logger.error(
-        "Failed to cache token payload",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to cache token payload',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
     }
   }
@@ -481,24 +454,17 @@ export class JwtAuthService {
       const tokenKey = `jwt:token:${this.hashToken(token)}`;
       const payloadKey = `jwt:payload:${this.hashToken(token)}`;
 
-      await Promise.all([
-        this.cacheService.delete(tokenKey),
-        this.cacheService.delete(payloadKey),
-      ]);
+      await Promise.all([this.cacheService.delete(tokenKey), this.cacheService.delete(payloadKey)]);
     } catch (_error) {
       this.logger.error(
-        "Failed to remove cached token",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Failed to remove cached token',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
     }
   }
 
   private hashToken(token: string): string {
-    return crypto
-      .createHash("sha256")
-      .update(token)
-      .digest("hex")
-      .substring(0, 16);
+    return crypto.createHash('sha256').update(token).digest('hex').substring(0, 16);
   }
 
   private checkRateLimit(userId: string): Promise<void> {
@@ -514,24 +480,18 @@ export class JwtAuthService {
     }
 
     if (userLimit.count >= this.MAX_TOKENS_PER_USER) {
-      throw new Error("Rate limit exceeded for token generation");
+      throw new Error('Rate limit exceeded for token generation');
     }
 
     userLimit.count++;
     return Promise.resolve();
   }
 
-  private trackDevice(
-    userId: string,
-    deviceFingerprint: string,
-  ): Promise<void> {
+  private trackDevice(userId: string, deviceFingerprint: string): Promise<void> {
     return Promise.resolve();
     const userDevices = this.deviceTrackingMap.get(userId) || new Set();
 
-    if (
-      userDevices.size >= this.MAX_DEVICES_PER_USER &&
-      !userDevices.has(deviceFingerprint)
-    ) {
+    if (userDevices.size >= this.MAX_DEVICES_PER_USER && !userDevices.has(deviceFingerprint)) {
       this.logger.warn(`User ${userId} exceeded max device limit`);
       // Could throw error for strict security, or just log for monitoring
     }
@@ -551,9 +511,9 @@ export class JwtAuthService {
           }
         }
       },
-      60 * 60 * 1000,
+      60 * 60 * 1000
     ); // 1 hour
 
-    this.logger.log("🔐 Advanced JWT Service initialized successfully");
+    this.logger.log('🔐 Advanced JWT Service initialized successfully');
   }
 }

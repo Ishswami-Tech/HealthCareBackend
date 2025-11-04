@@ -1,55 +1,98 @@
-import { Injectable } from "@nestjs/common";
-import {
-  BaseRepository,
-  RepositoryResult,
-  QueryOptions,
-} from "./base.repository";
-import { PrismaService } from "../prisma/prisma.service";
-import { Prisma } from "@prisma/client";
-import { CreateUserDto, UpdateUserDto } from "../../../dtos/user.dto";
+import { Injectable, Optional } from '@nestjs/common';
+import { BaseRepository, RepositoryResult, QueryOptions } from './base.repository';
+import { DatabaseService } from '@infrastructure/database';
+import { CreateUserDto, UpdateUserDto } from '@dtos/user.dto';
+import { LoggingService } from '@infrastructure/logging';
+import { CacheService } from '@infrastructure/cache';
+import { HealthcareDatabaseClient } from '../clients/healthcare-database.client';
+import { LogType, LogLevel } from '@core/types';
+import type { User, UserWithProfile, UserSearchOptions, UserBase } from '@core/types';
+// Type-safe Prisma operation helpers
+// Prisma delegates return 'unknown' to avoid 'any' type errors from Prisma's generated types
+type PrismaUserDelegate = {
+  findUnique: <T>(args: T) => Promise<unknown>;
+  findFirst: <T>(args: T) => Promise<unknown>;
+  findMany: <T>(args: T) => Promise<unknown>;
+  update: <T>(args: T) => Promise<unknown>;
+  updateMany: <T>(args: T) => Promise<unknown>;
+  count: <T>(args?: T) => Promise<unknown>;
+  groupBy: <T>(args: T) => Promise<unknown>;
+};
 
-// Define User interface locally to match the expected return type
-interface User {
-  id: string;
-  email: string;
-  firstName?: string;
-  lastName?: string;
-  name: string;
-  role: string;
-  isVerified: boolean;
-  phone?: string;
-  avatar?: string;
-  lastLoginAt?: Date;
+function getUserDelegate(prismaClient: { user: unknown }): PrismaUserDelegate {
+  return prismaClient.user as PrismaUserDelegate;
 }
 
-export interface UserWithProfile extends User {
-  profile?: unknown;
-  appointments?: unknown[];
-  medicalHistory?: unknown[];
-}
-
-export interface UserSearchOptions extends QueryOptions {
-  searchTerm?: string;
-  role?: string;
-  status?: string;
-  dateRange?: {
-    start: Date;
-    end: Date;
+/**
+ * Converts Prisma user result to UserBase
+ * - Prisma returns null for optional fields, but TypeScript optional properties use undefined
+ * - This converts null to undefined for firstName, lastName, phone
+ */
+function toUserBase(user: unknown): UserBase {
+  // Prisma returns objects with null values, TypeScript expects undefined for optional properties
+  const prismaUser = user as {
+    firstName?: string | null;
+    lastName?: string | null;
+    phone?: string | null;
+    [key: string]: string | number | boolean | Date | null | undefined;
   };
-  includeProfile?: boolean;
-  includeAppointments?: boolean;
-  includeMedicalHistory?: boolean;
+  return {
+    ...prismaUser,
+    firstName: prismaUser.firstName ?? undefined,
+    lastName: prismaUser.lastName ?? undefined,
+    phone: prismaUser.phone ?? undefined,
+  } as UserBase;
 }
 
+/**
+ * Converts Prisma result to UserBase or null
+ * Handles null/undefined from database queries
+ * Returns null if result is null/undefined, otherwise returns UserBase
+ * Note: Return type is not explicitly annotated to avoid 'any' in union types
+ */
+function toUserBaseOrNull(result: unknown) {
+  if (result === null || result === undefined) {
+    return null;
+  }
+  return toUserBase(result);
+}
+
+/**
+ * Converts Prisma array result to UserBase array
+ * Validates the result is an array before mapping
+ * Note: Return type is not explicitly annotated to avoid 'any' in union types
+ */
+function toUserBaseArray(result: unknown) {
+  if (!Array.isArray(result)) {
+    return [];
+  }
+  return result.map(user => toUserBase(user));
+}
+
+/**
+ * User Repository - INTERNAL INFRASTRUCTURE COMPONENT
+ *
+ * NOT FOR DIRECT USE - Use DatabaseService instead.
+ * This repository is an internal component used by DatabaseService optimization layers.
+ * @internal
+ */
 @Injectable()
-export class UserRepository extends BaseRepository<
-  User,
-  CreateUserDto,
-  UpdateUserDto,
-  string
-> {
-  constructor(private readonly prisma: PrismaService) {
-    super("User", prisma.user);
+export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUserDto, string> {
+  constructor(
+    databaseService: DatabaseService,
+    loggingService: LoggingService,
+    @Optional() cacheService?: CacheService
+  ) {
+    // Use internal accessor - repositories are infrastructure components
+    super(
+      'User',
+      (
+        databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient().user,
+      loggingService,
+      cacheService,
+      databaseService
+    );
   }
 
   /**
@@ -57,26 +100,34 @@ export class UserRepository extends BaseRepository<
    */
   async findByEmail(
     email: string,
-    options?: QueryOptions,
-  ): Promise<RepositoryResult<User | null>> {
+    options?: QueryOptions
+  ): Promise<RepositoryResult<UserBase | null>> {
     try {
-      this.logger.debug(`Finding user by email: ${email}`);
-      const user = await this.prisma.user.findUnique({
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Finding user by email: ${email}`,
+        'UserRepository'
+      );
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.findUnique({
         where: { email },
         ...(this.buildQueryOptions(options) || {}),
       });
-      // Convert null values to undefined for compatibility
-      const convertedUser = user
-        ? {
-            ...user,
-            firstName: user.firstName || undefined,
-            lastName: user.lastName || undefined,
-            phone: user.phone || undefined,
-          }
-        : null;
-      return RepositoryResult.success(convertedUser);
+      const userResult = toUserBaseOrNull(rawResult);
+      return RepositoryResult.success(userResult);
     } catch (_error) {
-      this.logger.error("Failed to find user by email:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to find user by email: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -86,26 +137,34 @@ export class UserRepository extends BaseRepository<
    */
   async findByPhone(
     phone: string,
-    options?: QueryOptions,
-  ): Promise<RepositoryResult<User | null>> {
+    options?: QueryOptions
+  ): Promise<RepositoryResult<UserBase | null>> {
     try {
-      this.logger.debug(`Finding user by phone: ${phone}`);
-      const user = await this.prisma.user.findFirst({
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Finding user by phone: ${phone}`,
+        'UserRepository'
+      );
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.findFirst({
         where: { phone },
         ...(this.buildQueryOptions(options) || {}),
       });
-      // Convert null values to undefined for compatibility
-      const convertedUser = user
-        ? {
-            ...user,
-            firstName: user.firstName || undefined,
-            lastName: user.lastName || undefined,
-            phone: user.phone || undefined,
-          }
-        : null;
-      return RepositoryResult.success(convertedUser);
+      const userResult = toUserBaseOrNull(rawResult);
+      return RepositoryResult.success(userResult);
     } catch (_error) {
-      this.logger.error("Failed to find user by phone:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to find user by phone: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -113,35 +172,33 @@ export class UserRepository extends BaseRepository<
   /**
    * Search users with advanced filtering
    */
-  async searchUsers(
-    options: UserSearchOptions,
-  ): Promise<RepositoryResult<UserWithProfile[]>> {
+  async searchUsers(options: UserSearchOptions): Promise<RepositoryResult<UserWithProfile[]>> {
     try {
       const where: Record<string, unknown> = {};
 
       // Text search across multiple fields
       if (options.searchTerm) {
-        where["OR"] = [
-          { firstName: { contains: options.searchTerm, mode: "insensitive" } },
-          { lastName: { contains: options.searchTerm, mode: "insensitive" } },
-          { email: { contains: options.searchTerm, mode: "insensitive" } },
+        where['OR'] = [
+          { firstName: { contains: options.searchTerm, mode: 'insensitive' } },
+          { lastName: { contains: options.searchTerm, mode: 'insensitive' } },
+          { email: { contains: options.searchTerm, mode: 'insensitive' } },
           { phone: { contains: options.searchTerm } },
         ];
       }
 
       // Role filter
       if (options.role) {
-        where["role"] = options.role as any;
+        where['role'] = options.role;
       }
 
       // Status filter (based on isVerified field in your schema)
       if (options.status) {
-        where["isVerified"] = options.status === "active";
+        where['isVerified'] = options.status === 'active';
       }
 
       // Date range filter
       if (options.dateRange) {
-        where["createdAt"] = {
+        where['createdAt'] = {
           gte: options.dateRange.start,
           lte: options.dateRange.end,
         };
@@ -150,41 +207,54 @@ export class UserRepository extends BaseRepository<
       const include: Record<string, unknown> = {};
 
       if (options.includeProfile) {
-        include["doctor"] = true; // Include doctor profile if user is a doctor
-        include["patient"] = true; // Include patient profile if user is a patient
+        include['doctor'] = true; // Include doctor profile if user is a doctor
+        include['patient'] = true; // Include patient profile if user is a patient
       }
 
       if (options.includeAppointments) {
-        include["appointments"] = {
+        include['appointments'] = {
           take: 10,
-          orderBy: { date: "desc" },
+          orderBy: { date: 'desc' },
         };
       }
 
       if (options.includeMedicalHistory) {
-        include["medicalHistories"] = {
+        include['medicalHistories'] = {
           take: 5,
-          orderBy: { createdAt: "desc" },
+          orderBy: { createdAt: 'desc' },
         };
       }
 
-      const users = await this.prisma.user.findMany({
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.findMany({
         where,
         include,
         ...(this.buildQueryOptions(options) || {}),
       });
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Found ${Array.isArray(rawResult) ? rawResult.length : 0} users matching search criteria`,
+        'UserRepository'
+      );
 
-      this.logger.debug(`Found ${users.length} users matching search criteria`);
-      // Convert null values to undefined for compatibility
-      const convertedUsers = users.map((user: unknown) => ({
-        ...(user as any),
-        firstName: (user as any).firstName || undefined,
-        lastName: (user as any).lastName || undefined,
-        phone: (user as any).phone || undefined,
-      }));
-      return RepositoryResult.success(convertedUsers as UserWithProfile[]);
+      // Convert Prisma results to UserWithProfile
+      const users: UserWithProfile[] = Array.isArray(rawResult)
+        ? rawResult.map(user => toUserBase(user) as UserWithProfile)
+        : [];
+      return RepositoryResult.success(users);
     } catch (_error) {
-      this.logger.error("Failed to search users:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to search users: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -192,26 +262,33 @@ export class UserRepository extends BaseRepository<
   /**
    * Get users by role with pagination
    */
-  async findByRole(
-    role: string,
-    options?: QueryOptions,
-  ): Promise<RepositoryResult<User[]>> {
+  async findByRole(role: string, options?: QueryOptions): Promise<RepositoryResult<UserBase[]>> {
     try {
-      this.logger.debug(`Finding users by role: ${role}`);
-      const users = await this.prisma.user.findMany({
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Finding users by role: ${role}`,
+        'UserRepository'
+      );
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.findMany({
         where: { role },
         ...(this.buildQueryOptions(options) || {}),
       });
-      // Convert null values to undefined for compatibility
-      const convertedUsers = users.map((user: unknown) => ({
-        ...(user as any),
-        firstName: (user as any).firstName || undefined,
-        lastName: (user as any).lastName || undefined,
-        phone: (user as any).phone || undefined,
-      }));
-      return RepositoryResult.success(convertedUsers);
+      const usersResult = toUserBaseArray(rawResult);
+      return RepositoryResult.success(usersResult);
     } catch (_error) {
-      this.logger.error("Failed to find users by role:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to find users by role: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -219,37 +296,48 @@ export class UserRepository extends BaseRepository<
   /**
    * Get active doctors with their profiles
    */
-  async getActiveDoctors(
-    options?: QueryOptions,
-  ): Promise<RepositoryResult<UserWithProfile[]>> {
+  async getActiveDoctors(options?: QueryOptions): Promise<RepositoryResult<UserWithProfile[]>> {
     try {
-      this.logger.debug("Finding active doctors");
-      const doctors = await this.prisma.user.findMany({
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        'Finding active doctors',
+        'UserRepository'
+      );
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.findMany({
         where: {
-          role: "DOCTOR",
+          role: 'DOCTOR',
           isVerified: true,
         },
         include: {
           doctor: true,
           appointments: {
             where: {
-              status: "SCHEDULED",
+              status: 'SCHEDULED',
             },
             take: 5,
           },
         },
         ...(this.buildQueryOptions(options) || {}),
       });
-      // Convert null values to undefined for compatibility
-      const convertedDoctors = doctors.map((doctor: unknown) => ({
-        ...(doctor as any),
-        firstName: (doctor as any).firstName || undefined,
-        lastName: (doctor as any).lastName || undefined,
-        phone: (doctor as any).phone || undefined,
-      }));
-      return RepositoryResult.success(convertedDoctors as UserWithProfile[]);
+      // Convert Prisma results to UserWithProfile
+      const doctors: UserWithProfile[] = Array.isArray(rawResult)
+        ? rawResult.map(doctor => toUserBase(doctor) as UserWithProfile)
+        : [];
+      return RepositoryResult.success(doctors);
     } catch (_error) {
-      this.logger.error("Failed to find active doctors:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to find active doctors: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -267,41 +355,71 @@ export class UserRepository extends BaseRepository<
     }>
   > {
     try {
-      const [total, active, inactive, roleStats, recentRegistrations] =
-        await Promise.all([
-          this.prisma.user.count(),
-          this.prisma.user.count({ where: { isVerified: true } }),
-          this.prisma.user.count({ where: { isVerified: false } }),
-          this.prisma.user.groupBy({
-            by: ["role"],
-            _count: { role: true },
-          }),
-          this.prisma.user.count({
-            where: {
-              createdAt: {
-                gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
-              },
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const results = await Promise.all([
+        userDelegate.count(),
+        userDelegate.count({ where: { isVerified: true } }),
+        userDelegate.count({ where: { isVerified: false } }),
+        userDelegate.groupBy({
+          by: ['role'],
+          _count: { role: true },
+        }),
+        userDelegate.count({
+          where: {
+            createdAt: {
+              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
             },
-          }),
-        ]);
+          },
+        }),
+      ]);
+      const total = results[0] as number;
+      const active = results[1] as number;
+      const inactive = results[2] as number;
+      const roleStats = results[3] as Array<{ role: string; _count: { role: number } }>;
+      const recentRegistrations = results[4] as number;
+
+      const totalCount = Number(total);
+      const activeCount = Number(active);
+      const inactiveCount = Number(inactive);
+      const recentRegistrationsCount = Number(recentRegistrations);
 
       const byRole: Record<string, number> = {};
-      for (const stat of roleStats) {
+      const roleStatsArray = (Array.isArray(roleStats) ? roleStats : []) as Array<{
+        role: string;
+        _count: { role: number };
+      }>;
+      for (const stat of roleStatsArray) {
         byRole[stat.role] = stat._count.role;
       }
 
       const stats = {
-        total,
-        active,
-        inactive,
+        total: totalCount,
+        active: activeCount,
+        inactive: inactiveCount,
         byRole,
-        recentRegistrations,
+        recentRegistrations: recentRegistrationsCount,
       };
 
-      this.logger.debug("User statistics calculated:", stats);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        'User statistics calculated',
+        'UserRepository',
+        { stats }
+      );
       return RepositoryResult.success(stats);
     } catch (_error) {
-      this.logger.error("Failed to get user statistics:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to get user statistics: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -309,13 +427,20 @@ export class UserRepository extends BaseRepository<
   /**
    * Update user password hash
    */
-  async updatePassword(
-    id: string,
-    password: string,
-  ): Promise<RepositoryResult<User>> {
+  async updatePassword(id: string, password: string): Promise<RepositoryResult<UserBase>> {
     try {
-      this.logger.debug(`Updating password for user: ${id}`);
-      const user = await this.prisma.user.update({
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Updating password for user: ${id}`,
+        'UserRepository'
+      );
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.update({
         where: { id },
         data: {
           password,
@@ -323,16 +448,16 @@ export class UserRepository extends BaseRepository<
           passwordChangedAt: new Date(),
         },
       });
-      // Convert null values to undefined for compatibility
-      const convertedUser = {
-        ...user,
-        firstName: user.firstName || undefined,
-        lastName: user.lastName || undefined,
-        phone: user.phone || undefined,
-      };
-      return RepositoryResult.success(convertedUser);
+      const userResult = toUserBase(rawResult);
+      return RepositoryResult.success(userResult);
     } catch (_error) {
-      this.logger.error("Failed to update user password:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to update user password: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -340,22 +465,27 @@ export class UserRepository extends BaseRepository<
   /**
    * Update user last login timestamp
    */
-  async updateLastLogin(id: string): Promise<RepositoryResult<User>> {
+  async updateLastLogin(id: string): Promise<RepositoryResult<UserBase>> {
     try {
-      const user = await this.prisma.user.update({
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.update({
         where: { id },
         data: { lastLogin: new Date() },
       });
-      // Convert null values to undefined for compatibility
-      const convertedUser = {
-        ...user,
-        firstName: user.firstName || undefined,
-        lastName: user.lastName || undefined,
-        phone: user.phone || undefined,
-      };
-      return RepositoryResult.success(convertedUser);
+      const userResult = toUserBase(rawResult);
+      return RepositoryResult.success(userResult);
     } catch (_error) {
-      this.logger.error("Failed to update last login:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to update last login: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -363,31 +493,36 @@ export class UserRepository extends BaseRepository<
   /**
    * Activate/Deactivate user account
    */
-  async toggleUserStatus(
-    id: string,
-    isVerified: boolean,
-  ): Promise<RepositoryResult<User>> {
+  async toggleUserStatus(id: string, isVerified: boolean): Promise<RepositoryResult<UserBase>> {
     try {
-      this.logger.debug(
-        `${isVerified ? "Verifying" : "Unverifying"} user: ${id}`,
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `${isVerified ? 'Verifying' : 'Unverifying'} user: ${id}`,
+        'UserRepository'
       );
-      const user = await this.prisma.user.update({
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.update({
         where: { id },
         data: {
           isVerified,
           updatedAt: new Date(),
         },
       });
-      // Convert null values to undefined for compatibility
-      const convertedUser = {
-        ...user,
-        firstName: user.firstName || undefined,
-        lastName: user.lastName || undefined,
-        phone: user.phone || undefined,
-      };
-      return RepositoryResult.success(convertedUser);
+      const userResult = toUserBase(rawResult);
+      return RepositoryResult.success(userResult);
     } catch (_error) {
-      this.logger.error("Failed to toggle user status:", _error);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to toggle user status: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
       return RepositoryResult.failure(_error as Error);
     }
   }
@@ -396,13 +531,18 @@ export class UserRepository extends BaseRepository<
    * Get users with upcoming appointments
    */
   async getUsersWithUpcomingAppointments(
-    days: number = 7,
+    days: number = 7
   ): Promise<RepositoryResult<UserWithProfile[]>> {
     try {
       const futureDate = new Date();
       futureDate.setDate(futureDate.getDate() + days);
 
-      const users = await this.prisma.user.findMany({
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.findMany({
         where: {
           appointments: {
             some: {
@@ -410,7 +550,7 @@ export class UserRepository extends BaseRepository<
                 gte: new Date(),
                 lte: futureDate,
               },
-              status: "SCHEDULED",
+              status: 'SCHEDULED',
             },
           },
         },
@@ -421,25 +561,24 @@ export class UserRepository extends BaseRepository<
                 gte: new Date(),
                 lte: futureDate,
               },
-              status: "SCHEDULED",
+              status: 'SCHEDULED',
             },
-            orderBy: { date: "asc" },
+            orderBy: { date: 'asc' },
           },
         },
       });
-
-      // Convert null values to undefined for compatibility
-      const convertedUsers = users.map((user: unknown) => ({
-        ...(user as any),
-        firstName: (user as any).firstName || undefined,
-        lastName: (user as any).lastName || undefined,
-        phone: (user as any).phone || undefined,
-      }));
-      return RepositoryResult.success(convertedUsers as UserWithProfile[]);
+      // Convert Prisma results to UserWithProfile
+      const users: UserWithProfile[] = Array.isArray(rawResult)
+        ? rawResult.map(user => toUserBase(user) as UserWithProfile)
+        : [];
+      return RepositoryResult.success(users);
     } catch (_error) {
-      this.logger.error(
-        "Failed to get users with upcoming appointments:",
-        _error,
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to get users with upcoming appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
       );
       return RepositoryResult.failure(_error as Error);
     }
@@ -450,10 +589,15 @@ export class UserRepository extends BaseRepository<
    */
   async bulkUpdateUsers(
     userIds: string[],
-    updateData: Partial<UpdateUserDto>,
+    updateData: Partial<UpdateUserDto>
   ): Promise<RepositoryResult<{ count: number }>> {
-    return this.executeInTransaction(async (tx: any) => {
-      const result = await tx.user.updateMany({
+    try {
+      // Use internal accessor - repositories are infrastructure components
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
+      ).getInternalPrismaClient();
+      const userDelegate = getUserDelegate(prismaClient);
+      const rawResult = await userDelegate.updateMany({
         where: {
           id: { in: userIds },
         },
@@ -462,44 +606,89 @@ export class UserRepository extends BaseRepository<
           updatedAt: new Date(),
         },
       });
+      const updateResult = rawResult as { count: number };
 
-      this.logger.debug(`Bulk updated ${result.count} users`);
-      return result;
-    });
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Bulk updated ${updateResult.count} users`,
+        'UserRepository'
+      );
+      return RepositoryResult.success(updateResult);
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to bulk update users: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'UserRepository',
+        { error: _error instanceof Error ? _error.stack : String(_error) }
+      );
+      return RepositoryResult.failure(_error as Error);
+    }
   }
 
   /**
    * Soft delete user (healthcare compliance)
    */
-  async softDeleteUser(id: string): Promise<RepositoryResult<User>> {
-    return this.executeInTransaction(async (tx: any) => {
+  async softDeleteUser(id: string): Promise<RepositoryResult<UserBase>> {
+    const result = await this.executeInTransaction(async (tx: unknown) => {
+      // Type the transaction client
+      type TransactionClient = {
+        user: {
+          update: (args: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => Promise<unknown>;
+        };
+        appointment: {
+          updateMany: (args: {
+            where: { userId: string };
+            data: { status: string };
+          }) => Promise<{ count: number }>;
+        };
+      };
+      const transactionClient = tx as TransactionClient;
+
       // First, anonymize sensitive data
-      const user = await tx.user.update({
+      const rawResult = await transactionClient.user.update({
         where: { id },
         data: {
           email: `deleted_${id}@deleted.local`,
           phone: null,
-          firstName: "Deleted",
-          lastName: "User",
+          firstName: 'Deleted',
+          lastName: 'User',
           isVerified: false,
         },
       });
 
       // Update related records if needed - cancel their appointments
-      await tx.appointment.updateMany({
+      await transactionClient.appointment.updateMany({
         where: { userId: id },
-        data: { status: "CANCELLED" },
+        data: { status: 'CANCELLED' },
       });
 
-      this.logger.debug(`Soft deleted user: ${id}`);
-      // Convert null values to undefined for compatibility
-      const convertedUser = {
-        ...user,
-        firstName: user.firstName || undefined,
-        lastName: user.lastName || undefined,
-        phone: user.phone || undefined,
-      };
-      return convertedUser;
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Soft deleted user: ${id}`,
+        'UserRepository'
+      );
+
+      const userResult = toUserBase(rawResult);
+      return userResult;
     });
+
+    if (result.isFailure) {
+      return result;
+    }
+
+    // Unwrap the nested result
+    const innerResult = result.data;
+    if (innerResult && innerResult instanceof RepositoryResult) {
+      return innerResult;
+    }
+
+    // If data is UserBase, wrap it in success result
+    return RepositoryResult.success(result.data as UserBase);
   }
 }

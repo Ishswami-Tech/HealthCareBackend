@@ -1,5 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { Queue, Job } from "bull";
+import { Injectable } from '@nestjs/common';
+import { Queue, Job } from 'bull';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 export interface EmailQueueData {
   to: string | string[];
@@ -14,7 +16,7 @@ export interface EmailQueueData {
     content: Buffer | string;
     contentType?: string;
   }>;
-  priority?: "low" | "normal" | "high" | "critical";
+  priority?: 'low' | 'normal' | 'high' | 'critical';
   delay?: number;
   metadata?: Record<string, unknown>;
 }
@@ -43,10 +45,12 @@ export interface EmailQueueStats {
 
 @Injectable()
 export class EmailQueueService {
-  private readonly logger = new Logger(EmailQueueService.name);
   private readonly emailQueue: Queue<EmailQueueData>;
 
-  constructor(emailQueue: Queue<EmailQueueData>) {
+  constructor(
+    emailQueue: Queue<EmailQueueData>,
+    private readonly loggingService: LoggingService
+  ) {
     this.emailQueue = emailQueue;
   }
 
@@ -59,12 +63,12 @@ export class EmailQueueService {
       priority?: number;
       removeOnComplete?: number;
       removeOnFail?: number;
-    },
+    }
   ): Promise<Job<EmailQueueData>> {
     try {
       const priority = this.getPriorityValue(emailData.priority);
 
-      const job = await this.emailQueue.add("send-email", emailData, {
+      const job = await this.emailQueue.add('send-email', emailData, {
         delay: emailData.delay || options?.delay || 0,
         attempts: options?.attempts || 3,
         backoff: options?.backoff || 2000,
@@ -74,22 +78,32 @@ export class EmailQueueService {
         ...options,
       });
 
-      this.logger.log("Email added to queue", {
-        jobId: job.id,
-        to: Array.isArray(emailData.to)
-          ? emailData.to.join(", ")
-          : emailData.to,
-        subject: emailData.subject,
-        priority: emailData.priority || "normal",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Email added to queue',
+        'EmailQueueService',
+        {
+          jobId: job.id,
+          to: Array.isArray(emailData.to) ? emailData.to.join(', ') : emailData.to,
+          subject: emailData.subject,
+          priority: emailData.priority || 'normal',
+        }
+      );
 
       return job;
     } catch (error) {
-      this.logger.error("Failed to add email to queue", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        to: emailData.to,
-        subject: emailData.subject,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to add email to queue',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          to: emailData.to,
+          subject: emailData.subject,
+        }
+      );
       throw error;
     }
   }
@@ -101,14 +115,10 @@ export class EmailQueueService {
       backoff?: number | { type: string; delay: number };
       removeOnComplete?: number;
       removeOnFail?: number;
-    },
+    }
   ): Promise<Job<EmailQueueData>[]> {
     try {
-      const {
-        emails,
-        batchSize = 50,
-        delayBetweenBatches = 1000,
-      } = bulkEmailData;
+      const { emails, batchSize = 50, delayBetweenBatches = 1000 } = bulkEmailData;
       const jobs: Job<EmailQueueData>[] = [];
 
       // Process emails in batches
@@ -121,7 +131,7 @@ export class EmailQueueService {
           const priority = this.getPriorityValue(emailData.priority);
 
           const job = await this.emailQueue.add(
-            "send-bulk-email",
+            'send-bulk-email',
             {
               ...emailData,
               metadata: {
@@ -137,26 +147,38 @@ export class EmailQueueService {
               priority,
               removeOnComplete: options?.removeOnComplete || 50,
               removeOnFail: options?.removeOnFail || 20,
-            },
+            }
           );
 
           jobs.push(job);
         }
       }
 
-      this.logger.log("Bulk emails added to queue", {
-        totalEmails: emails.length,
-        batches: Math.ceil(emails.length / batchSize),
-        batchSize,
-        totalJobs: jobs.length,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Bulk emails added to queue',
+        'EmailQueueService',
+        {
+          totalEmails: emails.length,
+          batches: Math.ceil(emails.length / batchSize),
+          batchSize,
+          totalJobs: jobs.length,
+        }
+      );
 
       return jobs;
     } catch (error) {
-      this.logger.error("Failed to add bulk emails to queue", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        emailCount: bulkEmailData.emails.length,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to add bulk emails to queue',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          emailCount: bulkEmailData.emails.length,
+        }
+      );
       throw error;
     }
   }
@@ -169,12 +191,12 @@ export class EmailQueueService {
       backoff?: number | { type: string; delay: number };
       removeOnComplete?: number;
       removeOnFail?: number;
-    },
+    }
   ): Promise<Job<EmailQueueData>> {
     try {
       const priority = this.getPriorityValue(emailData.priority);
 
-      const job = await this.emailQueue.add("send-recurring-email", emailData, {
+      const job = await this.emailQueue.add('send-recurring-email', emailData, {
         repeat: { cron: cronExpression },
         attempts: options?.attempts || 3,
         backoff: options?.backoff || 2000,
@@ -183,22 +205,34 @@ export class EmailQueueService {
         removeOnFail: options?.removeOnFail || 20,
       });
 
-      this.logger.log("Recurring email scheduled", {
-        jobId: job.id,
-        to: emailData.to,
-        subject: emailData.subject,
-        cronExpression,
-        priority: emailData.priority || "normal",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Recurring email scheduled',
+        'EmailQueueService',
+        {
+          jobId: job.id,
+          to: emailData.to,
+          subject: emailData.subject,
+          cronExpression,
+          priority: emailData.priority || 'normal',
+        }
+      );
 
       return job;
     } catch (error) {
-      this.logger.error("Failed to schedule recurring email", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        to: emailData.to,
-        subject: emailData.subject,
-        cronExpression,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to schedule recurring email',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          to: emailData.to,
+          subject: emailData.subject,
+          cronExpression,
+        }
+      );
       throw error;
     }
   }
@@ -207,10 +241,16 @@ export class EmailQueueService {
     try {
       return await this.emailQueue.getJob(jobId);
     } catch (error) {
-      this.logger.error("Failed to get job", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        jobId,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to get job',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          jobId,
+        }
+      );
       return null;
     }
   }
@@ -220,15 +260,27 @@ export class EmailQueueService {
       const job = await this.emailQueue.getJob(jobId);
       if (job) {
         await job.remove();
-        this.logger.log("Job removed from queue", { jobId });
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          'Job removed from queue',
+          'EmailQueueService',
+          { jobId }
+        );
         return true;
       }
       return false;
     } catch (error) {
-      this.logger.error("Failed to remove job", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        jobId,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to remove job',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          jobId,
+        }
+      );
       return false;
     }
   }
@@ -238,15 +290,27 @@ export class EmailQueueService {
       const job = await this.emailQueue.getJob(jobId);
       if (job) {
         await job.retry();
-        this.logger.log("Job retried", { jobId });
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          'Job retried',
+          'EmailQueueService',
+          { jobId }
+        );
         return true;
       }
       return false;
     } catch (error) {
-      this.logger.error("Failed to retry job", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        jobId,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to retry job',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          jobId,
+        }
+      );
       return false;
     }
   }
@@ -270,9 +334,15 @@ export class EmailQueueService {
         paused: 0, // Not available in current Bull version
       };
     } catch (error) {
-      this.logger.error("Failed to get queue stats", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to get queue stats',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
 
       return {
         waiting: 0,
@@ -289,9 +359,15 @@ export class EmailQueueService {
     try {
       return await this.emailQueue.getFailed(start, end);
     } catch (error) {
-      this.logger.error("Failed to get failed jobs", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to get failed jobs',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
       return [];
     }
   }
@@ -311,17 +387,29 @@ export class EmailQueueService {
         }
       }
 
-      this.logger.log("Retry all failed jobs completed", {
-        totalJobs: failedJobs.length,
-        successful: successCount,
-        failed: failedCount,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Retry all failed jobs completed',
+        'EmailQueueService',
+        {
+          totalJobs: failedJobs.length,
+          successful: successCount,
+          failed: failedCount,
+        }
+      );
 
       return { success: successCount, failed: failedCount };
     } catch (error) {
-      this.logger.error("Failed to retry all failed jobs", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to retry all failed jobs',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
       return { success: 0, failed: 0 };
     }
   }
@@ -340,16 +428,28 @@ export class EmailQueueService {
         }
       }
 
-      this.logger.log("Completed jobs cleared", {
-        clearedCount,
-        totalCompleted: completedJobs.length,
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Completed jobs cleared',
+        'EmailQueueService',
+        {
+          clearedCount,
+          totalCompleted: completedJobs.length,
+        }
+      );
 
       return clearedCount;
     } catch (error) {
-      this.logger.error("Failed to clear completed jobs", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to clear completed jobs',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
       return 0;
     }
   }
@@ -357,11 +457,22 @@ export class EmailQueueService {
   async pauseQueue(): Promise<void> {
     try {
       await this.emailQueue.pause();
-      this.logger.log("Email queue paused");
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Email queue paused',
+        'EmailQueueService'
+      );
     } catch (error) {
-      this.logger.error("Failed to pause queue", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to pause queue',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
       throw error;
     }
   }
@@ -369,11 +480,22 @@ export class EmailQueueService {
   async resumeQueue(): Promise<void> {
     try {
       await this.emailQueue.resume();
-      this.logger.log("Email queue resumed");
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Email queue resumed',
+        'EmailQueueService'
+      );
     } catch (error) {
-      this.logger.error("Failed to resume queue", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to resume queue',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
       throw error;
     }
   }
@@ -382,24 +504,35 @@ export class EmailQueueService {
     try {
       // Remove all jobs from the queue
       await this.emailQueue.empty();
-      this.logger.log("Email queue drained");
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        'Email queue drained',
+        'EmailQueueService'
+      );
     } catch (error) {
-      this.logger.error("Failed to drain queue", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to drain queue',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
       throw error;
     }
   }
 
   private getPriorityValue(priority?: string): number {
     switch (priority) {
-      case "critical":
+      case 'critical':
         return 10;
-      case "high":
+      case 'high':
         return 5;
-      case "normal":
+      case 'normal':
         return 0;
-      case "low":
+      case 'low':
         return -5;
       default:
         return 0;
@@ -421,25 +554,20 @@ export class EmailQueueService {
 
       // Calculate performance metrics
       const totalProcessed = stats.completed + stats.failed;
-      const errorRate =
-        totalProcessed > 0 ? (stats.failed / totalProcessed) * 100 : 0;
+      const errorRate = totalProcessed > 0 ? (stats.failed / totalProcessed) * 100 : 0;
 
       // Calculate average processing time from recent completed jobs
       const recentJobs = completed.slice(-50);
       const avgWaitTime =
         recentJobs.length > 0
           ? recentJobs.reduce((sum, job) => {
-              const wait =
-                job.processedOn && job.timestamp
-                  ? job.processedOn - job.timestamp
-                  : 0;
+              const wait = job.processedOn && job.timestamp ? job.processedOn - job.timestamp : 0;
               return sum + wait;
             }, 0) / recentJobs.length
           : 0;
 
       // Estimate throughput (jobs per hour based on recent activity)
-      const hourlyThroughput =
-        recentJobs.length > 0 ? (recentJobs.length / 1) * 60 : 0;
+      const hourlyThroughput = recentJobs.length > 0 ? (recentJobs.length / 1) * 60 : 0;
 
       const isHealthy =
         stats.active < 100 && // Not too many active jobs
@@ -456,9 +584,15 @@ export class EmailQueueService {
         },
       };
     } catch (error) {
-      this.logger.error("Failed to get queue health", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Failed to get queue health',
+        'EmailQueueService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
 
       return {
         isHealthy: false,

@@ -1,9 +1,9 @@
-import { Module, MiddlewareConsumer, RequestMethod } from "@nestjs/common";
-import { BullBoardModule as BullBoardNestModule } from "@bull-board/nestjs";
-import { FastifyAdapter } from "@bull-board/fastify";
-import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
-import { ConfigModule, ConfigService } from "@nestjs/config";
-import { BullBoardService } from "./bull-board.service";
+import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
+import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
+import { FastifyAdapter } from '@bull-board/fastify';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { BullBoardService } from './bull-board.service';
 import {
   SERVICE_QUEUE,
   APPOINTMENT_QUEUE,
@@ -12,7 +12,7 @@ import {
   VIDHAKARMA_QUEUE,
   PANCHAKARMA_QUEUE,
   CHEQUP_QUEUE,
-} from "../queue.constants";
+} from '@infrastructure/queue/src/queue.constants';
 
 /**
  * Bull Board Module for Queue Monitoring
@@ -42,22 +42,22 @@ import {
     BullBoardNestModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        route: "/queue-dashboard",
+        route: '/queue-dashboard',
         adapter: FastifyAdapter,
         auth: {
-          user: config.get<string>("QUEUE_DASHBOARD_USER", "admin"),
-          password: config.get<string>("QUEUE_DASHBOARD_PASSWORD", "admin"),
+          user: config.get<string>('QUEUE_DASHBOARD_USER', 'admin'),
+          password: config.get<string>('QUEUE_DASHBOARD_PASSWORD', 'admin'),
         },
-        basePath: "/queue-dashboard",
+        basePath: '/queue-dashboard',
         middleware: (req: unknown, _res: unknown, next: unknown) => {
           // Only handle queue-dashboard routes
           const request = req as { url: string };
           const nextFn = next as (value?: string) => void;
-          if (request.url.startsWith("/queue-dashboard")) {
+          if (request.url.startsWith('/queue-dashboard')) {
             nextFn();
           } else {
             // Pass through for non-queue routes
-            nextFn("route");
+            nextFn('route');
           }
         },
       }),
@@ -105,8 +105,8 @@ export class BullBoardModule {
     consumer
       .apply()
       .forRoutes(
-        { path: "queue-dashboard", method: RequestMethod.ALL },
-        { path: "queue-dashboard/*", method: RequestMethod.ALL },
+        { path: 'queue-dashboard', method: RequestMethod.ALL },
+        { path: 'queue-dashboard/*', method: RequestMethod.ALL }
       );
   }
 }

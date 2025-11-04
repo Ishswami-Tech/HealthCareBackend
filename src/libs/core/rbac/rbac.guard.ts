@@ -1,73 +1,32 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-  Logger,
-} from "@nestjs/common";
-import { Reflector } from "@nestjs/core";
-import { Observable } from "rxjs";
-import { RbacService, RbacContext } from "./rbac.service";
-import { RBAC_METADATA_KEY } from "./rbac.decorators";
-
-export interface RbacRequirement {
-  resource: string;
-  action: string;
-  clinicId?: string;
-  requireOwnership?: boolean;
-  allowSuperAdmin?: boolean;
-}
-
-interface RequestWithAuth {
-  url: string;
-  method: string;
-  user?: {
-    id?: string;
-    clinicId?: string;
-    [key: string]: unknown;
-  };
-  params?: {
-    [key: string]: unknown;
-  };
-  body?: {
-    [key: string]: unknown;
-  };
-  query?: {
-    [key: string]: unknown;
-  };
-  headers: {
-    [key: string]: string | undefined;
-  };
-  ip?: string;
-  connection?: {
-    remoteAddress?: string;
-  };
-  socket?: {
-    remoteAddress?: string;
-  };
-}
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Observable } from 'rxjs';
+import { RbacService } from './rbac.service';
+import type { RbacContext, RbacRequirement } from '@core/types/rbac.types';
+import { RBAC_METADATA_KEY } from './rbac.decorators';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import type { RequestWithAuth } from '@core/types/guard.types';
 
 @Injectable()
 export class RbacGuard implements CanActivate {
-  private readonly logger = new Logger(RbacGuard.name);
-
   constructor(
     private readonly rbacService: RbacService,
     private readonly reflector: Reflector,
+    private readonly loggingService: LoggingService
   ) {}
 
-  canActivate(
-    context: ExecutionContext,
-  ): boolean | Promise<boolean> | Observable<boolean> {
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
     return this.validateRequest(context);
   }
 
   private async validateRequest(context: ExecutionContext): Promise<boolean> {
     try {
       // Get RBAC requirements from decorator
-      const rbacRequirements = this.reflector.getAllAndOverride<
-        RbacRequirement[]
-      >(RBAC_METADATA_KEY, [context.getHandler(), context.getClass()]);
+      const rbacRequirements = this.reflector.getAllAndOverride<RbacRequirement[]>(
+        RBAC_METADATA_KEY,
+        [context.getHandler(), context.getClass()]
+      );
 
       if (!rbacRequirements || rbacRequirements.length === 0) {
         // No RBAC requirements specified, allow access
@@ -78,8 +37,13 @@ export class RbacGuard implements CanActivate {
       const user = request.user;
 
       if (!user || !user.id) {
-        this.logger.warn("No user found in request for RBAC check");
-        throw new ForbiddenException("Authentication required");
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'No user found in request for RBAC check',
+          'RbacGuard'
+        );
+        throw new ForbiddenException('Authentication required');
       }
 
       // Extract context information
@@ -97,23 +61,25 @@ export class RbacGuard implements CanActivate {
           metadata: {
             requestUrl: request.url,
             requestMethod: request.method,
-            ...(request.headers["user-agent"] && {
-              userAgent: request.headers["user-agent"],
+            ...(request.headers['user-agent'] && {
+              userAgent: request.headers['user-agent'],
             }),
             ipAddress: this.extractClientIp(request),
           },
         };
 
-        const permissionCheck =
-          await this.rbacService.checkPermission(rbacContext);
+        const permissionCheck = await this.rbacService.checkPermission(rbacContext);
 
         if (!permissionCheck.hasPermission) {
           // Check if super admin bypass is allowed
-          if (
-            requirement.allowSuperAdmin !== false &&
-            this.isSuperAdmin(permissionCheck.roles)
-          ) {
-            this.logger.log(`Super admin bypass granted for user ${userId}`);
+          if (requirement.allowSuperAdmin !== false && this.isSuperAdmin(permissionCheck.roles)) {
+            void this.loggingService.log(
+              LogType.SECURITY,
+              LogLevel.INFO,
+              'Super admin bypass granted',
+              'RbacGuard',
+              { userId }
+            );
             continue;
           }
 
@@ -122,29 +88,49 @@ export class RbacGuard implements CanActivate {
             requirement.requireOwnership &&
             (await this.checkOwnership(request, userId, requirement))
           ) {
-            this.logger.log(`Ownership check passed for user ${userId}`);
+            void this.loggingService.log(
+              LogType.SECURITY,
+              LogLevel.INFO,
+              'Ownership check passed',
+              'RbacGuard',
+              { userId }
+            );
             continue;
           }
 
-          this.logger.warn(`Permission denied for user ${userId}`, {
-            resource: requirement.resource,
-            action: requirement.action,
-            clinicId: rbacContext.clinicId,
-            reason: permissionCheck.reason,
-            roles: permissionCheck.roles,
-          });
+          void this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            'Permission denied',
+            'RbacGuard',
+            {
+              userId,
+              resource: requirement.resource,
+              action: requirement.action,
+              clinicId: rbacContext.clinicId,
+              reason: permissionCheck.reason,
+              roles: permissionCheck.roles,
+            }
+          );
 
           throw new ForbiddenException(
-            `Insufficient permissions for ${requirement.resource}:${requirement.action}`,
+            `Insufficient permissions for ${requirement.resource}:${requirement.action}`
           );
         }
 
-        this.logger.debug(`Permission granted for user ${userId}`, {
-          resource: requirement.resource,
-          action: requirement.action,
-          clinicId: rbacContext.clinicId,
-          roles: permissionCheck.roles,
-        });
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.DEBUG,
+          'Permission granted',
+          'RbacGuard',
+          {
+            userId,
+            resource: requirement.resource,
+            action: requirement.action,
+            clinicId: rbacContext.clinicId,
+            roles: permissionCheck.roles,
+          }
+        );
       }
 
       return true;
@@ -153,11 +139,14 @@ export class RbacGuard implements CanActivate {
         throw _error;
       }
 
-      this.logger.error(
-        "RBAC guard validation failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'RBAC guard validation failed',
+        'RbacGuard',
+        { error: _error instanceof Error ? _error.message : 'Unknown' }
       );
-      throw new ForbiddenException("Permission validation failed");
+      throw new ForbiddenException('Permission validation failed');
     }
   }
 
@@ -166,26 +155,24 @@ export class RbacGuard implements CanActivate {
    */
   private extractClinicId(
     request: RequestWithAuth,
-    requirements: RbacRequirement[],
+    requirements: RbacRequirement[]
   ): string | undefined {
     // Try to get clinic ID from various sources
     const sources = [
-      request.params?.["clinicId"] as string | undefined,
-      request.body?.["clinicId"] as string | undefined,
-      request.query?.["clinicId"] as string | undefined,
-      request.headers["x-clinic-id"],
+      request.params?.['clinicId'] as string | undefined,
+      request.body?.['clinicId'] as string | undefined,
+      request.query?.['clinicId'] as string | undefined,
+      request.headers['x-clinic-id'],
       request.user?.clinicId,
     ];
 
     // Check if any requirement specifies a clinic ID
-    const requirementClinicId = requirements.find(
-      (req) => req.clinicId,
-    )?.clinicId;
+    const requirementClinicId = requirements.find(req => req.clinicId)?.clinicId;
     if (requirementClinicId) {
       return requirementClinicId;
     }
 
-    return sources.find((id) => id && typeof id === "string");
+    return sources.find(id => id && typeof id === 'string');
   }
 
   /**
@@ -193,12 +180,12 @@ export class RbacGuard implements CanActivate {
    */
   private extractClientIp(request: RequestWithAuth): string {
     return (
-      request.headers["x-forwarded-for"] ||
-      request.headers["x-real-ip"] ||
+      request.headers['x-forwarded-for'] ||
+      request.headers['x-real-ip'] ||
       request.connection?.remoteAddress ||
       request.socket?.remoteAddress ||
       request.ip ||
-      "127.0.0.1"
+      '127.0.0.1'
     );
   }
 
@@ -207,10 +194,8 @@ export class RbacGuard implements CanActivate {
    */
   private isSuperAdmin(roles: string[]): boolean {
     return roles.some(
-      (role) =>
-        role === "SUPER_ADMIN" ||
-        role === "SYSTEM_ADMIN" ||
-        role.toLowerCase().includes("super"),
+      role =>
+        role === 'SUPER_ADMIN' || role === 'SYSTEM_ADMIN' || role.toLowerCase().includes('super')
     );
   }
 
@@ -220,7 +205,7 @@ export class RbacGuard implements CanActivate {
   private async checkOwnership(
     request: RequestWithAuth,
     userId: string,
-    requirement: RbacRequirement,
+    requirement: RbacRequirement
   ): Promise<boolean> {
     try {
       // Extract resource ID from request
@@ -232,17 +217,17 @@ export class RbacGuard implements CanActivate {
 
       // Check ownership based on resource type
       switch (requirement.resource) {
-        case "profile":
-        case "user":
+        case 'profile':
+        case 'user':
           return resourceId === userId;
 
-        case "appointments":
+        case 'appointments':
           return await this.checkAppointmentOwnership(resourceId, userId);
 
-        case "medical-records":
+        case 'medical-records':
           return await this.checkMedicalRecordOwnership(resourceId, userId);
 
-        case "patients":
+        case 'patients':
           return await this.checkPatientOwnership(resourceId, userId);
 
         default:
@@ -250,9 +235,15 @@ export class RbacGuard implements CanActivate {
           return resourceId === userId;
       }
     } catch (_error) {
-      this.logger.error(
-        `Ownership check failed for ${requirement.resource}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Ownership check failed',
+        'RbacGuard',
+        {
+          resource: requirement.resource,
+          error: _error instanceof Error ? _error.message : 'Unknown',
+        }
       );
       return false;
     }
@@ -261,28 +252,25 @@ export class RbacGuard implements CanActivate {
   /**
    * Extract resource ID from request
    */
-  private extractResourceId(
-    request: RequestWithAuth,
-    resource: string,
-  ): string | undefined {
+  private extractResourceId(request: RequestWithAuth, resource: string): string | undefined {
     const paramKeys = [
-      "id",
+      'id',
       `${resource}Id`,
       `${resource.slice(0, -1)}Id`, // Remove 's' from plural
     ];
 
     for (const key of paramKeys) {
       const paramValue = request.params?.[key];
-      if (paramValue && typeof paramValue === "string") {
+      if (paramValue && typeof paramValue === 'string') {
         return paramValue;
       }
     }
 
-    const bodyId = request.body?.["id"];
-    const queryId = request.query?.["id"];
+    const bodyId = request.body?.['id'];
+    const queryId = request.query?.['id'];
 
-    if (bodyId && typeof bodyId === "string") return bodyId;
-    if (queryId && typeof queryId === "string") return queryId;
+    if (bodyId && typeof bodyId === 'string') return bodyId;
+    if (queryId && typeof queryId === 'string') return queryId;
 
     return undefined;
   }
@@ -290,10 +278,7 @@ export class RbacGuard implements CanActivate {
   /**
    * Check appointment ownership
    */
-  private checkAppointmentOwnership(
-    _appointmentId: string,
-    _userId: string,
-  ): Promise<boolean> {
+  private checkAppointmentOwnership(_appointmentId: string, _userId: string): Promise<boolean> {
     // This would typically query the database to check if the user owns the appointment
     // For now, we'll implement a basic check
     // In a real implementation, you would inject the appointment service
@@ -303,10 +288,7 @@ export class RbacGuard implements CanActivate {
   /**
    * Check medical record ownership
    */
-  private checkMedicalRecordOwnership(
-    _recordId: string,
-    _userId: string,
-  ): Promise<boolean> {
+  private checkMedicalRecordOwnership(_recordId: string, _userId: string): Promise<boolean> {
     // This would typically query the database to check if the user owns the medical record
     return Promise.resolve(true); // Placeholder implementation
   }
@@ -314,10 +296,7 @@ export class RbacGuard implements CanActivate {
   /**
    * Check patient ownership
    */
-  private checkPatientOwnership(
-    patientId: string,
-    userId: string,
-  ): Promise<boolean> {
+  private checkPatientOwnership(patientId: string, userId: string): Promise<boolean> {
     // Check if the user is the patient or has access to the patient
     return Promise.resolve(patientId === userId); // Simplified check
   }

@@ -29,6 +29,10 @@
 - ✅ **NestJS with Fastify** (NOT Express)
 - ✅ **TypeScript Strict Mode** - No `any` types
 - ✅ **PostgreSQL Database** - Single database with multi-tenant clinic isolation
+  - **Single Entry Point**: Use `DatabaseService` only (from `@infrastructure/database`)
+  - **PrismaService**: INTERNAL ONLY - Never use directly in application services
+  - **Optimization**: All operations include connection pooling, caching, query optimization, metrics, HIPAA audit logging
+  - **10M+ Users Ready**: Optimized connection pooling (500 max), large cache (100K+ entries), read replicas
 - ✅ **Path Aliases** - Use `@services`, `@infrastructure`, `@communication`, etc. (never relative imports)
 - ✅ **Plugin Architecture** - Extensible appointment system with 12+ plugins
 - ✅ **Multi-Channel Communication** - Email, SMS, WhatsApp, Push Notifications, WebSocket
@@ -51,7 +55,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // 2. Internal imports - Infrastructure layer
-import { PrismaService } from '@infrastructure/database';
+import { DatabaseService } from '@infrastructure/database'; // ✅ Use DatabaseService (NOT PrismaService)
 import { RedisService } from '@infrastructure/cache';
 import { QueueService } from '@infrastructure/queue';
 import { EventsService } from '@infrastructure/events';
@@ -76,6 +80,84 @@ import { CreateUserDto, UpdateUserDto } from '@dtos';
 // 7. Local imports (same directory)
 import { UserRepository } from './user.repository';
 ```
+
+### **Change Management Policy (MANDATORY)**
+- Modify existing files for changes; create new files only when necessary for new modules or separations.
+- No duplication: extend/refactor existing code instead of creating parallel implementations.
+- Never skip ESLint rules or use disable comments; resolve issues properly until clean.
+
+### **Functionality Preservation (MANDATORY)**
+- Do not change existing functionality when addressing lint/type issues or refactors.
+- Any intended behavior change must be explicitly specified and tested.
+
+### 🧩 API Versioning & Deprecation (MANDATORY)
+- Public APIs must be semantically versioned (e.g., `v1`, `v2`) and backward compatible within a major.
+- Add deprecation headers for sunset APIs (`Deprecation`, `Sunset`, `Link` with migration docs) and grace periods.
+
+### 📦 Error Taxonomy
+- Standard error envelope across services with code, message, and correlation id.
+- Do not leak internals/PII; map infrastructure errors to domain-safe codes.
+ - Use centralized error system from `@core/errors`:
+   - Throw `HealthcareError` with `ErrorCodes` and safe messages.
+   - Prefer domain-specific codes (e.g., `APPOINTMENT_CONFLICT`, `AUTH_INVALID_CREDENTIALS`).
+   - Always log with `LoggingService` including `correlationId`, `userId`, `clinicId`.
+   - Let global filters map exceptions → HTTP responses consistently.
+
+```typescript
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCodes } from '@core/errors/error-codes.enum';
+import { LoggingService, LogType, LogLevel } from '@infrastructure/logging';
+
+// Example usage inside a service
+if (isDuplicate) {
+  await loggingService.log(
+    LogType.AUDIT,
+    LogLevel.WARN,
+    'Duplicate appointment detected',
+    'AppointmentService',
+    { userId, clinicId, appointmentId }
+  );
+  throw new HealthcareError(ErrorCodes.APPOINTMENT_CONFLICT, 'Appointment time is not available');
+}
+```
+
+### 🧱 Layer & Import Boundaries
+- Enforce path aliases and layering: services do not import infrastructure directly; use DI and approved facades.
+- Forbid cross-layer relative imports; use `@types`, `@core`, `@infrastructure`, `@communication`, `@services`.
+
+### ⚡ Performance Budgets
+- Define per-endpoint latency and memory budgets; prevent regressions in critical flows.
+- Optimize query plans and cache hot paths; no unindexed filters on large tables.
+
+### 🛡️ Operational Safety
+- Support canary/blue‑green rollouts with clear rollback playbooks.
+- Use feature flags with owners and expiry; limit blast radius for risky changes.
+
+### **Centralized Types & Aliases (MANDATORY)**
+- Use `@types/*` (aliased to `src/libs/core/types/*`) as the single source of truth for shared domain types and interfaces.
+- Database types stay under `@database/types` and must be mapped to `@types` with explicit mappers. Do not use DB types directly in business logic, controllers, or DTOs.
+- Mandatory aliases:
+  - `@logging/*` → `src/libs/infrastructure/logging/*`
+  - `@cache/*` → `src/libs/infrastructure/cache/*`
+  - `@events/*` → `src/libs/infrastructure/events/*`
+  - `@queue/*` → `src/libs/infrastructure/queue/*`
+  - `@core/*`, `@communication/*`, `@services/*`, `@dtos/*`
+
+Checklist:
+- All shared types/interfaces imported only from `@types`.
+- DTOs never import from `@database/types`.
+- Services/controllers do not import DB types directly.
+
+### 🚀 10M Users Readiness (MANDATORY)
+- SLOs: p95 < 200ms for API; p99 < 500ms; uptime ≥ 99.95%.
+- Capacity: horizontal scaling plan (pods per service, HPA targets, max concurrency per instance).
+- Resilience: circuit breakers, bulkheads, retries with jitter, timeouts, backpressure.
+- Idempotency: idempotency keys for POST/PUT in critical flows (billing, appointments).
+- Caching: multi-tier (in-memory + Redis), SWR, cache keys include tenant/clinic.
+- Data: read replicas, partitioning/sharding plan, hot-path denormalization where safe.
+- Async: queue-based offloading for heavy tasks; DLQ + retries; exactly-once semantics where required.
+- Observability: metrics, traces, structured logs, dashboards, SLO alerts, anomaly detection.
+- Security: rate limiting (per IP/user/tenant), WAF rules, abuse detection, bot protection.
 
 ## 📊 System Overview
 
@@ -144,14 +226,15 @@ infrastructure/
 │   ├── decorators/
 │   ├── interceptors/
 │   └── redis/
-├── database/       # Prisma with repository pattern
-│   ├── clients/
-│   ├── config/
-│   ├── interfaces/
-│   ├── prisma/
-│   ├── repositories/
+├── database/       # Single unified database service
+│   ├── clients/    # HealthcareDatabaseClient (INTERNAL)
+│   ├── config/     # Database configuration (10M+ users optimized)
+│   ├── prisma/     # PrismaService (INTERNAL - Encapsulated)
+│   ├── repositories/ # Internal repositories (INTERNAL)
 │   ├── scripts/
 │   └── types/
+│   # PUBLIC API: Only DatabaseService exported
+│   # Use: import { DatabaseService } from "@infrastructure/database"
 ├── events/         # Event-driven architecture
 │   └── types/
 ├── logging/        # Enterprise LoggingService (HIPAA-compliant)
@@ -238,19 +321,47 @@ import { RedisService } from '@infrastructure/cache';
 import { UserService } from '../../../services/users/user.service';
 ```
 
-### **Clinic Isolation Pattern**
+### **Database Usage Pattern (MANDATORY)**
 ```typescript
-// ✅ DO - Always filter by clinicId for multi-tenant data
-async findUsers(clinicId: string): Promise<User[]> {
-  return this.prisma.$client.user.findMany({
-    where: { clinicId, isActive: true }
-  });
+// ✅ DO - Use DatabaseService for all database operations
+import { DatabaseService } from "@infrastructure/database";
+
+@Injectable()
+export class UserService {
+  constructor(private readonly databaseService: DatabaseService) {}
+
+  async findUser(id: string) {
+    // Use safe methods (includes all optimization layers)
+    return await this.databaseService.findUserByIdSafe(id);
+  }
+
+  async findUsers(clinicId: string) {
+    // Clinic isolation automatic with safe methods
+    return await this.databaseService.findUsersSafe({ 
+      clinicId, 
+      isActive: true 
+    });
+  }
+
+  async createUser(data: CreateUserDto) {
+    // Automatic cache invalidation + HIPAA audit logging
+    return await this.databaseService.createUserSafe(data);
+  }
+
+  // For custom queries, use executeHealthcareRead/Write
+  async findUsersWithAppointments(clinicId: string) {
+    return await this.databaseService.executeHealthcareRead(async (client) => {
+      return await client.user.findMany({
+        where: { clinicId },
+        include: { appointments: true }
+      });
+    });
+  }
 }
 
-// ❌ DON'T - Query without clinic isolation
-async findUsers(): Promise<User[]> {
-  return this.prisma.$client.user.findMany();
-}
+// ❌ DON'T - Never import PrismaService directly
+import { PrismaService } from "@infrastructure/database/prisma/prisma.service";
+// Missing: connection pooling, caching, metrics, audit logging, query optimization
 ```
 
 ### **RBAC & Permissions**

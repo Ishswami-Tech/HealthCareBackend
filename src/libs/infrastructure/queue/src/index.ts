@@ -3,26 +3,26 @@
 // ========================================
 
 // Core queue infrastructure
-export * from "./queue.module";
-export { QueueService } from "./queue.service";
-export * from "./queue.constants";
-export * from "./shared-worker.service";
+export * from './queue.module';
+export { QueueService } from './queue.service';
+export * from './queue.constants';
+export * from './shared-worker.service';
 
 // Advanced feature implementations
-export * from "./implementations/advanced-implementations";
+export * from './implementations/advanced-implementations';
 
 // Enterprise interfaces and types available via direct import when needed
 
 // Real-time Socket Gateway
-export { QueueStatusGateway } from "./sockets/queue-status.gateway";
+export { QueueStatusGateway } from './sockets/queue-status.gateway';
 
 // Bull Board exports
-export * from "./bull-board/bull-board.module";
-export * from "./bull-board/bull-board.service";
+export * from './bull-board/bull-board.module';
+export * from './bull-board/bull-board.service';
 
 // Monitoring exports
-export * from "./monitoring/queue-monitoring.service";
-export * from "./monitoring/queue-monitoring.module";
+export * from './monitoring/queue-monitoring.service';
+export * from './monitoring/queue-monitoring.module';
 
 // ========================================
 // ✅ ALL ADVANCED FEATURES IMPLEMENTED

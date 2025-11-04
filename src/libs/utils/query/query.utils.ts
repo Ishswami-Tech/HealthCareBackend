@@ -98,7 +98,7 @@ export function addDateRangeFilter<
   where: T,
   dateFrom?: Date | string,
   dateTo?: Date | string,
-  fieldName: "createdAt" | "updatedAt" | "recordedAt" | "date" = "createdAt",
+  fieldName: 'createdAt' | 'updatedAt' | 'recordedAt' | 'date' = 'createdAt'
 ): T {
   const hasDateFilter = dateFrom || dateTo;
 
@@ -107,14 +107,8 @@ export function addDateRangeFilter<
   }
 
   // Convert string dates to Date objects
-  const fromDate =
-    dateFrom instanceof Date
-      ? dateFrom
-      : dateFrom
-        ? new Date(dateFrom)
-        : undefined;
-  const toDate =
-    dateTo instanceof Date ? dateTo : dateTo ? new Date(dateTo) : undefined;
+  const fromDate = dateFrom instanceof Date ? dateFrom : dateFrom ? new Date(dateFrom) : undefined;
+  const toDate = dateTo instanceof Date ? dateTo : dateTo ? new Date(dateTo) : undefined;
 
   // Add date range to where clause
   const whereWithDate = where as T & Record<string, DateRangeWhere>;
@@ -181,7 +175,7 @@ export function calculatePagination(params: PaginationParams): {
 export function buildPaginationMeta(
   total: number,
   page: number,
-  limit: number,
+  limit: number
 ): {
   total: number;
   page: number;
@@ -224,19 +218,16 @@ export function buildPaginationMeta(
 export function addStringFilter<T extends Record<string, unknown>>(
   where: T,
   fieldName: string,
-  searchTerm?: string,
+  searchTerm?: string
 ): T {
   if (!searchTerm) {
     return where;
   }
 
-  const whereWithString = where as T &
-    Record<string, { contains: string; mode: string }>;
-  (whereWithString as Record<string, { contains: string; mode: string }>)[
-    fieldName
-  ] = {
+  const whereWithString = where as T & Record<string, { contains: string; mode: string }>;
+  (whereWithString as Record<string, { contains: string; mode: string }>)[fieldName] = {
     contains: searchTerm,
-    mode: "insensitive",
+    mode: 'insensitive',
   };
 
   return whereWithString as T;
@@ -263,8 +254,8 @@ export function addStringFilter<T extends Record<string, unknown>>(
  */
 export function buildOrderBy(
   sortBy?: string,
-  sortOrder: "asc" | "desc" = "desc",
-): Record<string, "asc" | "desc"> | undefined {
+  sortOrder: 'asc' | 'desc' = 'desc'
+): Record<string, 'asc' | 'desc'> | undefined {
   if (!sortBy) {
     return undefined;
   }
@@ -298,9 +289,9 @@ export function parseSearchTerms(terms?: string): string[] | undefined {
   }
 
   return terms
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
+    .split(',')
+    .map(t => t.trim())
+    .filter(t => t.length > 0);
 }
 
 /**

@@ -8,7 +8,7 @@ export interface AppConfig {
   /** API prefix for all routes */
   readonly apiPrefix: string;
   /** Current environment (development, production, test) */
-  readonly environment: "development" | "production" | "test";
+  readonly environment: 'development' | 'production' | 'test';
   /** Whether the application is in development mode */
   readonly isDev: boolean;
   /** Host address for the application */
@@ -120,7 +120,7 @@ export interface RateLimitConfig {
  */
 export interface LoggingConfig {
   /** Log level (error, warn, info, debug, verbose) */
-  readonly level: "error" | "warn" | "info" | "debug" | "verbose";
+  readonly level: 'error' | 'warn' | 'info' | 'debug' | 'verbose';
   /** Whether to enable audit logging */
   readonly enableAuditLogs: boolean;
 }
@@ -238,12 +238,12 @@ export interface ProductionConfig extends Config {
 /**
  * Environment type definition
  */
-export type Environment = "development" | "production" | "test";
+export type Environment = 'development' | 'production' | 'test';
 
 /**
  * Log level type definition
  */
-export type LogLevel = "error" | "warn" | "info" | "debug" | "verbose";
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'verbose';
 
 /**
  * Configuration validation result

@@ -10,29 +10,31 @@
  * - Optimized queue processing
  */
 
-import { NestFactory } from "@nestjs/core";
-import { ConfigService } from "@nestjs/config";
-import { DatabaseModule } from "./libs/infrastructure/database";
-import { CacheModule } from "./libs/infrastructure/cache/cache.module";
-import { QueueModule } from "./libs/infrastructure/queue/src/queue.module";
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import configuration from "./config/configuration";
+import { NestFactory } from '@nestjs/core';
+import type { INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { DatabaseModule } from '@infrastructure/database';
+import { CacheModule } from '@infrastructure/cache/cache.module';
+import { QueueModule } from '@infrastructure/queue/src/queue.module';
+import { LoggingModule } from '@infrastructure/logging';
+import type { LoggingService } from '@infrastructure/logging';
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import configuration from './config/configuration';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath:
-        process.env["NODE_ENV"] === "production"
-          ? ".env.production"
-          : ".env.development",
+        process.env['NODE_ENV'] === 'production' ? '.env.production' : '.env.development',
       load: [configuration],
       expandVariables: true,
       cache: true,
     }),
     DatabaseModule,
     CacheModule,
+    LoggingModule,
     QueueModule.forRoot(),
   ],
   providers: [],
@@ -41,84 +43,138 @@ import configuration from "./config/configuration";
 class WorkerModule {}
 
 async function bootstrap() {
+  let app: INestApplication | null = null;
+  let logService: LoggingService | null = null;
+  
   try {
-    console.log(
-      "🚀 Starting Healthcare Worker for High-Concurrency Queue Processing...",
-    );
-
-    const app = await NestFactory.create(WorkerModule, {
-      logger: ["error", "warn", "log"],
+    app = await NestFactory.create(WorkerModule, {
+      logger: ['error', 'warn'],
     });
 
     const configService = app.get(ConfigService);
 
-    // The SharedWorkerService is provided by QueueModule when SERVICE_NAME=worker
-    // Since it's created in QueueModule.forRoot(), we don't need to access it directly
-    console.log("SharedWorkerService will be initialized by QueueModule");
-
     // Initialize worker service
     await app.init();
 
-    console.log(`✅ Healthcare Worker initialized successfully`);
-    console.log(
-      `🔄 Processing queues for ${configService.get("SERVICE_NAME", "clinic")} domain`,
-    );
-    console.log(
-      `📊 Redis Connection: ${configService.get("REDIS_HOST", "localhost")}:${configService.get("REDIS_PORT", 6379)}`,
-    );
+    // Try to use LoggingService, fallback to console if not available
+    try {
+      const LoggingServiceClass = (await import('@infrastructure/logging')).LoggingService;
+      logService = app.get(LoggingServiceClass);
+      const { LogType, LogLevel } = await import('@core/types');
+
+      if (logService) {
+        await logService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Healthcare Worker initialized successfully',
+        'WorkerBootstrap',
+        {
+          serviceName: configService.get('SERVICE_NAME', 'clinic'),
+          redisHost: configService.get('REDIS_HOST', 'localhost'),
+          redisPort: configService.get('REDIS_PORT', 6379),
+        }
+      );
+      }
+    } catch {
+      // Fallback to console.error/warn if LoggingService fails
+      console.error('✅ Healthcare Worker initialized successfully');
+      console.error(`🔄 Processing queues for ${configService.get('SERVICE_NAME', 'clinic')} domain`);
+      console.error(
+        `📊 Redis Connection: ${configService.get('REDIS_HOST', 'localhost')}:${configService.get('REDIS_PORT', 6379)}`
+      );
+    }
 
     // Graceful shutdown handlers
-    process.on("SIGTERM", () => {
-      console.log("📤 Received SIGTERM, shutting down worker gracefully...");
-      app
-        .close()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch((_error) => {
-          console.error("❌ Error during SIGTERM shutdown:", _error);
-          process.exit(1);
-        });
+    const shutdownHandler = async (signal: string): Promise<void> => {
+      if (logService) {
+        const { LogType, LogLevel } = await import('@core/types');
+        await logService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Received ${signal}, shutting down worker gracefully...`,
+          'WorkerBootstrap',
+          {}
+        );
+      } else {
+        console.error(`📤 Received ${signal}, shutting down worker gracefully...`);
+      }
+      try {
+        if (app) {
+        await app.close();
+        }
+        process.exit(0);
+      } catch (error) {
+        if (logService) {
+          const { LogType, LogLevel } = await import('@core/types');
+          await logService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            `Error during ${signal} shutdown`,
+            'WorkerBootstrap',
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        } else {
+          console.error(`❌ Error during ${signal} shutdown:`, error);
+        }
+        process.exit(1);
+      }
+    };
+
+    process.on('SIGTERM', () => {
+      void shutdownHandler('SIGTERM');
     });
 
-    process.on("SIGINT", () => {
-      console.log("📤 Received SIGINT, shutting down worker gracefully...");
-      app
-        .close()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch((_error) => {
-          console.error("❌ Error during SIGINT shutdown:", _error);
-          process.exit(1);
-        });
+    process.on('SIGINT', () => {
+      void shutdownHandler('SIGINT');
     });
 
     // Health check endpoint for Docker
-    if (process.argv.includes("--healthcheck")) {
-      console.log("✅ Worker health check passed");
+    if (process.argv.includes('--healthcheck')) {
+      console.error('✅ Worker health check passed');
       process.exit(0);
     }
 
     // Keep the process alive
-    console.log("🔄 Worker is running and processing queues...");
-  } catch (_error) {
-    console.error("❌ Worker failed to start:", _error);
+    if (logService) {
+      const { LogType, LogLevel } = await import('@core/types');
+      await logService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Worker is running and processing queues...',
+        'WorkerBootstrap',
+        {}
+      );
+    } else {
+      console.error('🔄 Worker is running and processing queues...');
+    }
+  } catch (error) {
+    if (logService) {
+      const { LogType, LogLevel } = await import('@core/types');
+      await logService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Worker failed to start',
+        'WorkerBootstrap',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    } else {
+      console.error('❌ Worker failed to start:', error);
+    }
     process.exit(1);
   }
 }
 
 // Handle unhandled rejections
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("🚨 Unhandled Rejection at:", promise, "reason:", reason);
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-process.on("uncaughtException", (_error) => {
-  console.error("🚨 Uncaught Exception:", _error);
+process.on('uncaughtException', (error) => {
+  console.error('🚨 Uncaught Exception:', error);
   process.exit(1);
 });
 
-bootstrap().catch((_error) => {
-  console.error("🚨 Bootstrap failed:", _error);
+bootstrap().catch((error) => {
+  console.error('🚨 Bootstrap failed:', error);
   process.exit(1);
 });

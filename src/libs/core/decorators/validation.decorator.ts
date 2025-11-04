@@ -7,12 +7,12 @@
  * @module ValidationDecorators
  */
 
-import { SetMetadata } from "@nestjs/common";
+import { SetMetadata } from '@nestjs/common';
 
 /**
  * Validation metadata key
  */
-export const VALIDATION_KEY = "validation" as const;
+export const VALIDATION_KEY = 'validation' as const;
 
 /**
  * Validation options interface
@@ -101,8 +101,7 @@ export const SkipValidation = (): MethodDecorator =>
  * }
  * ```
  */
-export const Transform = (): MethodDecorator =>
-  SetMetadata(VALIDATION_KEY, { transform: true });
+export const Transform = (): MethodDecorator => SetMetadata(VALIDATION_KEY, { transform: true });
 
 /**
  * Whitelist decorator for property filtering
@@ -122,5 +121,4 @@ export const Transform = (): MethodDecorator =>
  * }
  * ```
  */
-export const Whitelist = (): MethodDecorator =>
-  SetMetadata(VALIDATION_KEY, { whitelist: true });
+export const Whitelist = (): MethodDecorator => SetMetadata(VALIDATION_KEY, { whitelist: true });

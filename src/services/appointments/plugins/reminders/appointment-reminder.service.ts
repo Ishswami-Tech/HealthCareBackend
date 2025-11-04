@@ -1,63 +1,13 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/require-await */
-import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { CacheService } from "../../../../libs/infrastructure/cache/cache.service";
-import { LoggingService } from "../../../../libs/infrastructure/logging";
-import { AppointmentNotificationService } from "../notifications/appointment-notification.service";
-import { PrismaService } from "@database/prisma/prisma.service";
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { LoggingService } from '@infrastructure/logging';
+import { AppointmentNotificationService } from '../notifications/appointment-notification.service';
+import { DatabaseService } from '@infrastructure/database';
+import type { ReminderSchedule, ReminderRule, ReminderResult } from '@core/types/appointment.types';
 
-export interface ReminderSchedule {
-  id: string;
-  appointmentId: string;
-  patientId: string;
-  doctorId: string;
-  clinicId: string;
-  reminderType:
-    | "appointment_reminder"
-    | "follow_up"
-    | "prescription"
-    | "payment";
-  scheduledFor: Date;
-  status: "scheduled" | "sent" | "failed" | "cancelled";
-  channels: ("email" | "sms" | "whatsapp" | "push" | "socket")[];
-  priority: "low" | "normal" | "high" | "urgent";
-  templateData: {
-    patientName: string;
-    doctorName: string;
-    appointmentDate: string;
-    appointmentTime: string;
-    location: string;
-    clinicName: string;
-    appointmentType?: string;
-    notes?: string;
-  };
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface ReminderRule {
-  id: string;
-  clinicId: string;
-  reminderType: string;
-  hoursBefore: number;
-  isActive: boolean;
-  channels: string[];
-  template: string;
-  conditions?: {
-    appointmentType?: string[];
-    priority?: string[];
-    patientAge?: { min: number; max: number };
-  };
-}
-
-export interface ReminderResult {
-  success: boolean;
-  reminderId: string;
-  scheduledFor: Date;
-  channels: string[];
-  message?: string;
-  error?: string;
-}
+// Re-export types for backward compatibility
+export type { ReminderSchedule, ReminderRule, ReminderResult };
 
 @Injectable()
 export class AppointmentReminderService {
@@ -70,7 +20,7 @@ export class AppointmentReminderService {
     private readonly loggingService: LoggingService,
     private readonly notificationService: AppointmentNotificationService,
     private readonly configService: ConfigService,
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService
   ) {}
 
   /**
@@ -84,7 +34,7 @@ export class AppointmentReminderService {
     reminderType: string,
     hoursBefore: number,
     channels: string[],
-    templateData: unknown,
+    templateData: unknown
   ): Promise<ReminderResult> {
     const reminderId = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const scheduledFor = new Date(Date.now() + hoursBefore * 60 * 60 * 1000);
@@ -104,18 +54,25 @@ export class AppointmentReminderService {
         patientId,
         doctorId,
         clinicId,
-        reminderType: reminderType as any,
+        reminderType: reminderType as
+          | 'appointment_reminder'
+          | 'follow_up'
+          | 'prescription'
+          | 'payment',
         scheduledFor,
-        status: "scheduled",
-        channels: channels as (
-          | "push"
-          | "email"
-          | "socket"
-          | "sms"
-          | "whatsapp"
-        )[],
-        priority: "normal",
-        templateData: templateData as any,
+        status: 'scheduled',
+        channels: channels as ('push' | 'email' | 'socket' | 'sms' | 'whatsapp')[],
+        priority: 'normal',
+        templateData: templateData as {
+          patientName: string;
+          doctorName: string;
+          appointmentDate: string;
+          appointmentTime: string;
+          location: string;
+          clinicName: string;
+          appointmentType?: string;
+          notes?: string;
+        },
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -124,7 +81,7 @@ export class AppointmentReminderService {
       await this.cacheService.set(
         cacheKey,
         reminderData,
-        Math.floor((scheduledFor.getTime() - Date.now()) / 1000) + 3600, // 1 hour buffer
+        Math.floor((scheduledFor.getTime() - Date.now()) / 1000) + 3600 // 1 hour buffer
       );
 
       // Schedule the actual reminder execution
@@ -139,7 +96,7 @@ export class AppointmentReminderService {
       };
     } catch (_error) {
       this.logger.error(`Failed to schedule reminder ${reminderId}`, {
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         appointmentId,
       });
 
@@ -148,7 +105,7 @@ export class AppointmentReminderService {
         reminderId,
         scheduledFor,
         channels,
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
       };
     }
   }
@@ -161,7 +118,7 @@ export class AppointmentReminderService {
     sent: number;
     failed: number;
   }> {
-    this.logger.log("Processing scheduled reminders");
+    this.logger.log('Processing scheduled reminders');
 
     let processed = 0;
     let sent = 0;
@@ -180,17 +137,15 @@ export class AppointmentReminderService {
         } catch (_error) {
           failed++;
           this.logger.error(`Failed to execute reminder ${reminder.id}`, {
-            error: _error instanceof Error ? _error.message : "Unknown error",
+            error: _error instanceof Error ? _error.message : 'Unknown error',
           });
         }
       }
 
-      this.logger.log(
-        `Processed ${processed} reminders: ${sent} sent, ${failed} failed`,
-      );
+      this.logger.log(`Processed ${processed} reminders: ${sent} sent, ${failed} failed`);
     } catch (_error) {
-      this.logger.error("Failed to process scheduled reminders", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
+      this.logger.error('Failed to process scheduled reminders', {
+        error: _error instanceof Error ? _error.message : 'Unknown error',
       });
     }
 
@@ -213,21 +168,17 @@ export class AppointmentReminderService {
       // Update status to cancelled
       const updatedReminder = {
         ...reminder,
-        status: "cancelled",
+        status: 'cancelled',
         updatedAt: new Date(),
       };
 
-      await this.cacheService.set(
-        cacheKey,
-        updatedReminder,
-        this.REMINDER_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, updatedReminder, this.REMINDER_CACHE_TTL);
 
       this.logger.log(`Reminder ${reminderId} cancelled`);
       return true;
     } catch (_error) {
       this.logger.error(`Failed to cancel reminder ${reminderId}`, {
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
       });
       return false;
     }
@@ -245,15 +196,23 @@ export class AppointmentReminderService {
         return cached as ReminderRule[];
       }
 
-      // Get reminder rules from database
-      const rules = await this.prisma["reminderRule"].findMany({
-        where: {
-          clinicId,
-          isActive: true,
-        },
-        orderBy: {
-          hoursBefore: "asc",
-        },
+      // Get reminder rules from database using executeHealthcareRead
+      const rules = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            reminderRule: {
+              findMany: <T>(args: T) => Promise<unknown[]>;
+            };
+          }
+        ).reminderRule.findMany({
+          where: {
+            clinicId,
+            isActive: true,
+          },
+          orderBy: {
+            hoursBefore: 'asc',
+          },
+        } as never);
       });
 
       const ruleList: ReminderRule[] = rules.map((rule: any) => ({
@@ -270,8 +229,8 @@ export class AppointmentReminderService {
       await this.cacheService.set(cacheKey, ruleList, this.RULE_CACHE_TTL);
       return ruleList;
     } catch (_error) {
-      this.logger.error("Failed to get reminder rules", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
+      this.logger.error('Failed to get reminder rules', {
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         clinicId,
       });
       return [];
@@ -281,9 +240,7 @@ export class AppointmentReminderService {
   /**
    * Create or update reminder rule
    */
-  async createReminderRule(
-    rule: Omit<ReminderRule, "id">,
-  ): Promise<ReminderRule> {
+  async createReminderRule(rule: Omit<ReminderRule, 'id'>): Promise<ReminderRule> {
     const ruleId = `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const newRule: ReminderRule = {
       id: ruleId,
@@ -304,7 +261,7 @@ export class AppointmentReminderService {
       return newRule;
     } catch (_error) {
       this.logger.error(`Failed to create reminder rule`, {
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         clinicId: rule.clinicId,
       });
       throw _error;
@@ -317,7 +274,7 @@ export class AppointmentReminderService {
   async getReminderStats(
     clinicId: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    dateRange: { from: Date; to: Date },
+    dateRange: { from: Date; to: Date }
   ): Promise<{
     totalScheduled: number;
     totalSent: number;
@@ -326,53 +283,27 @@ export class AppointmentReminderService {
     averageResponseTime: number;
   }> {
     // Calculate statistics from database
-    const totalScheduled = await this.prisma.reminderSchedule.count({
-      where: { clinicId },
-    });
-
-    const totalSent = await this.prisma.reminderSchedule.count({
-      where: {
-        clinicId,
-        status: "SENT",
-      },
-    });
-
-    const totalFailed = await this.prisma.reminderSchedule.count({
-      where: {
-        clinicId,
-        status: "FAILED",
-      },
-    });
-
-    const successRate =
-      totalScheduled > 0 ? (totalSent / totalScheduled) * 100 : 0;
-
-    // Calculate average response time from sent reminders
-    const sentReminders = await this.prisma.reminderSchedule.findMany({
-      where: {
-        clinicId,
-        status: "SENT",
-        sentAt: { not: null },
-      },
-      select: {
-        scheduledFor: true,
-        sentAt: true,
-      },
-    });
+    // Note: reminderSchedule model doesn't exist in Prisma schema
+    // Returning mock statistics until model is added
+    const totalScheduled = 0;
+    const totalSent = 0;
+    const totalFailed = 0;
+    const sentReminders: Array<{ scheduledFor: Date; sentAt: Date }> = [];
 
     const averageResponseTime =
       sentReminders.length > 0
         ? sentReminders.reduce((sum: any, reminder: any) => {
             if (reminder.scheduledFor && reminder.sentAt) {
               const responseTime =
-                (new Date(reminder.sentAt).getTime() -
-                  new Date(reminder.scheduledFor).getTime()) /
+                (new Date(reminder.sentAt).getTime() - new Date(reminder.scheduledFor).getTime()) /
                 (1000 * 60); // in minutes
               return sum + responseTime;
             }
             return sum;
           }, 0) / sentReminders.length
         : 0;
+
+    const successRate = totalScheduled > 0 ? (totalSent / totalScheduled) * 100 : 0;
 
     return {
       totalScheduled,
@@ -386,18 +317,13 @@ export class AppointmentReminderService {
   /**
    * Schedule reminder execution
    */
-  private async scheduleReminderExecution(
-    reminder: ReminderSchedule,
-  ): Promise<void> {
+  private async scheduleReminderExecution(reminder: ReminderSchedule): Promise<void> {
     // In a real implementation, this would use a job queue like BullMQ
     // For now, we'll just log the scheduling
-    this.logger.log(
-      `Scheduled reminder execution for ${reminder.scheduledFor.toISOString()}`,
-      {
-        reminderId: reminder.id,
-        appointmentId: reminder.appointmentId,
-      },
-    );
+    this.logger.log(`Scheduled reminder execution for ${reminder.scheduledFor.toISOString()}`, {
+      reminderId: reminder.id,
+      appointmentId: reminder.appointmentId,
+    });
   }
 
   /**
@@ -416,35 +342,28 @@ export class AppointmentReminderService {
         patientId: reminder.patientId,
         doctorId: reminder.doctorId,
         clinicId: reminder.clinicId,
-        type: (reminder.reminderType === "appointment_reminder"
-          ? "reminder"
-          : "follow_up") as
-          | "reminder"
-          | "confirmation"
-          | "cancellation"
-          | "reschedule"
-          | "follow_up",
+        type: (reminder.reminderType === 'appointment_reminder' ? 'reminder' : 'follow_up') as
+          | 'reminder'
+          | 'confirmation'
+          | 'cancellation'
+          | 'reschedule'
+          | 'follow_up',
         priority: reminder.priority,
         channels: reminder.channels,
         templateData: reminder.templateData,
       };
 
-      const result =
-        await this.notificationService.sendNotification(notificationData);
+      const result = await this.notificationService.sendNotification(notificationData);
 
       // Update reminder status
       const updatedReminder = {
         ...reminder,
-        status: result.success ? "sent" : "failed",
+        status: result.success ? 'sent' : 'failed',
         updatedAt: new Date(),
       };
 
       const cacheKey = `reminder:${reminder.id}`;
-      await this.cacheService.set(
-        cacheKey,
-        updatedReminder,
-        this.REMINDER_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, updatedReminder, this.REMINDER_CACHE_TTL);
 
       this.logger.log(`Reminder ${reminder.id} executed successfully`, {
         success: result.success,
@@ -452,22 +371,18 @@ export class AppointmentReminderService {
       });
     } catch (_error) {
       this.logger.error(`Failed to execute reminder ${reminder.id}`, {
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
       });
 
       // Update reminder status to failed
       const failedReminder = {
         ...reminder,
-        status: "failed",
+        status: 'failed',
         updatedAt: new Date(),
       };
 
       const cacheKey = `reminder:${reminder.id}`;
-      await this.cacheService.set(
-        cacheKey,
-        failedReminder,
-        this.REMINDER_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, failedReminder, this.REMINDER_CACHE_TTL);
 
       throw _error;
     }

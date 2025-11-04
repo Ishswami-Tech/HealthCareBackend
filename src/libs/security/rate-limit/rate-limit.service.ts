@@ -1,10 +1,11 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { RedisService } from "../../infrastructure/cache/redis/redis.service";
-import {
-  LoggingService,
-  LogType,
-  LogLevel,
-} from "../../infrastructure/logging/logging.service";
+import { Injectable } from '@nestjs/common';
+
+// Internal imports - Infrastructure
+import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Core
+import { LogType, LogLevel } from '@core/types';
 
 export interface RateLimitOptions {
   windowMs: number;
@@ -43,7 +44,7 @@ export interface RateLimitResult {
  * );
  *
  * if (!result.allowed) {
- *   throw new Error('Rate limit exceeded');
+ *   throw new HealthcareError(ErrorCode.RATE_LIMIT_EXCEEDED, 'Rate limit exceeded');
  * }
  * ```
  *
@@ -57,11 +58,9 @@ export interface RateLimitResult {
  */
 @Injectable()
 export class RateLimitService {
-  private readonly logger = new Logger(RateLimitService.name);
-
   constructor(
     private readonly redis: RedisService,
-    private readonly logging: LoggingService,
+    private readonly loggingService: LoggingService
   ) {}
 
   /**
@@ -89,17 +88,13 @@ export class RateLimitService {
    * if (result.allowed) {
    *   // Process request
    * } else {
-   *   // Rate limit exceeded
-   *   console.log(`Rate limit exceeded. Reset at: ${result.resetTime}`);
+   *   // Rate limit exceeded - handle appropriately
    * }
    * ```
    *
    * @throws {Error} When Redis operations fail or invalid options are provided
    */
-  async checkRateLimit(
-    key: string,
-    options: RateLimitOptions,
-  ): Promise<RateLimitResult> {
+  async checkRateLimit(key: string, options: RateLimitOptions): Promise<RateLimitResult> {
     try {
       const now = Date.now();
       const window = Math.floor(now / options.windowMs);
@@ -112,12 +107,12 @@ export class RateLimitService {
         // Rate limit exceeded
         const resetTime = new Date((window + 1) * options.windowMs);
 
-        await this.logging.log(
+        void this.loggingService.log(
           LogType.SECURITY,
           LogLevel.WARN,
-          "Rate limit exceeded",
-          "RateLimitService",
-          { key, current, max: options.max, window },
+          'Rate limit exceeded',
+          'RateLimitService',
+          { key, current, max: options.max, window }
         );
 
         return {
@@ -146,9 +141,16 @@ export class RateLimitService {
         total: options.max,
       };
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
         `Rate limit check failed for key: ${key}`,
-        _error instanceof Error ? _error.stack : undefined,
+        'RateLimitService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
 
       // Fail open - allow request if Redis is down
@@ -169,18 +171,25 @@ export class RateLimitService {
       if (keys.length > 0) {
         await this.redis.del(...keys);
 
-        await this.logging.log(
+        void this.loggingService.log(
           LogType.SECURITY,
           LogLevel.INFO,
-          "Rate limit reset",
-          "RateLimitService",
-          { key, keysCleared: keys.length },
+          'Rate limit reset',
+          'RateLimitService',
+          { key, keysCleared: keys.length }
         );
       }
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
         `Failed to reset rate limit for key: ${key}`,
-        _error instanceof Error ? _error.stack : undefined,
+        'RateLimitService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
     }
   }
@@ -203,11 +212,9 @@ export class RateLimitService {
   generateDefaultKey(req: unknown): string {
     const request = req as Record<string, unknown>;
     return (
-      (request["ip"] as string) ||
-      ((request["connection"] as Record<string, unknown>)?.[
-        "remoteAddress"
-      ] as string) ||
-      "unknown"
+      (request['ip'] as string) ||
+      ((request['connection'] as Record<string, unknown>)?.['remoteAddress'] as string) ||
+      'unknown'
     );
   }
 
@@ -229,9 +236,9 @@ export class RateLimitService {
    */
   generateUserKey(req: unknown): string {
     const request = req as Record<string, unknown>;
-    const user = request["user"] as Record<string, unknown>;
-    const userId = user?.["id"] || user?.["userId"];
-    if (userId && typeof userId === "string") {
+    const user = request['user'] as Record<string, unknown>;
+    const userId = user?.['id'] || user?.['userId'];
+    if (userId && typeof userId === 'string') {
       return `user:${userId}`;
     }
     return this.generateDefaultKey(req);
@@ -255,9 +262,9 @@ export class RateLimitService {
    */
   generateAuthKey(req: unknown): string {
     const request = req as Record<string, unknown>;
-    const body = request["body"] as Record<string, unknown>;
-    const identifier = body?.["email"] || body?.["phone"] || body?.["username"];
-    if (identifier && typeof identifier === "string") {
+    const body = request['body'] as Record<string, unknown>;
+    const identifier = body?.['email'] || body?.['phone'] || body?.['username'];
+    if (identifier && typeof identifier === 'string') {
       return `auth:${identifier}`;
     }
     return this.generateDefaultKey(req);

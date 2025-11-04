@@ -41,7 +41,7 @@ libs/
 │   ├── rbac/                # Role-based access control
 │   ├── resilience/          # Circuit breaker & retry patterns
 │   ├── session/             # Session management
-│   └── types/               # Core type definitions
+│   └── types/               # Core type definitions (canonical domain types)
 ├── dtos/                     # Data transfer objects (shared DTOs)
 ├── infrastructure/           # Infrastructure layer
 │   ├── cache/               # Redis caching with SWR
@@ -56,7 +56,7 @@ libs/
 │   │   ├── prisma/          # Prisma schema & client
 │   │   ├── repositories/    # Repository implementations
 │   │   ├── scripts/         # Database scripts
-│   │   └── types/           # Database types
+│   │   └── types/           # Database types (DB-specific, mapped to @types)
 │   ├── events/              # Event-driven architecture
 │   │   └── types/           # Event type definitions
 │   ├── logging/             # Logging service
@@ -142,6 +142,17 @@ docs/
 ```
 
 ## 🔧 Design Patterns
+## 🌍 High-Scale Architecture (10M Users)
+- Module and boundary rules: services depend on abstractions; infrastructure behind interfaces; imports adhere to aliases.
+- Rollout strategies: canary first, then 50/50, then full; define rollback criteria and monitoring signals.
+- Stateless services; shared-nothing where possible; session in Redis with partitioning.
+- Horizontal scaling as first-class: HPA targets on CPU/RAM/RPS; graceful shutdown.
+- Bulkheads: isolate critical services (auth, billing, appointments) with separate pools/queues.
+- Circuit breakers and timeouts on all network calls; retry with exponential backoff + jitter.
+- Multi-tenant isolation enforced in every layer (guards, repos, cache keys, metrics labels).
+- Read/write separation; read replicas for heavy reads; CQRS where it reduces contention.
+- Event-driven integration between domains; idempotent consumers; DLQ and replay strategy.
+- Feature flags and gradual rollouts; surge protection; brownout modes under pressure.
 
 ### **Repository Pattern**
 ```typescript

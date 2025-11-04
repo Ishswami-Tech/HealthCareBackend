@@ -1,0 +1,113 @@
+# 🏥 Healthcare Backend - Codex Agent Configuration
+# Comprehensive TypeScript, Linting, and Coding Standards Enforcement
+
+agents:
+
+  - name: "lint_and_fix"
+    description: "Run lint and type check, then auto-fix any remaining issues using Healthcare TypeScript & Linting Agent."
+    steps:
+      - run: "pnpm lint || true"
+      - run: "pnpm tsc --noEmit || true"
+      - ask: |
+          There are lint and/or TypeScript type errors. Use the Healthcare TypeScript & Linting Agent to fix them without disabling rules (no eslint-disable, no @ts-ignore). Preserve existing functionality.
+          
+          **CRITICAL RULES - ZERO TOLERANCE:**
+          - ZERO ESLint errors or warnings (NO EXCEPTIONS)
+          - ZERO TypeScript build errors (NO EXCEPTIONS)
+          - ZERO TOLERANCE for `any` or `unknown` types
+          - ZERO TOLERANCE for relative imports (use path aliases)
+          - ZERO TOLERANCE for console.log (use LoggingService)
+          - ZERO TOLERANCE for Express usage (use Fastify)
+          - ZERO TOLERANCE for missing error handling
+          - ZERO TOLERANCE for missing input validation
+          - ZERO TOLERANCE for missing RBAC checks
+          - ZERO TOLERANCE for commented ESLint rules (NO BYPASSING)
+          - ZERO TOLERANCE for functionality breaking changes
+          
+          **Path Aliases (MANDATORY):**
+          - @services/* → src/services/*
+          - @infrastructure/* → src/libs/infrastructure/*
+          - @dtos/* → src/libs/dtos/*
+          - @core/* → src/libs/core/*
+          - @utils/* → src/libs/utils/*
+          - @communication/* → src/libs/communication/*
+          - @database/* → src/libs/infrastructure/database/*
+          
+          Once done, rerun the checks.
+      - run: "pnpm lint && pnpm tsc --noEmit"
+      - say: "✅ All ESLint and TypeScript errors are fixed."
+
+  - name: "healthcare_code_review"
+    description: "Comprehensive code review for healthcare backend standards compliance."
+    steps:
+      - ask: |
+          Review the code for healthcare backend standards compliance:
+          
+          **TypeScript Compliance:**
+          - [ ] No `any` or `unknown` types
+          - [ ] All functions have explicit return types
+          - [ ] Strict null checks handled
+          - [ ] Path aliases used (no relative imports)
+          - [ ] Interfaces properly defined
+          
+          **Architecture Compliance:**
+          - [ ] SOLID principles followed
+          - [ ] Single responsibility per class
+          - [ ] Dependency injection used
+          - [ ] Event-driven patterns implemented
+          - [ ] Repository pattern used
+          
+          **Security Compliance:**
+          - [ ] Input validation with DTOs
+          - [ ] RBAC guards implemented
+          - [ ] Clinic isolation enforced
+          - [ ] Audit logging implemented
+          - [ ] Sensitive data encrypted
+          
+          **NestJS Compliance:**
+          - [ ] Fastify used (not Express)
+          - [ ] Proper module structure
+          - [ ] Guards and interceptors used
+          - [ ] Exception filters implemented
+          - [ ] Custom decorators used
+          
+          **Logging Compliance:**
+          - [ ] LoggingService used (not NestJS Logger)
+          - [ ] Structured logging with context
+          - [ ] HIPAA-compliant audit trails
+          - [ ] Error logging with stack traces
+          
+          Fix any issues found and maintain all existing functionality.
+      - run: "pnpm lint && pnpm tsc --noEmit"
+      - say: "✅ Code review completed and all healthcare standards are met."
+
+  - name: "zero_error_enforcement"
+    description: "Enforce zero ESLint errors and zero TypeScript build errors."
+    steps:
+      - run: "pnpm lint:zero-errors || true"
+      - run: "pnpm type-check:zero-errors || true"
+      - ask: |
+          There are still errors. Fix them immediately:
+           
+          **ERROR RESOLUTION MANDATE:**
+          - Fix ALL ESLint errors and warnings immediately
+          - Fix ALL TypeScript compilation errors immediately
+          - NEVER comment out or disable ESLint rules
+          - NEVER use @ts-ignore or @ts-expect-error
+          - NEVER use eslint-disable comments
+          - ALWAYS provide proper type definitions
+          - ALWAYS implement proper error handling
+          - ALWAYS maintain existing functionality
+          
+          **ERROR RESOLUTION PRIORITY:**
+          1. TypeScript compilation errors (CRITICAL)
+          2. ESLint errors (CRITICAL)
+          3. ESLint warnings (HIGH)
+          4. Missing type definitions (HIGH)
+          5. Missing error handling (HIGH)
+          6. Code quality issues (MEDIUM)
+          7. Performance optimizations (LOW)
+          
+          Fix all issues and rerun the checks.
+      - run: "pnpm lint:zero-errors && pnpm type-check:zero-errors"
+      - say: "✅ Zero error enforcement successful - all ESLint and TypeScript errors are fixed."

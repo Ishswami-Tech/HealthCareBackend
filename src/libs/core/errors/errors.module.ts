@@ -1,5 +1,6 @@
-import { Global, Module } from "@nestjs/common";
-import { HealthcareErrorsService } from "./healthcare-errors.service";
+import { Global, Module } from '@nestjs/common';
+import { HealthcareErrorsService } from './healthcare-errors.service';
+import { LoggingModule } from '@infrastructure/logging';
 
 /**
  * Global Errors Module
@@ -18,6 +19,7 @@ import { HealthcareErrorsService } from "./healthcare-errors.service";
  */
 @Global()
 @Module({
+  imports: [LoggingModule],
   providers: [HealthcareErrorsService],
   exports: [HealthcareErrorsService],
 })

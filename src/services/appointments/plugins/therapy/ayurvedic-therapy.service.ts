@@ -1,82 +1,17 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-floating-promises */
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { DatabaseService } from "../../../../libs/infrastructure/database";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
-import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
-import {
-  TherapyType,
-  TherapyDuration,
-  TherapyStatus,
-} from "../../../../libs/infrastructure/database/prisma/prisma.types";
-
-// Local type definitions for Ayurvedic Therapy models
-export interface AyurvedicTherapy {
-  id: string;
-  name: string;
-  description?: string | null;
-  therapyType: TherapyType;
-  duration: TherapyDuration;
-  estimatedDuration: number;
-  isActive: boolean;
-  clinicId: string;
-  createdAt: Date;
-  updatedAt: Date;
-  sessions?: TherapySession[];
-}
-
-export interface TherapySession {
-  id: string;
-  therapyId: string;
-  appointmentId: string;
-  patientId: string;
-  doctorId: string;
-  scheduledDate: Date;
-  startTime?: Date | null;
-  endTime?: Date | null;
-  status: TherapyStatus;
-  notes?: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CreateTherapyDto {
-  name: string;
-  description?: string;
-  therapyType: TherapyType;
-  duration: TherapyDuration;
-  estimatedDuration: number; // in minutes
-  clinicId: string;
-}
-
-export interface UpdateTherapyDto {
-  name?: string;
-  description?: string;
-  therapyType?: TherapyType;
-  duration?: TherapyDuration;
-  estimatedDuration?: number;
-  isActive?: boolean;
-}
-
-export interface CreateTherapySessionDto {
-  therapyId: string;
-  appointmentId: string;
-  patientId: string;
-  doctorId: string;
-  clinicId: string;
-  sessionDate: Date;
-  startTime: Date;
-  notes?: string;
-  observations?: Record<string, unknown>;
-}
-
-export interface UpdateTherapySessionDto {
-  endTime?: Date;
-  status?: TherapyStatus;
-  notes?: string;
-  observations?: Record<string, unknown>;
-  nextSessionDate?: Date;
-}
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { TherapyType, TherapyDuration, TherapyStatus } from '@core/types/enums.types';
+import type {
+  AyurvedicTherapy,
+  TherapySession,
+  CreateTherapyDto,
+  UpdateTherapyDto,
+  CreateTherapySessionDto,
+  UpdateTherapySessionDto,
+} from '@core/types/appointment.types';
 
 @Injectable()
 export class AyurvedicTherapyService {
@@ -87,7 +22,7 @@ export class AyurvedicTherapyService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService,
+    private readonly loggingService: LoggingService
   ) {}
 
   /**
@@ -97,35 +32,51 @@ export class AyurvedicTherapyService {
     const startTime = Date.now();
 
     try {
-      const therapy = await this.databaseService
-        .getPrismaClient()
-        .ayurvedicTherapy.create({
-          data: {
-            name: data.name,
-            description: data.description,
-            therapyType: data.therapyType,
-            duration: data.duration,
-            estimatedDuration: data.estimatedDuration,
-            clinicId: data.clinicId,
-          },
-        });
-
-      // Invalidate cache
-      await this.cacheService.invalidateByPattern(
-        `therapies:clinic:${data.clinicId}*`,
+      // Use executeHealthcareWrite for create with audit logging
+      const therapy = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              ayurvedicTherapy: {
+                create: <T>(args: T) => Promise<AyurvedicTherapy>;
+              };
+            }
+          ).ayurvedicTherapy.create({
+            data: {
+              name: data.name,
+              description: data.description,
+              therapyType: data.therapyType,
+              duration: data.duration,
+              estimatedDuration: data.estimatedDuration,
+              clinicId: data.clinicId,
+            },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: data.clinicId,
+          resourceType: 'AYURVEDIC_THERAPY',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'system',
+          details: { name: data.name, therapyType: data.therapyType, clinicId: data.clinicId },
+        }
       );
+
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
 
       void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        "Ayurvedic therapy created successfully",
-        "AyurvedicTherapyService",
+        'Ayurvedic therapy created successfully',
+        'AyurvedicTherapyService',
         {
           therapyId: therapy.id,
           therapyType: data.therapyType,
           clinicId: data.clinicId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return therapy;
@@ -134,11 +85,11 @@ export class AyurvedicTherapyService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create therapy: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           data,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -147,12 +98,9 @@ export class AyurvedicTherapyService {
   /**
    * Get all therapies for a clinic
    */
-  async getClinicTherapies(
-    clinicId: string,
-    isActive?: boolean,
-  ): Promise<AyurvedicTherapy[]> {
+  async getClinicTherapies(clinicId: string, isActive?: boolean): Promise<AyurvedicTherapy[]> {
     const startTime = Date.now();
-    const cacheKey = `therapies:clinic:${clinicId}:${isActive ?? "all"}`;
+    const cacheKey = `therapies:clinic:${clinicId}:${isActive ?? 'all'}`;
 
     try {
       // Try to get from cache first
@@ -161,9 +109,15 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const therapies = await this.databaseService
-        .getPrismaClient()
-        .ayurvedicTherapy.findMany({
+      // Use executeHealthcareRead for optimized query
+      const therapies = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            ayurvedicTherapy: {
+              findMany: <T>(args: T) => Promise<AyurvedicTherapy[]>;
+            };
+          }
+        ).ayurvedicTherapy.findMany({
           where: {
             clinicId,
             ...(isActive !== undefined && { isActive }),
@@ -171,42 +125,39 @@ export class AyurvedicTherapyService {
           include: {
             sessions: {
               take: 10,
-              orderBy: { sessionDate: "desc" },
+              orderBy: { sessionDate: 'desc' },
             },
           },
-          orderBy: { createdAt: "desc" },
-        });
+          orderBy: { createdAt: 'desc' },
+        } as never);
+      });
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(therapies),
-        this.THERAPY_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(therapies), this.THERAPY_CACHE_TTL);
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Clinic therapies retrieved successfully",
-        "AyurvedicTherapyService",
+        'Clinic therapies retrieved successfully',
+        'AyurvedicTherapyService',
         {
           clinicId,
           count: therapies.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return therapies;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic therapies: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           clinicId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -217,7 +168,7 @@ export class AyurvedicTherapyService {
    */
   async getTherapiesByType(
     clinicId: string,
-    therapyType: TherapyType,
+    therapyType: TherapyType
   ): Promise<AyurvedicTherapy[]> {
     const startTime = Date.now();
     const cacheKey = `therapies:clinic:${clinicId}:type:${therapyType}`;
@@ -229,49 +180,52 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const therapies = await this.databaseService
-        .getPrismaClient()
-        .ayurvedicTherapy.findMany({
+      // Use executeHealthcareRead for optimized query
+      const therapies = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            ayurvedicTherapy: {
+              findMany: <T>(args: T) => Promise<AyurvedicTherapy[]>;
+            };
+          }
+        ).ayurvedicTherapy.findMany({
           where: {
             clinicId,
             therapyType,
             isActive: true,
           },
-          orderBy: { name: "asc" },
-        });
+          orderBy: { name: 'asc' },
+        } as never);
+      });
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(therapies),
-        this.THERAPY_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(therapies), this.THERAPY_CACHE_TTL);
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Therapies by type retrieved successfully",
-        "AyurvedicTherapyService",
+        'Therapies by type retrieved successfully',
+        'AyurvedicTherapyService',
         {
           clinicId,
           therapyType,
           count: therapies.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return therapies;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get therapies by type: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           clinicId,
           therapyType,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -291,51 +245,54 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const therapy = await this.databaseService
-        .getPrismaClient()
-        .ayurvedicTherapy.findUnique({
+      // Use executeHealthcareRead for optimized query
+      const therapy = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            ayurvedicTherapy: {
+              findUnique: <T>(args: T) => Promise<AyurvedicTherapy | null>;
+            };
+          }
+        ).ayurvedicTherapy.findUnique({
           where: { id: therapyId },
           include: {
             sessions: {
-              orderBy: { sessionDate: "desc" },
+              orderBy: { sessionDate: 'desc' },
               take: 20,
             },
           },
-        });
+        } as never);
+      });
 
       if (!therapy) {
         throw new NotFoundException(`Therapy with ID ${therapyId} not found`);
       }
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(therapy),
-        this.THERAPY_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(therapy), this.THERAPY_CACHE_TTL);
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Therapy retrieved successfully",
-        "AyurvedicTherapyService",
+        'Therapy retrieved successfully',
+        'AyurvedicTherapyService',
         {
           therapyId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return therapy;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get therapy: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           therapyId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -344,48 +301,61 @@ export class AyurvedicTherapyService {
   /**
    * Update therapy
    */
-  async updateTherapy(
-    therapyId: string,
-    data: UpdateTherapyDto,
-  ): Promise<AyurvedicTherapy> {
+  async updateTherapy(therapyId: string, data: UpdateTherapyDto): Promise<AyurvedicTherapy> {
     const startTime = Date.now();
 
     try {
-      const therapy = await this.databaseService
-        .getPrismaClient()
-        .ayurvedicTherapy.update({
-          where: { id: therapyId },
-          data,
-        });
-
-      // Invalidate cache
-      await this.cacheService.del(`therapy:${therapyId}`);
-      await this.cacheService.invalidateByPattern(
-        `therapies:clinic:${therapy.clinicId}*`,
+      // Use executeHealthcareWrite for update with audit logging
+      const therapy = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              ayurvedicTherapy: {
+                update: <T>(args: T) => Promise<AyurvedicTherapy>;
+              };
+            }
+          ).ayurvedicTherapy.update({
+            where: { id: therapyId },
+            data,
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: '',
+          resourceType: 'AYURVEDIC_THERAPY',
+          operation: 'UPDATE',
+          resourceId: therapyId,
+          userRole: 'system',
+          details: { updateFields: Object.keys(data) },
+        }
       );
 
-      this.loggingService.log(
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCache(`therapy:${therapyId}`);
+      await this.cacheService.invalidateCacheByTag(`clinic:${therapy.clinicId}`);
+
+      await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        "Therapy updated successfully",
-        "AyurvedicTherapyService",
+        'Therapy updated successfully',
+        'AyurvedicTherapyService',
         {
           therapyId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return therapy;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update therapy: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           therapyId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -398,46 +368,71 @@ export class AyurvedicTherapyService {
     const startTime = Date.now();
 
     try {
-      const therapy = await this.databaseService
-        .getPrismaClient()
-        .ayurvedicTherapy.findUnique({
+      // Use executeHealthcareRead first to get record for cache invalidation
+      const therapy = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            ayurvedicTherapy: {
+              findUnique: <T>(args: T) => Promise<AyurvedicTherapy | null>;
+            };
+          }
+        ).ayurvedicTherapy.findUnique({
           where: { id: therapyId },
-        });
+        } as never);
+      });
 
       if (!therapy) {
         throw new NotFoundException(`Therapy with ID ${therapyId} not found`);
       }
 
-      await this.databaseService.getPrismaClient().ayurvedicTherapy.delete({
-        where: { id: therapyId },
-      });
-
-      // Invalidate cache
-      await this.cacheService.del(`therapy:${therapyId}`);
-      await this.cacheService.invalidateByPattern(
-        `therapies:clinic:${therapy.clinicId}*`,
+      // Use executeHealthcareWrite for delete with audit logging
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              ayurvedicTherapy: {
+                delete: <T>(args: T) => Promise<AyurvedicTherapy>;
+              };
+            }
+          ).ayurvedicTherapy.delete({
+            where: { id: therapyId },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: therapy.clinicId || '',
+          resourceType: 'AYURVEDIC_THERAPY',
+          operation: 'DELETE',
+          resourceId: therapyId,
+          userRole: 'system',
+          details: { name: therapy.name, clinicId: therapy.clinicId },
+        }
       );
 
-      this.loggingService.log(
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCache(`therapy:${therapyId}`);
+      await this.cacheService.invalidateCacheByTag(`clinic:${therapy.clinicId}`);
+
+      await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        "Therapy deleted successfully",
-        "AyurvedicTherapyService",
+        'Therapy deleted successfully',
+        'AyurvedicTherapyService',
         {
           therapyId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete therapy: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           therapyId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -450,98 +445,114 @@ export class AyurvedicTherapyService {
   /**
    * Create therapy session
    */
-  async createTherapySession(
-    data: CreateTherapySessionDto,
-  ): Promise<TherapySession> {
+  async createTherapySession(data: CreateTherapySessionDto): Promise<TherapySession> {
     const startTime = Date.now();
 
     try {
-      // Validate therapy exists
-      const therapy = await this.databaseService
-        .getPrismaClient()
-        .ayurvedicTherapy.findUnique({
+      // Validate therapy exists using executeHealthcareRead
+      const therapy = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            ayurvedicTherapy: {
+              findUnique: <T>(args: T) => Promise<AyurvedicTherapy | null>;
+            };
+          }
+        ).ayurvedicTherapy.findUnique({
           where: { id: data.therapyId },
-        });
+        } as never);
+      });
 
       if (!therapy) {
-        throw new NotFoundException(
-          `Therapy with ID ${data.therapyId} not found`,
-        );
+        throw new NotFoundException(`Therapy with ID ${data.therapyId} not found`);
       }
 
-      const session = await this.databaseService
-        .getPrismaClient()
-        .therapySession.create({
-          data: {
-            therapyId: data.therapyId,
-            appointmentId: data.appointmentId,
-            patientId: data.patientId,
-            doctorId: data.doctorId,
-            clinicId: data.clinicId,
-            sessionDate: data.sessionDate,
-            startTime: data.startTime,
-            notes: data.notes,
-            observations: data.observations as any,
-            status: TherapyStatus.SCHEDULED,
-          },
-          include: {
-            therapy: true,
-            patient: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
+      // Use executeHealthcareWrite for create with audit logging
+      const session = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              therapySession: {
+                create: <T>(args: T) => Promise<TherapySession>;
+              };
+            }
+          ).therapySession.create({
+            data: {
+              therapyId: data.therapyId,
+              appointmentId: data.appointmentId,
+              patientId: data.patientId,
+              doctorId: data.doctorId,
+              clinicId: data.clinicId,
+              sessionDate: data.sessionDate,
+              startTime: data.startTime,
+              notes: data.notes,
+              observations: data.observations as never,
+              status: TherapyStatus.SCHEDULED,
+            },
+            include: {
+              therapy: true,
+              patient: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                      phone: true,
+                    },
+                  },
+                },
+              },
+              doctor: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                    },
                   },
                 },
               },
             },
-            doctor: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                  },
-                },
-              },
-            },
-          },
-        });
-
-      // Invalidate cache
-      await this.cacheService.invalidateByPattern(
-        `therapy-sessions:*:${data.clinicId}*`,
-      );
-      await this.cacheService.invalidateByPattern(
-        `therapy-sessions:patient:${data.patientId}*`,
+          } as never);
+        },
+        {
+          userId: data.patientId,
+          clinicId: data.clinicId,
+          resourceType: 'THERAPY_SESSION',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'patient',
+          details: { therapyId: data.therapyId, appointmentId: data.appointmentId },
+        }
       );
 
-      this.loggingService.log(
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
+      await this.cacheService.invalidateCacheByTag(`patient:${data.patientId}`);
+
+      await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Therapy session created successfully",
-        "AyurvedicTherapyService",
+        'Therapy session created successfully',
+        'AyurvedicTherapyService',
         {
           sessionId: session.id,
           therapyId: data.therapyId,
           patientId: data.patientId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return session;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create therapy session: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           data,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -550,10 +561,7 @@ export class AyurvedicTherapyService {
   /**
    * Get therapy sessions for a patient
    */
-  async getPatientTherapySessions(
-    patientId: string,
-    clinicId: string,
-  ): Promise<TherapySession[]> {
+  async getPatientTherapySessions(patientId: string, clinicId: string): Promise<TherapySession[]> {
     const startTime = Date.now();
     const cacheKey = `therapy-sessions:patient:${patientId}:clinic:${clinicId}`;
 
@@ -564,9 +572,15 @@ export class AyurvedicTherapyService {
         return JSON.parse(cached as string);
       }
 
-      const sessions = await this.databaseService
-        .getPrismaClient()
-        .therapySession.findMany({
+      // Use executeHealthcareRead for optimized query
+      const sessions = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            therapySession: {
+              findMany: <T>(args: T) => Promise<TherapySession[]>;
+            };
+          }
+        ).therapySession.findMany({
           where: {
             patientId,
             clinicId,
@@ -584,41 +598,38 @@ export class AyurvedicTherapyService {
               },
             },
           },
-          orderBy: { sessionDate: "desc" },
-        });
+          orderBy: { sessionDate: 'desc' },
+        } as never);
+      });
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(sessions),
-        this.SESSION_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(sessions), this.SESSION_CACHE_TTL);
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Patient therapy sessions retrieved successfully",
-        "AyurvedicTherapyService",
+        'Patient therapy sessions retrieved successfully',
+        'AyurvedicTherapyService',
         {
           patientId,
           clinicId,
           count: sessions.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return sessions;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get patient therapy sessions: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           patientId,
           clinicId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -630,10 +641,10 @@ export class AyurvedicTherapyService {
   async getDoctorTherapySessions(
     doctorId: string,
     clinicId: string,
-    date?: Date,
+    date?: Date
   ): Promise<TherapySession[]> {
     const startTime = Date.now();
-    const dateStr = date ? date.toISOString().split("T")[0] : "all";
+    const dateStr = date ? date.toISOString().split('T')[0] : 'all';
     const cacheKey = `therapy-sessions:doctor:${doctorId}:clinic:${clinicId}:date:${dateStr}`;
 
     try {
@@ -660,9 +671,15 @@ export class AyurvedicTherapyService {
         };
       }
 
-      const sessions = await this.databaseService
-        .getPrismaClient()
-        .therapySession.findMany({
+      // Use executeHealthcareRead for optimized query
+      const sessions = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            therapySession: {
+              findMany: <T>(args: T) => Promise<TherapySession[]>;
+            };
+          }
+        ).therapySession.findMany({
           where: whereClause,
           include: {
             therapy: true,
@@ -678,42 +695,39 @@ export class AyurvedicTherapyService {
               },
             },
           },
-          orderBy: { sessionDate: "asc" },
-        });
+          orderBy: { sessionDate: 'asc' },
+        } as never);
+      });
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(sessions),
-        this.SESSION_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(sessions), this.SESSION_CACHE_TTL);
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Doctor therapy sessions retrieved successfully",
-        "AyurvedicTherapyService",
+        'Doctor therapy sessions retrieved successfully',
+        'AyurvedicTherapyService',
         {
           doctorId,
           clinicId,
           date: dateStr,
           count: sessions.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return sessions;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get doctor therapy sessions: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           doctorId,
           clinicId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -724,79 +738,102 @@ export class AyurvedicTherapyService {
    */
   async updateTherapySession(
     sessionId: string,
-    data: UpdateTherapySessionDto,
+    data: UpdateTherapySessionDto
   ): Promise<TherapySession> {
     const startTime = Date.now();
 
     try {
-      const session = await this.databaseService
-        .getPrismaClient()
-        .therapySession.update({
-          where: { id: sessionId },
-          data: {
-            ...data,
-            observations: data.observations as any,
-          },
-          include: {
-            therapy: true,
-            patient: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
+      // Use executeHealthcareWrite for update with audit logging
+      const session = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              therapySession: {
+                update: <T>(args: T) => Promise<TherapySession>;
+              };
+            }
+          ).therapySession.update({
+            where: { id: sessionId },
+            data: {
+              ...data,
+              observations: data.observations as never,
+            },
+            include: {
+              therapy: true,
+              patient: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                      phone: true,
+                    },
+                  },
+                },
+              },
+              doctor: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                    },
                   },
                 },
               },
             },
-            doctor: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                  },
-                },
-              },
-            },
-          },
-        });
-
-      // Invalidate cache
-      await this.cacheService.invalidateByPattern(
-        `therapy-sessions:*:${session.clinicId}*`,
-      );
-      await this.cacheService.invalidateByPattern(
-        `therapy-sessions:patient:${session.patientId}*`,
-      );
-      await this.cacheService.invalidateByPattern(
-        `therapy-sessions:doctor:${session.doctorId}*`,
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: '',
+          resourceType: 'THERAPY_SESSION',
+          operation: 'UPDATE',
+          resourceId: sessionId,
+          userRole: 'system',
+          details: { updateFields: Object.keys(data) },
+        }
       );
 
-      this.loggingService.log(
+      // Invalidate cache using proper method
+      const sessionWithIds = session as TherapySession & {
+        clinicId?: string;
+        patientId?: string;
+        doctorId?: string;
+      };
+      if (sessionWithIds.clinicId) {
+        await this.cacheService.invalidateCacheByTag(`clinic:${sessionWithIds.clinicId}`);
+      }
+      if (sessionWithIds.patientId) {
+        await this.cacheService.invalidateCacheByTag(`patient:${sessionWithIds.patientId}`);
+      }
+      if (sessionWithIds.doctorId) {
+        await this.cacheService.invalidateCacheByTag(`doctor:${sessionWithIds.doctorId}`);
+      }
+
+      await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Therapy session updated successfully",
-        "AyurvedicTherapyService",
+        'Therapy session updated successfully',
+        'AyurvedicTherapyService',
         {
           sessionId,
           status: data.status,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return session;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update therapy session: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           sessionId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -819,7 +856,7 @@ export class AyurvedicTherapyService {
     sessionId: string,
     notes?: string,
     observations?: Record<string, unknown>,
-    nextSessionDate?: Date,
+    nextSessionDate?: Date
   ): Promise<TherapySession> {
     return this.updateTherapySession(sessionId, {
       status: TherapyStatus.COMPLETED,
@@ -833,10 +870,7 @@ export class AyurvedicTherapyService {
   /**
    * Cancel therapy session
    */
-  async cancelTherapySession(
-    sessionId: string,
-    notes?: string,
-  ): Promise<TherapySession> {
+  async cancelTherapySession(sessionId: string, notes?: string): Promise<TherapySession> {
     return this.updateTherapySession(sessionId, {
       status: TherapyStatus.CANCELLED,
       ...(notes && { notes }),
@@ -848,7 +882,7 @@ export class AyurvedicTherapyService {
    */
   async getTherapySessionStats(
     clinicId: string,
-    therapyId?: string,
+    therapyId?: string
   ): Promise<{
     total: number;
     scheduled: number;
@@ -865,92 +899,91 @@ export class AyurvedicTherapyService {
         whereClause.therapyId = therapyId;
       }
 
-      const sessions = await this.databaseService
-        .getPrismaClient()
-        .therapySession.findMany({
+      // Use executeHealthcareRead for optimized query
+      const sessions = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            therapySession: {
+              findMany: <T>(args: T) => Promise<TherapySession[]>;
+            };
+          }
+        ).therapySession.findMany({
           where: whereClause,
           select: {
             status: true,
             startTime: true,
             endTime: true,
           },
-        });
+        } as never);
+      });
 
       type SessionWithStatus = { status: TherapyStatus };
       const sessionsTyped = sessions as SessionWithStatus[];
       const stats = {
         total: sessions.length,
         scheduled: sessionsTyped.filter(
-          (s: SessionWithStatus) => s.status === TherapyStatus.SCHEDULED,
+          (s: SessionWithStatus) => s.status === TherapyStatus.SCHEDULED
         ).length,
         inProgress: sessionsTyped.filter(
-          (s: SessionWithStatus) => s.status === TherapyStatus.IN_PROGRESS,
+          (s: SessionWithStatus) => s.status === TherapyStatus.IN_PROGRESS
         ).length,
         completed: sessionsTyped.filter(
-          (s: SessionWithStatus) => s.status === TherapyStatus.COMPLETED,
+          (s: SessionWithStatus) => s.status === TherapyStatus.COMPLETED
         ).length,
         cancelled: sessionsTyped.filter(
-          (s: SessionWithStatus) => s.status === TherapyStatus.CANCELLED,
+          (s: SessionWithStatus) => s.status === TherapyStatus.CANCELLED
         ).length,
         averageDuration: 0,
       };
 
       // Calculate average duration for completed sessions
-      type SessionWithTimes = {
+      type SessionWithTimes = TherapySession & {
         status: TherapyStatus;
-        endTime?: Date | null;
-        startTime?: Date | null;
+        endTime: Date;
+        startTime: Date;
       };
       const completedSessions = sessions.filter(
-        (s: SessionWithTimes) =>
-          s.status === TherapyStatus.COMPLETED && s.endTime && s.startTime,
-      ) as SessionWithTimes[];
+        (s): s is SessionWithTimes =>
+          s.status === TherapyStatus.COMPLETED && !!s.endTime && !!s.startTime
+      );
 
       if (completedSessions.length > 0) {
-        const totalDuration = completedSessions.reduce(
-          (sum: number, session: SessionWithTimes) => {
-            if (!session.endTime || !session.startTime) return sum;
-            const duration =
-              (new Date(session.endTime).getTime() -
-                new Date(session.startTime).getTime()) /
-              60000; // minutes
-            return sum + duration;
-          },
-          0,
-        );
-        stats.averageDuration = Math.round(
-          totalDuration / completedSessions.length,
-        );
+        const totalDuration = completedSessions.reduce((sum: number, session: SessionWithTimes) => {
+          if (!session.endTime || !session.startTime) return sum;
+          const duration =
+            (new Date(session.endTime).getTime() - new Date(session.startTime).getTime()) / 60000; // minutes
+          return sum + duration;
+        }, 0);
+        stats.averageDuration = Math.round(totalDuration / completedSessions.length);
       }
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Therapy session stats retrieved successfully",
-        "AyurvedicTherapyService",
+        'Therapy session stats retrieved successfully',
+        'AyurvedicTherapyService',
         {
           clinicId,
           therapyId,
           stats,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return stats;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get therapy session stats: ${error instanceof Error ? error.message : String(error)}`,
-        "AyurvedicTherapyService",
+        'AyurvedicTherapyService',
         {
           clinicId,
           therapyId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-floating-promises */

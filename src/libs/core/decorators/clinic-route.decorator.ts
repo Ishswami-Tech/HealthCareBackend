@@ -1,9 +1,9 @@
-import { SetMetadata } from "@nestjs/common";
+import { SetMetadata } from '@nestjs/common';
 
 /**
  * Clinic route metadata key
  */
-export const CLINIC_ROUTE_KEY = "isClinicRoute" as const;
+export const CLINIC_ROUTE_KEY = 'isClinicRoute' as const;
 
 /**
  * Clinic route decorator for marking routes that require clinic-specific validation
@@ -27,5 +27,4 @@ export const CLINIC_ROUTE_KEY = "isClinicRoute" as const;
  * }
  * ```
  */
-export const ClinicRoute = (): MethodDecorator =>
-  SetMetadata(CLINIC_ROUTE_KEY, true);
+export const ClinicRoute = (): MethodDecorator => SetMetadata(CLINIC_ROUTE_KEY, true);

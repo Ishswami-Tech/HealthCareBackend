@@ -1,4 +1,11 @@
-import { PrismaClient } from "@prisma/client";
+import { HttpStatus } from '@nestjs/common';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+
+// Internal imports - Infrastructure (using path alias @infrastructure/database)
+import { DatabaseService } from '@infrastructure/database';
 
 /**
  * Clinic Utility Functions
@@ -14,7 +21,7 @@ import { PrismaClient } from "@prisma/client";
  */
 
 /**
- * Interface for clinic data returned from Prisma queries
+ * Interface for clinic data returned from database queries
  */
 interface ClinicData {
   id: string;
@@ -24,107 +31,110 @@ interface ClinicData {
 }
 
 /**
- * Type-safe Prisma client interface for clinic operations
+ * Helper function to safely query clinic by ID using DatabaseService
+ * Uses DatabaseService for proper connection pooling, caching, and query optimization
  */
-interface TypedPrismaClient {
-  clinic: {
-    findUnique: (args: {
-      where: { clinicId: string } | { id: string };
-      select: {
-        id: true;
-        clinicId: true;
-        name: true;
-        isActive: true;
-      };
-    }) => Promise<ClinicData | null>;
-  };
+async function findClinicById(
+  databaseService: DatabaseService,
+  where: { clinicId: string } | { id: string }
+): Promise<ClinicData | null> {
+  // Use DatabaseService for proper connection pooling, caching, and optimization
+  return await databaseService.executeHealthcareRead(async client => {
+    return await client.clinic.findUnique({
+      where: where as { clinicId: string } | { id: string },
+      select: { id: true, clinicId: true, name: true, isActive: true },
+    });
+  });
 }
 
 /**
  * Utility to resolve a clinic identifier (UUID or code) to the UUID
  *
- * @param prisma - Prisma client instance
+ * @param databaseService - DatabaseService instance (from @infrastructure/database)
  * @param clinicIdOrUUID - Clinic identifier (either clinicId or UUID)
  * @returns Promise resolving to the clinic's UUID
  *
  * @description Resolves a clinic identifier to its UUID by first trying to find
  * by clinicId, then by UUID. Validates that the clinic is active before returning.
+ * Uses DatabaseService for proper connection pooling, caching, and query optimization.
  *
  * @example
  * ```typescript
- * const clinicUUID = await resolveClinicUUID(prisma, 'clinic-123');
+ * // In a service constructor:
+ * constructor(private readonly databaseService: DatabaseService) {}
+ *
+ * // Usage:
+ * const clinicUUID = await resolveClinicUUID(this.databaseService, 'clinic-123');
  * // Returns: 'uuid-of-clinic-123'
  *
- * const clinicUUID2 = await resolveClinicUUID(prisma, 'existing-uuid');
+ * const clinicUUID2 = await resolveClinicUUID(this.databaseService, 'existing-uuid');
  * // Returns: 'existing-uuid' if clinic exists and is active
  * ```
  *
- * @throws {Error} When clinic ID is not provided, clinic is not found, or clinic is inactive
+ * @throws {HealthcareError} When clinic ID is not provided, clinic is not found, or clinic is inactive
  */
-/**
- * Helper function to safely call Prisma clinic.findUnique
- */
-async function findClinicById(
-  prisma: PrismaClient,
-  where: { clinicId: string } | { id: string },
-): Promise<ClinicData | null> {
-  // Cast to our typed interface to ensure type safety
-  const typedPrisma = prisma as TypedPrismaClient;
-
-  return await typedPrisma.clinic.findUnique({
-    where,
-    select: { id: true, clinicId: true, name: true, isActive: true },
-  });
-}
-
 export async function resolveClinicUUID(
-  prisma: PrismaClient,
-  clinicIdOrUUID: string,
+  databaseService: DatabaseService,
+  clinicIdOrUUID: string
 ): Promise<string> {
   if (!clinicIdOrUUID) {
-    throw new Error("Clinic ID is required");
+    throw new HealthcareError(
+      ErrorCode.VALIDATION_REQUIRED_FIELD,
+      'Clinic ID is required',
+      HttpStatus.BAD_REQUEST,
+      {}
+    );
   }
 
   try {
     // First try to find by clinicId (the unique identifier)
-    let clinic: ClinicData | null = await findClinicById(prisma, {
+    let clinic: ClinicData | null = await findClinicById(databaseService, {
       clinicId: clinicIdOrUUID,
     });
 
     if (clinic) {
       if (!clinic.isActive) {
-        throw new Error(
+        throw new HealthcareError(
+          ErrorCode.CLINIC_ACCESS_DENIED,
           `Clinic ${clinic.name} (${clinic.clinicId}) is inactive`,
+          HttpStatus.FORBIDDEN,
+          { clinicId: clinic.clinicId, clinicName: clinic.name }
         );
       }
       return clinic.id;
     }
 
     // Then try to find by UUID
-    clinic = await findClinicById(prisma, { id: clinicIdOrUUID });
+    clinic = await findClinicById(databaseService, { id: clinicIdOrUUID });
 
     if (clinic) {
       if (!clinic.isActive) {
-        throw new Error(
+        throw new HealthcareError(
+          ErrorCode.CLINIC_ACCESS_DENIED,
           `Clinic ${clinic.name} (${clinic.clinicId}) is inactive`,
+          HttpStatus.FORBIDDEN,
+          { clinicId: clinic.clinicId, clinicName: clinic.name }
         );
       }
       return clinic.id;
     }
 
     // If still not found, provide detailed error
-    throw new Error(
+    throw new HealthcareError(
+      ErrorCode.CLINIC_NOT_FOUND,
       `Clinic not found with identifier: ${clinicIdOrUUID}. Please check if the clinic exists and is active.`,
+      HttpStatus.NOT_FOUND,
+      { clinicIdOrUUID }
     );
   } catch (_error) {
-    if (
-      (_error as Error).message.includes("Clinic not found") ||
-      (_error as Error).message.includes("is inactive")
-    ) {
+    if (_error instanceof HealthcareError) {
       throw _error;
     }
-    throw new Error(
-      `Failed to resolve clinic UUID: ${(_error as Error).message}`,
+    throw new HealthcareError(
+      ErrorCode.DATABASE_QUERY_FAILED,
+      `Failed to resolve clinic UUID: ${_error instanceof Error ? _error.message : String(_error)}`,
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { clinicIdOrUUID }
     );
   }
 }

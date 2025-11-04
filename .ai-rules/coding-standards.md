@@ -45,7 +45,7 @@ import { ConfigService } from '@nestjs/config';
 
 // 2. Internal imports (using path aliases)
 import { PrismaService } from '@infrastructure/database';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { UserDto } from '@dtos';
 
 // 3. Local imports (same directory)
@@ -63,10 +63,10 @@ import { NotificationService } from '@services/notification';
 import { ClinicService } from '@services/clinic';
 
 import { PrismaService } from '@infrastructure/database';
-import { RedisService } from '@infrastructure/cache';
-import { LoggingService } from '@infrastructure/logging';
-import { QueueService } from '@infrastructure/queue';
-import { EventsService } from '@infrastructure/events';
+import { RedisService } from '@cache';
+import { LoggingService } from '@logging';
+import { QueueService } from '@queue';
+import { EventsService } from '@events';
 
 import { AuthDto, CreateUserDto } from '@dtos';
 
@@ -78,6 +78,7 @@ import { ValidationPipe } from '@core/pipes';
 import { HttpExceptionFilter } from '@core/filters';
 import { RbacService } from '@core/rbac';
 import { SessionService } from '@core/session';
+import type { RequestContext } from '@types';
 
 import { WhatsAppService } from '@communication/messaging/whatsapp';
 import { EmailService } from '@communication/messaging/email';
@@ -392,6 +393,14 @@ this.logger.info('Error occurred: ' + error.message);
 - **Return Types**: Always specify return types
 - **Async/Await**: Use async/await instead of Promises
 
+### 🚀 Performance Guidelines (10M Users)
+- Avoid unnecessary JSON.parse/stringify on hot paths; reuse buffers/objects.
+- Use memoization and caching for expensive pure computations.
+- Prefer Set/Map over arrays for membership checks in hot paths.
+- Use pagination and keyset/cursor pagination for large lists.
+- Batch external calls; prefer pipelines/bulk ops for Redis/DB.
+- Use lazy imports for rarely used modules in cold paths.
+
 ### **Class Guidelines**
 - **Constructor Injection**: Use dependency injection
 - **Private Methods**: Mark internal methods as private
@@ -484,3 +493,12 @@ async create(@Body() createUserDto: CreateUserDto) {
 **💡 Remember**: These standards ensure code consistency, maintainability, and reliability across the healthcare system.
 
 **Last Updated**: December 2024
+
+## 🧭 Change Management Policy
+- Prefer editing existing files to add features and fixes; create new files only when necessary.
+- Consolidate logic into existing modules; do not duplicate types/services/utilities.
+- ESLint rules must never be disabled or bypassed; fix issues correctly to achieve zero warnings.
+
+## ✅ Functionality Preservation
+- Refactors and lint/type fixes must preserve existing behavior.
+- For any intended behavior change, add/update tests and document the change in the PR description.

@@ -1,5 +1,5 @@
-import type { JwtModuleOptions } from "@nestjs/jwt";
-import { ENV_VARS, DEFAULT_CONFIG } from "./constants";
+import type { JwtModuleOptions } from '@nestjs/jwt';
+import { ENV_VARS, DEFAULT_CONFIG } from './constants';
 
 /**
  * Validates JWT configuration
@@ -7,14 +7,14 @@ import { ENV_VARS, DEFAULT_CONFIG } from "./constants";
  * @throws Error if configuration is invalid
  */
 function validateJwtConfig(config: JwtModuleOptions): void {
-  if (!config.secret || config.secret === "your-secret-key") {
-    if (process.env["NODE_ENV"] === "production") {
-      throw new Error("JWT_SECRET must be set in production environment");
+  if (!config.secret || config.secret === 'your-secret-key') {
+    if (process.env['NODE_ENV'] === 'production') {
+      throw new Error('JWT_SECRET must be set in production environment');
     }
   }
 
   if (!config.signOptions?.expiresIn) {
-    throw new Error("JWT expiration time must be specified");
+    throw new Error('JWT expiration time must be specified');
   }
 }
 
@@ -23,10 +23,9 @@ function validateJwtConfig(config: JwtModuleOptions): void {
  * @constant jwtConfig
  */
 export const jwtConfig: JwtModuleOptions = {
-  secret: process.env[ENV_VARS.JWT_SECRET] || "your-secret-key",
+  secret: process.env[ENV_VARS.JWT_SECRET] || 'your-secret-key',
   signOptions: {
-    expiresIn:
-      process.env[ENV_VARS.JWT_EXPIRATION] || DEFAULT_CONFIG.JWT_EXPIRATION,
+    expiresIn: process.env[ENV_VARS.JWT_EXPIRATION] || DEFAULT_CONFIG.JWT_EXPIRATION,
   },
 };
 

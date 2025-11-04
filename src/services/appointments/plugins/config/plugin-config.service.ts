@@ -1,6 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { CacheService } from "../../../../libs/infrastructure/cache";
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { CacheService } from '@infrastructure/cache';
 
 export interface PluginConfig {
   enabled: boolean;
@@ -17,12 +17,12 @@ export interface PluginConfigMap {
 @Injectable()
 export class PluginConfigService {
   private readonly logger = new Logger(PluginConfigService.name);
-  private readonly CONFIG_CACHE_KEY = "plugin:config";
+  private readonly CONFIG_CACHE_KEY = 'plugin:config';
   private readonly CONFIG_CACHE_TTL = 3600; // 1 hour
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly cacheService: CacheService,
+    private readonly cacheService: CacheService
   ) {}
 
   /**
@@ -33,10 +33,7 @@ export class PluginConfigService {
       const allConfigs = await this.getAllPluginConfigs();
       return allConfigs[pluginName] || null;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get plugin config for ${pluginName}:`,
-        _error,
-      );
+      this.logger.error(`Failed to get plugin config for ${pluginName}:`, _error);
       return null;
     }
   }
@@ -54,180 +51,93 @@ export class PluginConfigService {
 
       // Generate configurations from environment
       const configs: PluginConfigMap = {
-        "clinic-queue-plugin": {
-          enabled: this.configService.get("CLINIC_QUEUE_PLUGIN_ENABLED", true),
-          priority: this.configService.get("CLINIC_QUEUE_PLUGIN_PRIORITY", 1),
+        'clinic-queue-plugin': {
+          enabled: this.configService.get('CLINIC_QUEUE_PLUGIN_ENABLED', true),
+          priority: this.configService.get('CLINIC_QUEUE_PLUGIN_PRIORITY', 1),
           settings: {
-            maxQueueSize: this.configService.get("CLINIC_MAX_QUEUE_SIZE", 50),
-            defaultWaitTime: this.configService.get(
-              "CLINIC_DEFAULT_WAIT_TIME",
-              15,
-            ),
-            emergencyPriority: this.configService.get(
-              "CLINIC_EMERGENCY_PRIORITY",
-              10,
-            ),
-            autoConfirmation: this.configService.get(
-              "CLINIC_AUTO_CONFIRMATION",
-              true,
-            ),
+            maxQueueSize: this.configService.get('CLINIC_MAX_QUEUE_SIZE', 50),
+            defaultWaitTime: this.configService.get('CLINIC_DEFAULT_WAIT_TIME', 15),
+            emergencyPriority: this.configService.get('CLINIC_EMERGENCY_PRIORITY', 10),
+            autoConfirmation: this.configService.get('CLINIC_AUTO_CONFIRMATION', true),
           },
-          features: [
-            "queue-management",
-            "priority-queues",
-            "emergency-handling",
-          ],
-          domain: "healthcare",
+          features: ['queue-management', 'priority-queues', 'emergency-handling'],
+          domain: 'healthcare',
         },
         // Fashion queue plugin removed - healthcare application only
-        "clinic-location-plugin": {
-          enabled: this.configService.get(
-            "CLINIC_LOCATION_PLUGIN_ENABLED",
-            true,
-          ),
-          priority: this.configService.get(
-            "CLINIC_LOCATION_PLUGIN_PRIORITY",
-            1,
-          ),
+        'clinic-location-plugin': {
+          enabled: this.configService.get('CLINIC_LOCATION_PLUGIN_ENABLED', true),
+          priority: this.configService.get('CLINIC_LOCATION_PLUGIN_PRIORITY', 1),
           settings: {
-            cacheEnabled: this.configService.get(
-              "CLINIC_LOCATION_CACHE_ENABLED",
-              true,
-            ),
-            cacheTTL: this.configService.get("CLINIC_LOCATION_CACHE_TTL", 3600),
-            qrEnabled: this.configService.get("CLINIC_QR_ENABLED", true),
-            qrExpiration: this.configService.get("CLINIC_QR_EXPIRATION", 300),
+            cacheEnabled: this.configService.get('CLINIC_LOCATION_CACHE_ENABLED', true),
+            cacheTTL: this.configService.get('CLINIC_LOCATION_CACHE_TTL', 3600),
+            qrEnabled: this.configService.get('CLINIC_QR_ENABLED', true),
+            qrExpiration: this.configService.get('CLINIC_QR_EXPIRATION', 300),
           },
-          features: ["location-management", "qr-codes", "multi-location"],
-          domain: "healthcare",
+          features: ['location-management', 'qr-codes', 'multi-location'],
+          domain: 'healthcare',
         },
         // Fashion location plugin removed - healthcare application only
-        "clinic-confirmation-plugin": {
-          enabled: this.configService.get(
-            "CLINIC_CONFIRMATION_PLUGIN_ENABLED",
-            true,
-          ),
-          priority: this.configService.get(
-            "CLINIC_CONFIRMATION_PLUGIN_PRIORITY",
-            1,
-          ),
+        'clinic-confirmation-plugin': {
+          enabled: this.configService.get('CLINIC_CONFIRMATION_PLUGIN_ENABLED', true),
+          priority: this.configService.get('CLINIC_CONFIRMATION_PLUGIN_PRIORITY', 1),
           settings: {
-            qrEnabled: this.configService.get(
-              "CLINIC_CONFIRMATION_QR_ENABLED",
-              true,
-            ),
-            qrExpiration: this.configService.get(
-              "CLINIC_CONFIRMATION_QR_EXPIRATION",
-              300,
-            ),
-            autoCheckIn: this.configService.get("CLINIC_AUTO_CHECKIN", false),
-            checkInWindow: this.configService.get("CLINIC_CHECKIN_WINDOW", 15),
+            qrEnabled: this.configService.get('CLINIC_CONFIRMATION_QR_ENABLED', true),
+            qrExpiration: this.configService.get('CLINIC_CONFIRMATION_QR_EXPIRATION', 300),
+            autoCheckIn: this.configService.get('CLINIC_AUTO_CHECKIN', false),
+            checkInWindow: this.configService.get('CLINIC_CHECKIN_WINDOW', 15),
           },
-          features: ["qr-generation", "check-in", "confirmation", "completion"],
-          domain: "healthcare",
+          features: ['qr-generation', 'check-in', 'confirmation', 'completion'],
+          domain: 'healthcare',
         },
         // Fashion confirmation plugin removed - healthcare application only
-        "clinic-checkin-plugin": {
-          enabled: this.configService.get(
-            "CLINIC_CHECKIN_PLUGIN_ENABLED",
-            true,
-          ),
-          priority: this.configService.get("CLINIC_CHECKIN_PLUGIN_PRIORITY", 1),
+        'clinic-checkin-plugin': {
+          enabled: this.configService.get('CLINIC_CHECKIN_PLUGIN_ENABLED', true),
+          priority: this.configService.get('CLINIC_CHECKIN_PLUGIN_PRIORITY', 1),
           settings: {
-            biometricEnabled: this.configService.get(
-              "CLINIC_BIOMETRIC_ENABLED",
-              false,
-            ),
-            autoQueue: this.configService.get("CLINIC_AUTO_QUEUE", true),
-            priorityCheckIn: this.configService.get(
-              "CLINIC_PRIORITY_CHECKIN",
-              true,
-            ),
+            biometricEnabled: this.configService.get('CLINIC_BIOMETRIC_ENABLED', false),
+            autoQueue: this.configService.get('CLINIC_AUTO_QUEUE', true),
+            priorityCheckIn: this.configService.get('CLINIC_PRIORITY_CHECKIN', true),
           },
-          features: ["check-in", "queue-management", "consultation-start"],
-          domain: "healthcare",
+          features: ['check-in', 'queue-management', 'consultation-start'],
+          domain: 'healthcare',
         },
         // Fashion checkin plugin removed - healthcare application only
-        "clinic-socket-plugin": {
-          enabled: this.configService.get("CLINIC_SOCKET_PLUGIN_ENABLED", true),
-          priority: this.configService.get("CLINIC_SOCKET_PLUGIN_PRIORITY", 1),
+        'clinic-socket-plugin': {
+          enabled: this.configService.get('CLINIC_SOCKET_PLUGIN_ENABLED', true),
+          priority: this.configService.get('CLINIC_SOCKET_PLUGIN_PRIORITY', 1),
           settings: {
-            realTimeUpdates: this.configService.get(
-              "CLINIC_REALTIME_UPDATES",
-              true,
-            ),
-            queueNotifications: this.configService.get(
-              "CLINIC_QUEUE_NOTIFICATIONS",
-              true,
-            ),
-            emergencyAlerts: this.configService.get(
-              "CLINIC_EMERGENCY_ALERTS",
-              true,
-            ),
+            realTimeUpdates: this.configService.get('CLINIC_REALTIME_UPDATES', true),
+            queueNotifications: this.configService.get('CLINIC_QUEUE_NOTIFICATIONS', true),
+            emergencyAlerts: this.configService.get('CLINIC_EMERGENCY_ALERTS', true),
           },
-          features: [
-            "real-time-updates",
-            "queue-notifications",
-            "appointment-status",
-          ],
-          domain: "healthcare",
+          features: ['real-time-updates', 'queue-notifications', 'appointment-status'],
+          domain: 'healthcare',
         },
         // Fashion socket plugin removed - healthcare application only
-        "clinic-payment-plugin": {
-          enabled: this.configService.get(
-            "CLINIC_PAYMENT_PLUGIN_ENABLED",
-            true,
-          ),
-          priority: this.configService.get("CLINIC_PAYMENT_PLUGIN_PRIORITY", 1),
+        'clinic-payment-plugin': {
+          enabled: this.configService.get('CLINIC_PAYMENT_PLUGIN_ENABLED', true),
+          priority: this.configService.get('CLINIC_PAYMENT_PLUGIN_PRIORITY', 1),
           settings: {
-            insuranceEnabled: this.configService.get(
-              "CLINIC_INSURANCE_ENABLED",
-              true,
-            ),
-            copayEnabled: this.configService.get("CLINIC_COPAY_ENABLED", true),
-            refundEnabled: this.configService.get(
-              "CLINIC_REFUND_ENABLED",
-              true,
-            ),
-            autoBilling: this.configService.get("CLINIC_AUTO_BILLING", false),
+            insuranceEnabled: this.configService.get('CLINIC_INSURANCE_ENABLED', true),
+            copayEnabled: this.configService.get('CLINIC_COPAY_ENABLED', true),
+            refundEnabled: this.configService.get('CLINIC_REFUND_ENABLED', true),
+            autoBilling: this.configService.get('CLINIC_AUTO_BILLING', false),
           },
-          features: [
-            "payment-processing",
-            "insurance-claims",
-            "refunds",
-            "billing",
-          ],
-          domain: "healthcare",
+          features: ['payment-processing', 'insurance-claims', 'refunds', 'billing'],
+          domain: 'healthcare',
         },
         // Fashion payment plugin removed - healthcare application only
-        "clinic-video-plugin": {
-          enabled: this.configService.get("CLINIC_VIDEO_PLUGIN_ENABLED", true),
-          priority: this.configService.get("CLINIC_VIDEO_PLUGIN_PRIORITY", 1),
+        'clinic-video-plugin': {
+          enabled: this.configService.get('CLINIC_VIDEO_PLUGIN_ENABLED', true),
+          priority: this.configService.get('CLINIC_VIDEO_PLUGIN_PRIORITY', 1),
           settings: {
-            recordingEnabled: this.configService.get(
-              "CLINIC_VIDEO_RECORDING",
-              true,
-            ),
-            screenSharing: this.configService.get(
-              "CLINIC_SCREEN_SHARING",
-              true,
-            ),
-            medicalImageSharing: this.configService.get(
-              "CLINIC_MEDICAL_IMAGE_SHARING",
-              true,
-            ),
-            emergencyMode: this.configService.get(
-              "CLINIC_EMERGENCY_MODE",
-              true,
-            ),
+            recordingEnabled: this.configService.get('CLINIC_VIDEO_RECORDING', true),
+            screenSharing: this.configService.get('CLINIC_SCREEN_SHARING', true),
+            medicalImageSharing: this.configService.get('CLINIC_MEDICAL_IMAGE_SHARING', true),
+            emergencyMode: this.configService.get('CLINIC_EMERGENCY_MODE', true),
           },
-          features: [
-            "video-calls",
-            "screen-sharing",
-            "recording",
-            "medical-images",
-          ],
-          domain: "healthcare",
+          features: ['video-calls', 'screen-sharing', 'recording', 'medical-images'],
+          domain: 'healthcare',
         },
         // Fashion video plugin removed - healthcare application only
       };
@@ -236,12 +146,12 @@ export class PluginConfigService {
       await this.cacheService.set(
         this.CONFIG_CACHE_KEY,
         JSON.stringify(configs),
-        this.CONFIG_CACHE_TTL,
+        this.CONFIG_CACHE_TTL
       );
 
       return configs;
     } catch (_error) {
-      this.logger.error("Failed to get all plugin configs:", _error);
+      this.logger.error('Failed to get all plugin configs:', _error);
       return {};
     }
   }
@@ -249,10 +159,7 @@ export class PluginConfigService {
   /**
    * Update plugin configuration
    */
-  async updatePluginConfig(
-    pluginName: string,
-    config: Partial<PluginConfig>,
-  ): Promise<boolean> {
+  async updatePluginConfig(pluginName: string, config: Partial<PluginConfig>): Promise<boolean> {
     try {
       const allConfigs = await this.getAllPluginConfigs();
       allConfigs[pluginName] = {
@@ -262,23 +169,20 @@ export class PluginConfigService {
         priority: config.priority ?? allConfigs[pluginName]?.priority ?? 0,
         settings: config.settings ?? allConfigs[pluginName]?.settings ?? {},
         features: config.features ?? allConfigs[pluginName]?.features ?? [],
-        domain: config.domain ?? allConfigs[pluginName]?.domain ?? "",
+        domain: config.domain ?? allConfigs[pluginName]?.domain ?? '',
       };
 
       // Update cache
       await this.cacheService.set(
         this.CONFIG_CACHE_KEY,
         JSON.stringify(allConfigs),
-        this.CONFIG_CACHE_TTL,
+        this.CONFIG_CACHE_TTL
       );
 
       this.logger.log(`Updated plugin config for ${pluginName}`);
       return true;
     } catch (_error) {
-      this.logger.error(
-        `Failed to update plugin config for ${pluginName}:`,
-        _error,
-      );
+      this.logger.error(`Failed to update plugin config for ${pluginName}:`, _error);
       return false;
     }
   }
@@ -299,10 +203,7 @@ export class PluginConfigService {
 
       return domainConfigs;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get domain plugin configs for ${domain}:`,
-        _error,
-      );
+      this.logger.error(`Failed to get domain plugin configs for ${domain}:`, _error);
       return {};
     }
   }
@@ -315,10 +216,7 @@ export class PluginConfigService {
       const config = await this.getPluginConfig(pluginName);
       return config?.enabled || false;
     } catch (_error) {
-      this.logger.error(
-        `Failed to check if plugin ${pluginName} is enabled:`,
-        _error,
-      );
+      this.logger.error(`Failed to check if plugin ${pluginName} is enabled:`, _error);
       return false;
     }
   }
@@ -331,10 +229,7 @@ export class PluginConfigService {
       const config = await this.getPluginConfig(pluginName);
       return config?.priority || 1;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get plugin priority for ${pluginName}:`,
-        _error,
-      );
+      this.logger.error(`Failed to get plugin priority for ${pluginName}:`, _error);
       return 1;
     }
   }
@@ -345,12 +240,9 @@ export class PluginConfigService {
   async invalidateConfigCache(): Promise<void> {
     try {
       await this.cacheService.del(this.CONFIG_CACHE_KEY);
-      this.logger.log("Plugin configuration cache invalidated");
+      this.logger.log('Plugin configuration cache invalidated');
     } catch (_error) {
-      this.logger.error(
-        "Failed to invalidate plugin configuration cache:",
-        _error,
-      );
+      this.logger.error('Failed to invalidate plugin configuration cache:', _error);
     }
   }
 }

@@ -248,64 +248,77 @@ async getPatients(@Request() req: AuthenticatedRequest) {
 
 ## 📊 Infrastructure Components
 
-### Database Layer Architecture
+### Database Layer Architecture - Single Unified Service
 
-#### **HealthcareDatabaseClient**
+#### **DatabaseService (PUBLIC API - Use This Only)**
+
+**CRITICAL**: Only `DatabaseService` should be used for all database operations. All other components are internal.
+
 ```typescript
+import { DatabaseService } from "@infrastructure/database";
+
 @Injectable()
-export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
-  // Connection pooling for 10M+ users
-  // Metrics tracking and monitoring
-  // Error handling with RepositoryResult
-  // Health monitoring and circuit breakers
-  // Transaction support with audit trails
-  // Multi-tenant clinic isolation
-  // HIPAA compliance features
-  
-  async executeQuery<T>(query: string, params: any[]): Promise<RepositoryResult<T>> {
-    // Circuit breaker pattern
-    // Query optimization
-    // Audit logging
-    // Clinic isolation
+export class UserService {
+  constructor(private readonly databaseService: DatabaseService) {}
+
+  // Use safe methods (recommended - includes all optimization layers)
+  async findUser(id: string) {
+    return await this.databaseService.findUserByIdSafe(id);
+    // Automatically includes:
+    // - Connection pooling (50-500 connections)
+    // - Query caching (100K+ entries)
+    // - Query optimization
+    // - Metrics tracking
+    // - HIPAA audit logging
+    // - Clinic isolation
+  }
+
+  // For custom queries, use executeHealthcareRead/Write
+  async findUsersWithAppointments(clinicId: string) {
+    return await this.databaseService.executeHealthcareRead(async (client) => {
+      return await client.user.findMany({
+        where: { clinicId },
+        include: { appointments: true }
+      });
+    });
   }
 }
 ```
 
-#### **Connection Pool Manager**
-```typescript
-@Injectable()
-export class ConnectionPoolManager {
-  // 20-300 connections with intelligent batch processing
-  // Circuit breaker patterns for resilience
-  // Query queue management (20-100 queries per batch)
-  // Health monitoring and auto-scaling
-  // Performance metrics tracking
-  
-  private queryQueue: Array<{
-    query: string;
-    params: any[];
-    options: QueryOptions;
-    resolve: (result: any) => void;
-    reject: (error: any) => void;
-    timestamp: Date;
-  }> = [];
-}
+#### **Architecture Overview**
+
+```
+DatabaseService (PUBLIC - Only Export)
+├── HealthcareDatabaseClient (INTERNAL - Not Exported)
+│   ├── PrismaService (INTERNAL - Encapsulated)
+│   ├── ConnectionPoolManager (INTERNAL - 50-500 connections)
+│   ├── DatabaseMetricsService (INTERNAL - Metrics & Monitoring)
+│   ├── ClinicIsolationService (INTERNAL - Multi-Tenant Isolation)
+│   ├── HealthcareQueryOptimizerService (INTERNAL - Query Optimization)
+│   └── CacheService (INTERNAL - Caching Layer, 100K+ entries)
 ```
 
-#### **Prisma Service Configuration**
-```typescript
-@Injectable({ scope: Scope.REQUEST })
-export class PrismaService extends PrismaClient {
-  private static readonly MAX_CONNECTIONS = 50;
-  private static readonly CONNECTION_TIMEOUT = 3000;
-  private static readonly QUERY_TIMEOUT = 10000;
-  
-  // Singleton pattern for connection management
-  // Request-scoped for multi-tenancy
-  // Automatic retry logic
-  // Performance monitoring
-}
-```
+#### **10M+ Users Optimization**
+
+- **Connection Pooling**: 50-500 connections (auto-scaling)
+- **Caching**: 100,000+ entries (query cache: 50K, result cache: 100K)
+- **Query Optimization**: Automatic query analysis and optimization
+- **Read Replicas**: Enabled (25-200 replica connections)
+- **Auto-Scaling**: Enabled (CPU: 75%, Connections: 400)
+- **Circuit Breaker**: Enabled (5 failures threshold)
+
+#### **All Operations Include**
+
+1. ✅ Connection Pooling (via ConnectionPoolManager)
+2. ✅ Query Caching (read operations)
+3. ✅ Query Optimization (via HealthcareQueryOptimizerService)
+4. ✅ Metrics Tracking (via DatabaseMetricsService)
+5. ✅ HIPAA Audit Logging (write operations)
+6. ✅ Clinic Isolation (via ClinicIsolationService)
+7. ✅ Read Replica Routing (automatic)
+8. ✅ Cache Invalidation (write/delete operations)
+9. ✅ Error Handling & Retry Logic
+10. ✅ Circuit Breaker Protection
 
 ### Caching Strategy
 

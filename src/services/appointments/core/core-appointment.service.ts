@@ -1,27 +1,23 @@
-import { Injectable, Logger, Inject, forwardRef } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { EventEmitter2 } from "@nestjs/event-emitter";
-import { InjectQueue } from "@nestjs/bull";
-import { Queue } from "bull";
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 
 // Infrastructure Services
 // Using unified DatabaseService for all database operations
-import {
-  LoggingService,
-  LogType,
-  LogLevel,
-} from "../../../libs/infrastructure/logging";
-import { CacheService } from "../../../libs/infrastructure/cache";
-import { QueueService } from "../../../libs/infrastructure/queue";
-import { DatabaseService } from "../../../libs/infrastructure/database";
+import { LoggingService } from '@infrastructure/logging';
+import { EventService } from '@infrastructure/events';
+import { LogType, LogLevel } from '@core/types';
+import { CacheService } from '@infrastructure/cache';
+import { QueueService } from '@infrastructure/queue';
+import { DatabaseService } from '@infrastructure/database';
+import { HealthcareErrorsService } from '@core/errors';
 
 // Core Services
-import {
-  ConflictResolutionService,
-  TimeSlot,
-} from "./conflict-resolution.service";
-import { AppointmentWorkflowEngine } from "./appointment-workflow-engine.service";
-import { BusinessRulesEngine } from "./business-rules-engine.service";
+import { ConflictResolutionService } from './conflict-resolution.service';
+import type { TimeSlot } from '@core/types/appointment.types';
+import { AppointmentWorkflowEngine } from './appointment-workflow-engine.service';
+import { BusinessRulesEngine } from './business-rules-engine.service';
 
 // DTOs and Types
 import {
@@ -30,104 +26,30 @@ import {
   AppointmentFilterDto,
   AppointmentStatus,
   AppointmentPriority,
-} from "../appointment.dto";
-import {
-  PaymentStatus,
-  PaymentMethod,
-  Language,
-} from "../../../libs/infrastructure/database/prisma/prisma.types";
+} from '../appointment.dto';
+import { PaymentStatus, PaymentMethod, Language } from '@core/types';
+import type {
+  AppointmentContext,
+  AppointmentResult,
+  ConflictDetails,
+  AlternativeSlot,
+  AuditTrailEntry,
+  AppointmentMetricsData,
+} from '@core/types/appointment.types';
 
-// Interfaces
-export interface AppointmentContext {
-  userId: string;
-  role: string;
-  clinicId: string;
-  locationId?: string;
-  doctorId?: string;
-  patientId?: string;
-}
+// CoreAppointmentMetrics is an alias for AppointmentMetricsData
+export type CoreAppointmentMetrics = AppointmentMetricsData;
 
-export interface AppointmentResult<T = Record<string, unknown>> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  message: string;
-  metadata?: {
-    processingTime: number;
-    conflicts?: ConflictDetails[];
-    warnings?: string[];
-    auditTrail?: AuditTrailEntry[];
-    alternatives?: AlternativeSlot[];
-  };
-}
-
-export interface ConflictDetails {
-  type: string;
-  severity: string;
-  description: string;
-  conflictingAppointmentId?: string;
-  conflictingTimeSlot?: TimeSlot;
-  affectedResources: string[];
-  resolution?: string;
-}
-
-export interface AlternativeSlot {
-  startTime: Date;
-  endTime: Date;
-  doctorId: string;
-  score: number;
-  reason: string;
-  availability: "available" | "preferred" | "suboptimal";
-  estimatedWaitTime?: number;
-}
-
-export interface AuditTrailEntry {
-  action: string;
-  timestamp: Date;
-  userId: string;
-  details: Record<string, unknown>;
-}
-
-export interface CoreAppointmentMetrics {
-  totalAppointments: number;
-  appointmentsByStatus: Record<string, number>;
-  appointmentsByPriority: Record<string, number>;
-  averageDuration: number;
-  conflictResolutionRate: number;
-  noShowRate: number;
-  completionRate: number;
-  averageWaitTime: number;
-  queueEfficiency: number;
-}
-
-export interface AppointmentMetricsData {
-  totalAppointments: number;
-  appointmentsByStatus: Record<string, number>;
-  appointmentsByPriority: Record<string, number>;
-  averageDuration: number;
-  conflictResolutionRate: number;
-  noShowRate: number;
-  completionRate: number;
-  averageWaitTime: number;
-  queueEfficiency: number;
-}
-
-export interface AppointmentTimeSlot {
-  id: string;
-  date: Date;
-  time: string;
-  duration: number;
-  status: string;
-  priority: string;
-}
+// AppointmentTimeSlot is imported from database types
+import type { AppointmentTimeSlot } from '@core/types/database.types';
 
 // Use centralized types from database service
 import type {
-  Appointment,
-  Patient,
+  AppointmentBase as Appointment,
+  PatientBase as Patient,
   Doctor,
   Clinic,
-} from "../../../libs/infrastructure/database/prisma/prisma.types";
+} from '@core/types/database.types';
 
 export type AppointmentData = Appointment;
 export type PatientData = Patient;
@@ -149,7 +71,6 @@ export type ClinicData = Clinic;
  */
 @Injectable()
 export class CoreAppointmentService {
-  private readonly logger = new Logger(CoreAppointmentService.name);
   private readonly CACHE_TTL = 300; // 5 minutes
   private readonly METRICS_CACHE_TTL = 600; // 10 minutes
 
@@ -158,20 +79,21 @@ export class CoreAppointmentService {
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
     private readonly queueService: QueueService,
+    private readonly eventService: EventService,
     private readonly configService: ConfigService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly errors: HealthcareErrorsService,
     @Inject(forwardRef(() => ConflictResolutionService))
     private readonly conflictResolutionService: ConflictResolutionService,
     @Inject(forwardRef(() => AppointmentWorkflowEngine))
     private readonly workflowEngine: AppointmentWorkflowEngine,
     @Inject(forwardRef(() => BusinessRulesEngine))
     private readonly businessRules: BusinessRulesEngine,
-    @InjectQueue("clinic-appointment")
+    @InjectQueue('clinic-appointment')
     private readonly appointmentQueue: Queue,
-    @InjectQueue("clinic-notification")
+    @InjectQueue('clinic-notification')
     private readonly notificationQueue: Queue,
-    @InjectQueue("clinic-analytics")
-    private readonly analyticsQueue: Queue,
+    @InjectQueue('clinic-analytics')
+    private readonly analyticsQueue: Queue
   ) {}
 
   /**
@@ -179,26 +101,28 @@ export class CoreAppointmentService {
    */
   async createAppointment(
     createDto: CreateAppointmentDto,
-    context: AppointmentContext,
+    context: AppointmentContext
   ): Promise<AppointmentResult> {
     const startTime = Date.now();
 
     try {
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
         `Creating appointment for patient ${createDto.patientId} with doctor ${createDto.doctorId}`,
+        'CoreAppointmentService.createAppointment'
       );
 
       // 1. Validate business rules
-      const businessRuleValidation =
-        await this.businessRules.validateAppointmentCreation(
-          createDto,
-          context,
-        );
+      const businessRuleValidation = await this.businessRules.validateAppointmentCreation(
+        createDto,
+        context
+      );
       if (!businessRuleValidation.passed) {
         return {
           success: false,
-          error: "BUSINESS_RULE_VIOLATION",
-          message: businessRuleValidation.violations.join(", "),
+          error: 'BUSINESS_RULE_VIOLATION',
+          message: businessRuleValidation.violations.join(', '),
           metadata: {
             processingTime: Date.now() - startTime,
             warnings: businessRuleValidation.violations,
@@ -210,36 +134,29 @@ export class CoreAppointmentService {
       const existingAppointments = await this.getExistingTimeSlots(
         createDto.doctorId,
         createDto.clinicId,
-        new Date(createDto.date),
+        new Date(createDto.date)
       );
 
-      const conflictResult =
-        await this.conflictResolutionService.resolveSchedulingConflict(
-          {
-            patientId: createDto.patientId,
-            doctorId: createDto.doctorId,
-            clinicId: createDto.clinicId,
-            requestedTime: new Date(`${createDto.date}T${createDto.time}`),
-            duration: createDto.duration,
-            priority: this.mapPriority(
-              createDto.priority || AppointmentPriority.NORMAL,
-            ),
-            serviceType: createDto.type,
-            ...(createDto.notes && { notes: createDto.notes }),
-          },
-          this.convertToTimeSlots(
-            existingAppointments,
-            createDto.doctorId,
-            createDto.clinicId,
-          ),
-          { allowOverlap: false, suggestAlternatives: true },
-        );
+      const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
+        {
+          patientId: createDto.patientId,
+          doctorId: createDto.doctorId,
+          clinicId: createDto.clinicId,
+          requestedTime: new Date(`${createDto.date}T${createDto.time}`),
+          duration: createDto.duration,
+          priority: this.mapPriority(createDto.priority || AppointmentPriority.NORMAL),
+          serviceType: createDto.type,
+          ...(createDto.notes && { notes: createDto.notes }),
+        },
+        this.convertToTimeSlots(existingAppointments, createDto.doctorId, createDto.clinicId),
+        { allowOverlap: false, suggestAlternatives: true }
+      );
 
       if (!conflictResult.canSchedule && conflictResult.conflicts.length > 0) {
         return {
           success: false,
-          error: "SCHEDULING_CONFLICT",
-          message: "Appointment time conflicts with existing schedule",
+          error: 'SCHEDULING_CONFLICT',
+          message: 'Appointment time conflicts with existing schedule',
           metadata: {
             processingTime: Date.now() - startTime,
             conflicts: conflictResult.conflicts,
@@ -257,27 +174,27 @@ export class CoreAppointmentService {
         paymentStatus: createDto.paymentStatus || PaymentStatus.PENDING,
         paymentMethod: createDto.paymentMethod || PaymentMethod.CASH,
         amount: createDto.amount || 0,
-        currency: createDto.currency || "INR",
+        currency: createDto.currency || 'INR',
         language: createDto.language || Language.EN,
         isRecurring: createDto.isRecurring || false,
         date: new Date(createDto.date),
       };
 
       const appointment = (await this.databaseService.createAppointmentSafe(
-        appointmentData,
+        appointmentData
       )) as AppointmentData;
 
+      // Cast for AppointmentResult compatibility
+      const appointmentResult = appointment as unknown as Record<string, unknown>;
+
       // 4. Initialize workflow
-      this.workflowEngine.initializeWorkflow(
-        appointment.id,
-        "APPOINTMENT_CREATED",
-      );
+      this.workflowEngine.initializeWorkflow(appointment.id, 'APPOINTMENT_CREATED');
 
       // 5. Queue background operations
       await this.queueBackgroundOperations(appointment, context);
 
       // 6. Emit events
-      this.eventEmitter.emit("appointment.created", {
+      await this.eventService.emit('appointment.created', {
         appointmentId: appointment.id,
         clinicId: appointment.clinicId,
         doctorId: appointment.doctorId,
@@ -288,24 +205,28 @@ export class CoreAppointmentService {
       });
 
       // 7. HIPAA audit log
-      await this.hipaaAuditLog("CREATE_APPOINTMENT", context, {
+      await this.hipaaAuditLog('CREATE_APPOINTMENT', context, {
         appointmentId: appointment.id,
         patientId: appointment.patientId,
-        outcome: "SUCCESS",
+        outcome: 'SUCCESS',
       });
 
       // 8. Invalidate cache
       await this.invalidateAppointmentCache(context.clinicId);
 
       const processingTime = Date.now() - startTime;
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
         `Appointment created successfully in ${processingTime}ms`,
+        'CoreAppointmentService.createAppointment',
+        { processingTime }
       );
 
       return {
         success: true,
-        data: appointment,
-        message: "Appointment created successfully",
+        data: appointmentResult,
+        message: 'Appointment created successfully',
         metadata: {
           processingTime,
           warnings: conflictResult.warnings || [],
@@ -313,23 +234,29 @@ export class CoreAppointmentService {
       };
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Failed to create appointment: ${errorMessage}`,
-        error instanceof Error ? error.stack : "",
+        'CoreAppointmentService.createAppointment',
+        {
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+          processingTime,
+        }
       );
 
       // HIPAA audit log for failure
-      await this.hipaaAuditLog("CREATE_APPOINTMENT", context, {
-        outcome: "FAILURE",
+      await this.hipaaAuditLog('CREATE_APPOINTMENT', context, {
+        outcome: 'FAILURE',
         error: errorMessage,
       });
 
       return {
         success: false,
-        error: "INTERNAL_ERROR",
-        message: "Failed to create appointment",
+        error: 'INTERNAL_ERROR',
+        message: 'Failed to create appointment',
         metadata: { processingTime },
       };
     }
@@ -342,7 +269,7 @@ export class CoreAppointmentService {
     filters: AppointmentFilterDto,
     context: AppointmentContext,
     page: number = 1,
-    limit: number = 20,
+    limit: number = 20
   ): Promise<AppointmentResult> {
     const startTime = Date.now();
 
@@ -356,7 +283,7 @@ export class CoreAppointmentService {
         return {
           success: true,
           data: cachedResult as Record<string, unknown>,
-          message: "Appointments retrieved from cache",
+          message: 'Appointments retrieved from cache',
           metadata: { processingTime: Date.now() - startTime },
         };
       }
@@ -387,8 +314,8 @@ export class CoreAppointmentService {
       await this.cacheService.set(cacheKey, result, this.CACHE_TTL);
 
       // HIPAA audit log
-      await this.hipaaAuditLog("VIEW_APPOINTMENTS", context, {
-        outcome: "SUCCESS",
+      await this.hipaaAuditLog('VIEW_APPOINTMENTS', context, {
+        outcome: 'SUCCESS',
         filters,
         resultCount: appointments.length,
       });
@@ -397,22 +324,28 @@ export class CoreAppointmentService {
       return {
         success: true,
         data: result,
-        message: "Appointments retrieved successfully",
+        message: 'Appointments retrieved successfully',
         metadata: { processingTime },
       };
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Failed to get appointments: ${errorMessage}`,
-        error instanceof Error ? error.stack : "",
+        'CoreAppointmentService.getAppointments',
+        {
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+          processingTime,
+        }
       );
 
       return {
         success: false,
-        error: "INTERNAL_ERROR",
-        message: "Failed to retrieve appointments",
+        error: 'INTERNAL_ERROR',
+        message: 'Failed to retrieve appointments',
         metadata: { processingTime },
       };
     }
@@ -424,21 +357,20 @@ export class CoreAppointmentService {
   async updateAppointment(
     appointmentId: string,
     updateDto: UpdateAppointmentDto,
-    context: AppointmentContext,
+    context: AppointmentContext
   ): Promise<AppointmentResult> {
     const startTime = Date.now();
 
     try {
       // 1. Get existing appointment
       // Get appointments using unified database service
-      const existingAppointment =
-        await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      const existingAppointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
       if (!existingAppointment) {
         return {
           success: false,
-          error: "APPOINTMENT_NOT_FOUND",
-          message: "Appointment not found",
+          error: 'APPOINTMENT_NOT_FOUND',
+          message: 'Appointment not found',
           metadata: { processingTime: Date.now() - startTime },
         };
       }
@@ -446,14 +378,11 @@ export class CoreAppointmentService {
       // 2. Validate status transitions
       if (
         updateDto.status &&
-        !this.workflowEngine.isValidStatusTransition(
-          existingAppointment.status,
-          updateDto.status,
-        )
+        !this.workflowEngine.isValidStatusTransition(existingAppointment.status, updateDto.status)
       ) {
         return {
           success: false,
-          error: "INVALID_STATUS_TRANSITION",
+          error: 'INVALID_STATUS_TRANSITION',
           message: `Cannot transition from ${existingAppointment.status} to ${updateDto.status}`,
           metadata: { processingTime: Date.now() - startTime },
         };
@@ -467,35 +396,33 @@ export class CoreAppointmentService {
         const existingAppointments = await this.getExistingTimeSlots(
           existingAppointment.doctorId,
           existingAppointment.clinicId,
-          new Date(newDate),
+          new Date(newDate)
         );
 
-        const conflictResult =
-          await this.conflictResolutionService.resolveSchedulingConflict(
-            {
-              patientId: existingAppointment.patientId,
-              doctorId: existingAppointment.doctorId,
-              clinicId: existingAppointment.clinicId,
-              requestedTime: new Date(`${String(newDate)}T${String(newTime)}`),
-              duration: updateDto.duration || existingAppointment.duration,
-              priority: "regular",
-              serviceType: existingAppointment.type,
-              ...(updateDto.notes && { notes: updateDto.notes }),
-            },
-            this.convertToTimeSlots(
-              existingAppointments,
-              existingAppointment.doctorId,
-              existingAppointment.clinicId,
-            ),
-            { allowOverlap: false, suggestAlternatives: true },
-          );
+        const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
+          {
+            patientId: existingAppointment.patientId,
+            doctorId: existingAppointment.doctorId,
+            clinicId: existingAppointment.clinicId,
+            requestedTime: new Date(`${String(newDate)}T${String(newTime)}`),
+            duration: updateDto.duration || existingAppointment.duration,
+            priority: 'regular',
+            serviceType: existingAppointment.type,
+            ...(updateDto.notes && { notes: updateDto.notes }),
+          },
+          this.convertToTimeSlots(
+            existingAppointments,
+            existingAppointment.doctorId,
+            existingAppointment.clinicId
+          ),
+          { allowOverlap: false, suggestAlternatives: true }
+        );
 
         if (!conflictResult.canSchedule) {
           return {
             success: false,
-            error: "SCHEDULING_CONFLICT",
-            message:
-              "Updated appointment time conflicts with existing schedule",
+            error: 'SCHEDULING_CONFLICT',
+            message: 'Updated appointment time conflicts with existing schedule',
             metadata: {
               processingTime: Date.now() - startTime,
               conflicts: conflictResult.conflicts,
@@ -508,39 +435,32 @@ export class CoreAppointmentService {
       // Handle date conversion properly for exactOptionalPropertyTypes
       const updateData: Record<string, unknown> = { ...updateDto };
       if (updateDto.date) {
-        updateData["date"] =
-          typeof updateDto.date === "string"
-            ? new Date(updateDto.date)
-            : updateDto.date;
+        updateData['date'] =
+          typeof updateDto.date === 'string' ? new Date(updateDto.date) : updateDto.date;
       }
-      const updatedAppointment =
-        (await this.databaseService.updateAppointmentSafe(
-          appointmentId,
-          updateData as any,
-        )) as AppointmentData;
+      const updatedAppointment = (await this.databaseService.updateAppointmentSafe(
+        appointmentId,
+        updateData as any
+      )) as AppointmentData;
+
+      // Cast for AppointmentResult compatibility
+      const updatedAppointmentResult = updatedAppointment as unknown as Record<string, unknown>;
 
       // 5. Update workflow if status changed
-      if (
-        updateDto.status &&
-        String(updateDto.status) !== String(existingAppointment.status)
-      ) {
+      if (updateDto.status && String(updateDto.status) !== String(existingAppointment.status)) {
         this.workflowEngine.transitionStatus(
           appointmentId,
           existingAppointment.status,
           updateDto.status,
-          context.userId,
+          context.userId
         );
       }
 
       // 6. Queue background operations
-      await this.queueBackgroundOperations(
-        updatedAppointment,
-        context,
-        "UPDATE",
-      );
+      await this.queueBackgroundOperations(updatedAppointment, context, 'UPDATE');
 
       // 7. Emit events
-      this.eventEmitter.emit("appointment.updated", {
+      await this.eventService.emit('appointment.updated', {
         appointmentId: updatedAppointment.id,
         clinicId: updatedAppointment.clinicId,
         doctorId: updatedAppointment.doctorId,
@@ -551,10 +471,10 @@ export class CoreAppointmentService {
       });
 
       // 8. HIPAA audit log
-      await this.hipaaAuditLog("UPDATE_APPOINTMENT", context, {
+      await this.hipaaAuditLog('UPDATE_APPOINTMENT', context, {
         appointmentId: updatedAppointment.id,
         patientId: updatedAppointment.patientId,
-        outcome: "SUCCESS",
+        outcome: 'SUCCESS',
         changes: updateDto,
       });
 
@@ -564,23 +484,29 @@ export class CoreAppointmentService {
       const processingTime = Date.now() - startTime;
       return {
         success: true,
-        data: updatedAppointment,
-        message: "Appointment updated successfully",
+        data: updatedAppointmentResult,
+        message: 'Appointment updated successfully',
         metadata: { processingTime },
       };
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Failed to update appointment: ${errorMessage}`,
-        error instanceof Error ? error.stack : "",
+        'CoreAppointmentService.updateAppointment',
+        {
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+          processingTime,
+        }
       );
 
       return {
         success: false,
-        error: "INTERNAL_ERROR",
-        message: "Failed to update appointment",
+        error: 'INTERNAL_ERROR',
+        message: 'Failed to update appointment',
         metadata: { processingTime },
       };
     }
@@ -592,60 +518,52 @@ export class CoreAppointmentService {
   async cancelAppointment(
     appointmentId: string,
     reason: string,
-    context: AppointmentContext,
+    context: AppointmentContext
   ): Promise<AppointmentResult> {
     const startTime = Date.now();
 
     try {
       // 1. Get existing appointment
       // Get appointments using unified database service
-      const existingAppointment =
-        await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      const existingAppointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
       if (!existingAppointment) {
         return {
           success: false,
-          error: "APPOINTMENT_NOT_FOUND",
-          message: "Appointment not found",
+          error: 'APPOINTMENT_NOT_FOUND',
+          message: 'Appointment not found',
           metadata: { processingTime: Date.now() - startTime },
         };
       }
 
       // 2. Validate cancellation is allowed
-      if (
-        !this.workflowEngine.canCancelAppointment(existingAppointment.status)
-      ) {
+      if (!this.workflowEngine.canCancelAppointment(existingAppointment.status)) {
         return {
           success: false,
-          error: "CANCELLATION_NOT_ALLOWED",
+          error: 'CANCELLATION_NOT_ALLOWED',
           message: `Cannot cancel appointment in ${existingAppointment.status} status`,
           metadata: { processingTime: Date.now() - startTime },
         };
       }
 
       // 3. Cancel appointment
-      const cancelledAppointment =
-        await this.databaseService.updateAppointmentSafe(appointmentId, {
-          status: AppointmentStatus.CANCELLED,
-        });
+      const cancelledAppointment = await this.databaseService.updateAppointmentSafe(appointmentId, {
+        status: AppointmentStatus.CANCELLED,
+      });
 
       // 4. Update workflow
       this.workflowEngine.transitionStatus(
         appointmentId,
         existingAppointment.status,
         AppointmentStatus.CANCELLED,
-        context.userId,
+        context.userId
       );
 
       // 5. Queue background operations
-      await this.queueBackgroundOperations(
-        cancelledAppointment,
-        context,
-        "CANCELLATION",
-      );
+      await this.queueBackgroundOperations(cancelledAppointment, context, 'CANCELLATION');
 
       // 6. Emit events
-      this.eventEmitter.emit("appointment.cancelled", {
+      await this.eventService.emit('appointment.cancelled', {
         appointmentId: cancelledAppointment.id,
         clinicId: cancelledAppointment.clinicId,
         doctorId: cancelledAppointment.doctorId,
@@ -655,10 +573,10 @@ export class CoreAppointmentService {
       });
 
       // 7. HIPAA audit log
-      await this.hipaaAuditLog("CANCEL_APPOINTMENT", context, {
+      await this.hipaaAuditLog('CANCEL_APPOINTMENT', context, {
         appointmentId: cancelledAppointment.id,
         patientId: cancelledAppointment.patientId,
-        outcome: "SUCCESS",
+        outcome: 'SUCCESS',
         reason,
       });
 
@@ -668,23 +586,29 @@ export class CoreAppointmentService {
       const processingTime = Date.now() - startTime;
       return {
         success: true,
-        data: cancelledAppointment,
-        message: "Appointment cancelled successfully",
+        data: cancelledAppointment as unknown as Record<string, unknown>,
+        message: 'Appointment cancelled successfully',
         metadata: { processingTime },
       };
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Failed to cancel appointment: ${errorMessage}`,
-        error instanceof Error ? error.stack : "",
+        'CoreAppointmentService.cancelAppointment',
+        {
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+          processingTime,
+        }
       );
 
       return {
         success: false,
-        error: "INTERNAL_ERROR",
-        message: "Failed to cancel appointment",
+        error: 'INTERNAL_ERROR',
+        message: 'Failed to cancel appointment',
         metadata: { processingTime },
       };
     }
@@ -696,7 +620,7 @@ export class CoreAppointmentService {
   async getAppointmentMetrics(
     clinicId: string,
     dateRange: { from: Date; to: Date },
-    _context: AppointmentContext,
+    _context: AppointmentContext
   ): Promise<AppointmentResult> {
     const startTime = Date.now();
 
@@ -709,7 +633,7 @@ export class CoreAppointmentService {
         return {
           success: true,
           data: cachedMetrics as Record<string, unknown>,
-          message: "Metrics retrieved from cache",
+          message: 'Metrics retrieved from cache',
           metadata: { processingTime: Date.now() - startTime },
         };
       }
@@ -731,22 +655,28 @@ export class CoreAppointmentService {
       return {
         success: true,
         data: metrics as unknown as Record<string, unknown>,
-        message: "Appointment metrics retrieved successfully",
+        message: 'Appointment metrics retrieved successfully',
         metadata: { processingTime },
       };
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Failed to get appointment metrics: ${errorMessage}`,
-        error instanceof Error ? error.stack : "",
+        'CoreAppointmentService.getAppointmentMetrics',
+        {
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+          processingTime,
+        }
       );
 
       return {
         success: false,
-        error: "INTERNAL_ERROR",
-        message: "Failed to retrieve appointment metrics",
+        error: 'INTERNAL_ERROR',
+        message: 'Failed to retrieve appointment metrics',
         metadata: { processingTime },
       };
     }
@@ -762,15 +692,13 @@ export class CoreAppointmentService {
   private convertToTimeSlots(
     appointments: AppointmentTimeSlot[],
     doctorId: string,
-    clinicId: string,
+    clinicId: string
   ): TimeSlot[] {
-    return appointments.map((appointment) => {
+    return appointments.map(appointment => {
       const startTime = new Date(
-        `${appointment.date.toISOString().split("T")[0]}T${appointment.time}`,
+        `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
       );
-      const endTime = new Date(
-        startTime.getTime() + appointment.duration * 60000,
-      ); // duration in minutes
+      const endTime = new Date(startTime.getTime() + appointment.duration * 60000); // duration in minutes
 
       return {
         startTime,
@@ -787,62 +715,51 @@ export class CoreAppointmentService {
   private getExistingTimeSlots(
     doctorId: string,
     clinicId: string,
-    date: Date,
+    date: Date
   ): Promise<AppointmentTimeSlot[]> {
     // Using prisma directly instead of databaseService
 
-    return this.databaseService.findAppointmentTimeSlotsSafe(
-      doctorId,
-      clinicId,
-      date,
-    ) as Promise<AppointmentTimeSlot[]>;
+    return this.databaseService.findAppointmentTimeSlotsSafe(doctorId, clinicId, date);
   }
 
   private buildAppointmentWhereClause(
     filters: AppointmentFilterDto,
-    context: AppointmentContext,
+    context: AppointmentContext
   ): Record<string, unknown> {
     const where: Record<string, unknown> = { clinicId: context.clinicId };
 
     // Apply role-based filtering
     switch (context.role) {
-      case "DOCTOR":
-        where["doctorId"] = context.userId;
+      case 'DOCTOR':
+        where['doctorId'] = context.userId;
         break;
-      case "PATIENT":
-        where["patientId"] = context.userId;
+      case 'PATIENT':
+        where['patientId'] = context.userId;
         break;
-      case "NURSE":
-      case "RECEPTIONIST":
+      case 'NURSE':
+      case 'RECEPTIONIST':
         // Can see all appointments in their clinic
         break;
       default:
         // For unknown roles, restrict to user's own appointments
-        where["OR"] = [
-          { doctorId: context.userId },
-          { patientId: context.userId },
-        ];
+        where['OR'] = [{ doctorId: context.userId }, { patientId: context.userId }];
         break;
     }
 
     // Apply filters
-    if (filters.status) where["status"] = filters.status;
-    if (filters.type) where["type"] = filters.type;
-    if (filters.priority) where["priority"] = filters.priority;
-    if (filters.patientId) where["patientId"] = filters.patientId;
-    if (filters.locationId) where["locationId"] = filters.locationId;
+    if (filters.status) where['status'] = filters.status;
+    if (filters.type) where['type'] = filters.type;
+    if (filters.priority) where['priority'] = filters.priority;
+    if (filters.patientId) where['patientId'] = filters.patientId;
+    if (filters.locationId) where['locationId'] = filters.locationId;
 
     if (filters.startDate || filters.endDate) {
-      where["date"] = {};
+      where['date'] = {};
       if (filters.startDate) {
-        (where["date"] as Record<string, unknown>)["gte"] = new Date(
-          filters.startDate,
-        );
+        (where['date'] as Record<string, unknown>)['gte'] = new Date(filters.startDate);
       }
       if (filters.endDate) {
-        (where["date"] as Record<string, unknown>)["lte"] = new Date(
-          filters.endDate,
-        );
+        (where['date'] as Record<string, unknown>)['lte'] = new Date(filters.endDate);
       }
     }
 
@@ -852,12 +769,12 @@ export class CoreAppointmentService {
   private async queueBackgroundOperations(
     appointment: AppointmentData,
     _context: AppointmentContext,
-    operation: string = "CREATE",
+    operation: string = 'CREATE'
   ): Promise<void> {
     try {
       // Queue notification job
       await this.notificationQueue.add(
-        "APPOINTMENT_NOTIFICATION",
+        'APPOINTMENT_NOTIFICATION',
         {
           appointmentId: appointment.id,
           operation,
@@ -867,12 +784,12 @@ export class CoreAppointmentService {
           priority: 3,
           delay: 0,
           attempts: 3,
-        },
+        }
       );
 
       // Queue analytics job
       await this.analyticsQueue.add(
-        "APPOINTMENT_ANALYTICS",
+        'APPOINTMENT_ANALYTICS',
         {
           appointmentId: appointment.id,
           operation,
@@ -882,12 +799,12 @@ export class CoreAppointmentService {
           priority: 5,
           delay: 5000, // 5 second delay
           attempts: 2,
-        },
+        }
       );
 
       // Queue appointment processing job
       await this.appointmentQueue.add(
-        "APPOINTMENT_PROCESSING",
+        'APPOINTMENT_PROCESSING',
         {
           appointmentId: appointment.id,
           operation,
@@ -897,13 +814,16 @@ export class CoreAppointmentService {
           priority: 2,
           delay: 0,
           attempts: 3,
-        },
+        }
       );
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Failed to queue background operations: ${errorMessage}`,
+        'CoreAppointmentService.queueBackgroundOperations',
+        { error: errorMessage }
       );
       // Don't throw error as background operations shouldn't break main flow
     }
@@ -921,15 +841,20 @@ export class CoreAppointmentService {
         await this.cacheService.delPattern(pattern);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Failed to invalidate cache: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to invalidate cache: ${errorMessage}`,
+        'CoreAppointmentService.invalidateAppointmentCache',
+        { error: errorMessage }
+      );
     }
   }
 
   private calculateAppointmentMetrics(
     appointments: AppointmentData[],
-    _dateRange: { from: Date; to: Date },
+    _dateRange: { from: Date; to: Date }
   ): CoreAppointmentMetrics {
     const totalAppointments = appointments.length;
     const statusCounts: Record<string, number> = {};
@@ -939,10 +864,9 @@ export class CoreAppointmentService {
     let _cancelledCount = 0;
     let noShowCount = 0;
 
-    appointments.forEach((appointment) => {
+    appointments.forEach(appointment => {
       // Count by status
-      statusCounts[appointment.status] =
-        (statusCounts[appointment.status] || 0) + 1;
+      statusCounts[appointment.status] = (statusCounts[appointment.status] || 0) + 1;
 
       // Count by priority
       const appointmentWithPriority = appointment as { priority?: string };
@@ -957,17 +881,14 @@ export class CoreAppointmentService {
       }
 
       // Count specific statuses
-      if (appointment.status === "COMPLETED") completedCount++;
-      if (appointment.status === "CANCELLED") _cancelledCount++;
-      if (appointment.status === "NO_SHOW") noShowCount++;
+      if (appointment.status === 'COMPLETED') completedCount++;
+      if (appointment.status === 'CANCELLED') _cancelledCount++;
+      if (appointment.status === 'NO_SHOW') noShowCount++;
     });
 
-    const averageDuration =
-      totalDuration > 0 ? totalDuration / totalAppointments : 0;
-    const completionRate =
-      totalAppointments > 0 ? (completedCount / totalAppointments) * 100 : 0;
-    const noShowRate =
-      totalAppointments > 0 ? (noShowCount / totalAppointments) * 100 : 0;
+    const averageDuration = totalDuration > 0 ? totalDuration / totalAppointments : 0;
+    const completionRate = totalAppointments > 0 ? (completedCount / totalAppointments) * 100 : 0;
+    const noShowRate = totalAppointments > 0 ? (noShowCount / totalAppointments) * 100 : 0;
 
     return {
       totalAppointments,
@@ -985,14 +906,14 @@ export class CoreAppointmentService {
   private async hipaaAuditLog(
     action: string,
     context: AppointmentContext,
-    details: unknown,
+    details: unknown
   ): Promise<void> {
     try {
       await this.loggingService.log(
         LogType.AUDIT,
         LogLevel.INFO,
         `HIPAA Audit: ${action}`,
-        "CoreAppointmentService",
+        'CoreAppointmentService',
         {
           action,
           userId: context.userId,
@@ -1005,10 +926,17 @@ export class CoreAppointmentService {
             phiAccessed: true,
             auditTrail: true,
           },
-        },
+        }
       );
     } catch (_error) {
-      this.logger.error("Failed to log HIPAA audit:", _error);
+      // Silent failure for audit logging - already in error handling
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to log HIPAA audit: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
+        'CoreAppointmentService.hipaaAuditLog',
+        { error: _error instanceof Error ? _error.message : String(_error) }
+      );
       // Don't throw _error as audit logging failure shouldn't break the main operation
     }
   }
@@ -1019,8 +947,7 @@ export class CoreAppointmentService {
   async getDoctorAvailability(
     doctorId: string,
     date: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    context?: AppointmentContext,
+    context?: AppointmentContext
   ): Promise<unknown> {
     try {
       const _startDate = new Date(date);
@@ -1029,16 +956,16 @@ export class CoreAppointmentService {
 
       const appointments = await this.databaseService.findAppointmentsSafe({
         doctorId,
-        status: "SCHEDULED",
+        status: 'SCHEDULED',
       });
 
       // Generate time slots (9 AM to 6 PM)
       const timeSlots = [];
       for (let hour = 9; hour < 18; hour++) {
         for (let minute = 0; minute < 60; minute += 30) {
-          const time = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+          const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
           const isBooked = appointments.some(
-            (apt: unknown) => (apt as Record<string, unknown>)["time"] === time,
+            (apt: unknown) => (apt as Record<string, unknown>)['time'] === time
           );
 
           timeSlots.push({
@@ -1046,8 +973,7 @@ export class CoreAppointmentService {
             available: !isBooked,
             appointmentId: isBooked
               ? appointments.find(
-                  (apt: unknown) =>
-                    (apt as Record<string, unknown>)["time"] === time,
+                  (apt: unknown) => (apt as Record<string, unknown>)['time'] === time
                 )?.id
               : null,
           });
@@ -1057,24 +983,24 @@ export class CoreAppointmentService {
       return {
         doctorId,
         date,
-        available: timeSlots.some((slot) => slot.available),
-        availableSlots: timeSlots
-          .filter((slot) => slot.available)
-          .map((slot) => slot.time),
-        bookedSlots: timeSlots
-          .filter((slot) => !slot.available)
-          .map((slot) => slot.time),
+        available: timeSlots.some(slot => slot.available),
+        availableSlots: timeSlots.filter(slot => slot.available).map(slot => slot.time),
+        bookedSlots: timeSlots.filter(slot => !slot.available).map(slot => slot.time),
         workingHours: {
-          start: "09:00",
-          end: "18:00",
+          start: '09:00',
+          end: '18:00',
         },
-        message: timeSlots.some((slot) => slot.available)
-          ? "Doctor has available slots"
-          : "Doctor is fully booked for this date",
+        message: timeSlots.some(slot => slot.available)
+          ? 'Doctor has available slots'
+          : 'Doctor is fully booked for this date',
       };
     } catch (_error) {
-      this.logger.error(
-        `Failed to get doctor availability: ${_error instanceof Error ? _error.message : "Unknown _error"}`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get doctor availability: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
+        'CoreAppointmentService.getDoctorAvailability',
+        { error: _error instanceof Error ? _error.message : String(_error) }
       );
       throw _error;
     }
@@ -1083,20 +1009,18 @@ export class CoreAppointmentService {
   /**
    * Map AppointmentPriority enum to conflict resolution priority values
    */
-  private mapPriority(
-    priority: AppointmentPriority,
-  ): "emergency" | "vip" | "regular" | "followup" {
+  private mapPriority(priority: AppointmentPriority): 'emergency' | 'vip' | 'regular' | 'followup' {
     switch (priority) {
       case AppointmentPriority.EMERGENCY:
-        return "emergency";
+        return 'emergency';
       case AppointmentPriority.URGENT:
       case AppointmentPriority.HIGH:
-        return "vip";
+        return 'vip';
       case AppointmentPriority.LOW:
-        return "followup";
+        return 'followup';
       case AppointmentPriority.NORMAL:
       default:
-        return "regular";
+        return 'regular';
     }
   }
 }

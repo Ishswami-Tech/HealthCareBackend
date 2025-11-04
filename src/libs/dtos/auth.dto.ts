@@ -9,9 +9,9 @@ import {
   IsEnum,
   IsObject,
   IsDateString,
-} from "class-validator";
-import { ApiProperty } from "@nestjs/swagger";
-import { Transform } from "class-transformer";
+} from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 
 /**
  * Data Transfer Object for user login
@@ -26,57 +26,57 @@ import { Transform } from "class-transformer";
  * ```
  */
 export class LoginDto {
-  @IsEmail({}, { message: "Please provide a valid email address" })
-  @IsNotEmpty({ message: "Email is required" })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }): string =>
-    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
   )
   email!: string;
 
   @ApiProperty({
-    description: "User password",
-    example: "SecurePassword123!",
+    description: 'User password',
+    example: 'SecurePassword123!',
     minLength: 8,
   })
-  @IsString({ message: "Password must be a string" })
-  @IsNotEmpty({ message: "Password is required" })
-  @MinLength(8, { message: "Password must be at least 8 characters long" })
+  @IsString({ message: 'Password must be a string' })
+  @IsNotEmpty({ message: 'Password is required' })
+  @MinLength(8, { message: 'Password must be at least 8 characters long' })
   password!: string;
 
   @ApiProperty({
-    description: "OTP for passwordless login",
-    example: "123456",
+    description: 'OTP for passwordless login',
+    example: '123456',
     required: false,
   })
-  @IsString({ message: "OTP must be a string" })
+  @IsString({ message: 'OTP must be a string' })
   @IsOptional()
   otp?: string;
 
   @ApiProperty({
-    description: "Clinic ID for multi-tenant context",
-    example: "clinic-uuid-123",
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Clinic ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
 
   @ApiProperty({
-    description: "Studio ID for multi-tenant context",
-    example: "studio-uuid-123",
+    description: 'Studio ID for multi-tenant context',
+    example: 'studio-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Studio ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
   @IsOptional()
   studioId?: string;
 
   @ApiProperty({
-    description: "Remember me option for extended session",
+    description: 'Remember me option for extended session',
     example: false,
     required: false,
     default: false,
   })
-  @IsBoolean({ message: "Remember me must be a boolean" })
+  @IsBoolean({ message: 'Remember me must be a boolean' })
   @IsOptional()
   rememberMe?: boolean = false;
 }
@@ -94,124 +94,120 @@ export class LoginDto {
  * ```
  */
 export class RegisterDto {
-  @IsEmail({}, { message: "Please provide a valid email address" })
-  @IsNotEmpty({ message: "Email is required" })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }): string =>
-    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
   )
   email!: string;
 
   @ApiProperty({
-    description: "User password",
-    example: "SecurePassword123!",
+    description: 'User password',
+    example: 'SecurePassword123!',
     minLength: 8,
   })
-  @IsString({ message: "Password must be a string" })
-  @IsNotEmpty({ message: "Password is required" })
-  @MinLength(8, { message: "Password must be at least 8 characters long" })
+  @IsString({ message: 'Password must be a string' })
+  @IsNotEmpty({ message: 'Password is required' })
+  @MinLength(8, { message: 'Password must be at least 8 characters long' })
   password!: string;
 
   @ApiProperty({
-    description: "User first name",
-    example: "John",
+    description: 'User first name',
+    example: 'John',
     minLength: 2,
     maxLength: 50,
   })
-  @IsString({ message: "First name must be a string" })
-  @IsNotEmpty({ message: "First name is required" })
-  @Transform(({ value }): string =>
-    typeof value === "string" ? value.trim() : (value as string),
-  )
+  @IsString({ message: 'First name must be a string' })
+  @IsNotEmpty({ message: 'First name is required' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
   firstName!: string;
 
   @ApiProperty({
-    description: "User last name",
-    example: "Doe",
+    description: 'User last name',
+    example: 'Doe',
     minLength: 2,
     maxLength: 50,
   })
-  @IsString({ message: "Last name must be a string" })
-  @IsNotEmpty({ message: "Last name is required" })
-  @Transform(({ value }): string =>
-    typeof value === "string" ? value.trim() : (value as string),
-  )
+  @IsString({ message: 'Last name must be a string' })
+  @IsNotEmpty({ message: 'Last name is required' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
   lastName!: string;
 
   @ApiProperty({
-    description: "User phone number",
-    example: "+1234567890",
-    pattern: "^\\+?[1-9]\\d{1,14}$",
+    description: 'User phone number',
+    example: '+1234567890',
+    pattern: '^\\+?[1-9]\\d{1,14}$',
   })
-  @IsString({ message: "Phone number must be a string" })
-  @IsNotEmpty({ message: "Phone number is required" })
+  @IsString({ message: 'Phone number must be a string' })
+  @IsNotEmpty({ message: 'Phone number is required' })
   phone!: string;
 
   @ApiProperty({
-    description: "Clinic ID for multi-tenant context",
-    example: "clinic-uuid-123",
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Clinic ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
 
   @ApiProperty({
-    description: "Studio ID for multi-tenant context",
-    example: "studio-uuid-123",
+    description: 'Studio ID for multi-tenant context',
+    example: 'studio-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Studio ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
   @IsOptional()
   studioId?: string;
 
   @ApiProperty({
-    description: "User role",
-    example: "PATIENT",
-    enum: ["PATIENT", "DOCTOR", "ADMIN", "RECEPTIONIST", "NURSE"],
+    description: 'User role',
+    example: 'PATIENT',
+    enum: ['PATIENT', 'DOCTOR', 'ADMIN', 'RECEPTIONIST', 'NURSE'],
     required: false,
   })
-  @IsEnum(["PATIENT", "DOCTOR", "ADMIN", "RECEPTIONIST", "NURSE"], {
-    message: "Role must be a valid role",
+  @IsEnum(['PATIENT', 'DOCTOR', 'ADMIN', 'RECEPTIONIST', 'NURSE'], {
+    message: 'Role must be a valid role',
   })
   @IsOptional()
   role?: string;
 
   @ApiProperty({
-    description: "User gender",
-    example: "MALE",
-    enum: ["MALE", "FEMALE", "OTHER"],
+    description: 'User gender',
+    example: 'MALE',
+    enum: ['MALE', 'FEMALE', 'OTHER'],
     required: false,
   })
-  @IsEnum(["MALE", "FEMALE", "OTHER"], {
-    message: "Gender must be a valid gender",
+  @IsEnum(['MALE', 'FEMALE', 'OTHER'], {
+    message: 'Gender must be a valid gender',
   })
   @IsOptional()
   gender?: string;
 
   @ApiProperty({
-    description: "User date of birth",
-    example: "1990-01-01",
+    description: 'User date of birth',
+    example: '1990-01-01',
     required: false,
   })
-  @IsDateString({}, { message: "Date of birth must be a valid date" })
+  @IsDateString({}, { message: 'Date of birth must be a valid date' })
   @IsOptional()
   dateOfBirth?: string;
 
   @ApiProperty({
-    description: "User address",
-    example: "123 Main St, City, State 12345",
+    description: 'User address',
+    example: '123 Main St, City, State 12345',
     required: false,
   })
-  @IsString({ message: "Address must be a string" })
+  @IsString({ message: 'Address must be a string' })
   @IsOptional()
   address?: string;
 
   @ApiProperty({
-    description: "Emergency contact information",
-    example: { name: "John Doe", phone: "+1234567890", relationship: "Father" },
+    description: 'Emergency contact information',
+    example: { name: 'John Doe', phone: '+1234567890', relationship: 'Father' },
     required: false,
   })
-  @IsObject({ message: "Emergency contact must be an object" })
+  @IsObject({ message: 'Emergency contact must be an object' })
   @IsOptional()
   emergencyContact?: {
     name: string;
@@ -220,11 +216,11 @@ export class RegisterDto {
   };
 
   @ApiProperty({
-    description: "Google OAuth ID for social registration",
-    example: "google-oauth-id-123456",
+    description: 'Google OAuth ID for social registration',
+    example: 'google-oauth-id-123456',
     required: false,
   })
-  @IsString({ message: "Google ID must be a string" })
+  @IsString({ message: 'Google ID must be a string' })
   @IsOptional()
   googleId?: string;
 }
@@ -242,21 +238,21 @@ export class RegisterDto {
  */
 export class LogoutDto {
   @ApiProperty({
-    description: "Session ID to logout from",
-    example: "session_123456789",
+    description: 'Session ID to logout from',
+    example: 'session_123456789',
     required: false,
   })
-  @IsString({ message: "Session ID must be a string" })
+  @IsString({ message: 'Session ID must be a string' })
   @IsOptional()
   sessionId?: string;
 
   @ApiProperty({
-    description: "Whether to logout from all devices",
+    description: 'Whether to logout from all devices',
     example: false,
     required: false,
     default: false,
   })
-  @IsBoolean({ message: "All devices must be a boolean" })
+  @IsBoolean({ message: 'All devices must be a boolean' })
   @IsOptional()
   allDevices?: boolean = false;
 }
@@ -274,32 +270,32 @@ export class LogoutDto {
  */
 export class PasswordResetDto {
   @ApiProperty({
-    description: "Reset token received via email",
-    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    description: 'Reset token received via email',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
   })
-  @IsString({ message: "Reset token must be a string" })
-  @IsNotEmpty({ message: "Reset token is required" })
+  @IsString({ message: 'Reset token must be a string' })
+  @IsNotEmpty({ message: 'Reset token is required' })
   token!: string;
 
   @ApiProperty({
-    description: "New password",
-    example: "NewSecurePassword123!",
+    description: 'New password',
+    example: 'NewSecurePassword123!',
     minLength: 8,
   })
-  @IsString({ message: "New password must be a string" })
-  @IsNotEmpty({ message: "New password is required" })
-  @MinLength(8, { message: "New password must be at least 8 characters long" })
+  @IsString({ message: 'New password must be a string' })
+  @IsNotEmpty({ message: 'New password is required' })
+  @MinLength(8, { message: 'New password must be at least 8 characters long' })
   newPassword!: string;
 
   @ApiProperty({
-    description: "Confirm new password",
-    example: "NewSecurePassword123!",
+    description: 'Confirm new password',
+    example: 'NewSecurePassword123!',
     minLength: 8,
   })
-  @IsString({ message: "Confirm password must be a string" })
-  @IsNotEmpty({ message: "Confirm password is required" })
+  @IsString({ message: 'Confirm password must be a string' })
+  @IsNotEmpty({ message: 'Confirm password is required' })
   @MinLength(8, {
-    message: "Confirm password must be at least 8 characters long",
+    message: 'Confirm password must be at least 8 characters long',
   })
   confirmPassword!: string;
 }
@@ -317,16 +313,16 @@ export class PasswordResetDto {
  */
 export class RefreshTokenDto {
   @ApiProperty({
-    description: "Refresh token for getting new access token",
-    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    description: 'Refresh token for getting new access token',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
   })
-  @IsString({ message: "Refresh token must be a string" })
-  @IsNotEmpty({ message: "Refresh token is required" })
+  @IsString({ message: 'Refresh token must be a string' })
+  @IsNotEmpty({ message: 'Refresh token is required' })
   refreshToken!: string;
 
   @ApiProperty({
-    description: "Device fingerprint for security validation",
-    example: "fp_1234567890abcdef",
+    description: 'Device fingerprint for security validation',
+    example: 'fp_1234567890abcdef',
     required: false,
   })
   @IsString()
@@ -334,8 +330,8 @@ export class RefreshTokenDto {
   deviceFingerprint?: string;
 
   @ApiProperty({
-    description: "User agent for security tracking",
-    example: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    description: 'User agent for security tracking',
+    example: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     required: false,
   })
   @IsString()
@@ -343,8 +339,8 @@ export class RefreshTokenDto {
   userAgent?: string;
 
   @ApiProperty({
-    description: "IP address for security validation",
-    example: "192.168.1.100",
+    description: 'IP address for security validation',
+    example: '192.168.1.100',
     required: false,
   })
   @IsString()
@@ -365,32 +361,32 @@ export class RefreshTokenDto {
  */
 export class ChangePasswordDto {
   @ApiProperty({
-    description: "Current password",
-    example: "CurrentPassword123!",
+    description: 'Current password',
+    example: 'CurrentPassword123!',
   })
-  @IsString({ message: "Current password must be a string" })
-  @IsNotEmpty({ message: "Current password is required" })
+  @IsString({ message: 'Current password must be a string' })
+  @IsNotEmpty({ message: 'Current password is required' })
   currentPassword!: string;
 
   @ApiProperty({
-    description: "New password",
-    example: "NewSecurePassword123!",
+    description: 'New password',
+    example: 'NewSecurePassword123!',
     minLength: 8,
   })
-  @IsString({ message: "New password must be a string" })
-  @IsNotEmpty({ message: "New password is required" })
-  @MinLength(8, { message: "New password must be at least 8 characters long" })
+  @IsString({ message: 'New password must be a string' })
+  @IsNotEmpty({ message: 'New password is required' })
+  @MinLength(8, { message: 'New password must be at least 8 characters long' })
   newPassword!: string;
 
   @ApiProperty({
-    description: "Confirm new password",
-    example: "NewSecurePassword123!",
+    description: 'Confirm new password',
+    example: 'NewSecurePassword123!',
     minLength: 8,
   })
-  @IsString({ message: "Confirm password must be a string" })
-  @IsNotEmpty({ message: "Confirm password is required" })
+  @IsString({ message: 'Confirm password must be a string' })
+  @IsNotEmpty({ message: 'Confirm password is required' })
   @MinLength(8, {
-    message: "Confirm password must be at least 8 characters long",
+    message: 'Confirm password must be at least 8 characters long',
   })
   confirmPassword!: string;
 }
@@ -408,23 +404,23 @@ export class ChangePasswordDto {
  */
 export class PasswordResetRequestDto {
   @ApiProperty({
-    description: "User email address for password reset",
-    example: "user@example.com",
-    format: "email",
+    description: 'User email address for password reset',
+    example: 'user@example.com',
+    format: 'email',
   })
-  @IsEmail({}, { message: "Please provide a valid email address" })
-  @IsNotEmpty({ message: "Email is required" })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }): string =>
-    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
   )
   email!: string;
 
   @ApiProperty({
-    description: "Clinic ID for multi-tenant context",
-    example: "clinic-uuid-123",
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Clinic ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
 }
@@ -442,19 +438,19 @@ export class PasswordResetRequestDto {
  */
 export class RequestOtpDto {
   @ApiProperty({
-    description: "User email or phone for OTP",
-    example: "user@example.com",
+    description: 'User email or phone for OTP',
+    example: 'user@example.com',
   })
-  @IsString({ message: "Identifier must be a string" })
-  @IsNotEmpty({ message: "Identifier is required" })
+  @IsString({ message: 'Identifier must be a string' })
+  @IsNotEmpty({ message: 'Identifier is required' })
   identifier!: string;
 
   @ApiProperty({
-    description: "Clinic ID for multi-tenant context",
-    example: "clinic-uuid-123",
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Clinic ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
 }
@@ -472,31 +468,31 @@ export class RequestOtpDto {
  */
 export class VerifyOtpRequestDto {
   @ApiProperty({
-    description: "User email",
-    example: "user@example.com",
-    format: "email",
+    description: 'User email',
+    example: 'user@example.com',
+    format: 'email',
   })
-  @IsEmail({}, { message: "Please provide a valid email address" })
-  @IsNotEmpty({ message: "Email is required" })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }): string =>
-    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
   )
   email!: string;
 
   @ApiProperty({
-    description: "OTP code",
-    example: "123456",
+    description: 'OTP code',
+    example: '123456',
   })
-  @IsString({ message: "OTP must be a string" })
-  @IsNotEmpty({ message: "OTP is required" })
+  @IsString({ message: 'OTP must be a string' })
+  @IsNotEmpty({ message: 'OTP is required' })
   otp!: string;
 
   @ApiProperty({
-    description: "Clinic ID for multi-tenant context",
-    example: "clinic-uuid-123",
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Clinic ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
 }
@@ -513,14 +509,14 @@ export class VerifyOtpRequestDto {
  */
 export class CheckOtpStatusDto {
   @ApiProperty({
-    description: "User email",
-    example: "user@example.com",
-    format: "email",
+    description: 'User email',
+    example: 'user@example.com',
+    format: 'email',
   })
-  @IsEmail({}, { message: "Please provide a valid email address" })
-  @IsNotEmpty({ message: "Email is required" })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }): string =>
-    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
   )
   email!: string;
 }
@@ -537,14 +533,14 @@ export class CheckOtpStatusDto {
  */
 export class InvalidateOtpDto {
   @ApiProperty({
-    description: "User email",
-    example: "user@example.com",
-    format: "email",
+    description: 'User email',
+    example: 'user@example.com',
+    format: 'email',
   })
-  @IsEmail({}, { message: "Please provide a valid email address" })
-  @IsNotEmpty({ message: "Email is required" })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
   @Transform(({ value }): string =>
-    typeof value === "string" ? value.toLowerCase().trim() : (value as string),
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
   )
   email!: string;
 }
@@ -562,24 +558,24 @@ export class InvalidateOtpDto {
  */
 export class AuthResponse {
   @ApiProperty({
-    description: "Access token",
-    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    description: 'Access token',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
   })
-  @IsString({ message: "Access token must be a string" })
+  @IsString({ message: 'Access token must be a string' })
   accessToken!: string;
 
   @ApiProperty({
-    description: "Refresh token",
-    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    description: 'Refresh token',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
   })
-  @IsString({ message: "Refresh token must be a string" })
+  @IsString({ message: 'Refresh token must be a string' })
   refreshToken!: string;
 
   @ApiProperty({
-    description: "User information",
-    example: { id: "user-123", email: "user@example.com" },
+    description: 'User information',
+    example: { id: 'user-123', email: 'user@example.com' },
   })
-  @IsObject({ message: "User must be an object" })
+  @IsObject({ message: 'User must be an object' })
   user!: unknown;
 }
 
@@ -605,29 +601,29 @@ export class LoginRequestDto extends LoginDto {}
  */
 export class RegisterDtoWithOAuth extends RegisterDto {
   @ApiProperty({
-    description: "Google ID for OAuth registration",
-    example: "google-oauth-id-123",
+    description: 'Google ID for OAuth registration',
+    example: 'google-oauth-id-123',
     required: false,
   })
-  @IsString({ message: "Google ID must be a string" })
+  @IsString({ message: 'Google ID must be a string' })
   @IsOptional()
   googleId?: string;
 
   @ApiProperty({
-    description: "Facebook ID for OAuth registration",
-    example: "facebook-oauth-id-123",
+    description: 'Facebook ID for OAuth registration',
+    example: 'facebook-oauth-id-123',
     required: false,
   })
-  @IsString({ message: "Facebook ID must be a string" })
+  @IsString({ message: 'Facebook ID must be a string' })
   @IsOptional()
   facebookId?: string;
 
   @ApiProperty({
-    description: "Apple ID for OAuth registration",
-    example: "apple-oauth-id-123",
+    description: 'Apple ID for OAuth registration',
+    example: 'apple-oauth-id-123',
     required: false,
   })
-  @IsString({ message: "Apple ID must be a string" })
+  @IsString({ message: 'Apple ID must be a string' })
   @IsOptional()
   appleId?: string;
 }
@@ -640,11 +636,11 @@ export class RegisterDtoWithOAuth extends RegisterDto {
  */
 export class VerifyOtpRequestDtoWithClinic extends VerifyOtpRequestDto {
   @ApiProperty({
-    description: "Clinic ID for multi-tenant context",
-    example: "clinic-uuid-123",
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID("4", { message: "Clinic ID must be a valid UUID" })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
 }

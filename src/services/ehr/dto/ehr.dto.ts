@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsDateString } from "class-validator";
+import { IsString, IsOptional, IsDateString } from 'class-validator';
 
 // Medical History DTOs
 export class CreateMedicalHistoryDto {
@@ -369,7 +369,7 @@ import type {
   ImmunizationResponse,
   FamilyHistoryResponse,
   LifestyleAssessmentResponse,
-} from "../types/ehr.types";
+} from '@core/types/ehr.types';
 
 // Comprehensive Health Record DTOs
 export class HealthRecordSummaryDto {

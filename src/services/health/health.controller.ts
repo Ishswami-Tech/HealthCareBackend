@@ -1,106 +1,103 @@
-import { Controller, Get, Res } from "@nestjs/common";
-import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
-import { HealthService } from "./health.service";
-import {
-  HealthCheckResponse,
-  DetailedHealthCheckResponse,
-} from "../../libs/core/types/health.types";
-import { Public } from "../../libs/core/decorators/public.decorator";
-import { FastifyReply } from "fastify";
-import { HealthcareErrorsService } from "../../libs/core/errors";
+import { Controller, Get, Res } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { HealthService } from './health.service';
+import { HealthCheckResponse, DetailedHealthCheckResponse } from '@core/types/common.types';
+import { Public } from '@core/decorators/public.decorator';
+import { FastifyReply } from 'fastify';
+import { HealthcareErrorsService } from '@core/errors';
 
-@ApiTags("Health")
-@Controller("health")
+@ApiTags('Health')
+@Controller('health')
 export class HealthController {
   constructor(
     private readonly healthService: HealthService,
-    private readonly errors: HealthcareErrorsService,
+    private readonly errors: HealthcareErrorsService
   ) {}
 
   @Get()
   @Public()
-  @ApiOperation({ summary: "Get basic health status of core services" })
+  @ApiOperation({ summary: 'Get basic health status of core services' })
   @ApiResponse({
     status: 200,
-    description: "Basic health check successful",
+    description: 'Basic health check successful',
     schema: {
-      type: "object",
+      type: 'object',
       properties: {
-        status: { type: "string", enum: ["healthy", "degraded"] },
-        timestamp: { type: "string", format: "date-time" },
-        environment: { type: "string" },
-        version: { type: "string" },
+        status: { type: 'string', enum: ['healthy', 'degraded'] },
+        timestamp: { type: 'string', format: 'date-time' },
+        environment: { type: 'string' },
+        version: { type: 'string' },
         systemMetrics: {
-          type: "object",
+          type: 'object',
           properties: {
-            uptime: { type: "number" },
+            uptime: { type: 'number' },
             memoryUsage: {
-              type: "object",
+              type: 'object',
               properties: {
-                heapTotal: { type: "number" },
-                heapUsed: { type: "number" },
-                rss: { type: "number" },
-                external: { type: "number" },
-                systemTotal: { type: "number" },
-                systemFree: { type: "number" },
-                systemUsed: { type: "number" },
+                heapTotal: { type: 'number' },
+                heapUsed: { type: 'number' },
+                rss: { type: 'number' },
+                external: { type: 'number' },
+                systemTotal: { type: 'number' },
+                systemFree: { type: 'number' },
+                systemUsed: { type: 'number' },
               },
             },
             cpuUsage: {
-              type: "object",
+              type: 'object',
               properties: {
-                user: { type: "number" },
-                system: { type: "number" },
-                cpuCount: { type: "number" },
-                cpuModel: { type: "string" },
-                cpuSpeed: { type: "number" },
+                user: { type: 'number' },
+                system: { type: 'number' },
+                cpuCount: { type: 'number' },
+                cpuModel: { type: 'string' },
+                cpuSpeed: { type: 'number' },
               },
             },
           },
         },
         services: {
-          type: "object",
+          type: 'object',
           properties: {
             api: {
-              type: "object",
+              type: 'object',
               properties: {
-                status: { type: "string", enum: ["healthy", "unhealthy"] },
-                responseTime: { type: "number" },
-                lastChecked: { type: "string", format: "date-time" },
+                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
+                responseTime: { type: 'number' },
+                lastChecked: { type: 'string', format: 'date-time' },
               },
             },
             database: {
-              type: "object",
+              type: 'object',
               properties: {
-                status: { type: "string", enum: ["healthy", "unhealthy"] },
-                details: { type: "string" },
-                responseTime: { type: "number" },
-                lastChecked: { type: "string", format: "date-time" },
+                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
+                details: { type: 'string' },
+                responseTime: { type: 'number' },
+                lastChecked: { type: 'string', format: 'date-time' },
                 metrics: {
-                  type: "object",
+                  type: 'object',
                   properties: {
-                    queryResponseTime: { type: "number" },
-                    activeConnections: { type: "number" },
-                    maxConnections: { type: "number" },
-                    connectionUtilization: { type: "number" },
+                    queryResponseTime: { type: 'number' },
+                    activeConnections: { type: 'number' },
+                    maxConnections: { type: 'number' },
+                    connectionUtilization: { type: 'number' },
                   },
                 },
               },
             },
             redis: {
-              type: "object",
+              type: 'object',
               properties: {
-                status: { type: "string", enum: ["healthy", "unhealthy"] },
-                details: { type: "string" },
-                responseTime: { type: "number" },
-                lastChecked: { type: "string", format: "date-time" },
+                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
+                details: { type: 'string' },
+                responseTime: { type: 'number' },
+                lastChecked: { type: 'string', format: 'date-time' },
                 metrics: {
-                  type: "object",
+                  type: 'object',
                   properties: {
-                    connectedClients: { type: "number" },
-                    usedMemory: { type: "number" },
-                    totalKeys: { type: "number" },
-                    lastSave: { type: "string", format: "date-time" },
+                    connectedClients: { type: 'number' },
+                    usedMemory: { type: 'number' },
+                    totalKeys: { type: 'number' },
+                    lastSave: { type: 'string', format: 'date-time' },
                   },
                 },
               },
@@ -114,57 +111,56 @@ export class HealthController {
     return this.healthService.checkHealth();
   }
 
-  @Get("detailed")
+  @Get('detailed')
   @ApiOperation({
-    summary:
-      "Get detailed health status of all services with additional metrics",
+    summary: 'Get detailed health status of all services with additional metrics',
   })
   @ApiResponse({
     status: 200,
-    description: "Detailed health check successful",
+    description: 'Detailed health check successful',
     schema: {
       allOf: [
-        { $ref: "#/components/schemas/HealthCheckResponse" },
+        { $ref: '#/components/schemas/HealthCheckResponse' },
         {
-          type: "object",
+          type: 'object',
           properties: {
             services: {
-              type: "object",
+              type: 'object',
               properties: {
-                queues: { $ref: "#/components/schemas/ServiceHealth" },
-                logger: { $ref: "#/components/schemas/ServiceHealth" },
-                socket: { $ref: "#/components/schemas/ServiceHealth" },
-                prismaStudio: { $ref: "#/components/schemas/ServiceHealth" },
-                redisCommander: { $ref: "#/components/schemas/ServiceHealth" },
-                pgAdmin: { $ref: "#/components/schemas/ServiceHealth" },
+                queues: { $ref: '#/components/schemas/ServiceHealth' },
+                logger: { $ref: '#/components/schemas/ServiceHealth' },
+                socket: { $ref: '#/components/schemas/ServiceHealth' },
+                prismaStudio: { $ref: '#/components/schemas/ServiceHealth' },
+                redisCommander: { $ref: '#/components/schemas/ServiceHealth' },
+                pgAdmin: { $ref: '#/components/schemas/ServiceHealth' },
               },
             },
             processInfo: {
-              type: "object",
+              type: 'object',
               properties: {
-                pid: { type: "number" },
-                ppid: { type: "number" },
-                platform: { type: "string" },
+                pid: { type: 'number' },
+                ppid: { type: 'number' },
+                platform: { type: 'string' },
                 versions: {
-                  type: "object",
-                  additionalProperties: { type: "string" },
+                  type: 'object',
+                  additionalProperties: { type: 'string' },
                 },
               },
             },
             memory: {
-              type: "object",
+              type: 'object',
               properties: {
-                heapUsed: { type: "number" },
-                heapTotal: { type: "number" },
-                external: { type: "number" },
-                arrayBuffers: { type: "number" },
+                heapUsed: { type: 'number' },
+                heapTotal: { type: 'number' },
+                external: { type: 'number' },
+                arrayBuffers: { type: 'number' },
               },
             },
             cpu: {
-              type: "object",
+              type: 'object',
               properties: {
-                user: { type: "number" },
-                system: { type: "number" },
+                user: { type: 'number' },
+                system: { type: 'number' },
               },
             },
           },
@@ -176,24 +172,24 @@ export class HealthController {
     return this.healthService.checkDetailedHealth();
   }
 
-  @Get("/api-health")
+  @Get('/api-health')
   @Public()
   async apiHealth(@Res() res: FastifyReply) {
     const health = await this.getHealth();
     return res.send(health);
   }
 
-  @Get("/api")
+  @Get('/api')
   @Public()
   async apiStatus(@Res() res: FastifyReply) {
     return res.send({
-      status: "ok",
-      message: "API is running",
+      status: 'ok',
+      message: 'API is running',
       timestamp: new Date().toISOString(),
     });
   }
 
-  @Get("/favicon.ico")
+  @Get('/favicon.ico')
   @Public()
   async favicon(@Res() res: FastifyReply) {
     return res.status(204).send();

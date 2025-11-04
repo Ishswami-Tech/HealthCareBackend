@@ -1,5 +1,6 @@
-import { Module } from "@nestjs/common";
-import { CircuitBreakerService } from "./circuit-breaker.service";
+import { Module } from '@nestjs/common';
+import { LoggingModule } from '@infrastructure/logging';
+import { CircuitBreakerService } from './circuit-breaker.service';
 
 /**
  * Resilience Module for Healthcare Backend
@@ -16,6 +17,7 @@ import { CircuitBreakerService } from "./circuit-breaker.service";
  * ```
  */
 @Module({
+  imports: [LoggingModule],
   providers: [CircuitBreakerService],
   exports: [CircuitBreakerService],
 })

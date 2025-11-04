@@ -1,9 +1,9 @@
-import { SetMetadata } from "@nestjs/common";
+import { SetMetadata } from '@nestjs/common';
 
 /**
  * Public route metadata key
  */
-export const IS_PUBLIC_KEY = "isPublic" as const;
+export const IS_PUBLIC_KEY = 'isPublic' as const;
 
 /**
  * Public decorator for marking routes that bypass authentication
@@ -27,5 +27,4 @@ export const IS_PUBLIC_KEY = "isPublic" as const;
  * }
  * ```
  */
-export const Public = (): MethodDecorator & ClassDecorator =>
-  SetMetadata(IS_PUBLIC_KEY, true);
+export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(IS_PUBLIC_KEY, true);

@@ -1,53 +1,27 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-floating-promises */
-import { Injectable, Logger } from "@nestjs/common";
-import {
-  SocketService,
-  SocketEventData,
-} from "../../../libs/communication/socket/socket.service";
-import { CacheService } from "../../../libs/infrastructure/cache/cache.service";
-import { LoggingService } from "../../../libs/infrastructure/logging/logging.service";
-import {
-  LogType,
-  LogLevel,
-} from "../../../libs/infrastructure/logging/types/logging.types";
+import { Injectable } from '@nestjs/common';
+import { SocketService } from '@communication/socket/socket.service';
+import type { SocketEventData } from '@communication/socket/socket.service';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
-export interface AppointmentSocketMessage extends SocketEventData {
-  type: "queue_update" | "appointment_status" | "video_call" | "notification";
-  appointmentId: string;
-  clinicId: string;
-  userId: string;
-  data: unknown;
-  timestamp: string;
-}
+import type {
+  AppointmentSocketMessage,
+  QueueUpdateMessage,
+  AppointmentStatusMessage,
+} from '@core/types/appointment.types';
 
-export interface QueueUpdateMessage {
-  appointmentId: string;
-  position: number;
-  estimatedWaitTime: number;
-  status: "waiting" | "in_progress" | "completed";
-}
-
-export interface AppointmentStatusMessage {
-  appointmentId: string;
-  status:
-    | "scheduled"
-    | "confirmed"
-    | "checked_in"
-    | "in_progress"
-    | "completed"
-    | "cancelled";
-  message?: string;
-}
+// Re-export types for backward compatibility
+export type { AppointmentSocketMessage, QueueUpdateMessage, AppointmentStatusMessage };
 
 @Injectable()
 export class AppointmentCommunicationsService {
-  private readonly logger = new Logger(AppointmentCommunicationsService.name);
   private readonly CACHE_TTL = 300; // 5 minutes
 
   constructor(
     private readonly socketService: SocketService,
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService,
+    private readonly loggingService: LoggingService
   ) {}
 
   /**
@@ -56,58 +30,67 @@ export class AppointmentCommunicationsService {
   async sendQueueUpdate(
     clinicId: string,
     doctorId: string,
-    queueData: QueueUpdateMessage,
+    queueData: QueueUpdateMessage
   ): Promise<void> {
     const startTime = Date.now();
 
     try {
       const roomId = `clinic:${clinicId}:queue:${doctorId}`;
       const message: AppointmentSocketMessage = {
-        type: "queue_update",
+        type: 'queue_update',
         appointmentId: queueData.appointmentId,
         clinicId,
-        userId: "", // Will be filled by client
-        data: queueData,
+        userId: '', // Will be filled by client
         timestamp: new Date().toISOString(),
+        data: {
+          appointmentId: queueData.appointmentId,
+          position: queueData.position,
+          estimatedWaitTime: queueData.estimatedWaitTime,
+          status: queueData.status,
+        },
       };
 
-      // Send to realtime gateway
-      this.socketService.sendToRoom(roomId, "queue_update", message);
+      // Send to realtime gateway - convert to SocketEventData format
+      const socketData: Record<string, string | number | boolean | null> = {
+        type: message.type,
+        appointmentId: message.appointmentId,
+        clinicId: message.clinicId,
+        userId: message.userId,
+        timestamp: message.timestamp,
+        ...(message.data && { ...message.data }),
+      };
+      this.socketService.sendToRoom(roomId, 'queue_update', socketData);
 
       // Cache the update
       const cacheKey = `queue:update:${clinicId}:${doctorId}:${queueData.appointmentId}`;
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(message),
-        this.CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(message), this.CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Queue update sent successfully",
-        "AppointmentCommunicationsService",
+        'Queue update sent successfully',
+        'AppointmentCommunicationsService',
         {
           clinicId,
           doctorId,
           appointmentId: queueData.appointmentId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send queue update: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentCommunicationsService",
+        `Failed to send queue update: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentCommunicationsService',
         {
           clinicId,
           doctorId,
           queueData,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        },
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw _error;
+      throw error;
     }
   }
 
@@ -118,68 +101,72 @@ export class AppointmentCommunicationsService {
     appointmentId: string,
     clinicId: string,
     userId: string,
-    statusData: AppointmentStatusMessage,
+    statusData: AppointmentStatusMessage
   ): Promise<void> {
     const startTime = Date.now();
 
     try {
       const message: AppointmentSocketMessage = {
-        type: "appointment_status",
+        type: 'appointment_status',
         appointmentId,
         clinicId,
         userId,
-        data: statusData,
+        data: {
+          appointmentId: statusData.appointmentId,
+          status: statusData.status,
+          ...(statusData.message && { message: statusData.message }),
+        },
         timestamp: new Date().toISOString(),
       };
 
-      // Send to user's personal room
+      // Send to user's personal room - convert to SocketEventData format
+      const socketData: Record<string, string | number | boolean | null> = {
+        type: message.type,
+        appointmentId: message.appointmentId,
+        clinicId: message.clinicId,
+        userId: message.userId,
+        timestamp: message.timestamp,
+        ...(message.data && { ...message.data }),
+      };
       const userRoomId = `user:${userId}:appointments`;
-      this.socketService.sendToRoom(userRoomId, "appointment_status", message);
+      this.socketService.sendToRoom(userRoomId, 'appointment_status', socketData);
 
       // Also send to clinic room for admin visibility
       const clinicRoomId = `clinic:${clinicId}:appointments`;
-      this.socketService.sendToRoom(
-        clinicRoomId,
-        "appointment_status",
-        message,
-      );
+      this.socketService.sendToRoom(clinicRoomId, 'appointment_status', socketData);
 
       // Cache the status update
       const cacheKey = `appointment:status:${appointmentId}`;
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(message),
-        this.CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(message), this.CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Appointment status update sent successfully",
-        "AppointmentCommunicationsService",
+        'Appointment status update sent successfully',
+        'AppointmentCommunicationsService',
         {
           appointmentId,
           clinicId,
           userId,
           status: statusData.status,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send appointment status update: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentCommunicationsService",
+        `Failed to send appointment status update: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentCommunicationsService',
         {
           appointmentId,
           clinicId,
           userId,
           statusData,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        },
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw _error;
+      throw error;
     }
   }
 
@@ -191,13 +178,13 @@ export class AppointmentCommunicationsService {
     clinicId: string,
     patientId: string,
     doctorId: string,
-    callData: unknown,
+    callData: unknown
   ): Promise<void> {
     const startTime = Date.now();
 
     try {
       const message: AppointmentSocketMessage = {
-        type: "video_call",
+        type: 'video_call',
         appointmentId,
         clinicId,
         userId: patientId,
@@ -209,58 +196,54 @@ export class AppointmentCommunicationsService {
         timestamp: new Date().toISOString(),
       };
 
-      // Send to both patient and doctor
+      // Send to both patient and doctor - convert to SocketEventData format
+      const socketData: Record<string, string | number | boolean | null> = {
+        type: message.type,
+        appointmentId: message.appointmentId,
+        clinicId: message.clinicId,
+        userId: message.userId,
+        timestamp: message.timestamp,
+        ...(message.data && { ...message.data }),
+      };
       const patientRoomId = `user:${patientId}:video_calls`;
       const doctorRoomId = `user:${doctorId}:video_calls`;
 
-      this.socketService.sendToRoom(
-        patientRoomId,
-        "video_call_notification",
-        message,
-      );
-      this.socketService.sendToRoom(
-        doctorRoomId,
-        "video_call_notification",
-        message,
-      );
+      this.socketService.sendToRoom(patientRoomId, 'video_call_notification', socketData);
+      this.socketService.sendToRoom(doctorRoomId, 'video_call_notification', socketData);
 
       // Cache the notification
       const cacheKey = `video_call:${appointmentId}`;
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(message),
-        this.CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(message), this.CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Video call notification sent successfully",
-        "AppointmentCommunicationsService",
+        'Video call notification sent successfully',
+        'AppointmentCommunicationsService',
         {
           appointmentId,
           clinicId,
           patientId,
           doctorId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send video call notification: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentCommunicationsService",
+        `Failed to send video call notification: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentCommunicationsService',
         {
           appointmentId,
           clinicId,
           patientId,
           doctorId,
           callData,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        },
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw _error;
+      throw error;
     }
   }
 
@@ -273,60 +256,64 @@ export class AppointmentCommunicationsService {
     notificationData: {
       title: string;
       message: string;
-      type: "info" | "warning" | "success" | "error";
+      type: 'info' | 'warning' | 'success' | 'error';
       appointmentId?: string;
-    },
+    }
   ): Promise<void> {
     const startTime = Date.now();
 
     try {
       const message: AppointmentSocketMessage = {
-        type: "notification",
-        appointmentId: notificationData.appointmentId || "",
+        type: 'notification',
+        appointmentId: notificationData.appointmentId || '',
         clinicId,
         userId,
         data: notificationData,
         timestamp: new Date().toISOString(),
       };
 
-      // Send to user's notification room
+      // Send to user's notification room - convert to SocketEventData format
+      const socketData: Record<string, string | number | boolean | null> = {
+        type: message.type,
+        appointmentId: message.appointmentId,
+        clinicId: message.clinicId,
+        userId: message.userId,
+        timestamp: message.timestamp,
+        ...(message.data && { ...message.data }),
+      };
       const userRoomId = `user:${userId}:notifications`;
-      this.socketService.sendToRoom(userRoomId, "notification", message);
+      this.socketService.sendToRoom(userRoomId, 'notification', socketData);
 
       // Cache the notification
       const cacheKey = `notification:${userId}:${Date.now()}`;
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(message),
-        this.CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(message), this.CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Notification sent successfully",
-        "AppointmentCommunicationsService",
+        'Notification sent successfully',
+        'AppointmentCommunicationsService',
         {
           userId,
           clinicId,
           type: notificationData.type,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send notification: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentCommunicationsService",
+        `Failed to send notification: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentCommunicationsService',
         {
           userId,
           clinicId,
           notificationData,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        },
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw _error;
+      throw error;
     }
   }
 
@@ -358,33 +345,29 @@ export class AppointmentCommunicationsService {
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(connections),
-        this.CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(connections), this.CACHE_TTL);
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Active connections retrieved successfully",
-        "AppointmentCommunicationsService",
-        { clinicId, responseTime: Date.now() - startTime },
+        'Active connections retrieved successfully',
+        'AppointmentCommunicationsService',
+        { clinicId, responseTime: Date.now() - startTime }
       );
 
       return connections;
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get active connections: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentCommunicationsService",
+        `Failed to get active connections: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentCommunicationsService',
         {
           clinicId,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        },
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw _error;
+      throw error;
     }
   }
 
@@ -394,7 +377,7 @@ export class AppointmentCommunicationsService {
   async joinAppointmentRoom(
     userId: string,
     appointmentId: string,
-    clinicId: string,
+    clinicId: string
   ): Promise<void> {
     const startTime = Date.now();
 
@@ -403,7 +386,12 @@ export class AppointmentCommunicationsService {
 
       // This would integrate with the actual socket service
       // For now, just log the action
-      this.logger.log(`User ${userId} joining appointment room ${roomId}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `User ${userId} joining appointment room ${roomId}`,
+        'AppointmentCommunicationsService.joinAppointmentRoom'
+      );
 
       // Cache the room membership
       const cacheKey = `room:${roomId}:members`;
@@ -412,50 +400,43 @@ export class AppointmentCommunicationsService {
 
       if (!memberList.includes(userId)) {
         memberList.push(userId);
-        await this.cacheService.set(
-          cacheKey,
-          JSON.stringify(memberList),
-          this.CACHE_TTL,
-        );
+        await this.cacheService.set(cacheKey, JSON.stringify(memberList), this.CACHE_TTL);
       }
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "User joined appointment room successfully",
-        "AppointmentCommunicationsService",
+        'User joined appointment room successfully',
+        'AppointmentCommunicationsService',
         {
           userId,
           appointmentId,
           clinicId,
           roomId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to join appointment room: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentCommunicationsService",
+        `Failed to join appointment room: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentCommunicationsService.joinAppointmentRoom',
         {
           userId,
           appointmentId,
           clinicId,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        },
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw _error;
+      throw error;
     }
   }
 
   /**
    * Leave appointment room
    */
-  async leaveAppointmentRoom(
-    userId: string,
-    appointmentId: string,
-  ): Promise<void> {
+  async leaveAppointmentRoom(userId: string, appointmentId: string): Promise<void> {
     const startTime = Date.now();
 
     try {
@@ -463,7 +444,12 @@ export class AppointmentCommunicationsService {
 
       // This would integrate with the actual socket service
       // For now, just log the action
-      this.logger.log(`User ${userId} leaving appointment room ${roomId}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `User ${userId} leaving appointment room ${roomId}`,
+        'AppointmentCommunicationsService.leaveAppointmentRoom'
+      );
 
       // Update room membership cache
       const cacheKey = `room:${roomId}:members`;
@@ -471,34 +457,29 @@ export class AppointmentCommunicationsService {
       if (members) {
         const memberList = JSON.parse(members as string);
         const updatedList = memberList.filter((id: string) => id !== userId);
-        await this.cacheService.set(
-          cacheKey,
-          JSON.stringify(updatedList),
-          this.CACHE_TTL,
-        );
+        await this.cacheService.set(cacheKey, JSON.stringify(updatedList), this.CACHE_TTL);
       }
 
-      this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "User left appointment room successfully",
-        "AppointmentCommunicationsService",
-        { userId, appointmentId, roomId, responseTime: Date.now() - startTime },
+        'User left appointment room successfully',
+        'AppointmentCommunicationsService',
+        { userId, appointmentId, roomId, responseTime: Date.now() - startTime }
       );
-    } catch (_error) {
-      this.loggingService.log(
+    } catch (error) {
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to leave appointment room: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "AppointmentCommunicationsService",
+        `Failed to leave appointment room: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentCommunicationsService',
         {
           userId,
           appointmentId,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        },
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
-      throw _error;
+      throw error;
     }
   }
 }
-/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-floating-promises */

@@ -1,4 +1,13 @@
 # 🔒 Security Guidelines
+## 🌐 Internet-Scale Defenses (10M Users)
+- Dependencies: define allowlist/banlist; automate vulnerability scanning on PRs; enforce update cadence.
+- Secrets: mandatory secret scanning in CI; runtime env schema validation on boot.
+- Rate Limiting: sliding window per IP/user/tenant; stricter on auth, relaxed on static.
+- Bot/Abuse: WAF rules, user-agent heuristics, IP reputation, challenge/ban flows.
+- DoS/Backpressure: admission control, queue buffering, shed non-critical traffic under load.
+- Secrets: short-lived creds, key rotation, no secrets/PHI in logs, token binding.
+- Multi-Region: failover runbooks, DNS health checks, data residency and key management per region.
+- Privacy: field-level encryption for PHI; purpose-based access logging; least-privilege across services.
 
 ## 🛡️ Authentication & Authorization
 

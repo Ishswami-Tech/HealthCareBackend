@@ -1,39 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
-import { Injectable, Logger } from "@nestjs/common";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { PrismaService } from "../../../../libs/infrastructure/database/prisma/prisma.service";
-
-export interface Resource {
-  id: string;
-  name: string;
-  type: "room" | "equipment" | "vehicle" | "other";
-  clinicId: string;
-  locationId?: string;
-  capacity?: number;
-  features: string[];
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface ResourceBooking {
-  id: string;
-  resourceId: string;
-  appointmentId: string;
-  startTime: Date;
-  endTime: Date;
-  status: "booked" | "confirmed" | "cancelled";
-  notes?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface ResourceConflict {
-  resourceId: string;
-  conflictingBookings: ResourceBooking[];
-  suggestedAlternatives: Resource[];
-  conflictType: "time_overlap" | "capacity_exceeded" | "feature_mismatch";
-}
+import { Injectable, Logger } from '@nestjs/common';
+import { CacheService } from '@infrastructure/cache';
+import { DatabaseService } from '@infrastructure/database';
+import type { Resource, ResourceBooking, ResourceConflict } from '@core/types/appointment.types';
 
 @Injectable()
 export class AppointmentResourceService {
@@ -41,15 +9,15 @@ export class AppointmentResourceService {
   private readonly RESOURCE_CACHE_TTL = 600; // 10 minutes
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly cacheService: CacheService,
+    private readonly databaseService: DatabaseService,
+    private readonly cacheService: CacheService
   ) {}
 
   /**
    * Create resource
    */
   async createResource(
-    resourceData: Omit<Resource, "id" | "createdAt" | "updatedAt">,
+    resourceData: Omit<Resource, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<Resource> {
     const resourceId = `resource_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -88,11 +56,8 @@ export class AppointmentResourceService {
   /**
    * Get resources for clinic
    */
-  async getClinicResources(
-    clinicId: string,
-    type?: string,
-  ): Promise<Resource[]> {
-    const cacheKey = `clinic_resources:${clinicId}:${type || "all"}`;
+  async getClinicResources(clinicId: string, type?: string): Promise<Resource[]> {
+    const cacheKey = `clinic_resources:${clinicId}:${type || 'all'}`;
 
     try {
       const cached = await this.cacheService.get(cacheKey);
@@ -100,25 +65,30 @@ export class AppointmentResourceService {
         return cached as Resource[];
       }
 
-      // Get resources from database
-      const resources = await (this.prisma as any).resource.findMany({
-        where: {
-          clinicId,
-          isActive: true,
-        },
-        orderBy: {
-          name: "asc",
-        },
+      // Get resources from database using executeHealthcareRead
+      const resources = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            resource: {
+              findMany: <T>(args: T) => Promise<unknown[]>;
+            };
+          }
+        ).resource.findMany({
+          where: {
+            clinicId,
+            isActive: true,
+            ...(type && { type }),
+          },
+          orderBy: {
+            name: 'asc',
+          },
+        } as never);
       });
 
       const resourceList: Resource[] = resources.map((resource: unknown) => ({
         id: (resource as any).id,
         name: (resource as any).name,
-        type: (resource as any).type as
-          | "room"
-          | "equipment"
-          | "vehicle"
-          | "other",
+        type: (resource as any).type as 'room' | 'equipment' | 'vehicle' | 'other',
         clinicId: (resource as any).clinicId,
         capacity: (resource as any).capacity,
         features: [], // This could be stored in database as JSON
@@ -127,15 +97,10 @@ export class AppointmentResourceService {
         updatedAt: (resource as any).updatedAt,
       }));
 
-      const filteredResources = type
-        ? resourceList.filter((resource) => (resource as any).type === type)
-        : resourceList;
+      // Type filtering is now handled in the query, so no need to filter here
+      const filteredResources = resourceList;
 
-      await this.cacheService.set(
-        cacheKey,
-        filteredResources,
-        this.RESOURCE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, filteredResources, this.RESOURCE_CACHE_TTL);
       return filteredResources;
     } catch (_error) {
       this.logger.error(`Failed to get clinic resources`, {
@@ -155,19 +120,15 @@ export class AppointmentResourceService {
     appointmentId: string,
     startTime: Date,
     endTime: Date,
-    notes?: string,
+    notes?: string
   ): Promise<ResourceBooking> {
     const bookingId = `booking_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Check for conflicts
-    const conflicts = await this.checkResourceConflicts(
-      resourceId,
-      startTime,
-      endTime,
-    );
+    const conflicts = await this.checkResourceConflicts(resourceId, startTime, endTime);
     if (conflicts.length > 0) {
       throw new Error(
-        `Resource conflicts detected: ${conflicts.map((c) => c.conflictType).join(", ")}`,
+        `Resource conflicts detected: ${conflicts.map(c => c.conflictType).join(', ')}`
       );
     }
 
@@ -177,7 +138,7 @@ export class AppointmentResourceService {
       appointmentId,
       startTime,
       endTime,
-      status: "booked",
+      status: 'booked',
       createdAt: new Date(),
       updatedAt: new Date(),
       ...(notes && { notes }),
@@ -191,14 +152,11 @@ export class AppointmentResourceService {
       // Invalidate resource bookings cache
       await this.invalidateResourceBookingsCache(resourceId);
 
-      this.logger.log(
-        `Booked resource ${resourceId} for appointment ${appointmentId}`,
-        {
-          bookingId,
-          startTime: startTime.toISOString(),
-          endTime: endTime.toISOString(),
-        },
-      );
+      this.logger.log(`Booked resource ${resourceId} for appointment ${appointmentId}`, {
+        bookingId,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+      });
 
       return booking;
     } catch (_error) {
@@ -217,20 +175,16 @@ export class AppointmentResourceService {
   async checkResourceConflicts(
     resourceId: string,
     startTime: Date,
-    endTime: Date,
+    endTime: Date
   ): Promise<ResourceConflict[]> {
     try {
       // Get existing bookings for the resource
-      const existingBookings = await this.getResourceBookings(
-        resourceId,
-        startTime,
-        endTime,
-      );
+      const existingBookings = await this.getResourceBookings(resourceId, startTime, endTime);
 
       const conflicts: ResourceConflict[] = [];
 
       // Check for time overlaps
-      const overlappingBookings = existingBookings.filter((booking) => {
+      const overlappingBookings = existingBookings.filter(booking => {
         return (
           (startTime >= booking.startTime && startTime < booking.endTime) ||
           (endTime > booking.startTime && endTime <= booking.endTime) ||
@@ -243,7 +197,7 @@ export class AppointmentResourceService {
           resourceId,
           conflictingBookings: overlappingBookings,
           suggestedAlternatives: await this.getAlternativeResources(resourceId),
-          conflictType: "time_overlap",
+          conflictType: 'time_overlap',
         });
       }
 
@@ -265,9 +219,9 @@ export class AppointmentResourceService {
   async getResourceBookings(
     resourceId: string,
     startTime?: Date,
-    endTime?: Date,
+    endTime?: Date
   ): Promise<ResourceBooking[]> {
-    const cacheKey = `resource_bookings:${resourceId}:${startTime?.toISOString() || "all"}:${endTime?.toISOString() || "all"}`;
+    const cacheKey = `resource_bookings:${resourceId}:${startTime?.toISOString() || 'all'}:${endTime?.toISOString() || 'all'}`;
 
     try {
       const cached = await this.cacheService.get(cacheKey);
@@ -275,68 +229,67 @@ export class AppointmentResourceService {
         return cached as ResourceBooking[];
       }
 
-      // Get bookings from database
-      const bookings = await this.prisma["resourceBooking"].findMany({
-        where: {
-          resourceId,
-          ...(startTime && endTime
-            ? {
-                startTime: { gte: startTime },
-                endTime: { lte: endTime },
-              }
-            : {}),
-        },
-        include: {
-          appointment: {
-            select: {
-              id: true,
-              patient: {
-                include: {
-                  user: {
-                    select: {
-                      name: true,
-                      firstName: true,
-                      lastName: true,
+      // Get bookings from database using executeHealthcareRead
+      const bookings = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            resourceBooking: { findMany: <T>(args: T) => Promise<ResourceBooking[]> };
+          }
+        ).resourceBooking.findMany({
+          where: {
+            resourceId,
+            ...(startTime && endTime
+              ? {
+                  startTime: { gte: startTime },
+                  endTime: { lte: endTime },
+                }
+              : {}),
+          },
+          include: {
+            appointment: {
+              select: {
+                id: true,
+                patient: {
+                  include: {
+                    user: {
+                      select: {
+                        name: true,
+                        firstName: true,
+                        lastName: true,
+                      },
                     },
                   },
                 },
               },
             },
           },
-        },
-        orderBy: {
-          startTime: "asc",
-        },
+          orderBy: {
+            startTime: 'asc',
+          },
+        } as never);
       });
 
-      const bookingList: ResourceBooking[] = bookings.map(
-        (booking: unknown) => ({
-          id: (booking as any).id,
-          resourceId: (booking as any).resourceId,
-          appointmentId: (booking as any).appointmentId,
-          startTime: (booking as any).startTime,
-          endTime: (booking as any).endTime,
-          status: (booking as any).status,
-          notes: `Appointment with ${(booking as any).appointment?.patient?.user?.name || "Unknown Patient"}`,
-          createdAt: (booking as any).createdAt,
-          updatedAt: (booking as any).updatedAt,
-        }),
-      );
+      const bookingList: ResourceBooking[] = bookings.map((booking: unknown) => ({
+        id: (booking as any).id,
+        resourceId: (booking as any).resourceId,
+        appointmentId: (booking as any).appointmentId,
+        startTime: (booking as any).startTime,
+        endTime: (booking as any).endTime,
+        status: (booking as any).status,
+        notes: `Appointment with ${(booking as any).appointment?.patient?.user?.name || 'Unknown Patient'}`,
+        createdAt: (booking as any).createdAt,
+        updatedAt: (booking as any).updatedAt,
+      }));
 
       // Filter by time range if provided
       const filteredBookings =
         startTime && endTime
           ? bookingList.filter(
-              (booking) =>
-                booking.startTime >= startTime && booking.endTime <= endTime,
+              booking => booking.startTime >= startTime && booking.endTime <= endTime
             )
           : bookingList;
 
-      await this.cacheService.set(
-        cacheKey,
-        filteredBookings,
-        this.RESOURCE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, filteredBookings, this.RESOURCE_CACHE_TTL);
       return filteredBookings;
     } catch (_error) {
       this.logger.error(`Failed to get resource bookings`, {
@@ -363,13 +316,11 @@ export class AppointmentResourceService {
       // Get resources of the same type in the same clinic
       const alternatives = await this.getClinicResources(
         originalResource.clinicId,
-        originalResource.type,
+        originalResource.type
       );
 
       // Filter out the original resource
-      return alternatives.filter(
-        (resource) => (resource as any).id !== resourceId,
-      );
+      return alternatives.filter(resource => (resource as any).id !== resourceId);
     } catch (_error) {
       this.logger.error(`Failed to get alternative resources`, {
         resourceId,
@@ -391,9 +342,26 @@ export class AppointmentResourceService {
         return cached as Resource;
       }
 
-      // Get resource from database
-      const resourceData = await (this.prisma as any).resource.findUnique({
-        where: { id: resourceId },
+      // Get resource from database using executeHealthcareRead
+      const resourceData = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            resource: {
+              findUnique: <T>(args: T) => Promise<{
+                id: string;
+                name: string;
+                type: string;
+                clinicId: string;
+                capacity: number;
+                isActive: boolean;
+                createdAt: Date;
+                updatedAt: Date;
+              } | null>;
+            };
+          }
+        ).resource.findUnique({
+          where: { id: resourceId },
+        } as never);
       });
 
       if (!resourceData) {
@@ -403,7 +371,7 @@ export class AppointmentResourceService {
       const resourceResult: Resource = {
         id: resourceData.id,
         name: resourceData.name,
-        type: resourceData.type as "room" | "equipment" | "vehicle" | "other",
+        type: resourceData.type as 'room' | 'equipment' | 'vehicle' | 'other',
         clinicId: resourceData.clinicId,
         capacity: resourceData.capacity,
         features: [], // This could be stored in database as JSON
@@ -412,11 +380,7 @@ export class AppointmentResourceService {
         updatedAt: resourceData.updatedAt,
       };
 
-      await this.cacheService.set(
-        cacheKey,
-        resourceResult,
-        this.RESOURCE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, resourceResult, this.RESOURCE_CACHE_TTL);
       return resourceResult;
     } catch (_error) {
       this.logger.error(`Failed to get resource`, {
@@ -434,22 +398,16 @@ export class AppointmentResourceService {
     try {
       // Update booking status
       const cacheKey = `resource_booking:${bookingId}`;
-      const booking = (await this.cacheService.get(
-        cacheKey,
-      )) as ResourceBooking;
+      const booking = (await this.cacheService.get(cacheKey)) as ResourceBooking;
 
       if (booking) {
         const updatedBooking = {
           ...booking,
-          status: "cancelled" as const,
+          status: 'cancelled' as const,
           updatedAt: new Date(),
         };
 
-        await this.cacheService.set(
-          cacheKey,
-          updatedBooking,
-          this.RESOURCE_CACHE_TTL,
-        );
+        await this.cacheService.set(cacheKey, updatedBooking, this.RESOURCE_CACHE_TTL);
 
         // Invalidate resource bookings cache
         await this.invalidateResourceBookingsCache(booking.resourceId);
@@ -471,9 +429,7 @@ export class AppointmentResourceService {
   /**
    * Invalidate clinic resources cache
    */
-  private async invalidateClinicResourcesCache(
-    clinicId: string,
-  ): Promise<void> {
+  private async invalidateClinicResourcesCache(clinicId: string): Promise<void> {
     const cacheKeys = [
       `clinic_resources:${clinicId}:all`,
       `clinic_resources:${clinicId}:room`,
@@ -489,11 +445,8 @@ export class AppointmentResourceService {
   /**
    * Invalidate resource bookings cache
    */
-  private async invalidateResourceBookingsCache(
-    resourceId: string,
-  ): Promise<void> {
+  private async invalidateResourceBookingsCache(resourceId: string): Promise<void> {
     const cacheKey = `resource_bookings:${resourceId}:all:all`;
     await this.cacheService.delete(cacheKey);
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */

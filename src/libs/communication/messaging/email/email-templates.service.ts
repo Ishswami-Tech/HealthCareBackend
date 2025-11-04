@@ -1,4 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 /**
  * Base email template data interface
@@ -10,7 +12,7 @@ export interface EmailTemplateData {
   /** Clinic name for branding */
   readonly clinicName?: string;
   /** Additional template-specific data */
-  readonly [key: string]: unknown;
+  readonly [key: string]: string | number | boolean | undefined | readonly string[];
 }
 
 /**
@@ -101,7 +103,7 @@ export interface AccountVerificationTemplateData extends EmailTemplateData {
  */
 @Injectable()
 export class EmailTemplatesService {
-  private readonly logger = new Logger(EmailTemplatesService.name);
+  constructor(private readonly loggingService: LoggingService) {}
 
   /**
    * Generates appointment reminder email template
@@ -109,11 +111,17 @@ export class EmailTemplatesService {
    * @returns HTML email template
    */
   generateAppointmentReminderTemplate(data: AppointmentTemplateData): string {
-    this.logger.log("Generating appointment reminder template", {
-      patientName: data.patientName,
-      doctorName: data.doctorName,
-      appointmentDate: data.appointmentDate,
-    });
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Generating appointment reminder template',
+      'EmailTemplatesService',
+      {
+        patientName: data.patientName,
+        doctorName: data.doctorName,
+        appointmentDate: data.appointmentDate,
+      }
+    );
 
     return `
       <!DOCTYPE html>
@@ -143,7 +151,7 @@ export class EmailTemplatesService {
               <div><strong style="color: #2c3e50;">Date:</strong> <span style="color: #555;">${data.appointmentDate}</span></div>
               <div><strong style="color: #2c3e50;">Time:</strong> <span style="color: #555;">${data.appointmentTime}</span></div>
               <div><strong style="color: #2c3e50;">Location:</strong> <span style="color: #555;">${data.location}</span></div>
-              ${data.appointmentId ? `<div><strong style="color: #2c3e50;">Appointment ID:</strong> <span style="color: #555;">${data.appointmentId}</span></div>` : ""}
+              ${data.appointmentId ? `<div><strong style="color: #2c3e50;">Appointment ID:</strong> <span style="color: #555;">${data.appointmentId}</span></div>` : ''}
             </div>
           </div>
 
@@ -161,11 +169,11 @@ export class EmailTemplatesService {
             data.rescheduleUrl || data.cancelUrl
               ? `
           <div style="text-align: center; margin: 40px 0;">
-            ${data.rescheduleUrl ? `<a href="${data.rescheduleUrl}" style="display: inline-block; background: #4CAF50; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin: 0 10px 10px 0; font-weight: bold;">Reschedule Appointment</a>` : ""}
-            ${data.cancelUrl ? `<a href="${data.cancelUrl}" style="display: inline-block; background: #f44336; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin: 0 10px 10px 0; font-weight: bold;">Cancel Appointment</a>` : ""}
+            ${data.rescheduleUrl ? `<a href="${data.rescheduleUrl}" style="display: inline-block; background: #4CAF50; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin: 0 10px 10px 0; font-weight: bold;">Reschedule Appointment</a>` : ''}
+            ${data.cancelUrl ? `<a href="${data.cancelUrl}" style="display: inline-block; background: #f44336; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin: 0 10px 10px 0; font-weight: bold;">Cancel Appointment</a>` : ''}
           </div>
           `
-              : ""
+              : ''
           }
 
           <p style="font-size: 16px; color: #555; margin: 30px 0 0 0;">
@@ -175,7 +183,7 @@ export class EmailTemplatesService {
 
         <div style="background: #f8f9fc; padding: 25px 30px; text-align: center; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
           <p style="margin: 0 0 10px 0; font-size: 16px; color: #333; font-weight: bold;">Best regards,</p>
-          <p style="margin: 0 0 20px 0; font-size: 16px; color: #4CAF50; font-weight: bold;">${data.clinicName || "Healthcare Team"}</p>
+          <p style="margin: 0 0 20px 0; font-size: 16px; color: #4CAF50; font-weight: bold;">${data.clinicName || 'Healthcare Team'}</p>
           <p style="margin: 0; font-size: 12px; color: #888;">This is an automated reminder. Please do not reply to this email.</p>
         </div>
       </body>
@@ -189,11 +197,17 @@ export class EmailTemplatesService {
    * @returns HTML email template
    */
   generatePrescriptionReadyTemplate(data: PrescriptionTemplateData): string {
-    this.logger.log("Generating prescription ready template", {
-      patientName: data.patientName,
-      prescriptionId: data.prescriptionId,
-      medicationCount: data.medications.length,
-    });
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Generating prescription ready template',
+      'EmailTemplatesService',
+      {
+        patientName: data.patientName,
+        prescriptionId: data.prescriptionId,
+        medicationCount: data.medications.length,
+      }
+    );
 
     return `
       <!DOCTYPE html>
@@ -213,7 +227,7 @@ export class EmailTemplatesService {
           <p style="font-size: 18px; color: #333; margin: 0 0 30px 0;">Dear ${data.patientName},</p>
 
           <p style="font-size: 16px; color: #555; margin: 0 0 30px 0;">
-            Great news! Your prescription is ready for pickup at ${data.pharmacyName || "our pharmacy"}.
+            Great news! Your prescription is ready for pickup at ${data.pharmacyName || 'our pharmacy'}.
           </p>
 
           <div style="background: #fff3e0; padding: 25px; border-radius: 8px; margin: 30px 0; border-left: 4px solid #FF9800;">
@@ -229,7 +243,7 @@ export class EmailTemplatesService {
               <strong style="color: #2c3e50;">Medications:</strong>
             </div>
             <ul style="margin: 5px 0 0 20px; padding: 0; color: #555;">
-              ${data.medications.map((medication) => `<li style="margin-bottom: 5px; padding: 5px 0; border-bottom: 1px solid #eee;">${medication}</li>`).join("")}
+              ${data.medications.map(medication => `<li style="margin-bottom: 5px; padding: 5px 0; border-bottom: 1px solid #eee;">${medication}</li>`).join('')}
             </ul>
           </div>
 
@@ -238,11 +252,11 @@ export class EmailTemplatesService {
               ? `
           <div style="background: #e8f5e9; padding: 20px; border-radius: 8px; margin: 30px 0; border-left: 4px solid #4CAF50;">
             <h4 style="margin: 0 0 15px 0; color: #2e7d32;">Pickup Location</h4>
-            ${data.pharmacyName ? `<div style="margin-bottom: 8px;"><strong>Pharmacy:</strong> ${data.pharmacyName}</div>` : ""}
-            ${data.pharmacyAddress ? `<div><strong>Address:</strong> ${data.pharmacyAddress}</div>` : ""}
+            ${data.pharmacyName ? `<div style="margin-bottom: 8px;"><strong>Pharmacy:</strong> ${data.pharmacyName}</div>` : ''}
+            ${data.pharmacyAddress ? `<div><strong>Address:</strong> ${data.pharmacyAddress}</div>` : ''}
           </div>
           `
-              : ""
+              : ''
           }
 
           <div style="background: #e3f2fd; padding: 20px; border-radius: 8px; margin: 30px 0; border-left: 4px solid #2196F3;">
@@ -252,7 +266,7 @@ export class EmailTemplatesService {
               <li style="margin-bottom: 8px;">Insurance card (if applicable)</li>
               <li>Payment method for any copay or deductible</li>
             </ul>
-            ${data.pickupInstructions ? `<p style="margin: 15px 0 0 0; color: #1976d2;"><strong>Special Instructions:</strong> ${data.pickupInstructions}</p>` : ""}
+            ${data.pickupInstructions ? `<p style="margin: 15px 0 0 0; color: #1976d2;"><strong>Special Instructions:</strong> ${data.pickupInstructions}</p>` : ''}
           </div>
 
           <div style="text-align: center; margin: 40px 0;">
@@ -268,7 +282,7 @@ export class EmailTemplatesService {
 
         <div style="background: #f8f9fc; padding: 25px 30px; text-align: center; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
           <p style="margin: 0 0 10px 0; font-size: 16px; color: #333; font-weight: bold;">Best regards,</p>
-          <p style="margin: 0 0 20px 0; font-size: 16px; color: #FF9800; font-weight: bold;">${data.clinicName || "Healthcare Pharmacy Team"}</p>
+          <p style="margin: 0 0 20px 0; font-size: 16px; color: #FF9800; font-weight: bold;">${data.clinicName || 'Healthcare Pharmacy Team'}</p>
           <p style="margin: 0; font-size: 12px; color: #888;">This is an automated notification. Please do not reply to this email.</p>
         </div>
       </body>
@@ -282,11 +296,17 @@ export class EmailTemplatesService {
    * @returns HTML email template
    */
   generatePaymentConfirmationTemplate(data: PaymentTemplateData): string {
-    this.logger.log("Generating payment confirmation template", {
-      patientName: data.patientName,
-      amount: data.amount,
-      transactionId: data.transactionId,
-    });
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Generating payment confirmation template',
+      'EmailTemplatesService',
+      {
+        patientName: data.patientName,
+        amount: data.amount,
+        transactionId: data.transactionId,
+      }
+    );
 
     return `
       <!DOCTYPE html>
@@ -335,7 +355,7 @@ export class EmailTemplatesService {
             <a href="${data.receiptUrl}" style="display: inline-block; background: #4CAF50; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Download Receipt</a>
           </div>
           `
-              : ""
+              : ''
           }
 
           <p style="font-size: 16px; color: #555; margin: 30px 0 0 0;">
@@ -345,7 +365,7 @@ export class EmailTemplatesService {
 
         <div style="background: #f8f9fc; padding: 25px 30px; text-align: center; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
           <p style="margin: 0 0 10px 0; font-size: 16px; color: #333; font-weight: bold;">Best regards,</p>
-          <p style="margin: 0 0 20px 0; font-size: 16px; color: #4CAF50; font-weight: bold;">${data.clinicName || "Healthcare Team"}</p>
+          <p style="margin: 0 0 20px 0; font-size: 16px; color: #4CAF50; font-weight: bold;">${data.clinicName || 'Healthcare Team'}</p>
           <p style="margin: 0; font-size: 12px; color: #888;">This is an automated confirmation. Please do not reply to this email.</p>
         </div>
       </body>
@@ -401,7 +421,7 @@ export class EmailTemplatesService {
 
         <div style="background: #f8f9fc; padding: 25px 30px; text-align: center; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
           <p style="margin: 0 0 10px 0; font-size: 16px; color: #333; font-weight: bold;">Best regards,</p>
-          <p style="margin: 0 0 20px 0; font-size: 16px; color: #667eea; font-weight: bold;">${data.clinicName || "Healthcare Team"}</p>
+          <p style="margin: 0 0 20px 0; font-size: 16px; color: #667eea; font-weight: bold;">${data.clinicName || 'Healthcare Team'}</p>
           <p style="margin: 0; font-size: 12px; color: #888;">This is an automated security email. Please do not reply.</p>
         </div>
       </body>
@@ -414,9 +434,7 @@ export class EmailTemplatesService {
    * @param data - Account verification template data
    * @returns HTML email template
    */
-  generateAccountVerificationTemplate(
-    data: AccountVerificationTemplateData,
-  ): string {
+  generateAccountVerificationTemplate(data: AccountVerificationTemplateData): string {
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -456,7 +474,7 @@ export class EmailTemplatesService {
 
         <div style="background: #f8f9fc; padding: 25px 30px; text-align: center; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
           <p style="margin: 0 0 10px 0; font-size: 16px; color: #333; font-weight: bold;">Best regards,</p>
-          <p style="margin: 0 0 20px 0; font-size: 16px; color: #4CAF50; font-weight: bold;">${data.clinicName || "Healthcare Team"}</p>
+          <p style="margin: 0 0 20px 0; font-size: 16px; color: #4CAF50; font-weight: bold;">${data.clinicName || 'Healthcare Team'}</p>
           <p style="margin: 0; font-size: 12px; color: #888;">This is an automated verification email. Please do not reply.</p>
         </div>
       </body>
