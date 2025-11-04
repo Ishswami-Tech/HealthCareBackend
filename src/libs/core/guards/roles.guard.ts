@@ -1,20 +1,8 @@
-import { Injectable, CanActivate, ExecutionContext } from "@nestjs/common";
-import { Reflector } from "@nestjs/core";
-import { Role } from "../../infrastructure/database/prisma/prisma.types";
-import { ROLES_KEY } from "../decorators/roles.decorator";
-
-/**
- * Request with user interface for role-based access control
- *
- * @interface RequestWithUser
- * @description Defines the structure of requests containing user information
- */
-export interface RequestWithUser {
-  readonly user?: {
-    readonly role?: string;
-    readonly [key: string]: unknown;
-  };
-}
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Role } from '@core/types';
+import { ROLES_KEY } from '@core/decorators/roles.decorator';
+import type { RequestWithUser } from '@core/types/guard.types';
 
 /**
  * Roles Guard for Healthcare Applications
@@ -64,6 +52,6 @@ export class RolesGuard implements CanActivate {
     }
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const { user } = request;
-    return requiredRoles.some((role) => user?.role?.includes(role));
+    return requiredRoles.some(role => user?.role === role);
   }
 }

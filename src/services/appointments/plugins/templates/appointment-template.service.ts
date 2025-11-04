@@ -1,58 +1,11 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
-import { Injectable, Logger } from "@nestjs/common";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { PrismaService } from "../../../../libs/infrastructure/database/prisma/prisma.service";
-
-export interface AppointmentTemplate {
-  id: string;
-  name: string;
-  description?: string;
-  clinicId: string;
-  doctorId?: string;
-  duration: number;
-  type: string;
-  recurringPattern: "daily" | "weekly" | "monthly" | "yearly";
-  recurringDays?: number[];
-  recurringInterval: number;
-  startDate: Date;
-  endDate?: Date;
-  timeSlots: string[];
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface PrismaAppointmentTemplate {
-  id: string;
-  name: string;
-  description: string | null;
-  clinicId: string;
-  doctorId: string | null;
-  duration: number;
-  type: string;
-  recurringPattern: string | null;
-  recurringDays: number[] | null;
-  recurringInterval: number | null;
-  startDate: Date;
-  endDate: Date | null;
-  timeSlots: string[];
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface RecurringAppointmentSeries {
-  id: string;
-  templateId: string;
-  patientId: string;
-  clinicId: string;
-  startDate: Date;
-  endDate?: Date;
-  status: "active" | "paused" | "cancelled";
-  appointments: string[]; // appointment IDs
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { Injectable, Logger } from '@nestjs/common';
+import { CacheService } from '@infrastructure/cache';
+import { DatabaseService } from '@infrastructure/database';
+import type {
+  AppointmentTemplate,
+  PrismaAppointmentTemplate,
+  RecurringAppointmentSeries,
+} from '@core/types/appointment.types';
 
 @Injectable()
 export class AppointmentTemplateService {
@@ -60,54 +13,67 @@ export class AppointmentTemplateService {
   private readonly TEMPLATE_CACHE_TTL = 3600; // 1 hour
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly cacheService: CacheService,
+    private readonly databaseService: DatabaseService,
+    private readonly cacheService: CacheService
   ) {}
 
   /**
    * Create appointment template
    */
   async createTemplate(
-    templateData: Omit<AppointmentTemplate, "id" | "createdAt" | "updatedAt">,
+    templateData: Omit<AppointmentTemplate, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<AppointmentTemplate> {
     try {
-      const template = await this.prisma["appointmentTemplate"].create({
-        data: {
-          name: templateData.name,
-          description: templateData.description,
-          clinicId: templateData.clinicId,
-          doctorId: templateData.doctorId,
-          type: templateData.type,
-          duration: templateData.duration,
-          timeSlots: templateData.timeSlots,
-          recurringPattern: templateData.recurringPattern,
-          recurringDays: templateData.recurringDays,
-          recurringInterval: templateData.recurringInterval,
-          startDate: templateData.startDate,
-          endDate: templateData.endDate,
-          isActive: templateData.isActive,
+      // Use executeHealthcareWrite for create with audit logging
+      const template = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              appointmentTemplate: { create: <T>(args: T) => Promise<AppointmentTemplate> };
+            }
+          ).appointmentTemplate.create({
+            data: {
+              name: templateData.name,
+              description: templateData.description,
+              clinicId: templateData.clinicId,
+              doctorId: templateData.doctorId,
+              type: templateData.type,
+              duration: templateData.duration,
+              timeSlots: templateData.timeSlots,
+              recurringPattern: templateData.recurringPattern,
+              recurringDays: templateData.recurringDays,
+              recurringInterval: templateData.recurringInterval,
+              startDate: templateData.startDate,
+              endDate: templateData.endDate,
+              isActive: templateData.isActive,
+            },
+          } as never);
         },
-      });
+        {
+          userId: 'system',
+          clinicId: templateData.clinicId || '',
+          resourceType: 'APPOINTMENT_TEMPLATE',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'system',
+          details: { name: templateData.name, clinicId: templateData.clinicId },
+        }
+      );
 
       const templateResult: AppointmentTemplate = {
         id: template.id,
         name: template.name,
-        description: template.description ?? undefined,
+        ...(template.description && { description: template.description }),
         clinicId: template.clinicId,
-        doctorId: template.doctorId ?? undefined,
+        ...(template.doctorId && { doctorId: template.doctorId }),
         type: template.type,
         duration: template.duration,
         timeSlots: template.timeSlots,
-        recurringPattern:
-          (template.recurringPattern as
-            | "daily"
-            | "weekly"
-            | "monthly"
-            | "yearly") ?? "daily",
-        recurringDays: template.recurringDays ?? undefined,
+        recurringPattern: template.recurringPattern ?? 'daily',
+        ...(template.recurringDays && { recurringDays: template.recurringDays }),
         recurringInterval: template.recurringInterval ?? 1,
         startDate: template.startDate,
-        endDate: template.endDate ?? undefined,
+        ...(template.endDate && { endDate: template.endDate }),
         isActive: template.isActive,
         createdAt: template.createdAt,
         updatedAt: template.updatedAt,
@@ -115,11 +81,7 @@ export class AppointmentTemplateService {
 
       // Cache the template
       const cacheKey = `appointment_template:${template.id}`;
-      await this.cacheService.set(
-        cacheKey,
-        templateResult,
-        this.TEMPLATE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, templateResult, this.TEMPLATE_CACHE_TTL);
 
       // Invalidate clinic templates cache
       await this.invalidateClinicTemplatesCache(templateData.clinicId);
@@ -153,49 +115,48 @@ export class AppointmentTemplateService {
         return cached as AppointmentTemplate[];
       }
 
-      // Get templates from database
-      const templates = await this.prisma["appointmentTemplate"].findMany({
-        where: {
-          clinicId,
-          isActive: true,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
+      // Get templates from database using executeHealthcareRead
+      const templates = (await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            appointmentTemplate: { findMany: <T>(args: T) => Promise<AppointmentTemplate[]> };
+          }
+        ).appointmentTemplate.findMany({
+          where: {
+            clinicId,
+            isActive: true,
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+        } as never);
+      })) as PrismaAppointmentTemplate[];
 
       const templateList: AppointmentTemplate[] = templates.map(
         (template: PrismaAppointmentTemplate) => {
           return {
             id: template.id,
             name: template.name,
+            ...(template.description && { description: template.description }),
             clinicId: template.clinicId,
-            doctorId: template.doctorId ?? undefined,
+            ...(template.doctorId && { doctorId: template.doctorId }),
             type: template.type,
             duration: template.duration,
             timeSlots: template.timeSlots,
             recurringPattern:
-              (template.recurringPattern as
-                | "daily"
-                | "weekly"
-                | "monthly"
-                | "yearly") ?? "daily",
-            recurringDays: template.recurringDays ?? undefined,
+              (template.recurringPattern as 'daily' | 'weekly' | 'monthly' | 'yearly') ?? 'daily',
+            ...(template.recurringDays && { recurringDays: template.recurringDays }),
             recurringInterval: template.recurringInterval ?? 1,
             startDate: template.startDate,
-            endDate: template.endDate ?? undefined,
+            ...(template.endDate && { endDate: template.endDate }),
             isActive: template.isActive,
             createdAt: template.createdAt,
             updatedAt: template.updatedAt,
           };
-        },
+        }
       );
 
-      await this.cacheService.set(
-        cacheKey,
-        templateList,
-        this.TEMPLATE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, templateList, this.TEMPLATE_CACHE_TTL);
       return templateList;
     } catch (_error) {
       this.logger.error(`Failed to get clinic templates`, {
@@ -214,7 +175,7 @@ export class AppointmentTemplateService {
     patientId: string,
     clinicId: string,
     startDate: Date,
-    endDate?: Date,
+    endDate?: Date
   ): Promise<RecurringAppointmentSeries> {
     const seriesId = `series_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -222,7 +183,7 @@ export class AppointmentTemplateService {
       // Get template
       const template = await this.getTemplate(templateId);
       if (!template) {
-        throw new Error("Template not found");
+        throw new Error('Template not found');
       }
 
       // Generate appointments based on template
@@ -230,7 +191,7 @@ export class AppointmentTemplateService {
         template,
         patientId,
         startDate,
-        endDate,
+        endDate
       );
 
       const series: RecurringAppointmentSeries = {
@@ -239,7 +200,7 @@ export class AppointmentTemplateService {
         patientId,
         clinicId,
         startDate,
-        status: "active",
+        status: 'active',
         appointments: appointments,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -281,9 +242,17 @@ export class AppointmentTemplateService {
         return cached as AppointmentTemplate;
       }
 
-      // Get template from database
-      const template = await this.prisma["appointmentTemplate"].findUnique({
-        where: { id: templateId },
+      // Get template from database using executeHealthcareRead
+      const template = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            appointmentTemplate: {
+              findUnique: <T>(args: T) => Promise<AppointmentTemplate | null>;
+            };
+          }
+        ).appointmentTemplate.findUnique({
+          where: { id: templateId },
+        } as never);
       });
 
       if (!template) {
@@ -293,33 +262,24 @@ export class AppointmentTemplateService {
       const templateResult: AppointmentTemplate = {
         id: template.id,
         name: template.name,
-        description: template.description ?? undefined,
+        ...(template.description && { description: template.description }),
         clinicId: template.clinicId,
-        doctorId: template.doctorId ?? undefined,
+        ...(template.doctorId && { doctorId: template.doctorId }),
         type: template.type,
         duration: template.duration,
         timeSlots: template.timeSlots,
-        recurringPattern:
-          (template.recurringPattern as
-            | "daily"
-            | "weekly"
-            | "monthly"
-            | "yearly") ?? "daily",
-        recurringDays: template.recurringDays ?? undefined,
+        recurringPattern: template.recurringPattern ?? 'daily',
+        ...(template.recurringDays && { recurringDays: template.recurringDays }),
         recurringInterval: template.recurringInterval ?? 1,
         startDate: template.startDate,
-        endDate: template.endDate ?? undefined,
+        ...(template.endDate && { endDate: template.endDate }),
         isActive: template.isActive,
         createdAt: template.createdAt,
         updatedAt: template.updatedAt,
       };
 
       // Cache the template
-      await this.cacheService.set(
-        cacheKey,
-        templateResult,
-        this.TEMPLATE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, templateResult, this.TEMPLATE_CACHE_TTL);
 
       return templateResult;
     } catch (_error) {
@@ -338,12 +298,11 @@ export class AppointmentTemplateService {
     template: AppointmentTemplate,
     patientId: string,
     startDate: Date,
-    endDate?: Date,
+    endDate?: Date
   ): Promise<string[]> {
     const appointments: string[] = [];
     const currentDate = new Date(startDate);
-    const finalDate =
-      endDate || new Date(currentDate.getTime() + 365 * 24 * 60 * 60 * 1000); // 1 year default
+    const finalDate = endDate || new Date(currentDate.getTime() + 365 * 24 * 60 * 60 * 1000); // 1 year default
 
     while (currentDate <= finalDate) {
       // Check if current date matches recurring pattern
@@ -364,18 +323,15 @@ export class AppointmentTemplateService {
   /**
    * Check if date matches recurring pattern
    */
-  private matchesRecurringPattern(
-    template: AppointmentTemplate,
-    date: Date,
-  ): boolean {
+  private matchesRecurringPattern(template: AppointmentTemplate, date: Date): boolean {
     switch (template.recurringPattern) {
-      case "daily":
+      case 'daily':
         return true;
-      case "weekly":
+      case 'weekly':
         return template.recurringDays?.includes(date.getDay()) || false;
-      case "monthly":
+      case 'monthly':
         return date.getDate() === template.startDate.getDate();
-      case "yearly":
+      case 'yearly':
         return (
           date.getMonth() === template.startDate.getMonth() &&
           date.getDate() === template.startDate.getDate()
@@ -388,21 +344,18 @@ export class AppointmentTemplateService {
   /**
    * Advance date by recurring pattern
    */
-  private advanceDateByPattern(
-    date: Date,
-    template: AppointmentTemplate,
-  ): void {
+  private advanceDateByPattern(date: Date, template: AppointmentTemplate): void {
     switch (template.recurringPattern) {
-      case "daily":
+      case 'daily':
         date.setDate(date.getDate() + template.recurringInterval);
         break;
-      case "weekly":
+      case 'weekly':
         date.setDate(date.getDate() + 7 * template.recurringInterval);
         break;
-      case "monthly":
+      case 'monthly':
         date.setMonth(date.getMonth() + template.recurringInterval);
         break;
-      case "yearly":
+      case 'yearly':
         date.setFullYear(date.getFullYear() + template.recurringInterval);
         break;
     }
@@ -413,45 +366,58 @@ export class AppointmentTemplateService {
    */
   async updateTemplate(
     templateId: string,
-    updateData: Partial<AppointmentTemplate>,
+    updateData: Partial<AppointmentTemplate>
   ): Promise<AppointmentTemplate> {
     try {
-      const template = await this.prisma["appointmentTemplate"].update({
-        where: { id: templateId },
-        data: {
-          name: updateData.name,
-          description: updateData.description,
-          type: updateData.type,
-          duration: updateData.duration,
-          timeSlots: updateData.timeSlots,
-          recurringPattern: updateData.recurringPattern,
-          recurringDays: updateData.recurringDays,
-          recurringInterval: updateData.recurringInterval,
-          startDate: updateData.startDate,
-          endDate: updateData.endDate,
-          isActive: updateData.isActive,
+      // Use executeHealthcareWrite for update with audit logging
+      const template = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              appointmentTemplate: { update: <T>(args: T) => Promise<AppointmentTemplate> };
+            }
+          ).appointmentTemplate.update({
+            where: { id: templateId },
+            data: {
+              name: updateData.name,
+              description: updateData.description,
+              type: updateData.type,
+              duration: updateData.duration,
+              timeSlots: updateData.timeSlots,
+              recurringPattern: updateData.recurringPattern,
+              recurringDays: updateData.recurringDays,
+              recurringInterval: updateData.recurringInterval,
+              startDate: updateData.startDate,
+              endDate: updateData.endDate,
+              isActive: updateData.isActive,
+            },
+          } as never);
         },
-      });
+        {
+          userId: 'system',
+          clinicId: '',
+          resourceType: 'APPOINTMENT_TEMPLATE',
+          operation: 'UPDATE',
+          resourceId: templateId,
+          userRole: 'system',
+          details: { updateFields: Object.keys(updateData) },
+        }
+      );
 
       const templateResult: AppointmentTemplate = {
         id: template.id,
         name: template.name,
-        description: template.description ?? undefined,
+        ...(template.description && { description: template.description }),
         clinicId: template.clinicId,
-        doctorId: template.doctorId ?? undefined,
+        ...(template.doctorId && { doctorId: template.doctorId }),
         type: template.type,
         duration: template.duration,
         timeSlots: template.timeSlots,
-        recurringPattern:
-          (template.recurringPattern as
-            | "daily"
-            | "weekly"
-            | "monthly"
-            | "yearly") ?? "daily",
-        recurringDays: template.recurringDays ?? undefined,
+        recurringPattern: template.recurringPattern ?? 'daily',
+        ...(template.recurringDays && { recurringDays: template.recurringDays }),
         recurringInterval: template.recurringInterval ?? 1,
         startDate: template.startDate,
-        endDate: template.endDate ?? undefined,
+        ...(template.endDate && { endDate: template.endDate }),
         isActive: template.isActive,
         createdAt: template.createdAt,
         updatedAt: template.updatedAt,
@@ -459,14 +425,10 @@ export class AppointmentTemplateService {
 
       // Update cache
       const cacheKey = `appointment_template:${templateId}`;
-      await this.cacheService.set(
-        cacheKey,
-        templateResult,
-        this.TEMPLATE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, templateResult, this.TEMPLATE_CACHE_TTL);
 
       // Invalidate clinic templates cache
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
       await this.invalidateClinicTemplatesCache(template.clinicId);
 
       this.logger.log(`Updated template ${templateId}`, {
@@ -488,26 +450,54 @@ export class AppointmentTemplateService {
    */
   async deleteTemplate(templateId: string): Promise<boolean> {
     try {
-      const template = await this.prisma["appointmentTemplate"].findUnique({
-        where: { id: templateId },
-        select: { id: true, clinicId: true, name: true },
-      });
+      // Use executeHealthcareRead first to get record for cache invalidation
+      const template = (await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            appointmentTemplate: {
+              findUnique: <T>(
+                args: T
+              ) => Promise<{ id: string; clinicId: string; name: string } | null>;
+            };
+          }
+        ).appointmentTemplate.findUnique({
+          where: { id: templateId },
+          select: { id: true, clinicId: true, name: true },
+        } as never);
+      })) as { id: string; clinicId: string; name: string } | null;
 
       if (!template) {
         return false;
       }
 
-      // Delete from database
-      await this.prisma["appointmentTemplate"].delete({
-        where: { id: templateId },
-      });
+      // Delete from database using executeHealthcareWrite with audit logging
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              appointmentTemplate: { delete: <T>(args: T) => Promise<AppointmentTemplate> };
+            }
+          ).appointmentTemplate.delete({
+            where: { id: templateId },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: template.clinicId || '',
+          resourceType: 'APPOINTMENT_TEMPLATE',
+          operation: 'DELETE',
+          resourceId: templateId,
+          userRole: 'system',
+          details: { name: template.name, clinicId: template.clinicId },
+        }
+      );
 
       // Remove from cache
       const cacheKey = `appointment_template:${templateId}`;
       await this.cacheService.delete(cacheKey);
 
       // Invalidate clinic templates cache
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
       await this.invalidateClinicTemplatesCache(template.clinicId);
 
       this.logger.log(`Deleted template ${templateId}`, {
@@ -528,11 +518,8 @@ export class AppointmentTemplateService {
   /**
    * Invalidate clinic templates cache
    */
-  private async invalidateClinicTemplatesCache(
-    clinicId: string,
-  ): Promise<void> {
+  private async invalidateClinicTemplatesCache(clinicId: string): Promise<void> {
     const cacheKey = `clinic_templates:${clinicId}`;
     await this.cacheService.delete(cacheKey);
   }
 }
-/* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */

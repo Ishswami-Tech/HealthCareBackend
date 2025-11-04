@@ -1,75 +1,17 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-floating-promises */
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-} from "@nestjs/common";
-import { DatabaseService } from "../../../../libs/infrastructure/database";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
-import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
-// Local type definitions for Check-In models
-export interface CheckInLocation {
-  id: string;
-  clinicId: string;
-  locationName: string;
-  coordinates: Record<string, number>;
-  radius: number;
-  isActive: boolean;
-  qrCode?: string | null;
-  qrCodeExpiry?: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CheckIn {
-  id: string;
-  appointmentId: string;
-  locationId: string;
-  checkInTime: Date;
-  isVerified: boolean;
-  verifiedBy?: string | null;
-  coordinates?: Record<string, number> | null;
-  deviceInfo?: Record<string, unknown> | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CreateCheckInLocationDto {
-  clinicId: string;
-  locationName: string;
-  coordinates: { lat: number; lng: number };
-  radius: number; // in meters
-}
-
-export interface UpdateCheckInLocationDto {
-  locationName?: string;
-  coordinates?: { lat: number; lng: number };
-  radius?: number;
-  isActive?: boolean;
-}
-
-export interface ProcessCheckInDto {
-  appointmentId: string;
-  locationId: string;
-  patientId: string;
-  coordinates?: { lat: number; lng: number };
-  deviceInfo?: Record<string, unknown>;
-  qrCode?: string;
-}
-
-export interface VerifyCheckInDto {
-  checkInId: string;
-  verifiedBy: string;
-  notes?: string;
-}
-
-export interface CheckInValidation {
-  isValid: boolean;
-  distance?: number;
-  message: string;
-}
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import type {
+  CheckInLocation,
+  CheckIn,
+  CreateCheckInLocationDto,
+  UpdateCheckInLocationDto,
+  ProcessCheckInDto,
+  VerifyCheckInDto,
+  CheckInValidation,
+} from '@core/types/appointment.types';
 
 @Injectable()
 export class CheckInLocationService {
@@ -80,62 +22,76 @@ export class CheckInLocationService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService,
+    private readonly loggingService: LoggingService
   ) {}
 
   /**
    * Create a new check-in location
    */
-  async createCheckInLocation(
-    data: CreateCheckInLocationDto,
-  ): Promise<CheckInLocation> {
+  async createCheckInLocation(data: CreateCheckInLocationDto): Promise<CheckInLocation> {
     const startTime = Date.now();
 
     try {
       // Generate QR code (unique identifier)
       const qrCode = this.generateQRCode(data.clinicId, data.locationName);
 
-      const location = await this.databaseService
-        .getPrismaClient()
-        .checkInLocation.create({
-          data: {
-            clinicId: data.clinicId,
-            locationName: data.locationName,
-            qrCode,
-            coordinates: data.coordinates as any,
-            radius: data.radius,
-          },
-        });
-
-      // Invalidate cache
-      await this.cacheService.invalidateByPattern(
-        `checkin-locations:clinic:${data.clinicId}*`,
+      // Use executeHealthcareWrite for create with audit logging
+      const location = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              checkInLocation: {
+                create: <T>(args: T) => Promise<CheckInLocation>;
+              };
+            }
+          ).checkInLocation.create({
+            data: {
+              clinicId: data.clinicId,
+              locationName: data.locationName,
+              qrCode,
+              coordinates: data.coordinates as never,
+              radius: data.radius,
+            },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: data.clinicId,
+          resourceType: 'CHECK_IN_LOCATION',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'system',
+          details: { locationName: data.locationName, clinicId: data.clinicId },
+        }
       );
 
-      this.loggingService.log(
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
+
+      await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        "Check-in location created successfully",
-        "CheckInLocationService",
+        'Check-in location created successfully',
+        'CheckInLocationService',
         {
           locationId: location.id,
           locationName: data.locationName,
           clinicId: data.clinicId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return location;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create check-in location: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           data,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -144,12 +100,9 @@ export class CheckInLocationService {
   /**
    * Get all check-in locations for a clinic
    */
-  async getClinicLocations(
-    clinicId: string,
-    isActive?: boolean,
-  ): Promise<CheckInLocation[]> {
+  async getClinicLocations(clinicId: string, isActive?: boolean): Promise<CheckInLocation[]> {
     const startTime = Date.now();
-    const cacheKey = `checkin-locations:clinic:${clinicId}:${isActive ?? "all"}`;
+    const cacheKey = `checkin-locations:clinic:${clinicId}:${isActive ?? 'all'}`;
 
     try {
       // Try to get from cache first
@@ -158,9 +111,15 @@ export class CheckInLocationService {
         return JSON.parse(cached as string);
       }
 
-      const locations = await this.databaseService
-        .getPrismaClient()
-        .checkInLocation.findMany({
+      // Use executeHealthcareRead for optimized query with caching
+      const locations = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkInLocation: {
+              findMany: <T>(args: T) => Promise<CheckInLocation[]>;
+            };
+          }
+        ).checkInLocation.findMany({
           where: {
             clinicId,
             ...(isActive !== undefined && { isActive }),
@@ -168,42 +127,39 @@ export class CheckInLocationService {
           include: {
             checkIns: {
               take: 10,
-              orderBy: { checkedInAt: "desc" },
+              orderBy: { checkedInAt: 'desc' },
             },
           },
-          orderBy: { createdAt: "desc" },
-        });
+          orderBy: { createdAt: 'desc' },
+        } as never);
+      });
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(locations),
-        this.LOCATION_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(locations), this.LOCATION_CACHE_TTL);
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Clinic check-in locations retrieved successfully",
-        "CheckInLocationService",
+        'Clinic check-in locations retrieved successfully',
+        'CheckInLocationService',
         {
           clinicId,
           count: locations.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return locations;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic locations: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           clinicId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -223,52 +179,53 @@ export class CheckInLocationService {
         return JSON.parse(cached as string);
       }
 
-      const location = await this.databaseService
-        .getPrismaClient()
-        .checkInLocation.findUnique({
+      // Use executeHealthcareRead for optimized query
+      const location = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkInLocation: {
+              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+            };
+          }
+        ).checkInLocation.findUnique({
           where: { qrCode },
-        });
+        } as never);
+      });
 
       if (!location) {
-        throw new NotFoundException(
-          `Location with QR code ${qrCode} not found`,
-        );
+        throw new NotFoundException(`Location with QR code ${qrCode} not found`);
       }
 
       if (!location.isActive) {
-        throw new BadRequestException("This check-in location is not active");
+        throw new BadRequestException('This check-in location is not active');
       }
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(location),
-        this.LOCATION_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(location), this.LOCATION_CACHE_TTL);
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Location retrieved by QR code",
-        "CheckInLocationService",
+        'Location retrieved by QR code',
+        'CheckInLocationService',
         {
           locationId: location.id,
           qrCode,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return location;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location by QR code: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           qrCode,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -279,52 +236,68 @@ export class CheckInLocationService {
    */
   async updateCheckInLocation(
     locationId: string,
-    data: UpdateCheckInLocationDto,
+    data: UpdateCheckInLocationDto
   ): Promise<CheckInLocation> {
     const startTime = Date.now();
 
     try {
-      const location = await this.databaseService
-        .getPrismaClient()
-        .checkInLocation.update({
-          where: { id: locationId },
-          data: {
-            ...data,
-            coordinates: data.coordinates as any,
-          },
-        });
-
-      // Invalidate cache
-      await this.cacheService.del(`checkin-location:${locationId}`);
-      await this.cacheService.invalidateByPattern(
-        `checkin-locations:clinic:${location.clinicId}*`,
+      // Use executeHealthcareWrite for update with audit logging
+      const location = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              checkInLocation: {
+                update: <T>(args: T) => Promise<CheckInLocation>;
+              };
+            }
+          ).checkInLocation.update({
+            where: { id: locationId },
+            data: {
+              ...data,
+              coordinates: data.coordinates as never,
+            },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: '',
+          resourceType: 'CHECK_IN_LOCATION',
+          operation: 'UPDATE',
+          resourceId: locationId,
+          userRole: 'system',
+          details: { updateFields: Object.keys(data) },
+        }
       );
+
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCache(`checkin-location:${locationId}`);
+      await this.cacheService.invalidateCacheByTag(`clinic:${location.clinicId}`);
       if (location.qrCode) {
-        await this.cacheService.del(`checkin-location:qr:${location.qrCode}`);
+        await this.cacheService.invalidateCache(`checkin-location:qr:${location.qrCode}`);
       }
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        "Check-in location updated successfully",
-        "CheckInLocationService",
+        'Check-in location updated successfully',
+        'CheckInLocationService',
         {
           locationId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return location;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update check-in location: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           locationId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -337,49 +310,74 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      const location = await this.databaseService
-        .getPrismaClient()
-        .checkInLocation.findUnique({
+      // Use executeHealthcareRead first to get record for cache invalidation
+      const location = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkInLocation: {
+              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+            };
+          }
+        ).checkInLocation.findUnique({
           where: { id: locationId },
-        });
+        } as never);
+      });
 
       if (!location) {
         throw new NotFoundException(`Location with ID ${locationId} not found`);
       }
 
-      await this.databaseService.getPrismaClient().checkInLocation.delete({
-        where: { id: locationId },
-      });
-
-      // Invalidate cache
-      await this.cacheService.del(`checkin-location:${locationId}`);
-      await this.cacheService.invalidateByPattern(
-        `checkin-locations:clinic:${location.clinicId}*`,
+      // Use executeHealthcareWrite for delete with audit logging
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              checkInLocation: {
+                delete: <T>(args: T) => Promise<CheckInLocation>;
+              };
+            }
+          ).checkInLocation.delete({
+            where: { id: locationId },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: location.clinicId || '',
+          resourceType: 'CHECK_IN_LOCATION',
+          operation: 'DELETE',
+          resourceId: locationId,
+          userRole: 'system',
+          details: { locationName: location.locationName },
+        }
       );
+
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCache(`checkin-location:${locationId}`);
+      await this.cacheService.invalidateCacheByTag(`clinic:${location.clinicId}`);
       if (location.qrCode) {
-        await this.cacheService.del(`checkin-location:qr:${location.qrCode}`);
+        await this.cacheService.invalidateCache(`checkin-location:qr:${location.qrCode}`);
       }
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        "Check-in location deleted successfully",
-        "CheckInLocationService",
+        'Check-in location deleted successfully',
+        'CheckInLocationService',
         {
           locationId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete check-in location: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           locationId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -396,47 +394,55 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      // Validate appointment exists
-      const appointment = await this.databaseService
-        .getPrismaClient()
-        .appointment.findUnique({
+      // Validate appointment exists using executeHealthcareRead
+      const appointment = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.appointment.findUnique({
           where: { id: data.appointmentId },
         });
+      });
 
       if (!appointment) {
-        throw new NotFoundException(
-          `Appointment with ID ${data.appointmentId} not found`,
-        );
+        throw new NotFoundException(`Appointment with ID ${data.appointmentId} not found`);
       }
 
-      // Check if already checked in
-      const existingCheckIn = await this.databaseService
-        .getPrismaClient()
-        .checkIn.findFirst({
+      // Check if already checked in using executeHealthcareRead
+      const existingCheckIn = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkIn: {
+              findFirst: <T>(args: T) => Promise<CheckIn | null>;
+            };
+          }
+        ).checkIn.findFirst({
           where: {
             appointmentId: data.appointmentId,
           },
-        });
+        } as never);
+      });
 
       if (existingCheckIn) {
-        throw new BadRequestException("Appointment already checked in");
+        throw new BadRequestException('Appointment already checked in');
       }
 
-      // Get location details
-      const location = await this.databaseService
-        .getPrismaClient()
-        .checkInLocation.findUnique({
+      // Get location details using executeHealthcareRead
+      const location = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkInLocation: {
+              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+            };
+          }
+        ).checkInLocation.findUnique({
           where: { id: data.locationId },
-        });
+        } as never);
+      });
 
       if (!location) {
-        throw new NotFoundException(
-          `Location with ID ${data.locationId} not found`,
-        );
+        throw new NotFoundException(`Location with ID ${data.locationId} not found`);
       }
 
       if (!location.isActive) {
-        throw new BadRequestException("Check-in location is not active");
+        throw new BadRequestException('Check-in location is not active');
       }
 
       // Validate location if coordinates provided
@@ -447,77 +453,108 @@ export class CheckInLocationService {
         }
       }
 
-      // Create check-in
-      const checkIn = await this.databaseService
-        .getPrismaClient()
-        .checkIn.create({
-          data: {
-            appointmentId: data.appointmentId,
-            locationId: data.locationId,
-            patientId: data.patientId,
-            coordinates: data.coordinates as any,
-            deviceInfo: data.deviceInfo as any,
-          },
-          include: {
-            location: true,
-            patient: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
+      // Create check-in using executeHealthcareWrite with audit logging
+      const checkIn = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              checkIn: {
+                create: <T>(args: T) => Promise<CheckIn>;
+              };
+            }
+          ).checkIn.create({
+            data: {
+              appointmentId: data.appointmentId,
+              locationId: data.locationId,
+              patientId: data.patientId,
+              coordinates: data.coordinates as never,
+              deviceInfo: data.deviceInfo as never,
+            },
+            include: {
+              location: true,
+              patient: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                      phone: true,
+                    },
                   },
                 },
               },
-            },
-            appointment: {
-              select: {
-                id: true,
-                type: true,
-                date: true,
-                time: true,
+              appointment: {
+                select: {
+                  id: true,
+                  type: true,
+                  date: true,
+                  time: true,
+                },
               },
             },
-          },
-        });
-
-      // Update appointment status
-      await this.databaseService.getPrismaClient().appointment.update({
-        where: { id: data.appointmentId },
-        data: {
-          checkedInAt: new Date(),
-          status: "CHECKED_IN" as any,
+          } as never);
         },
-      });
+        {
+          userId: data.patientId,
+          clinicId: location?.clinicId || '',
+          resourceType: 'CHECK_IN',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'patient',
+          details: { appointmentId: data.appointmentId, locationId: data.locationId },
+        }
+      );
 
-      // Invalidate cache
-      await this.cacheService.invalidateByPattern(`checkins:*`);
+      // Update appointment status using executeHealthcareWrite
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.appointment.update({
+            where: { id: data.appointmentId },
+            data: {
+              checkedInAt: new Date(),
+              status: 'CHECKED_IN',
+            },
+          });
+        },
+        {
+          userId: data.patientId,
+          clinicId: location?.clinicId || '',
+          resourceType: 'APPOINTMENT',
+          operation: 'UPDATE',
+          resourceId: data.appointmentId,
+          userRole: 'patient',
+          details: { status: 'CHECKED_IN' },
+        }
+      );
 
-      this.loggingService.log(
+      // Invalidate cache using proper method
+      await this.cacheService.invalidateCacheByTag(`appointment:${data.appointmentId}`);
+      await this.cacheService.invalidateCacheByTag(`patient:${data.patientId}`);
+
+      await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Check-in processed successfully",
-        "CheckInLocationService",
+        'Check-in processed successfully',
+        'CheckInLocationService',
         {
           checkInId: checkIn.id,
           appointmentId: data.appointmentId,
           locationId: data.locationId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return checkIn;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           data,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -530,58 +567,81 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
-      const checkIn = await this.databaseService
-        .getPrismaClient()
-        .checkIn.update({
-          where: { id: data.checkInId },
-          data: {
-            isVerified: true,
-            verifiedBy: data.verifiedBy,
-            notes: data.notes,
-          },
-          include: {
-            location: true,
-            patient: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
+      // Use executeHealthcareWrite for update with audit logging
+      const checkIn = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              checkIn: {
+                update: <T>(args: T) => Promise<CheckIn>;
+              };
+            }
+          ).checkIn.update({
+            where: { id: data.checkInId },
+            data: {
+              isVerified: true,
+              verifiedBy: data.verifiedBy,
+              notes: data.notes,
+            },
+            include: {
+              location: true,
+              patient: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                      phone: true,
+                    },
                   },
                 },
               },
+              appointment: true,
             },
-            appointment: true,
-          },
-        });
+          } as never);
+        },
+        {
+          userId: data.verifiedBy,
+          clinicId: '',
+          resourceType: 'CHECK_IN',
+          operation: 'UPDATE',
+          resourceId: data.checkInId,
+          userRole: 'system',
+          details: { verified: true, verifiedBy: data.verifiedBy },
+        }
+      );
 
-      // Invalidate cache
-      await this.cacheService.invalidateByPattern(`checkins:*`);
+      // Invalidate cache using proper method
+      const checkInWithAppointment = checkIn as CheckIn & { appointment?: { id: string } };
+      if (checkInWithAppointment.appointment?.id) {
+        await this.cacheService.invalidateCacheByTag(
+          `appointment:${checkInWithAppointment.appointment.id}`
+        );
+      }
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        "Check-in verified successfully",
-        "CheckInLocationService",
+        'Check-in verified successfully',
+        'CheckInLocationService',
         {
           checkInId: data.checkInId,
           verifiedBy: data.verifiedBy,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return checkIn;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to verify check-in: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           data,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -593,7 +653,7 @@ export class CheckInLocationService {
   async getLocationCheckIns(
     locationId: string,
     startDate?: Date,
-    endDate?: Date,
+    endDate?: Date
   ): Promise<CheckIn[]> {
     const startTime = Date.now();
 
@@ -607,9 +667,15 @@ export class CheckInLocationService {
         };
       }
 
-      const checkIns = await this.databaseService
-        .getPrismaClient()
-        .checkIn.findMany({
+      // Use executeHealthcareRead for optimized query
+      const checkIns = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkIn: {
+              findMany: <T>(args: T) => Promise<CheckIn[]>;
+            };
+          }
+        ).checkIn.findMany({
           where: whereClause,
           include: {
             patient: {
@@ -632,32 +698,33 @@ export class CheckInLocationService {
               },
             },
           },
-          orderBy: { checkedInAt: "desc" },
-        });
+          orderBy: { checkedInAt: 'desc' },
+        } as never);
+      });
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Location check-ins retrieved successfully",
-        "CheckInLocationService",
+        'Location check-ins retrieved successfully',
+        'CheckInLocationService',
         {
           locationId,
           count: checkIns.length,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return checkIns;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location check-ins: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           locationId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -668,7 +735,7 @@ export class CheckInLocationService {
    */
   async getCheckInStats(
     locationId: string,
-    date?: Date,
+    date?: Date
   ): Promise<{
     totalCheckIns: number;
     verified: number;
@@ -692,48 +759,51 @@ export class CheckInLocationService {
         };
       }
 
-      const checkIns = await this.databaseService
-        .getPrismaClient()
-        .checkIn.findMany({
+      // Use executeHealthcareRead for optimized query
+      const checkIns = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkIn: {
+              findMany: <T>(args: T) => Promise<CheckIn[]>;
+            };
+          }
+        ).checkIn.findMany({
           where: whereClause,
-        });
+        } as never);
+      });
 
       type CheckInWithVerification = { isVerified: boolean };
       const checkInsTyped = checkIns as CheckInWithVerification[];
       const stats = {
         totalCheckIns: checkIns.length,
-        verified: checkInsTyped.filter(
-          (c: CheckInWithVerification) => c.isVerified,
-        ).length,
-        unverified: checkInsTyped.filter(
-          (c: CheckInWithVerification) => !c.isVerified,
-        ).length,
+        verified: checkInsTyped.filter((c: CheckInWithVerification) => c.isVerified).length,
+        unverified: checkInsTyped.filter((c: CheckInWithVerification) => !c.isVerified).length,
         averageCheckInTime: 0, // Placeholder - would calculate based on actual data
       };
 
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Check-in stats retrieved successfully",
-        "CheckInLocationService",
+        'Check-in stats retrieved successfully',
+        'CheckInLocationService',
         {
           locationId,
           stats,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return stats;
     } catch (error) {
-      this.loggingService.log(
+      await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get check-in stats: ${error instanceof Error ? error.message : String(error)}`,
-        "CheckInLocationService",
+        'CheckInLocationService',
         {
           locationId,
           error: error instanceof Error ? error.stack : undefined,
-        },
+        }
       );
       throw error;
     }
@@ -748,15 +818,15 @@ export class CheckInLocationService {
    */
   private validateLocation(
     patientCoords: { lat: number; lng: number },
-    location: CheckInLocation,
+    location: CheckInLocation
   ): CheckInValidation {
-    const locationCoords = location.coordinates as any;
-    const distance = this.calculateDistance(
-      patientCoords.lat,
-      patientCoords.lng,
-      locationCoords.lat,
-      locationCoords.lng,
-    );
+    const locationCoords = location.coordinates;
+    const lat = locationCoords['lat'];
+    const lng = locationCoords['lng'];
+    if (lat === undefined || lng === undefined) {
+      throw new Error('Location coordinates are missing lat or lng');
+    }
+    const distance = this.calculateDistance(patientCoords.lat, patientCoords.lng, lat, lng);
 
     if (distance > location.radius) {
       return {
@@ -769,19 +839,14 @@ export class CheckInLocationService {
     return {
       isValid: true,
       distance,
-      message: "Location validated successfully",
+      message: 'Location validated successfully',
     };
   }
 
   /**
    * Calculate distance between two coordinates using Haversine formula
    */
-  private calculateDistance(
-    lat1: number,
-    lng1: number,
-    lat2: number,
-    lng2: number,
-  ): number {
+  private calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
     const R = 6371e3; // Earth's radius in meters
     const φ1 = (lat1 * Math.PI) / 180;
     const φ2 = (lat2 * Math.PI) / 180;
@@ -802,10 +867,7 @@ export class CheckInLocationService {
   private generateQRCode(clinicId: string, locationName: string): string {
     const timestamp = Date.now();
     const random = Math.random().toString(36).substring(2, 15);
-    const nameHash = Buffer.from(locationName)
-      .toString("base64")
-      .substring(0, 8);
+    const nameHash = Buffer.from(locationName).toString('base64').substring(0, 8);
     return `CHK-${clinicId.substring(0, 8)}-${nameHash}-${timestamp}-${random}`;
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-floating-promises */

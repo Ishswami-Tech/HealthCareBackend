@@ -3,34 +3,14 @@
  *
  * Provides unified plugin system for all healthcare platform services.
  * Supports domain-specific plugins with enterprise-grade features.
+ *
+ * NOTE: All types are in @core/types. Import types from @core/types directly.
+ * This module exports error class implementations and generic registry/manager implementations.
  */
 
-// Core Interfaces
-export * from "./plugin.interface";
+// Error classes (implementations)
+export { PluginError, PluginTimeoutError, PluginValidationError } from './plugin.interface';
 
-// Implementations
-export * from "./plugin.registry";
-export * from "./plugin.manager";
-
-// Re-export commonly used types for convenience
-export type {
-  BasePlugin,
-  AppointmentPlugin,
-  AuthPlugin,
-  QueuePlugin,
-  PluginRegistry,
-  PluginManager,
-  PluginContext,
-  PluginHealth,
-  PluginConfig,
-  PluginError,
-  PluginTimeoutError,
-  PluginValidationError,
-  PluginEvent,
-  PluginMetrics,
-  PluginFactory,
-} from "./plugin.interface";
-
-export { EnterprisePluginRegistry } from "./plugin.registry";
-
-export { EnterprisePluginManager } from "./plugin.manager";
+// Generic implementations
+export { EnterprisePluginRegistry } from './plugin.registry';
+export { EnterprisePluginManager } from './plugin.manager';

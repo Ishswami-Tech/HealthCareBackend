@@ -1,44 +1,53 @@
-import { Injectable } from "@nestjs/common";
-import { DatabaseService } from "../../../libs/infrastructure/database";
-import { LoggingService } from "../../../libs/infrastructure/logging";
-import {
-  LogType,
-  LogLevel,
-} from "../../../libs/infrastructure/logging/types/logging.types";
-import {
+import { Injectable } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import type {
   ClinicLocationCreateInput,
   ClinicLocationUpdateInput,
   ClinicLocationResponseDto,
-} from "../types/clinic-location.types";
+} from '@core/types/clinic.types';
 
 @Injectable()
 export class ClinicLocationService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService,
+    private readonly loggingService: LoggingService
   ) {}
 
   async createClinicLocation(
     data: ClinicLocationCreateInput,
-    _userId: string,
+    _userId: string
   ): Promise<ClinicLocationResponseDto> {
     try {
-      const prismaClient = this.databaseService.getPrismaClient();
-
-      const clinicLocation = await prismaClient.clinicLocation.create({
-        data: {
-          ...data,
-          workingHours: data.workingHours || "9:00 AM - 5:00 PM",
-          isActive: data.isActive ?? true,
+      // Use executeHealthcareWrite for clinic location creation with full optimization layers
+      const clinicLocation = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.clinicLocation.create({
+            data: {
+              ...data,
+              workingHours: data.workingHours || '9:00 AM - 5:00 PM',
+              isActive: data.isActive ?? true,
+            },
+          });
         },
-      });
+        {
+          userId: _userId || 'system',
+          clinicId: data.clinicId || '',
+          resourceType: 'CLINIC_LOCATION',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'system',
+          details: { name: data.name, clinicId: data.clinicId },
+        }
+      );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic location created: ${clinicLocation.id}`,
-        "ClinicLocationService",
-        { locationId: clinicLocation.id },
+        'ClinicLocationService',
+        { locationId: clinicLocation.id }
       );
 
       return clinicLocation as ClinicLocationResponseDto;
@@ -47,8 +56,8 @@ export class ClinicLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create clinic location: ${(error as Error).message}`,
-        "ClinicLocationService",
-        { error: (error as Error).stack },
+        'ClinicLocationService',
+        { error: (error as Error).stack }
       );
       throw error;
     }
@@ -56,37 +65,58 @@ export class ClinicLocationService {
 
   async getLocations(
     clinicId: string,
-    includeDoctors = false,
+    includeDoctors = false
   ): Promise<ClinicLocationResponseDto[]> {
     try {
-      const prismaClient = this.databaseService.getPrismaClient();
+      // Use executeHealthcareRead for optimized query
+      const queryOptions: {
+        where: { clinicId: string; isActive: boolean };
+        include?: {
+          doctorClinic: {
+            include: {
+              doctor: {
+                include: {
+                  user: {
+                    select: {
+                      id: boolean;
+                      name: boolean;
+                      email: boolean;
+                    };
+                  };
+                };
+              };
+            };
+          };
+        };
+      } = {
+        where: {
+          clinicId,
+          isActive: true,
+        },
+      };
 
-      const include = includeDoctors
-        ? {
-            doctorClinic: {
-              include: {
-                doctor: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                      },
+      if (includeDoctors) {
+        queryOptions.include = {
+          doctorClinic: {
+            include: {
+              doctor: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
                     },
                   },
                 },
               },
             },
-          }
-        : undefined;
+          },
+        };
+      }
 
-      const locations = await prismaClient.clinicLocation.findMany({
-        where: {
-          clinicId,
-          isActive: true,
-        },
-        include,
+      const locations = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.clinicLocation.findMany(queryOptions);
       });
 
       return locations as ClinicLocationResponseDto[];
@@ -95,8 +125,8 @@ export class ClinicLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get locations: ${(error as Error).message}`,
-        "ClinicLocationService",
-        { error: (error as Error).stack },
+        'ClinicLocationService',
+        { error: (error as Error).stack }
       );
       throw error;
     }
@@ -104,34 +134,55 @@ export class ClinicLocationService {
 
   async getClinicLocationById(
     id: string,
-    includeDoctors = false,
+    includeDoctors = false
   ): Promise<ClinicLocationResponseDto | null> {
     try {
-      const prismaClient = this.databaseService.getPrismaClient();
+      // Use executeHealthcareRead for optimized query
+      const queryOptions: {
+        where: { id: string };
+        include?: {
+          doctorClinic: {
+            include: {
+              doctor: {
+                include: {
+                  user: {
+                    select: {
+                      id: boolean;
+                      name: boolean;
+                      email: boolean;
+                    };
+                  };
+                };
+              };
+            };
+          };
+        };
+      } = {
+        where: { id },
+      };
 
-      const include = includeDoctors
-        ? {
-            doctorClinic: {
-              include: {
-                doctor: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                      },
+      if (includeDoctors) {
+        queryOptions.include = {
+          doctorClinic: {
+            include: {
+              doctor: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
                     },
                   },
                 },
               },
             },
-          }
-        : undefined;
+          },
+        };
+      }
 
-      const location = await prismaClient.clinicLocation.findFirst({
-        where: { id },
-        include,
+      const location = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.clinicLocation.findFirst(queryOptions);
       });
 
       return location as ClinicLocationResponseDto | null;
@@ -140,8 +191,8 @@ export class ClinicLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic location: ${(error as Error).message}`,
-        "ClinicLocationService",
-        { error: (error as Error).stack },
+        'ClinicLocationService',
+        { error: (error as Error).stack }
       );
       throw error;
     }
@@ -150,25 +201,38 @@ export class ClinicLocationService {
   async updateLocation(
     id: string,
     data: ClinicLocationUpdateInput,
-    _userId: string,
+    _userId: string
   ): Promise<ClinicLocationResponseDto> {
     try {
-      const prismaClient = this.databaseService.getPrismaClient();
-
-      const location = await prismaClient.clinicLocation.update({
-        where: { id },
-        data: {
-          ...data,
-          updatedAt: new Date(),
+      // Use executeHealthcareWrite for update with full optimization layers
+      const location = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.clinicLocation.update({
+            where: { id },
+            data: {
+              ...data,
+              updatedAt: new Date(),
+            },
+          });
         },
-      });
+        {
+          userId: _userId || 'system',
+          clinicId:
+            ('clinicId' in data && typeof data.clinicId === 'string' ? data.clinicId : '') || '',
+          resourceType: 'CLINIC_LOCATION',
+          operation: 'UPDATE',
+          resourceId: id,
+          userRole: 'system',
+          details: { updateFields: Object.keys(data) },
+        }
+      );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic location updated: ${location.id}`,
-        "ClinicLocationService",
-        { locationId: location.id },
+        'ClinicLocationService',
+        { locationId: location.id }
       );
 
       return location as ClinicLocationResponseDto;
@@ -177,8 +241,8 @@ export class ClinicLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update clinic location: ${(error as Error).message}`,
-        "ClinicLocationService",
-        { error: (error as Error).stack },
+        'ClinicLocationService',
+        { error: (error as Error).stack }
       );
       throw error;
     }
@@ -186,30 +250,42 @@ export class ClinicLocationService {
 
   async deleteLocation(id: string, _userId: string): Promise<void> {
     try {
-      const prismaClient = this.databaseService.getPrismaClient();
-
-      await prismaClient.clinicLocation.update({
-        where: { id },
-        data: {
-          isActive: false,
-          updatedAt: new Date(),
+      // Use executeHealthcareWrite for soft delete with audit logging
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.clinicLocation.update({
+            where: { id },
+            data: {
+              isActive: false,
+              updatedAt: new Date(),
+            },
+          });
         },
-      });
+        {
+          userId: _userId || 'system',
+          clinicId: '',
+          resourceType: 'CLINIC_LOCATION',
+          operation: 'DELETE',
+          resourceId: id,
+          userRole: 'system',
+          details: { locationId: id, softDelete: true },
+        }
+      );
 
       this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Clinic location deactivated: ${id}`,
-        "ClinicLocationService",
-        { locationId: id },
+        'ClinicLocationService',
+        { locationId: id }
       );
     } catch (error) {
       this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete clinic location: ${(error as Error).message}`,
-        "ClinicLocationService",
-        { error: (error as Error).stack },
+        'ClinicLocationService',
+        { error: (error as Error).stack }
       );
       throw error;
     }
@@ -217,13 +293,14 @@ export class ClinicLocationService {
 
   async getLocationCount(clinicId: string): Promise<number> {
     try {
-      const prismaClient = this.databaseService.getPrismaClient();
-
-      const count = await prismaClient.clinicLocation.count({
-        where: {
-          clinicId,
-          isActive: true,
-        },
+      // Use executeHealthcareRead for count query
+      const count = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.clinicLocation.count({
+          where: {
+            clinicId,
+            isActive: true,
+          },
+        });
       });
 
       return count;
@@ -232,8 +309,8 @@ export class ClinicLocationService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location count: ${(error as Error).message}`,
-        "ClinicLocationService",
-        { error: (error as Error).stack },
+        'ClinicLocationService',
+        { error: (error as Error).stack }
       );
       throw error;
     }

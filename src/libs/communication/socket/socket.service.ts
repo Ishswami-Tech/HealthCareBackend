@@ -1,14 +1,19 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { Server } from "socket.io";
+import { Injectable } from '@nestjs/common';
+import { Server } from 'socket.io';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 /**
  * Socket event data interface
  * @interface SocketEventData
  */
-export interface SocketEventData {
-  /** Event data properties */
-  readonly [key: string]: unknown;
-}
+export type SocketEventPrimitive = string | number | boolean | null;
+export type SocketEventData = Record<
+  string,
+  SocketEventPrimitive | SocketEventPrimitive[] | Record<string, SocketEventPrimitive>
+>;
 
 /**
  * Socket service for managing WebSocket connections and broadcasting
@@ -17,7 +22,7 @@ export interface SocketEventData {
  */
 @Injectable()
 export class SocketService {
-  private readonly logger = new Logger(SocketService.name);
+  constructor(private readonly loggingService: LoggingService) {}
   private server!: Server;
   private isServerInitialized = false;
   private healthCheckInterval!: NodeJS.Timeout;
@@ -30,83 +35,131 @@ export class SocketService {
   setServer(server: Server): void {
     try {
       if (!server) {
-        throw new Error("Cannot initialize SocketService with null server");
+        throw new HealthcareError(
+          ErrorCode.SERVICE_UNAVAILABLE,
+          'Cannot initialize SocketService with null server',
+          undefined,
+          {},
+          'SocketService.setServer'
+        );
       }
 
       this.server = server;
       this.isServerInitialized = true;
 
       // Add error handlers
-      this.server.on("error", (error: Error) => {
-        this.logger.error(
-          `Socket.IO server error: ${error instanceof Error ? error.message : "Unknown error"}`,
-          error instanceof Error ? error.stack : undefined,
+      this.server.on('error', (error: Error) => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Socket.IO server error: ${error?.message ?? 'Unknown error'}`,
+          'SocketService',
+          { stack: error?.stack }
         );
         this.handleServerError();
       });
 
-      this.server.on("connection_error", (error: Error) => {
-        this.logger.error(
-          `Socket.IO connection error: ${error instanceof Error ? error.message : "Unknown error"}`,
-          error instanceof Error ? error.stack : undefined,
+      this.server.on('connection_error', (error: Error) => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Socket.IO connection error: ${error?.message ?? 'Unknown error'}`,
+          'SocketService',
+          { stack: error?.stack }
         );
         this.handleConnectionError();
       });
 
       // Start health check
       this.startHealthCheck();
-
-      this.logger.log("SocketService initialized successfully");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'SocketService initialized successfully',
+        'SocketService'
+      );
     } catch (error) {
-      this.logger.error(
-        `Failed to initialize SocketService: ${error instanceof Error ? error.message : "Unknown error"}`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to initialize SocketService: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SocketService',
+        { stack: (error as Error)?.stack }
       );
       this.isServerInitialized = false;
       throw error;
     }
   }
 
-  private startHealthCheck() {
+  private startHealthCheck(): void {
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
     }
 
     this.healthCheckInterval = setInterval(() => {
-      this.checkServerHealth().catch((error) => {
-        this.logger.error("Health check failed:", error);
+      this.checkServerHealth().catch(error => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'SocketService',
+          { stack: (error as Error)?.stack }
+        );
       });
     }, this.HEALTH_CHECK_INTERVAL);
   }
 
-  private async checkServerHealth() {
+  private async checkServerHealth(): Promise<boolean> {
     try {
       if (!this.server || !this.isServerInitialized) {
-        this.logger.warn("Server health check failed: Server not initialized");
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Server health check failed: Server not initialized',
+          'SocketService'
+        );
         return false;
       }
 
       // Check if server is responding
       const connectedClients = await this.server.allSockets();
-      this.logger.debug(
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
         `Server health check: ${connectedClients.size} clients connected`,
+        'SocketService'
       );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Server health check failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Server health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SocketService',
+        { stack: (error as Error)?.stack }
       );
       return false;
     }
   }
 
   private handleServerError() {
-    this.logger.error("Server error occurred, attempting recovery...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.ERROR,
+      'Server error occurred, attempting recovery...',
+      'SocketService'
+    );
     // Implement recovery logic here
     // For example, try to reinitialize the server or notify administrators
   }
 
   private handleConnectionError() {
-    this.logger.error("Connection error occurred, attempting recovery...");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.ERROR,
+      'Connection error occurred, attempting recovery...',
+      'SocketService'
+    );
     // Implement recovery logic here
     // For example, try to reconnect or notify administrators
   }
@@ -119,9 +172,15 @@ export class SocketService {
     return this.isServerInitialized;
   }
 
-  private ensureInitialized() {
+  private ensureInitialized(): void {
     if (!this.isServerInitialized || !this.server) {
-      throw new Error("SocketService is not initialized");
+      throw new HealthcareError(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'SocketService is not initialized',
+        undefined,
+        {},
+        'SocketService.ensureInitialized'
+      );
     }
   }
 
@@ -131,22 +190,36 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  sendToRoom(room: string, event: string, data: SocketEventData) {
+  sendToRoom(room: string, event: string, data: SocketEventData): void {
     try {
       this.ensureInitialized();
 
       if (!room || !event) {
-        throw new Error("Room and event must be provided");
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_REQUIRED_FIELD,
+          'Room and event must be provided',
+          undefined,
+          { room, event },
+          'SocketService.sendToRoom'
+        );
       }
 
       this.server.to(room).emit(event, data);
-      this.logger.debug(`Event ${event} sent to room ${room}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
+        `Event ${event} sent to room ${room}`,
+        'SocketService',
+        { room, event }
+      );
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Error sending event to room: ${errorMessage}`,
-        error instanceof Error ? error.stack : undefined,
+        'SocketService',
+        { stack: (error as Error)?.stack, room, event }
       );
       throw error; // Re-throw to let the caller handle it
     }
@@ -158,18 +231,26 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  sendToUser(userId: string, event: string, data: SocketEventData) {
+  sendToUser(userId: string, event: string, data: SocketEventData): void {
     try {
       if (!userId) {
-        throw new Error("User ID must be provided");
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_REQUIRED_FIELD,
+          'User ID must be provided',
+          undefined,
+          { userId },
+          'SocketService.sendToUser'
+        );
       }
       this.sendToRoom(`user:${userId}`, event, data);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Error sending event to user: ${errorMessage}`,
-        error instanceof Error ? error.stack : undefined,
+        'SocketService',
+        { stack: (error as Error)?.stack, userId, event }
       );
       throw error;
     }
@@ -186,19 +267,27 @@ export class SocketService {
     resourceType: string,
     resourceId: string,
     event: string,
-    data: SocketEventData,
-  ) {
+    data: SocketEventData
+  ): void {
     try {
       if (!resourceType || !resourceId) {
-        throw new Error("Resource type and ID must be provided");
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_REQUIRED_FIELD,
+          'Resource type and ID must be provided',
+          undefined,
+          { resourceType, resourceId },
+          'SocketService.sendToResource'
+        );
       }
       this.sendToRoom(`${resourceType}:${resourceId}`, event, data);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Error sending event to resource: ${errorMessage}`,
-        error instanceof Error ? error.stack : undefined,
+        'SocketService',
+        { stack: (error as Error)?.stack, resourceType, resourceId, event }
       );
       throw error;
     }
@@ -210,18 +299,26 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  sendToLocation(locationId: string, event: string, data: SocketEventData) {
+  sendToLocation(locationId: string, event: string, data: SocketEventData): void {
     try {
       if (!locationId) {
-        throw new Error("Location ID must be provided");
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_REQUIRED_FIELD,
+          'Location ID must be provided',
+          undefined,
+          { locationId },
+          'SocketService.sendToLocation'
+        );
       }
       this.sendToRoom(`location:${locationId}`, event, data);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Error sending event to location: ${errorMessage}`,
-        error instanceof Error ? error.stack : undefined,
+        'SocketService',
+        { stack: (error as Error)?.stack, locationId, event }
       );
       throw error;
     }
@@ -232,22 +329,36 @@ export class SocketService {
    * @param event - Event name
    * @param data - Event data
    */
-  broadcast(event: string, data: SocketEventData) {
+  broadcast(event: string, data: SocketEventData): void {
     try {
       this.ensureInitialized();
 
       if (!event) {
-        throw new Error("Event name must be provided");
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_REQUIRED_FIELD,
+          'Event name must be provided',
+          undefined,
+          { event },
+          'SocketService.broadcast'
+        );
       }
 
       this.server.emit(event, data);
-      this.logger.debug(`Event ${event} broadcasted to all clients`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
+        `Event ${event} broadcasted to all clients`,
+        'SocketService',
+        { event }
+      );
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Error broadcasting event: ${errorMessage}`,
-        error instanceof Error ? error.stack : undefined,
+        'SocketService',
+        { stack: (error as Error)?.stack, event }
       );
       throw error;
     }
@@ -273,8 +384,14 @@ export class SocketService {
       clearInterval(this.healthCheckInterval);
     }
     if (this.server) {
-      this.server.close().catch((error) => {
-        this.logger.error("Error closing server:", error);
+      this.server.close().catch(error => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Error closing server: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'SocketService',
+          { stack: (error as Error)?.stack }
+        );
       });
     }
   }

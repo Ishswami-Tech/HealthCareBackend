@@ -5,7 +5,11 @@ on:
   pull_request:
     branches: [main, develop]
   push:
-    branches: [develop]
+    branches: [develop, main]
+    paths-ignore:
+      - 'README.md'
+      - '**/*.md'
+      - '**/*.svg'
 
 permissions:
   contents: read
@@ -15,12 +19,18 @@ permissions:
 env:
   NODE_VERSION: '20'
   PNPM_VERSION: '9.15.4'
+  REGISTRY: ghcr.io
+  IMAGE_REPO: ${{ github.repository }}
+  IMAGE_NAME: healthcare-api
+  IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}
+  NAMESPACE: healthcare-backend
 
 jobs:
   # Code Quality Checks
   lint:
     name: Lint & Format Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +58,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -73,6 +84,7 @@ jobs:
     name: Build Application
     runs-on: ubuntu-latest
     needs: [lint]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -103,11 +115,31 @@ jobs:
           path: dist/
           retention-days: 1
 
+      - name: Setup kubectl (for kustomize validation)
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate Kustomize (base)
+        run: |
+          kubectl kustomize devops/kubernetes/base >/dev/null
+
+      - name: Validate Kustomize (production overlay)
+        run: |
+          kubectl kustomize devops/kubernetes/overlays/production >/dev/null
+
+      - name: Validate Kubernetes manifests with kubeconform
+        uses: yannh/kubeconform-action@v0.6.4
+        with:
+          kubernetes-version: v1.29.0
+          files: |
+            devops/kubernetes/base
+            devops/kubernetes/overlays/production
+
   # Unit Tests
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
     needs: [lint]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -140,6 +172,7 @@ jobs:
     name: Docker Build Test
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -155,6 +188,114 @@ jobs:
           tags: healthcare-api:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Kubernetes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [build]
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install deps and build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm prisma:generate
+          pnpm build
+
+      - name: Authenticate to GHCR (podman)
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build OCI image with Buildah (no Docker)
+        id: build-image
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ env.IMAGE }}
+          tags: latest,${{ github.sha }}
+          containerfiles: |
+            devops/docker/Dockerfile
+          context: .
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+          layers: false
+
+      - name: Push image to registry
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-image.outputs.image }}
+          tags: ${{ steps.build-image.outputs.tags }}
+          registry: ${{ env.REGISTRY }}
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          echo "${KUBE_CONFIG_DATA}" | base64 -d > $HOME/.kube/config
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+
+      - name: Ensure namespace exists
+        run: |
+          kubectl apply -f devops/kubernetes/base/namespace.yaml
+
+      - name: Create/Update imagePullSecret for GHCR
+        run: |
+          kubectl -n ${NAMESPACE} delete secret ghcr-pull-secret --ignore-not-found=true
+          kubectl -n ${NAMESPACE} create secret docker-registry ghcr-pull-secret \
+            --docker-server=${REGISTRY} \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --docker-email=ci@github.actions
+
+      - name: Patch ServiceAccounts to use imagePullSecret
+        run: |
+          kubectl -n ${NAMESPACE} patch serviceaccount default --type merge -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' || true
+          kubectl -n ${NAMESPACE} patch serviceaccount healthcare-api-sa --type merge -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' || true
+          kubectl -n ${NAMESPACE} patch serviceaccount healthcare-worker-sa --type merge -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' || true
+
+      - name: Apply Kustomize overlay (production)
+        run: |
+          kubectl apply -k devops/kubernetes/overlays/production/
+
+      - name: Set deployed images
+        run: |
+          kubectl -n ${NAMESPACE} set image deployment/healthcare-api api=${IMAGE}:${GITHUB_SHA}
+          kubectl -n ${NAMESPACE} set image deployment/healthcare-worker worker=${IMAGE}:${GITHUB_SHA} || true
+        env:
+          IMAGE: ${{ env.IMAGE }}
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deploy/healthcare-api -n ${NAMESPACE} --timeout=300s
+          kubectl rollout status deploy/healthcare-worker -n ${NAMESPACE} --timeout=300s || true
+
+      - name: Smoke check /health
+        run: |
+          kubectl run tmp-curl --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
+            -sS http://healthcare-api.${NAMESPACE}.svc.cluster.local:8088/health | head -200 || true
 
   # Integration Tests
   integration:

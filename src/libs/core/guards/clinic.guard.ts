@@ -1,122 +1,22 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-} from "@nestjs/common";
-import { Reflector } from "@nestjs/core";
-import { DatabaseService } from "../../infrastructure/database";
-import { LoggingService } from "../../infrastructure/logging/logging.service";
-import {
-  LogType,
-  LogLevel,
-} from "../../infrastructure/logging/types/logging.types";
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { DatabaseService } from '@infrastructure/database';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import {
   ClinicIsolationService,
   ClinicContext,
-} from "../../infrastructure/database/clinic-isolation.service";
-
-/**
- * Authenticated user interface for request context
- *
- * @interface AuthenticatedUser
- * @description Defines the structure of authenticated user information
- */
-export interface AuthenticatedUser {
-  readonly id?: string;
-  readonly sub?: string;
-  readonly role?: string;
-  readonly clinicId?: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Request headers interface for clinic-specific headers
- *
- * @interface ClinicRequestHeaders
- * @description Defines the structure of request headers including clinic-specific ones
- */
-export interface ClinicRequestHeaders {
-  readonly "x-clinic-id"?: string;
-  readonly "clinic-id"?: string;
-  readonly [key: string]: string | undefined;
-}
-
-/**
- * Query parameters interface for clinic requests
- *
- * @interface ClinicQueryParams
- * @description Defines the structure of query parameters for clinic requests
- */
-export interface ClinicQueryParams {
-  readonly clinicId?: string;
-  readonly clinic_id?: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Route parameters interface for clinic requests
- *
- * @interface ClinicRouteParams
- * @description Defines the structure of route parameters for clinic requests
- */
-export interface ClinicRouteParams {
-  readonly clinicId?: string;
-  readonly clinic_id?: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Request body interface for clinic requests
- *
- * @interface ClinicRequestBody
- * @description Defines the structure of request body for clinic requests
- */
-export interface ClinicRequestBody {
-  readonly clinicId?: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Clinic context interface for request context
- *
- * @interface ClinicRequestContext
- * @description Defines the structure of clinic context in requests
- */
-export interface ClinicRequestContext {
-  readonly clinicName?: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Clinic request interface with healthcare-specific properties
- *
- * @interface ClinicRequest
- * @description Enhanced request interface for clinic-specific operations
- */
-export interface ClinicRequest {
-  readonly url: string;
-  readonly method: string;
-  readonly user?: AuthenticatedUser;
-  readonly headers: ClinicRequestHeaders;
-  readonly query?: ClinicQueryParams;
-  readonly params?: ClinicRouteParams;
-  readonly body?: ClinicRequestBody;
-  clinicId?: string;
-  clinicContext?: ClinicRequestContext;
-}
-
-/**
- * Clinic validation result interface
- *
- * @interface ClinicValidationResult
- * @description Defines the structure of clinic validation results
- */
-export interface ClinicValidationResult {
-  readonly success: boolean;
-  readonly error?: string;
-  readonly clinicContext?: ClinicContext;
-}
+} from '@infrastructure/database/clinic-isolation.service';
+import type {
+  AuthenticatedUser,
+  ClinicRequestHeaders,
+  ClinicQueryParams,
+  ClinicRouteParams,
+  ClinicRequestBody,
+  ClinicRequestContext,
+  ClinicRequest,
+  ClinicValidationResult,
+} from '@core/types/guard.types';
 
 /**
  * Clinic Guard for Healthcare Applications
@@ -153,7 +53,7 @@ export class ClinicGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
-    private readonly clinicIsolationService: ClinicIsolationService,
+    private readonly clinicIsolationService: ClinicIsolationService
   ) {}
 
   /**
@@ -173,13 +73,13 @@ export class ClinicGuard implements CanActivate {
       LogType.AUTH,
       LogLevel.DEBUG,
       `ClinicGuard processing request`,
-      "ClinicGuard",
+      'ClinicGuard',
       {
         path: request.url,
         method: request.method,
         userId: user?.id,
         userRole: user?.role,
-      },
+      }
     );
 
     // Check if this route is accessing clinic-specific resources
@@ -191,8 +91,8 @@ export class ClinicGuard implements CanActivate {
         LogType.AUTH,
         LogLevel.DEBUG,
         `Not a clinic route, allowing access`,
-        "ClinicGuard",
-        { path: request.url },
+        'ClinicGuard',
+        { path: request.url }
       );
       return true;
     }
@@ -205,19 +105,19 @@ export class ClinicGuard implements CanActivate {
         LogType.AUTH,
         LogLevel.WARN,
         `Clinic ID required for clinic route`,
-        "ClinicGuard",
-        { path: request.url },
+        'ClinicGuard',
+        { path: request.url }
       );
       throw new ForbiddenException(
-        "Clinic ID is required. Please provide clinic ID in header, query, or JWT token.",
+        'Clinic ID is required. Please provide clinic ID in header, query, or JWT token.'
       );
     }
 
     // Validate clinic access using ClinicIsolationService
     const clinicResult: ClinicValidationResult =
       await this.clinicIsolationService.validateClinicAccess(
-        user?.sub || user?.id || "anonymous",
-        clinicId,
+        user?.sub || user?.id || 'anonymous',
+        clinicId
       );
 
     if (!clinicResult.success) {
@@ -225,16 +125,14 @@ export class ClinicGuard implements CanActivate {
         LogType.AUTH,
         LogLevel.WARN,
         `Invalid clinic access`,
-        "ClinicGuard",
+        'ClinicGuard',
         {
           path: request.url,
           clinicId,
           error: clinicResult.error,
-        },
+        }
       );
-      throw new ForbiddenException(
-        `Clinic access denied: ${clinicResult.error}`,
-      );
+      throw new ForbiddenException(`Clinic access denied: ${clinicResult.error}`);
     }
 
     // Set clinic context in request for downstream use
@@ -248,13 +146,13 @@ export class ClinicGuard implements CanActivate {
       LogType.AUTH,
       LogLevel.DEBUG,
       `Clinic access validated`,
-      "ClinicGuard",
+      'ClinicGuard',
       {
         userId: user?.sub || user?.id,
         userRole: user?.role,
         clinicId,
         clinicName: clinicResult.clinicContext?.clinicName,
-      },
+      }
     );
 
     return true;
@@ -269,7 +167,7 @@ export class ClinicGuard implements CanActivate {
    */
   private isClinicRoute(context: ExecutionContext): boolean {
     // Get the controller and handler metadata to determine if this is a clinic route
-    const isPublic = this.reflector.getAllAndOverride<boolean>("isPublic", [
+    const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
       context.getHandler(),
       context.getClass(),
     ]);
@@ -280,10 +178,10 @@ export class ClinicGuard implements CanActivate {
     }
 
     // Get controller metadata to check if it's a clinic route
-    const isClinicRoute = this.reflector.getAllAndOverride<boolean>(
-      "isClinicRoute",
-      [context.getHandler(), context.getClass()],
-    );
+    const isClinicRoute = this.reflector.getAllAndOverride<boolean>('isClinicRoute', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
     // If explicitly marked as a clinic route, return true
     if (isClinicRoute) {
@@ -305,7 +203,7 @@ export class ClinicGuard implements CanActivate {
       /\/prescriptions\//,
     ];
 
-    return clinicRoutePatterns.some((pattern) => pattern.test(path));
+    return clinicRoutePatterns.some(pattern => pattern.test(path));
   }
 
   /**
@@ -319,8 +217,7 @@ export class ClinicGuard implements CanActivate {
     // Try to get clinic ID from various sources
 
     // 1. From headers
-    const headerClinicId =
-      request.headers["x-clinic-id"] || request.headers["clinic-id"];
+    const headerClinicId = request.headers['x-clinic-id'] || request.headers['clinic-id'];
     if (headerClinicId) {
       return headerClinicId;
     }

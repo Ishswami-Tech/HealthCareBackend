@@ -1,67 +1,70 @@
-import { PrismaClient } from "@prisma/client";
-import { faker } from "@faker-js/faker";
+import { PrismaClient } from '@prisma/client';
+import { faker } from '@faker-js/faker';
+import * as bcrypt from 'bcrypt';
+// Import enums from centralized location
 import {
   PaymentStatus,
   PaymentMethod,
   MedicineType,
   QueueStatus,
-  NotificationType,
-  NotificationStatus,
-  HealthRecordType,
-  getPrismaClient,
-} from "./prisma.types";
-import * as bcrypt from "bcrypt";
-import {
-  Role,
-  Gender,
-  Prakriti,
-  Dosha,
   AppointmentStatus,
   AppointmentType,
-} from "./prisma.types";
+  Prakriti,
+  Dosha,
+} from '@core/types/enums.types';
+import type { Role } from '@core/types/rbac.types';
+import { Gender } from '@dtos/user.dto';
+
+// Role string literals (Role is a type, not an enum)
+const RoleValues = {
+  SUPER_ADMIN: 'SUPER_ADMIN' as const,
+  CLINIC_ADMIN: 'CLINIC_ADMIN' as const,
+  DOCTOR: 'DOCTOR' as const,
+  PATIENT: 'PATIENT' as const,
+  RECEPTIONIST: 'RECEPTIONIST' as const,
+  PHARMACIST: 'PHARMACIST' as const,
+  THERAPIST: 'THERAPIST' as const,
+  LAB_TECHNICIAN: 'LAB_TECHNICIAN' as const,
+  FINANCE_BILLING: 'FINANCE_BILLING' as const,
+  SUPPORT_STAFF: 'SUPPORT_STAFF' as const,
+  NURSE: 'NURSE' as const,
+  COUNSELOR: 'COUNSELOR' as const,
+} satisfies Record<string, Role>;
 
 const SEED_COUNT = 50;
 
 // Initialize Prisma client with error handling
-let prisma: PrismaClient;
-try {
-  prisma = getPrismaClient();
-  console.log("Prisma client initialized successfully");
-} catch (_error) {
-  console.error("Failed to initialize Prisma client:", _error);
-  process.exit(1);
-}
+const prisma = new PrismaClient();
 
 let userIdCounter = 1;
-const generateUserId = () => `UID${String(userIdCounter++).padStart(6, "0")}`;
+const generateUserId = () => `UID${String(userIdCounter++).padStart(6, '0')}`;
 
 let locationIdCounter = 1;
-const generateLocationId = () =>
-  `LOC${String(locationIdCounter++).padStart(4, "0")}`;
+const generateLocationId = () => `LOC${String(locationIdCounter++).padStart(4, '0')}`;
 
 async function main() {
   try {
     await waitForDatabase();
 
-    console.log("Cleaning database...");
+    console.log('Cleaning database...');
     await cleanDatabase();
 
-    console.log("Starting comprehensive database seeding...");
+    console.log('Starting comprehensive database seeding...');
 
     // ===== SUPER ADMIN CREATION =====
-    console.log("Creating SuperAdmin user...");
-    const hashedPassword = await bcrypt.hash("admin123", 10);
+    console.log('Creating SuperAdmin user...');
+    const hashedPassword = await bcrypt.hash('admin123', 10);
 
     const superAdminUser = await prisma.user.create({
       data: {
-        email: "admin@example.com",
+        email: 'admin@example.com',
         password: hashedPassword,
-        name: "Admin User",
+        name: 'Admin User',
         age: 30,
-        firstName: "Admin",
-        lastName: "User",
-        phone: "1234567890",
-        role: Role.SUPER_ADMIN,
+        firstName: 'Admin',
+        lastName: 'User',
+        phone: '1234567890',
+        role: RoleValues.SUPER_ADMIN,
         gender: Gender.MALE,
         isVerified: true,
         userid: generateUserId(),
@@ -75,25 +78,25 @@ async function main() {
     });
 
     // ===== CLINIC CREATION =====
-    console.log("Creating clinics...");
+    console.log('Creating clinics...');
 
     // Aadesh Ayurvedalay
     const clinic1 = await prisma.clinic.create({
       data: {
-        name: "Aadesh Ayurvedalay",
-        address: "Pune, Maharashtra",
-        phone: "+91-9876543210",
-        email: "contact@aadesh.com",
-        app_name: "aadesh_ayurvedalay",
+        name: 'Aadesh Ayurvedalay',
+        address: 'Pune, Maharashtra',
+        phone: '+91-9876543210',
+        email: 'contact@aadesh.com',
+        app_name: 'aadesh_ayurvedalay',
         db_connection_string:
-          process.env["DATABASE_URL"] ||
-          "postgresql://postgres:postgres@postgres:5432/userdb?schema=public",
-        databaseName: "userdb",
+          process.env['DATABASE_URL'] ||
+          'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+        databaseName: 'userdb',
         createdByUser: {
           connect: { id: superAdminUser.id },
         },
-        clinicId: "CL0001",
-        subdomain: "aadesh",
+        clinicId: 'CL0001',
+        subdomain: 'aadesh',
         isActive: true,
       },
     });
@@ -101,38 +104,38 @@ async function main() {
     // Shri Vishwamurthi Ayurvedalay
     const clinic2 = await prisma.clinic.create({
       data: {
-        name: "Shri Vishwamurthi Ayurvedalay",
-        address: "Mumbai, Maharashtra",
-        phone: "+91-8765432109",
-        email: "contact@vishwamurthi.com",
-        app_name: "vishwamurthi_ayurvedalay",
+        name: 'Shri Vishwamurthi Ayurvedalay',
+        address: 'Mumbai, Maharashtra',
+        phone: '+91-8765432109',
+        email: 'contact@vishwamurthi.com',
+        app_name: 'vishwamurthi_ayurvedalay',
         db_connection_string:
-          process.env["DATABASE_URL"] ||
-          "postgresql://postgres:postgres@postgres:5432/userdb?schema=public",
-        databaseName: "userdb",
+          process.env['DATABASE_URL'] ||
+          'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+        databaseName: 'userdb',
         createdByUser: {
           connect: { id: superAdminUser.id },
         },
-        clinicId: "CL0002",
-        subdomain: "vishwamurthi",
+        clinicId: 'CL0002',
+        subdomain: 'vishwamurthi',
         isActive: true,
       },
     });
 
     // Create clinic locations
-    console.log("Creating clinic locations...");
+    console.log('Creating clinic locations...');
     // Aadesh Ayurvedalay Locations
     const clinic1Locations = await Promise.all([
       prisma.clinicLocation.create({
         data: {
-          name: "Aadesh Main Branch",
-          address: "Koregaon Park, Pune",
-          city: "Pune",
-          state: "Maharashtra",
-          country: "India",
-          zipCode: "411001",
-          phone: "+91-9876543210",
-          email: "main@aadesh.com",
+          name: 'Aadesh Main Branch',
+          address: 'Koregaon Park, Pune',
+          city: 'Pune',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '411001',
+          phone: '+91-9876543210',
+          email: 'main@aadesh.com',
           clinicId: clinic1.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -140,14 +143,14 @@ async function main() {
       }),
       prisma.clinicLocation.create({
         data: {
-          name: "Aadesh North Branch",
-          address: "Baner Road, Pune",
-          city: "Pune",
-          state: "Maharashtra",
-          country: "India",
-          zipCode: "411045",
-          phone: "+91-9876543211",
-          email: "north@aadesh.com",
+          name: 'Aadesh North Branch',
+          address: 'Baner Road, Pune',
+          city: 'Pune',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '411045',
+          phone: '+91-9876543211',
+          email: 'north@aadesh.com',
           clinicId: clinic1.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -155,14 +158,14 @@ async function main() {
       }),
       prisma.clinicLocation.create({
         data: {
-          name: "Aadesh South Branch",
-          address: "Sinhagad Road, Pune",
-          city: "Pune",
-          state: "Maharashtra",
-          country: "India",
-          zipCode: "411041",
-          phone: "+91-9876543212",
-          email: "south@aadesh.com",
+          name: 'Aadesh South Branch',
+          address: 'Sinhagad Road, Pune',
+          city: 'Pune',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '411041',
+          phone: '+91-9876543212',
+          email: 'south@aadesh.com',
           clinicId: clinic1.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -174,14 +177,14 @@ async function main() {
     const clinic2Locations = await Promise.all([
       prisma.clinicLocation.create({
         data: {
-          name: "Vishwamurthi Main Branch",
-          address: "Juhu, Mumbai",
-          city: "Mumbai",
-          state: "Maharashtra",
-          country: "India",
-          zipCode: "400049",
-          phone: "+91-8765432109",
-          email: "main@vishwamurthi.com",
+          name: 'Vishwamurthi Main Branch',
+          address: 'Juhu, Mumbai',
+          city: 'Mumbai',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '400049',
+          phone: '+91-8765432109',
+          email: 'main@vishwamurthi.com',
           clinicId: clinic2.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -189,14 +192,14 @@ async function main() {
       }),
       prisma.clinicLocation.create({
         data: {
-          name: "Vishwamurthi Andheri Branch",
-          address: "Andheri East, Mumbai",
-          city: "Mumbai",
-          state: "Maharashtra",
-          country: "India",
-          zipCode: "400069",
-          phone: "+91-8765432108",
-          email: "andheri@vishwamurthi.com",
+          name: 'Vishwamurthi Andheri Branch',
+          address: 'Andheri East, Mumbai',
+          city: 'Mumbai',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '400069',
+          phone: '+91-8765432108',
+          email: 'andheri@vishwamurthi.com',
           clinicId: clinic2.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -204,14 +207,14 @@ async function main() {
       }),
       prisma.clinicLocation.create({
         data: {
-          name: "Vishwamurthi Powai Branch",
-          address: "Powai, Mumbai",
-          city: "Mumbai",
-          state: "Maharashtra",
-          country: "India",
-          zipCode: "400076",
-          phone: "+91-8765432107",
-          email: "powai@vishwamurthi.com",
+          name: 'Vishwamurthi Powai Branch',
+          address: 'Powai, Mumbai',
+          city: 'Mumbai',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '400076',
+          phone: '+91-8765432107',
+          email: 'powai@vishwamurthi.com',
           clinicId: clinic2.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -220,17 +223,17 @@ async function main() {
     ]);
 
     // Create a default clinic admin
-    console.log("Creating default clinic admin...");
+    console.log('Creating default clinic admin...');
     const clinicAdminUser = await prisma.user.create({
       data: {
-        email: "clinicadmin@example.com",
-        password: await bcrypt.hash("admin123", 10),
-        name: "Clinic Admin",
+        email: 'clinicadmin@example.com',
+        password: await bcrypt.hash('admin123', 10),
+        name: 'Clinic Admin',
         age: 35,
-        firstName: "Clinic",
-        lastName: "Admin",
-        phone: "9876543210",
-        role: Role.CLINIC_ADMIN,
+        firstName: 'Clinic',
+        lastName: 'Admin',
+        phone: '9876543210',
+        role: RoleValues.CLINIC_ADMIN,
         gender: Gender.MALE,
         isVerified: true,
         userid: generateUserId(),
@@ -250,14 +253,14 @@ async function main() {
     // ===== CLINIC ADMIN DEMO USER =====
     const demoClinicAdmin = await prisma.user.create({
       data: {
-        email: "clinicadmin1@example.com",
-        password: await bcrypt.hash("test1234", 10),
-        name: "Demo Clinic Admin",
+        email: 'clinicadmin1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Clinic Admin',
         age: 40,
-        firstName: "Demo",
-        lastName: "ClinicAdmin",
-        phone: "9000000001",
-        role: Role.CLINIC_ADMIN,
+        firstName: 'Demo',
+        lastName: 'ClinicAdmin',
+        phone: '9000000001',
+        role: RoleValues.CLINIC_ADMIN,
         gender: Gender.MALE,
         isVerified: true,
         userid: generateUserId(),
@@ -274,7 +277,7 @@ async function main() {
     });
 
     // Create Users with different roles
-    console.log("Creating users...");
+    console.log('Creating users...');
     const users = await Promise.all([
       // Clinic Admins
       ...Array(SEED_COUNT)
@@ -289,14 +292,14 @@ async function main() {
               firstName: faker.person.firstName(),
               lastName: faker.person.lastName(),
               phone: faker.phone.number(),
-              role: Role.CLINIC_ADMIN,
+              role: RoleValues.CLINIC_ADMIN,
               gender: faker.helpers.arrayElement(Object.values(Gender)),
               isVerified: true,
               userid: generateUserId(),
               clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
               primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
             },
-          }),
+          })
         ),
 
       // Doctors
@@ -312,14 +315,14 @@ async function main() {
               firstName: faker.person.firstName(),
               lastName: faker.person.lastName(),
               phone: faker.phone.number(),
-              role: Role.DOCTOR,
+              role: RoleValues.DOCTOR,
               gender: faker.helpers.arrayElement(Object.values(Gender)),
               isVerified: true,
               userid: generateUserId(),
               clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
               primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
             },
-          }),
+          })
         ),
 
       // Patients
@@ -335,14 +338,14 @@ async function main() {
               firstName: faker.person.firstName(),
               lastName: faker.person.lastName(),
               phone: faker.phone.number(),
-              role: Role.PATIENT,
+              role: RoleValues.PATIENT,
               gender: faker.helpers.arrayElement(Object.values(Gender)),
               isVerified: true,
               userid: generateUserId(),
               clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
               primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
             },
-          }),
+          })
         ),
 
       // Receptionists
@@ -358,20 +361,20 @@ async function main() {
               firstName: faker.person.firstName(),
               lastName: faker.person.lastName(),
               phone: faker.phone.number(),
-              role: Role.RECEPTIONIST,
+              role: RoleValues.RECEPTIONIST,
               gender: faker.helpers.arrayElement(Object.values(Gender)),
               isVerified: true,
               userid: generateUserId(),
               clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
               primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
             },
-          }),
+          })
         ),
     ]);
 
     // Create ClinicAdmins with clinic associations
-    console.log("Creating clinic admins...");
-    const clinicAdminUsers = users.filter((u) => u.role === Role.CLINIC_ADMIN);
+    console.log('Creating clinic admins...');
+    const clinicAdminUsers = users.filter(u => u.role === RoleValues.CLINIC_ADMIN);
     await Promise.all(
       clinicAdminUsers.map((user, index) => {
         const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
@@ -382,14 +385,14 @@ async function main() {
             isOwner: index < 2, // First admin for each clinic is owner
           },
         });
-      }),
+      })
     );
 
     // Create Doctors with clinic and location associations
-    console.log("Creating doctors...");
-    const doctorUsers = users.filter((u) => u.role === Role.DOCTOR);
+    console.log('Creating doctors...');
+    const doctorUsers = users.filter(u => u.role === RoleValues.DOCTOR);
     const doctors = await Promise.all(
-      doctorUsers.map((user) =>
+      doctorUsers.map(user =>
         prisma.doctor.create({
           data: {
             id: user.id,
@@ -405,22 +408,25 @@ async function main() {
               fractionDigits: 2,
             }),
           },
-        }),
-      ),
+        })
+      )
     );
 
     // Create DoctorClinic relationships with locations
-    console.log("Creating doctor-clinic relationships...");
+    console.log('Creating doctor-clinic relationships...');
 
     // Prepare doctor-clinic relationships data - one relationship per doctor per clinic
-    const doctorClinicData = doctors.flatMap((doctor) => [
+    const doctorClinicData = doctors.flatMap(doctor => [
       // Connect doctor to Aadesh clinic with a random location
       {
         doctorId: doctor.id,
         clinicId: clinic1.id,
         locationId:
-          clinic1Locations[Math.floor(Math.random() * clinic1Locations.length)]
-            .id,
+          clinic1Locations.length > 0
+            ? (clinic1Locations[Math.floor(Math.random() * clinic1Locations.length)]?.id ??
+              clinic1Locations[0]?.id ??
+              clinic1.id)
+            : clinic1.id, // Fallback to clinic ID if no locations
         startTime: faker.date.future(),
         endTime: faker.date.future(),
       },
@@ -429,8 +435,11 @@ async function main() {
         doctorId: doctor.id,
         clinicId: clinic2.id,
         locationId:
-          clinic2Locations[Math.floor(Math.random() * clinic2Locations.length)]
-            .id,
+          clinic2Locations.length > 0
+            ? (clinic2Locations[Math.floor(Math.random() * clinic2Locations.length)]?.id ??
+              clinic2Locations[0]?.id ??
+              clinic2.id)
+            : clinic2.id, // Fallback to clinic ID if no locations
         startTime: faker.date.future(),
         endTime: faker.date.future(),
       },
@@ -444,29 +453,29 @@ async function main() {
         });
       } catch (_error) {
         // Skip if relationship already exists
-        if ((_error as { code?: string }).code !== "P2002") {
+        if ((_error as { code?: string }).code !== 'P2002') {
           throw _error;
         }
       }
     }
 
     // Create Receptionists with clinic associations
-    console.log("Creating receptionists...");
-    const receptionistUsers = users.filter((u) => u.role === Role.RECEPTIONIST);
+    console.log('Creating receptionists...');
+    const receptionistUsers = users.filter(u => u.role === RoleValues.RECEPTIONIST);
 
     // First create receptionists without clinic association
     const receptionists = await Promise.all(
-      receptionistUsers.map((user) => {
+      receptionistUsers.map(user => {
         return prisma.receptionist.create({
           data: {
             userId: user.id,
           },
         });
-      }),
+      })
     );
 
     // Then create the many-to-many relationships
-    console.log("Creating receptionist-clinic relationships...");
+    console.log('Creating receptionist-clinic relationships...');
     await Promise.all(
       receptionists.map((receptionist, index) => {
         const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
@@ -476,14 +485,14 @@ async function main() {
             B: receptionist.id, // receptionist id
           },
         });
-      }),
+      })
     );
 
     // Create Patients with clinic associations
-    console.log("Creating patients...");
-    const patientUsers = users.filter((u) => u.role === Role.PATIENT);
+    console.log('Creating patients...');
+    const patientUsers = users.filter(u => u.role === RoleValues.PATIENT);
     const patients = await Promise.all(
-      patientUsers.map((user) =>
+      patientUsers.map(user =>
         prisma.patient.create({
           data: {
             prakriti: faker.helpers.arrayElement(Object.values(Prakriti)),
@@ -494,13 +503,13 @@ async function main() {
               },
             },
           },
-        }),
-      ),
+        })
+      )
     );
 
     // After creating patients, connect them to clinics
     await Promise.all(
-      patients.flatMap((patient) => [
+      patients.flatMap(patient => [
         prisma.user.update({
           where: { id: patient.userId },
           data: {
@@ -517,20 +526,20 @@ async function main() {
             },
           },
         }),
-      ]),
+      ])
     );
 
     // ===== DOCTOR DEMO USER =====
     const demoDoctor = await prisma.user.create({
       data: {
-        email: "doctor1@example.com",
-        password: await bcrypt.hash("test1234", 10),
-        name: "Demo Doctor",
+        email: 'doctor1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Doctor',
         age: 45,
-        firstName: "Demo",
-        lastName: "Doctor",
-        phone: "9000000002",
-        role: Role.DOCTOR,
+        firstName: 'Demo',
+        lastName: 'Doctor',
+        phone: '9000000002',
+        role: RoleValues.DOCTOR,
         gender: Gender.FEMALE,
         isVerified: true,
         userid: generateUserId(),
@@ -538,13 +547,13 @@ async function main() {
         primaryClinicId: clinic2.id,
       },
     });
-    const demoDoctorRecord = await prisma.doctor.create({
+    const _demoDoctorRecord = await prisma.doctor.create({
       data: {
         id: demoDoctor.id,
         userId: demoDoctor.id,
-        specialization: "General Medicine",
+        specialization: 'General Medicine',
         experience: 10,
-        qualification: "MBBS",
+        qualification: 'MBBS',
         rating: 4.5,
         isAvailable: true,
         consultationFee: 1000,
@@ -572,14 +581,14 @@ async function main() {
     // ===== PATIENT DEMO USER =====
     const demoPatient = await prisma.user.create({
       data: {
-        email: "patient1@example.com",
-        password: await bcrypt.hash("test1234", 10),
-        name: "Demo Patient",
+        email: 'patient1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Patient',
         age: 30,
-        firstName: "Demo",
-        lastName: "Patient",
-        phone: "9000000003",
-        role: Role.PATIENT,
+        firstName: 'Demo',
+        lastName: 'Patient',
+        phone: '9000000003',
+        role: RoleValues.PATIENT,
         gender: Gender.OTHER,
         isVerified: true,
         userid: generateUserId(),
@@ -587,7 +596,7 @@ async function main() {
         primaryClinicId: clinic1.id,
       },
     });
-    const demoPatientRecord = await prisma.patient.create({
+    const _demoPatientRecord = await prisma.patient.create({
       data: {
         prakriti: Prakriti.VATA,
         dosha: Dosha.PITTA,
@@ -598,14 +607,14 @@ async function main() {
     // ===== RECEPTIONIST DEMO USER =====
     const demoReceptionist = await prisma.user.create({
       data: {
-        email: "receptionist1@example.com",
-        password: await bcrypt.hash("test1234", 10),
-        name: "Demo Receptionist",
+        email: 'receptionist1@example.com',
+        password: await bcrypt.hash('test1234', 10),
+        name: 'Demo Receptionist',
         age: 28,
-        firstName: "Demo",
-        lastName: "Receptionist",
-        phone: "9000000004",
-        role: Role.RECEPTIONIST,
+        firstName: 'Demo',
+        lastName: 'Receptionist',
+        phone: '9000000004',
+        role: RoleValues.RECEPTIONIST,
         gender: Gender.FEMALE,
         isVerified: true,
         userid: generateUserId(),
@@ -613,20 +622,20 @@ async function main() {
         primaryClinicId: clinic2.id,
       },
     });
-    const demoReceptionistRecord = await prisma.receptionist.create({
+    const _demoReceptionistRecord = await prisma.receptionist.create({
       data: { userId: demoReceptionist.id },
     });
     await prisma.receptionistsAtClinic.create({
-      data: { A: clinic1.id, B: demoReceptionistRecord.id },
+      data: { A: clinic1.id, B: _demoReceptionistRecord.id },
     });
     await prisma.receptionistsAtClinic.create({
-      data: { A: clinic2.id, B: demoReceptionistRecord.id },
+      data: { A: clinic2.id, B: _demoReceptionistRecord.id },
     });
 
     // Create sample data only in development environment
-    if (process.env["NODE_ENV"] === "development") {
+    if (process.env['NODE_ENV'] === 'development') {
       // Create Medicines
-      console.log("Creating medicines...");
+      console.log('Creating medicines...');
       const medicines1 = await Promise.all(
         Array(SEED_COUNT)
           .fill(null)
@@ -636,13 +645,13 @@ async function main() {
                 name: faker.commerce.productName(),
                 ingredients: faker.commerce.productMaterial(),
                 properties: faker.commerce.productDescription(),
-                dosage: faker.number.int({ min: 1, max: 3 }) + " times daily",
+                dosage: faker.number.int({ min: 1, max: 3 }) + ' times daily',
                 manufacturer: faker.company.name(),
                 type: faker.helpers.arrayElement(Object.values(MedicineType)),
                 clinicId: clinic1.id,
               },
-            }),
-          ),
+            })
+          )
       );
 
       const medicines2 = await Promise.all(
@@ -654,19 +663,19 @@ async function main() {
                 name: faker.commerce.productName(),
                 ingredients: faker.commerce.productMaterial(),
                 properties: faker.commerce.productDescription(),
-                dosage: faker.number.int({ min: 1, max: 3 }) + " times daily",
+                dosage: faker.number.int({ min: 1, max: 3 }) + ' times daily',
                 manufacturer: faker.company.name(),
                 type: faker.helpers.arrayElement(Object.values(MedicineType)),
                 clinicId: clinic2.id,
               },
-            }),
-          ),
+            })
+          )
       );
 
-      const medicines = [...medicines1, ...medicines2];
+      const _medicines = [...medicines1, ...medicines2];
 
       // Create Therapies
-      console.log("Creating therapies...");
+      console.log('Creating therapies...');
       await Promise.all([
         ...Array(SEED_COUNT)
           .fill(null)
@@ -678,7 +687,7 @@ async function main() {
                 duration: faker.number.int({ min: 30, max: 120 }),
                 clinicId: clinic1.id,
               },
-            }),
+            })
           ),
         ...Array(SEED_COUNT)
           .fill(null)
@@ -690,31 +699,37 @@ async function main() {
                 duration: faker.number.int({ min: 30, max: 120 }),
                 clinicId: clinic2.id,
               },
-            }),
+            })
           ),
       ]);
 
       // Create sample appointments and related data
-      console.log("Creating sample appointments and related data...");
+      console.log('Creating sample appointments and related data...');
       const appointments = await Promise.all(
         Array.from({ length: 10 }).map(async (_, index) => {
           const appointmentDate = faker.date.future();
-          const timeString = appointmentDate.toLocaleTimeString("en-US", {
+          const timeString = appointmentDate.toLocaleTimeString('en-US', {
             hour12: false,
-            hour: "2-digit",
-            minute: "2-digit",
+            hour: '2-digit',
+            minute: '2-digit',
           });
 
           const doctor = doctors[Math.floor(Math.random() * doctors.length)];
           const patient = patients[Math.floor(Math.random() * patients.length)];
+
+          if (!doctor || !patient) {
+            throw new Error('Doctor or patient not found');
+          }
+
           const isFirstClinic = index % 2 === 0;
           const clinicId = isFirstClinic ? clinic1.id : clinic2.id;
-          const clinicLocations = isFirstClinic
-            ? clinic1Locations
-            : clinic2Locations;
+          const clinicLocations = isFirstClinic ? clinic1Locations : clinic2Locations;
           const locationId =
-            clinicLocations[Math.floor(Math.random() * clinicLocations.length)]
-              .id;
+            clinicLocations.length > 0
+              ? (clinicLocations[Math.floor(Math.random() * clinicLocations.length)]?.id ??
+                clinicLocations[0]?.id ??
+                clinicId)
+              : clinicId; // Fallback to clinic ID if no locations
 
           return prisma.appointment.create({
             data: {
@@ -731,13 +746,13 @@ async function main() {
               userId: patient.userId,
             },
           });
-        }),
+        })
       );
 
       // Create sample payments, queues, prescriptions, etc.
       await Promise.all([
         // Payments
-        ...appointments.map((appointment) =>
+        ...appointments.map(appointment =>
           prisma.payment.create({
             data: {
               amount: faker.number.float({ min: 500, max: 5000 }),
@@ -747,7 +762,7 @@ async function main() {
               clinicId: appointment.clinicId,
               appointmentId: appointment.id,
             },
-          }),
+          })
         ),
         // Queues
         ...appointments.map((appointment, index) =>
@@ -759,25 +774,25 @@ async function main() {
               clinicId: appointment.clinicId,
               appointmentId: appointment.id,
             },
-          }),
+          })
         ),
       ]);
     }
 
-    console.log("Seeding complete!");
-    console.log("Default credentials:");
-    console.log("SuperAdmin: admin@example.com / admin123");
-    console.log("Clinic Admin: clinicadmin@example.com / admin123");
-    console.log("Created clinics:");
-    console.log("1. Aadesh Ayurvedalay");
-    console.log("2. Shri Vishwamurthi Ayurvedalay");
-    console.log("Demo login credentials:");
-    console.log("Clinic Admin: clinicadmin1@example.com / test1234");
-    console.log("Doctor: doctor1@example.com / test1234");
-    console.log("Patient: patient1@example.com / test1234");
-    console.log("Receptionist: receptionist1@example.com / test1234");
+    console.log('Seeding complete!');
+    console.log('Default credentials:');
+    console.log('SuperAdmin: admin@example.com / admin123');
+    console.log('Clinic Admin: clinicadmin@example.com / admin123');
+    console.log('Created clinics:');
+    console.log('1. Aadesh Ayurvedalay');
+    console.log('2. Shri Vishwamurthi Ayurvedalay');
+    console.log('Demo login credentials:');
+    console.log('Clinic Admin: clinicadmin1@example.com / test1234');
+    console.log('Doctor: doctor1@example.com / test1234');
+    console.log('Patient: patient1@example.com / test1234');
+    console.log('Receptionist: receptionist1@example.com / test1234');
   } catch (_error) {
-    console.error("Error during seeding:", _error);
+    console.error('Error during seeding:', _error);
     throw _error;
   } finally {
     await prisma.$disconnect();
@@ -790,17 +805,15 @@ async function waitForDatabase() {
   while (retries > 0) {
     try {
       await prisma.$connect();
-      console.log("Database connection established.");
+      console.log('Database connection established.');
       return;
     } catch (_error) {
-      console.log(
-        `Database not ready yet, retrying... (${retries} attempts left)`,
-      );
+      console.log(`Database not ready yet, retrying... (${retries} attempts left)`);
       retries -= 1;
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
-  throw new Error("Failed to connect to database after multiple attempts");
+  throw new Error('Failed to connect to database after multiple attempts');
 }
 
 // Function to clean up database
@@ -808,49 +821,56 @@ async function cleanDatabase() {
   try {
     // Delete records in reverse order of dependencies
     const tables = [
-      "auditLog",
-      "notification",
-      "prescriptionItem",
-      "prescription",
-      "review",
-      "healthRecord",
-      "queue",
-      "payment",
-      "appointment",
-      "product",
-      "medicine",
-      "therapy",
-      "doctorClinic",
-      "doctor",
-      "receptionist",
-      "patient",
-      "clinicAdmin",
-      "clinicLocation",
-      "clinic",
-      "superAdmin",
-      "user",
+      'auditLog',
+      'notification',
+      'prescriptionItem',
+      'prescription',
+      'review',
+      'healthRecord',
+      'queue',
+      'payment',
+      'appointment',
+      'product',
+      'medicine',
+      'therapy',
+      'doctorClinic',
+      'doctor',
+      'receptionist',
+      'patient',
+      'clinicAdmin',
+      'clinicLocation',
+      'clinic',
+      'superAdmin',
+      'user',
     ];
 
     for (const table of tables) {
       try {
-        await prisma[table].deleteMany({});
-        console.log(`Cleaned ${table} table`);
+        // Type-safe access to Prisma delegates
+        type PrismaDelegate = {
+          deleteMany: (args?: Record<string, never>) => Promise<{ count: number }>;
+        };
+        const delegate = (prisma as unknown as Record<string, PrismaDelegate>)[table];
+        if (delegate) {
+          await delegate.deleteMany({});
+          console.log(`Cleaned ${table} table`);
+        }
       } catch (_error) {
         // Skip if table doesn't exist
         console.log(`Skipping ${table} table (may not exist yet)`);
       }
     }
   } catch (_error) {
-    console.error("Error cleaning database:", _error);
+    console.error('Error cleaning database:', _error);
     throw _error;
   }
 }
 
 main()
-  .catch((e) => {
+  .catch(e => {
     console.error(e);
     process.exit(1);
   })
-  .finally(async () => {
-    await prisma.$disconnect();
+  .finally(() => {
+    void prisma.$disconnect();
   });

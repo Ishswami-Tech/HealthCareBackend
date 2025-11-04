@@ -1,18 +1,15 @@
 import {
   Injectable,
-  Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
-} from "@nestjs/common";
-import { DatabaseService } from "../../libs/infrastructure/database";
-import { CacheService } from "../../libs/infrastructure/cache";
-import { LoggingService } from "../../libs/infrastructure/logging/logging.service";
-import { EventService } from "../../libs/infrastructure/events/event.service";
-import {
-  LogLevel,
-  LogType,
-} from "../../libs/infrastructure/logging/types/logging.types";
+} from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { EventService } from '@infrastructure/events';
+import { LogLevel, LogType } from '@core/types';
+import { SubscriptionStatus, InvoiceStatus, PaymentStatus } from '@core/types/enums.types';
 import {
   CreateBillingPlanDto,
   UpdateBillingPlanDto,
@@ -22,82 +19,27 @@ import {
   UpdatePaymentDto,
   CreateInvoiceDto,
   UpdateInvoiceDto,
-  SubscriptionStatus,
-  InvoiceStatus,
-  PaymentStatus,
-} from "./dto/billing.dto";
-import { InvoicePDFService } from "./invoice-pdf.service";
-import { WhatsAppService } from "../../libs/communication/messaging/whatsapp/whatsapp.service";
+} from './dto/billing.dto';
+import { InvoicePDFService } from './invoice-pdf.service';
+import { WhatsAppService } from '@communication/messaging/whatsapp/whatsapp.service';
 
-// Type-safe interfaces for database operations
-interface AppointmentWhereInput {
-  subscriptionId?: string;
-  status?: string;
-}
-
-interface SubscriptionUpdateInput {
-  status?: string;
-  endDate?: Date;
-  cancelAtPeriodEnd?: boolean;
-  metadata?: Record<string, string | number | boolean>;
-}
-
-interface InvoiceUpdateInput {
-  status?: string;
-  amount?: number;
-  tax?: number;
-  discount?: number;
-  totalAmount?: number;
-  dueDate?: Date;
-  description?: string;
-  lineItems?: Record<string, string | number | boolean>;
-  metadata?: Record<string, string | number | boolean>;
-  sentViaWhatsApp?: boolean;
-  whatsappSentAt?: Date;
-}
-
-interface InvoicePDFData {
-  invoiceNumber: string;
-  invoiceDate: Date;
-  dueDate: Date;
-  status: string;
-  clinicName: string;
-  clinicAddress?: string;
-  clinicPhone?: string;
-  clinicEmail?: string;
-  userName: string;
-  userEmail?: string;
-  userPhone?: string;
-  subscriptionPlan?: string;
-  subscriptionPeriod?: string;
-  lineItems: Array<{
-    description: string;
-    quantity?: number;
-    unitPrice?: number;
-    amount: number;
-  }>;
-  subtotal: number;
-  tax: number;
-  discount: number;
-  total: number;
-  paidAt?: Date;
-  paymentMethod?: string;
-  transactionId?: string;
-  notes: string;
-  termsAndConditions: string;
-}
+// Import centralized types
+import type {
+  AppointmentWhereInput,
+  SubscriptionUpdateInput,
+  InvoiceUpdateInput,
+} from '@core/types/input.types';
+import type { InvoicePDFData } from '@core/types/billing.types';
 
 @Injectable()
 export class BillingService {
-  private readonly logger = new Logger(BillingService.name);
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
     private readonly invoicePDFService: InvoicePDFService,
-    private readonly whatsAppService: WhatsAppService,
+    private readonly whatsAppService: WhatsAppService
   ) {}
 
   // ============ Billing Plans ============
@@ -107,7 +49,7 @@ export class BillingService {
       const plan = await this.databaseService.createBillingPlanSafe({
         name: data.name,
         amount: data.amount,
-        currency: data.currency || "INR",
+        currency: data.currency || 'INR',
         interval: data.interval,
         intervalCount: data.intervalCount || 1,
         ...(data.description && { description: data.description }),
@@ -120,32 +62,32 @@ export class BillingService {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Billing plan created",
-        "BillingService",
-        { planId: plan.id, name: plan.name },
+        'Billing plan created',
+        'BillingService',
+        { planId: plan.id, name: plan.name }
       );
 
-      await this.eventService.emit("billing.plan.created", { planId: plan.id });
-      await this.cacheService.invalidateCacheByTag("billing_plans");
+      await this.eventService.emit('billing.plan.created', { planId: plan.id });
+      await this.cacheService.invalidateCacheByTag('billing_plans');
 
       return plan;
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to create billing plan",
-        "BillingService",
+        'Failed to create billing plan',
+        'BillingService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           data,
-        },
+        }
       );
       throw error;
     }
   }
 
   async getBillingPlans(clinicId?: string) {
-    const cacheKey = `billing_plans:${clinicId || "all"}`;
+    const cacheKey = `billing_plans:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -157,9 +99,9 @@ export class BillingService {
       },
       {
         ttl: 1800,
-        tags: ["billing_plans"],
-        priority: "normal",
-      },
+        tags: ['billing_plans'],
+        priority: 'normal',
+      }
     );
   }
 
@@ -179,28 +121,27 @@ export class BillingService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Billing plan updated",
-      "BillingService",
-      { planId: id },
+      'Billing plan updated',
+      'BillingService',
+      { planId: id }
     );
 
-    await this.eventService.emit("billing.plan.updated", { planId: id });
-    await this.cacheService.invalidateCacheByTag("billing_plans");
+    await this.eventService.emit('billing.plan.updated', { planId: id });
+    await this.cacheService.invalidateCacheByTag('billing_plans');
 
     return plan;
   }
 
   async deleteBillingPlan(id: string) {
     // Check if plan has active subscriptions
-    const activeSubscriptions =
-      await this.databaseService.findSubscriptionsSafe({
-        planId: id,
-        status: SubscriptionStatus.ACTIVE,
-      });
+    const activeSubscriptions = await this.databaseService.findSubscriptionsSafe({
+      planId: id,
+      status: SubscriptionStatus.ACTIVE,
+    });
 
     if (activeSubscriptions.length > 0) {
       throw new ConflictException(
-        `Cannot delete plan with ${activeSubscriptions.length} active subscriptions`,
+        `Cannot delete plan with ${activeSubscriptions.length} active subscriptions`
       );
     }
 
@@ -209,13 +150,13 @@ export class BillingService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Billing plan deleted",
-      "BillingService",
-      { planId: id },
+      'Billing plan deleted',
+      'BillingService',
+      { planId: id }
     );
 
-    await this.eventService.emit("billing.plan.deleted", { planId: id });
-    await this.cacheService.invalidateCacheByTag("billing_plans");
+    await this.eventService.emit('billing.plan.deleted', { planId: id });
+    await this.cacheService.invalidateCacheByTag('billing_plans');
   }
 
   // ============ Subscriptions ============
@@ -229,7 +170,7 @@ export class BillingService {
     const currentPeriodEnd = this.calculatePeriodEnd(
       currentPeriodStart,
       plan.interval,
-      plan.intervalCount,
+      plan.intervalCount
     );
 
     // Handle trial period
@@ -270,31 +211,29 @@ export class BillingService {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Subscription created",
-        "BillingService",
-        { subscriptionId: subscription.id, userId: data.userId },
+        'Subscription created',
+        'BillingService',
+        { subscriptionId: subscription.id, userId: data.userId }
       );
 
-      await this.eventService.emit("billing.subscription.created", {
+      await this.eventService.emit('billing.subscription.created', {
         subscriptionId: subscription.id,
         userId: data.userId,
       });
 
-      await this.cacheService.invalidateCacheByTag(
-        `user_subscriptions:${data.userId}`,
-      );
+      await this.cacheService.invalidateCacheByTag(`user_subscriptions:${data.userId}`);
 
       return subscription;
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to create subscription",
-        "BillingService",
+        'Failed to create subscription',
+        'BillingService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           data,
-        },
+        }
       );
       throw error;
     }
@@ -313,14 +252,13 @@ export class BillingService {
       {
         ttl: 900,
         tags: [`user_subscriptions:${userId}`],
-        priority: "high",
-      },
+        priority: 'high',
+      }
     );
   }
 
   async getSubscription(id: string) {
-    const subscription =
-      await this.databaseService.findSubscriptionByIdSafe(id);
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(id);
 
     if (!subscription) {
       throw new NotFoundException(`Subscription with ID ${id} not found`);
@@ -341,25 +279,20 @@ export class BillingService {
       }),
     };
 
-    const subscription = await this.databaseService.updateSubscriptionSafe(
-      id,
-      updateData,
-    );
+    const subscription = await this.databaseService.updateSubscriptionSafe(id, updateData);
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Subscription updated",
-      "BillingService",
-      { subscriptionId: id },
+      'Subscription updated',
+      'BillingService',
+      { subscriptionId: id }
     );
 
-    await this.eventService.emit("billing.subscription.updated", {
+    await this.eventService.emit('billing.subscription.updated', {
       subscriptionId: id,
     });
-    await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${subscription.userId}`,
-    );
+    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
 
     return subscription;
   }
@@ -383,27 +316,22 @@ export class BillingService {
       updateData.cancelAtPeriodEnd = true;
     }
 
-    const updated = await this.databaseService.updateSubscriptionSafe(
-      id,
-      updateData,
-    );
+    const updated = await this.databaseService.updateSubscriptionSafe(id, updateData);
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Subscription cancelled",
-      "BillingService",
-      { subscriptionId: id, immediate },
+      'Subscription cancelled',
+      'BillingService',
+      { subscriptionId: id, immediate }
     );
 
-    await this.eventService.emit("billing.subscription.cancelled", {
+    await this.eventService.emit('billing.subscription.cancelled', {
       subscriptionId: id,
       immediate,
     });
 
-    await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${subscription.userId}`,
-    );
+    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
 
     return updated;
   }
@@ -411,15 +339,15 @@ export class BillingService {
   async renewSubscription(id: string) {
     const subscription = await this.getSubscription(id);
 
-    if (String(subscription.status) === "ACTIVE") {
-      throw new BadRequestException("Subscription is already active");
+    if (String(subscription.status) === 'ACTIVE') {
+      throw new BadRequestException('Subscription is already active');
     }
 
     const currentPeriodStart = new Date();
     const currentPeriodEnd = this.calculatePeriodEnd(
       currentPeriodStart,
-      subscription.plan?.interval || "MONTHLY",
-      subscription.plan?.intervalCount || 1,
+      subscription.plan?.interval || 'MONTHLY',
+      subscription.plan?.intervalCount || 1
     );
 
     const updated = await this.databaseService.updateSubscriptionSafe(id, {
@@ -432,17 +360,15 @@ export class BillingService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Subscription renewed",
-      "BillingService",
-      { subscriptionId: id },
+      'Subscription renewed',
+      'BillingService',
+      { subscriptionId: id }
     );
 
-    await this.eventService.emit("billing.subscription.renewed", {
+    await this.eventService.emit('billing.subscription.renewed', {
       subscriptionId: id,
     });
-    await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${subscription.userId}`,
-    );
+    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
 
     return updated;
   }
@@ -473,29 +399,27 @@ export class BillingService {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Invoice created",
-        "BillingService",
-        { invoiceId: invoice.id, invoiceNumber },
+        'Invoice created',
+        'BillingService',
+        { invoiceId: invoice.id, invoiceNumber }
       );
 
-      await this.eventService.emit("billing.invoice.created", {
+      await this.eventService.emit('billing.invoice.created', {
         invoiceId: invoice.id,
       });
-      await this.cacheService.invalidateCacheByTag(
-        `user_invoices:${data.userId}`,
-      );
+      await this.cacheService.invalidateCacheByTag(`user_invoices:${data.userId}`);
 
       return invoice;
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to create invoice",
-        "BillingService",
+        'Failed to create invoice',
+        'BillingService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           data,
-        },
+        }
       );
       throw error;
     }
@@ -514,8 +438,8 @@ export class BillingService {
       {
         ttl: 900,
         tags: [`user_invoices:${userId}`],
-        priority: "normal",
-      },
+        priority: 'normal',
+      }
     );
   }
 
@@ -532,11 +456,7 @@ export class BillingService {
   async updateInvoice(id: string, data: UpdateInvoiceDto) {
     const updateData: UpdateInvoiceDto & { totalAmount?: number } = { ...data };
 
-    if (
-      data.amount !== undefined ||
-      data.tax !== undefined ||
-      data.discount !== undefined
-    ) {
+    if (data.amount !== undefined || data.tax !== undefined || data.discount !== undefined) {
       const invoice = await this.databaseService.findInvoiceByIdSafe(id);
       if (!invoice) {
         throw new NotFoundException(`Invoice with ID ${id} not found`);
@@ -548,28 +468,42 @@ export class BillingService {
       updateData.totalAmount = amount + tax - discount;
     }
 
-    // Convert string dates to Date objects
-    if (updateData.dueDate && typeof updateData.dueDate === "string") {
-      (updateData as any).dueDate = new Date(updateData.dueDate);
-    }
+    // Convert string dates to Date objects for InvoiceUpdateInput
+    const invoiceUpdateData: InvoiceUpdateInput = {
+      ...(updateData.status && { status: updateData.status }),
+      ...(updateData.amount !== undefined && { amount: updateData.amount }),
+      ...(updateData.tax !== undefined && { tax: updateData.tax }),
+      ...(updateData.discount !== undefined && { discount: updateData.discount }),
+      ...(updateData.description && { description: updateData.description }),
+      ...(updateData.lineItems && { lineItems: updateData.lineItems }),
+      ...(updateData.metadata && { metadata: updateData.metadata }),
+      ...(updateData.totalAmount !== undefined && { totalAmount: updateData.totalAmount }),
+      ...(updateData.dueDate
+        ? {
+            dueDate:
+              typeof updateData.dueDate === 'string'
+                ? new Date(updateData.dueDate)
+                : updateData.dueDate &&
+                    typeof updateData.dueDate === 'object' &&
+                    'getTime' in updateData.dueDate
+                  ? (updateData.dueDate as Date)
+                  : new Date(String(updateData.dueDate)),
+          }
+        : {}),
+    };
 
-    const invoice = await this.databaseService.updateInvoiceSafe(id, {
-      ...updateData,
-      ...(updateData.dueDate && { dueDate: new Date(updateData.dueDate) }),
-    } as InvoiceUpdateInput);
+    const invoice = await this.databaseService.updateInvoiceSafe(id, invoiceUpdateData);
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Invoice updated",
-      "BillingService",
-      { invoiceId: id },
+      'Invoice updated',
+      'BillingService',
+      { invoiceId: id }
     );
 
-    await this.eventService.emit("billing.invoice.updated", { invoiceId: id });
-    await this.cacheService.invalidateCacheByTag(
-      `user_invoices:${invoice.userId}`,
-    );
+    await this.eventService.emit('billing.invoice.updated', { invoiceId: id });
+    await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
 
     return invoice;
   }
@@ -583,15 +517,13 @@ export class BillingService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Invoice marked as paid",
-      "BillingService",
-      { invoiceId: id },
+      'Invoice marked as paid',
+      'BillingService',
+      { invoiceId: id }
     );
 
-    await this.eventService.emit("billing.invoice.paid", { invoiceId: id });
-    await this.cacheService.invalidateCacheByTag(
-      `user_invoices:${invoice.userId}`,
-    );
+    await this.eventService.emit('billing.invoice.paid', { invoiceId: id });
+    await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
 
     return invoice;
   }
@@ -617,19 +549,17 @@ export class BillingService {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Payment created",
-        "BillingService",
-        { paymentId: payment.id, amount: payment.amount },
+        'Payment created',
+        'BillingService',
+        { paymentId: payment.id, amount: payment.amount }
       );
 
-      await this.eventService.emit("billing.payment.created", {
+      await this.eventService.emit('billing.payment.created', {
         paymentId: payment.id,
       });
 
       if (data.userId) {
-        await this.cacheService.invalidateCacheByTag(
-          `user_payments:${data.userId}`,
-        );
+        await this.cacheService.invalidateCacheByTag(`user_payments:${data.userId}`);
       }
 
       return payment;
@@ -637,12 +567,12 @@ export class BillingService {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to create payment",
-        "BillingService",
+        'Failed to create payment',
+        'BillingService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           data,
-        },
+        }
       );
       throw error;
     }
@@ -657,24 +587,21 @@ export class BillingService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Payment updated",
-      "BillingService",
-      { paymentId: id },
+      'Payment updated',
+      'BillingService',
+      { paymentId: id }
     );
 
-    await this.eventService.emit("billing.payment.updated", { paymentId: id });
+    await this.eventService.emit('billing.payment.updated', { paymentId: id });
 
-    const paymentWithUserId = payment as { userId?: string };
-    if (paymentWithUserId.userId) {
-      await this.cacheService.invalidateCacheByTag(
-        `user_payments:${paymentWithUserId.userId}`,
-      );
+    // Invalidate cache if payment has userId
+    if ('userId' in payment && payment.userId) {
+      await this.cacheService.invalidateCacheByTag(`user_payments:${payment.userId}`);
     }
 
     // Auto-update invoice if payment is linked to one
-    const paymentWithInvoiceId = payment as { invoiceId?: string };
-    if (paymentWithInvoiceId.invoiceId && String(data.status) === "COMPLETED") {
-      await this.markInvoiceAsPaid(paymentWithInvoiceId.invoiceId);
+    if ('invoiceId' in payment && payment.invoiceId && String(data.status) === 'COMPLETED') {
+      await this.markInvoiceAsPaid(payment.invoiceId);
     }
 
     return payment;
@@ -693,8 +620,8 @@ export class BillingService {
       {
         ttl: 900,
         tags: [`user_payments:${userId}`],
-        priority: "normal",
-      },
+        priority: 'normal',
+      }
     );
   }
 
@@ -710,27 +637,23 @@ export class BillingService {
 
   // ============ Helper Methods ============
 
-  private calculatePeriodEnd(
-    start: Date,
-    interval: string,
-    intervalCount: number,
-  ): Date {
+  private calculatePeriodEnd(start: Date, interval: string, intervalCount: number): Date {
     const end = new Date(start);
 
     switch (interval) {
-      case "DAILY":
+      case 'DAILY':
         end.setDate(end.getDate() + intervalCount);
         break;
-      case "WEEKLY":
+      case 'WEEKLY':
         end.setDate(end.getDate() + intervalCount * 7);
         break;
-      case "MONTHLY":
+      case 'MONTHLY':
         end.setMonth(end.getMonth() + intervalCount);
         break;
-      case "QUARTERLY":
+      case 'QUARTERLY':
         end.setMonth(end.getMonth() + intervalCount * 3);
         break;
-      case "YEARLY":
+      case 'YEARLY':
         end.setFullYear(end.getFullYear() + intervalCount);
         break;
     }
@@ -739,37 +662,33 @@ export class BillingService {
   }
 
   private async generateInvoiceNumber(): Promise<string> {
-    const COUNTER_KEY = "invoice:counter";
+    const COUNTER_KEY = 'invoice:counter';
     const currentId = await this.cacheService.get(COUNTER_KEY);
     const nextId = currentId ? parseInt(currentId as string) + 1 : 1;
     await this.cacheService.set(COUNTER_KEY, nextId.toString());
 
     const year = new Date().getFullYear();
-    return `INV-${year}-${nextId.toString().padStart(6, "0")}`;
+    return `INV-${year}-${nextId.toString().padStart(6, '0')}`;
   }
 
   // ============ Subscription Appointment Management ============
 
   async canBookAppointment(
     subscriptionId: string,
-    appointmentType?: string,
+    appointmentType?: string
   ): Promise<{
     allowed: boolean;
     requiresPayment?: boolean;
     paymentAmount?: number;
     reason?: string;
   }> {
-    const subscription =
-      await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
     if (!subscription) {
-      return { allowed: false, reason: "Subscription not found" };
+      return { allowed: false, reason: 'Subscription not found' };
     }
 
-    if (
-      String(subscription.status) !== "ACTIVE" &&
-      String(subscription.status) !== "TRIALING"
-    ) {
+    if (String(subscription.status) !== 'ACTIVE' && String(subscription.status) !== 'TRIALING') {
       return {
         allowed: false,
         reason: `Subscription is ${subscription.status.toLowerCase()}`,
@@ -778,7 +697,7 @@ export class BillingService {
 
     // Check if current period has ended
     if (new Date() > subscription.currentPeriodEnd) {
-      return { allowed: false, reason: "Subscription period has ended" };
+      return { allowed: false, reason: 'Subscription period has ended' };
     }
 
     // Check if specific appointment type is covered
@@ -789,14 +708,10 @@ export class BillingService {
       if (!isCovered) {
         // Get payment amount from metadata
         const metadata =
-          (subscription.plan?.metadata as Record<
-            string,
-            string | number | boolean
-          >) || {};
+          (subscription.plan?.metadata as Record<string, string | number | boolean>) || {};
         const paymentKey = `${appointmentType.toLowerCase()}Price`;
         const paymentAmount =
-          Number(metadata[paymentKey]) ||
-          this.getDefaultAppointmentPrice(appointmentType);
+          Number(metadata[paymentKey]) || this.getDefaultAppointmentPrice(appointmentType);
 
         return {
           allowed: false,
@@ -817,7 +732,7 @@ export class BillingService {
       return {
         allowed: false,
         requiresPayment: true,
-        reason: "Plan does not include appointments",
+        reason: 'Plan does not include appointments',
       };
     }
 
@@ -830,7 +745,7 @@ export class BillingService {
       return {
         allowed: false,
         requiresPayment: true,
-        reason: "Appointment quota exceeded for this period",
+        reason: 'Appointment quota exceeded for this period',
       };
     }
 
@@ -846,18 +761,11 @@ export class BillingService {
     return prices[appointmentType] || 500;
   }
 
-  async checkAppointmentCoverage(
-    subscriptionId: string,
-    appointmentType: string,
-  ) {
-    const result = await this.canBookAppointment(
-      subscriptionId,
-      appointmentType,
-    );
+  async checkAppointmentCoverage(subscriptionId: string, appointmentType: string) {
+    const result = await this.canBookAppointment(subscriptionId, appointmentType);
 
     if (result.allowed) {
-      const subscription =
-        await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+      const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
       return {
         covered: true,
@@ -877,45 +785,42 @@ export class BillingService {
     };
   }
 
-  async bookAppointmentWithSubscription(
-    subscriptionId: string,
-    appointmentId: string,
-  ) {
+  async bookAppointmentWithSubscription(subscriptionId: string, appointmentId: string) {
     const canBook = await this.canBookAppointment(subscriptionId);
 
     if (!canBook.allowed) {
       throw new BadRequestException(canBook.reason);
     }
 
-    const subscription =
-      await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
     if (!subscription) {
-      throw new NotFoundException("Subscription not found");
+      throw new NotFoundException('Subscription not found');
     }
 
-    // Update appointment to link with subscription
+    // Update appointment to link with subscription using executeHealthcareWrite
     // Note: subscriptionId and isSubscriptionBased are not part of AppointmentUpdateInput
-    // This would need to be handled through a direct Prisma call or a custom method
-    const prismaClient = this.databaseService.getPrismaClient() as {
-      appointment: {
-        update: (args: {
-          where: { id: string };
-          data: { subscriptionId: string; isSubscriptionBased: boolean };
-        }) => Promise<{
-          id: string;
-          subscriptionId: string;
-          isSubscriptionBased: boolean;
-        }>;
-      };
-    };
-    await prismaClient.appointment.update({
-      where: { id: appointmentId },
-      data: {
-        subscriptionId,
-        isSubscriptionBased: true,
+    // Use executeHealthcareWrite for direct Prisma access with full optimization layers
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            subscriptionId,
+            isSubscriptionBased: true,
+          },
+        });
       },
-    });
+      {
+        userId: 'system',
+        clinicId: subscription.clinicId || '',
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointmentId,
+        userRole: 'system',
+        details: { subscriptionId, isSubscriptionBased: true },
+      }
+    );
 
     // Update subscription usage if not unlimited
     if (!subscription.plan?.isUnlimitedAppointments) {
@@ -931,77 +836,67 @@ export class BillingService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Appointment booked with subscription",
-      "BillingService",
-      { subscriptionId, appointmentId },
+      'Appointment booked with subscription',
+      'BillingService',
+      { subscriptionId, appointmentId }
     );
 
-    await this.eventService.emit("billing.appointment.booked", {
+    await this.eventService.emit('billing.appointment.booked', {
       subscriptionId,
       appointmentId,
     });
-    await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${subscription.userId}`,
-    );
+    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
   }
 
   async cancelSubscriptionAppointment(appointmentId: string) {
-    const appointment =
-      await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
-    const appointmentWithSubscription = appointment as {
-      subscriptionId?: string;
-      subscription?: {
-        plan: { isUnlimitedAppointments: boolean };
-        appointmentsRemaining: number | null;
-        userId: string;
-      };
-    };
-    if (
-      !appointment ||
-      !appointmentWithSubscription.subscriptionId ||
-      !appointmentWithSubscription.subscription
-    ) {
+    // Type-safe check for subscription properties
+    if (!appointment || !('subscriptionId' in appointment) || !appointment.subscriptionId) {
+      return;
+    }
+
+    // Get subscription with proper type checking
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(
+      appointment.subscriptionId
+    );
+
+    if (!subscription) {
       return;
     }
 
     // Restore appointment quota if not unlimited
-    const subscription = appointmentWithSubscription.subscription;
-    if (!subscription?.plan?.isUnlimitedAppointments) {
-      await this.databaseService.updateSubscriptionSafe(
-        appointmentWithSubscription.subscriptionId,
-        {
-          appointmentsUsed:
-            subscription?.appointmentsRemaining !== null
-              ? subscription.appointmentsRemaining + 1
-              : 1,
-          ...(subscription?.appointmentsRemaining !== null && {
+    if (!subscription.plan?.isUnlimitedAppointments) {
+      await this.databaseService.updateSubscriptionSafe(appointment.subscriptionId, {
+        appointmentsUsed:
+          subscription.appointmentsRemaining !== null &&
+          subscription.appointmentsRemaining !== undefined
+            ? subscription.appointmentsRemaining + 1
+            : 1,
+        ...(subscription.appointmentsRemaining !== null &&
+          subscription.appointmentsRemaining !== undefined && {
             appointmentsRemaining: subscription.appointmentsRemaining + 1,
           }),
-        },
-      );
+      });
     }
 
-    const appointmentSubscription = appointmentWithSubscription.subscription;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Subscription appointment cancelled, quota restored",
-      "BillingService",
+      'Subscription appointment cancelled, quota restored',
+      'BillingService',
       {
-        subscriptionId: appointmentWithSubscription.subscriptionId,
+        subscriptionId: appointment.subscriptionId,
         appointmentId,
-      },
+      }
     );
 
-    await this.eventService.emit("billing.appointment.cancelled", {
-      subscriptionId: appointmentWithSubscription.subscriptionId,
+    await this.eventService.emit('billing.appointment.cancelled', {
+      subscriptionId: appointment.subscriptionId,
       appointmentId,
     });
 
-    await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${appointmentSubscription?.userId}`,
-    );
+    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
   }
 
   async getActiveUserSubscription(userId: string, clinicId: string) {
@@ -1012,10 +907,9 @@ export class BillingService {
 
     const subscription = subscriptions
       .filter(
-        (sub) =>
-          (String(sub.status) === "ACTIVE" ||
-            String(sub.status) === "TRIALING") &&
-          sub.currentPeriodEnd >= new Date(),
+        sub =>
+          (String(sub.status) === 'ACTIVE' || String(sub.status) === 'TRIALING') &&
+          sub.currentPeriodEnd >= new Date()
       )
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 
@@ -1027,14 +921,14 @@ export class BillingService {
 
     const appointments = await this.databaseService.findAppointmentsSafe({
       subscriptionId,
-      status: "SCHEDULED",
+      status: 'SCHEDULED',
     } as AppointmentWhereInput);
 
     const appointmentCount = appointments.length;
 
     return {
       subscriptionId,
-      planName: subscription.plan?.name || "",
+      planName: subscription.plan?.name || '',
       appointmentsIncluded: subscription.plan?.appointmentsIncluded,
       isUnlimited: subscription.plan?.isUnlimitedAppointments || false,
       appointmentsUsed: subscription.appointmentsUsed,
@@ -1063,17 +957,15 @@ export class BillingService {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Subscription quota reset",
-      "BillingService",
-      { subscriptionId },
+      'Subscription quota reset',
+      'BillingService',
+      { subscriptionId }
     );
 
-    await this.eventService.emit("billing.subscription.quota_reset", {
+    await this.eventService.emit('billing.subscription.quota_reset', {
       subscriptionId,
     });
-    await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${subscription.userId}`,
-    );
+    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
   }
 
   // ============ Analytics ============
@@ -1101,7 +993,7 @@ export class BillingService {
 
     const totalRevenue = payments.reduce(
       (sum: number, payment: { amount: number }) => sum + payment.amount,
-      0,
+      0
     );
 
     return {
@@ -1120,30 +1012,30 @@ export class BillingService {
     type SubscriptionWithPlan = (typeof subscriptions)[number];
 
     const active = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === "ACTIVE",
+      (s: SubscriptionWithPlan) => String(s.status) === 'ACTIVE'
     ).length;
     const trialing = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === "TRIALING",
+      (s: SubscriptionWithPlan) => String(s.status) === 'TRIALING'
     ).length;
     const cancelled = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === "CANCELLED",
+      (s: SubscriptionWithPlan) => String(s.status) === 'CANCELLED'
     ).length;
     const pastDue = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === "PAST_DUE",
+      (s: SubscriptionWithPlan) => String(s.status) === 'PAST_DUE'
     ).length;
 
     const monthlyRecurringRevenue = subscriptions
-      .filter((s: SubscriptionWithPlan) => String(s.status) === "ACTIVE")
+      .filter((s: SubscriptionWithPlan) => String(s.status) === 'ACTIVE')
       .reduce((sum: number, sub: SubscriptionWithPlan) => {
         const planAmount = sub.plan?.amount || 0;
         const monthlyAmount =
-          sub.plan?.interval === "MONTHLY"
+          sub.plan?.interval === 'MONTHLY'
             ? planAmount
-            : sub.plan?.interval === "YEARLY"
+            : sub.plan?.interval === 'YEARLY'
               ? planAmount / 12
-              : sub.plan?.interval === "QUARTERLY"
+              : sub.plan?.interval === 'QUARTERLY'
                 ? planAmount / 3
-                : sub.plan?.interval === "WEEKLY"
+                : sub.plan?.interval === 'WEEKLY'
                   ? (planAmount * 52) / 12
                   : planAmount * 30;
 
@@ -1157,8 +1049,7 @@ export class BillingService {
       cancelled,
       pastDue,
       monthlyRecurringRevenue,
-      churnRate:
-        subscriptions.length > 0 ? (cancelled / subscriptions.length) * 100 : 0,
+      churnRate: subscriptions.length > 0 ? (cancelled / subscriptions.length) * 100 : 0,
     };
   }
 
@@ -1177,89 +1068,74 @@ export class BillingService {
 
       // Get user details
       const subscriptionUser = invoice.subscription as {
-        user?: { name: string; email: string; phone: string };
+        user?: { name: string | null; email: string; phone: string | null };
       } | null;
-      const user =
-        subscriptionUser?.user ||
-        (await this.databaseService.findUserByIdSafe(invoice.userId));
+      const subscriptionUserData = subscriptionUser?.user;
+      const fetchedUser = await this.databaseService.findUserByIdSafe(invoice.userId);
+
+      // Use type-safe user data - prefer fetched user as it has all properties
+      const user = fetchedUser || subscriptionUserData;
 
       if (!user) {
         throw new NotFoundException(`User ${invoice.userId} not found`);
       }
 
       // Get clinic details
-      const clinic = (await this.databaseService.findClinicByIdSafe(
-        invoice.clinicId,
-      )) as {
-        name: string;
-        address?: string;
-        phone?: string;
-        email?: string;
-      } | null;
+      const clinic = await this.databaseService.findClinicByIdSafe(invoice.clinicId);
 
       if (!clinic) {
         throw new NotFoundException(`Clinic ${invoice.clinicId} not found`);
       }
 
-      // Prepare PDF data
+      // Extract user name safely - handle both UserWithRelations and simplified user types
+      const getUserName = (u: typeof user): string => {
+        if ('name' in u && u.name) return u.name;
+        if ('firstName' in u || 'lastName' in u) {
+          const firstName = 'firstName' in u ? u.firstName || '' : '';
+          const lastName = 'lastName' in u ? u.lastName || '' : '';
+          const fullName = `${firstName} ${lastName}`.trim();
+          if (fullName) return fullName;
+        }
+        if ('email' in u && u.email) return u.email;
+        return 'Unknown User';
+      };
+
+      // Prepare PDF data with proper type safety
       const pdfData = {
         invoiceNumber: invoice.invoiceNumber,
         invoiceDate: invoice.createdAt,
         dueDate: invoice.dueDate,
         status: invoice.status,
 
-        // Clinic details
-        clinicName: (
-          clinic as {
-            name: string;
-            address?: string;
-            phone?: string;
-            email?: string;
-          }
-        ).name,
-        clinicAddress:
-          (
-            clinic as {
-              name: string;
-              address?: string;
-              phone?: string;
-              email?: string;
-            }
-          ).address || undefined,
-        clinicPhone:
-          (
-            clinic as {
-              name: string;
-              address?: string;
-              phone?: string;
-              email?: string;
-            }
-          ).phone || undefined,
-        clinicEmail:
-          (
-            clinic as {
-              name: string;
-              address?: string;
-              phone?: string;
-              email?: string;
-            }
-          ).email || undefined,
+        // Clinic details - using type-safe access
+        clinicName: clinic.name,
+        clinicAddress: clinic.address || undefined,
+        clinicPhone: clinic.phone || undefined,
+        clinicEmail: clinic.email || undefined,
 
-        // User details
-        userName: (user as { name: string; email?: string; phone?: string })
-          .name,
-        userEmail:
-          (user as { name: string; email?: string; phone?: string }).email ||
-          undefined,
-        userPhone:
-          (user as { name: string; email?: string; phone?: string }).phone ||
-          undefined,
+        // User details - using type-safe access
+        userName: getUserName(user),
+        userEmail: 'email' in user ? user.email || undefined : undefined,
+        userPhone: 'phone' in user ? user.phone || undefined : undefined,
 
-        // Subscription details
-        subscriptionPlan: invoice.subscription?.plan?.name,
-        subscriptionPeriod: invoice.subscription
-          ? `${new Date(invoice.subscription.currentPeriodStart).toLocaleDateString()} - ${new Date(invoice.subscription.currentPeriodEnd).toLocaleDateString()}`
-          : undefined,
+        // Subscription details - type-safe access
+        subscriptionPlan:
+          invoice.subscription &&
+          typeof invoice.subscription === 'object' &&
+          'plan' in invoice.subscription &&
+          invoice.subscription.plan &&
+          typeof invoice.subscription.plan === 'object' &&
+          'name' in invoice.subscription.plan &&
+          typeof invoice.subscription.plan.name === 'string'
+            ? invoice.subscription.plan.name
+            : undefined,
+        subscriptionPeriod:
+          'subscription' in invoice &&
+          invoice.subscription &&
+          'currentPeriodStart' in invoice.subscription &&
+          'currentPeriodEnd' in invoice.subscription
+            ? `${new Date(invoice.subscription.currentPeriodStart).toLocaleDateString()} - ${new Date(invoice.subscription.currentPeriodEnd).toLocaleDateString()}`
+            : undefined,
 
         // Line items
         lineItems: Array.isArray(invoice.lineItems)
@@ -1269,7 +1145,7 @@ export class BillingService {
             }>)
           : [
               {
-                description: invoice.description || "Subscription Payment",
+                description: invoice.description || 'Subscription Payment',
                 amount: invoice.amount,
               },
             ],
@@ -1285,10 +1161,20 @@ export class BillingService {
         paymentMethod: undefined as string | undefined,
         transactionId: undefined as string | undefined,
 
-        // Notes
-        notes: `Thank you for your payment. This invoice is for ${invoice.subscription?.plan?.name || "services"}.`,
+        // Notes - type-safe access
+        notes: `Thank you for your payment. This invoice is for ${
+          (invoice.subscription &&
+          typeof invoice.subscription === 'object' &&
+          'plan' in invoice.subscription &&
+          invoice.subscription.plan &&
+          typeof invoice.subscription.plan === 'object' &&
+          'name' in invoice.subscription.plan &&
+          typeof invoice.subscription.plan.name === 'string'
+            ? invoice.subscription.plan.name
+            : null) || 'services'
+        }.`,
         termsAndConditions:
-          "Payment is due within 30 days. Please include the invoice number with your payment.",
+          'Payment is due within 30 days. Please include the invoice number with your payment.',
       };
 
       // Get payment details if invoice is paid
@@ -1297,21 +1183,18 @@ export class BillingService {
           invoiceId: invoice.id,
         });
 
-        const payment = payments.sort(
-          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-        )[0];
+        const payment = payments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 
         if (payment) {
-          pdfData.paymentMethod = payment.method as string;
-          pdfData.transactionId = payment.transactionId as string;
+          pdfData.paymentMethod = payment.method || undefined;
+          pdfData.transactionId = payment.transactionId || undefined;
         }
       }
 
       // Generate PDF
-      const { filePath, fileName } =
-        await this.invoicePDFService.generateInvoicePDF(
-          pdfData as InvoicePDFData,
-        );
+      const { filePath, fileName } = await this.invoicePDFService.generateInvoicePDF(
+        pdfData as InvoicePDFData
+      );
 
       // Get public URL
       const pdfUrl = this.invoicePDFService.getPublicInvoiceUrl(fileName);
@@ -1325,28 +1208,26 @@ export class BillingService {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Invoice PDF generated",
-        "BillingService",
-        { invoiceId, fileName },
+        'Invoice PDF generated',
+        'BillingService',
+        { invoiceId, fileName }
       );
 
-      await this.eventService.emit("billing.invoice.pdf_generated", {
+      await this.eventService.emit('billing.invoice.pdf_generated', {
         invoiceId,
         pdfUrl,
       });
-      await this.cacheService.invalidateCacheByTag(
-        `user_invoices:${invoice.userId}`,
-      );
+      await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to generate invoice PDF",
-        "BillingService",
+        'Failed to generate invoice PDF',
+        'BillingService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           invoiceId,
-        },
+        }
       );
       throw error;
     }
@@ -1365,21 +1246,22 @@ export class BillingService {
 
       // Get user details
       const subscriptionUser = invoice.subscription as {
-        user?: { phone?: string; id: string };
+        user?: { phone?: string | null; id: string };
       } | null;
-      const user =
-        subscriptionUser?.user ||
-        (await this.databaseService.findUserByIdSafe(invoice.userId));
+      const subscriptionUserData = subscriptionUser?.user;
+      const fetchedUser = await this.databaseService.findUserByIdSafe(invoice.userId);
+
+      // Use type-safe user data - prefer fetched user as it has all properties
+      const user = fetchedUser || subscriptionUserData;
 
       if (!user) {
         throw new NotFoundException(`User ${invoice.userId} not found`);
       }
 
-      const userWithPhone = user as { phone?: string; id: string };
-      if (!userWithPhone.phone) {
-        throw new BadRequestException(
-          `User ${userWithPhone.id} has no phone number`,
-        );
+      const userPhone = 'phone' in user ? user.phone : null;
+      if (!userPhone) {
+        const userId = 'id' in user ? user.id : invoice.userId;
+        throw new BadRequestException(`User ${userId} has no phone number`);
       }
 
       // Generate PDF if not already generated
@@ -1387,28 +1269,39 @@ export class BillingService {
         await this.generateInvoicePDF(invoiceId);
 
         // Fetch updated invoice
-        const updatedInvoice =
-          await this.databaseService.findInvoiceByIdSafe(invoiceId);
+        const updatedInvoice = await this.databaseService.findInvoiceByIdSafe(invoiceId);
 
         if (!updatedInvoice?.pdfUrl) {
-          throw new Error("Failed to generate invoice PDF");
+          throw new Error('Failed to generate invoice PDF');
         }
 
         invoice.pdfUrl = updatedInvoice.pdfUrl;
       }
 
-      // Send via WhatsApp
-      const userForWhatsApp = user as {
-        phone: string;
-        name: string;
+      // Send via WhatsApp - using type-safe access
+      const getUserNameForWhatsApp = (u: typeof user): string => {
+        if (typeof u === 'object' && u !== null) {
+          if ('name' in u && typeof u.name === 'string' && u.name) return u.name;
+          if (('firstName' in u || 'lastName' in u) && typeof u === 'object') {
+            const firstName =
+              'firstName' in u && typeof u.firstName === 'string' ? u.firstName : '';
+            const lastName = 'lastName' in u && typeof u.lastName === 'string' ? u.lastName : '';
+            const fullName = `${firstName} ${lastName}`.trim();
+            if (fullName) return fullName;
+          }
+          if ('email' in u && typeof u.email === 'string' && u.email) return u.email;
+        }
+        return 'User';
       };
+
+      const userName = getUserNameForWhatsApp(user);
       const success = await this.whatsAppService.sendInvoice(
-        userForWhatsApp.phone,
-        userForWhatsApp.name,
+        userPhone,
+        userName,
         invoice.invoiceNumber,
         invoice.totalAmount,
         invoice.dueDate.toLocaleDateString(),
-        invoice.pdfUrl,
+        invoice.pdfUrl || ''
       );
 
       if (success) {
@@ -1421,18 +1314,16 @@ export class BillingService {
         await this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          "Invoice sent via WhatsApp",
-          "BillingService",
-          { invoiceId, userId: user.id },
+          'Invoice sent via WhatsApp',
+          'BillingService',
+          { invoiceId, userId: user.id }
         );
 
-        await this.eventService.emit("billing.invoice.sent_whatsapp", {
+        await this.eventService.emit('billing.invoice.sent_whatsapp', {
           invoiceId,
           userId: user.id,
         });
-        await this.cacheService.invalidateCacheByTag(
-          `user_invoices:${invoice.userId}`,
-        );
+        await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
       }
 
       return success;
@@ -1440,12 +1331,12 @@ export class BillingService {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to send invoice via WhatsApp",
-        "BillingService",
+        'Failed to send invoice via WhatsApp',
+        'BillingService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           invoiceId,
-        },
+        }
       );
       return false;
     }
@@ -1456,36 +1347,57 @@ export class BillingService {
    */
   async sendSubscriptionConfirmation(subscriptionId: string): Promise<void> {
     try {
-      const subscription =
-        await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+      const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
       if (!subscription) {
         throw new NotFoundException(`Subscription ${subscriptionId} not found`);
       }
 
-      const subscriptionUser = subscription as {
-        user?: { phone?: string; id: string; name: string };
+      // Get user with proper type checking
+      const subscriptionWithUser = subscription as {
+        user?: {
+          phone?: string | null;
+          id: string;
+          name?: string | null;
+          firstName?: string | null;
+          lastName?: string | null;
+          email?: string;
+        };
       };
-      const user = subscriptionUser.user;
-      const subscriptionPlan = subscription.plan as {
-        name: string;
-        amount: number;
-      };
-      if (!user?.phone) {
-        this.logger.warn(
-          `User ${user?.id} has no phone number, skipping WhatsApp confirmation`,
+      const user = subscriptionWithUser.user;
+      const subscriptionPlan = subscription.plan;
+
+      if (!user || !user.phone) {
+        const userId = user?.id || subscription.userId;
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `User ${userId} has no phone number, skipping WhatsApp confirmation`,
+          'BillingService',
+          { userId, subscriptionId }
         );
         return;
       }
 
       // Send subscription confirmation
+      const getUserNameForSubscription = (u: typeof user): string => {
+        if (u.name) return u.name;
+        if (u.firstName || u.lastName) {
+          const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+          if (fullName) return fullName;
+        }
+        if (u.email) return u.email;
+        return 'User';
+      };
+
+      const userName = getUserNameForSubscription(user);
       await this.whatsAppService.sendSubscriptionConfirmation(
         user.phone,
-        user.name,
-        subscriptionPlan.name,
-        subscriptionPlan.amount,
+        userName,
+        subscriptionPlan?.name || 'Unknown Plan',
+        subscriptionPlan?.amount || 0,
         subscription.currentPeriodStart.toLocaleDateString(),
-        subscription.currentPeriodEnd.toLocaleDateString(),
+        subscription.currentPeriodEnd.toLocaleDateString()
       );
 
       // Check if invoice exists for this subscription
@@ -1493,9 +1405,7 @@ export class BillingService {
         subscriptionId: subscription.id,
       });
 
-      const invoice = invoices.sort(
-        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-      )[0];
+      const invoice = invoices.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 
       if (invoice) {
         // Send existing invoice via WhatsApp
@@ -1506,17 +1416,17 @@ export class BillingService {
           userId: subscription.userId,
           subscriptionId: subscription.id,
           clinicId: subscription.clinicId,
-          amount: subscription.plan?.amount || 0,
-          tax: (subscription.plan?.amount || 0) * 0.18, // 18% GST
+          amount: subscriptionPlan?.amount || 0,
+          tax: (subscriptionPlan?.amount || 0) * 0.18, // 18% GST
           dueDate: subscription.currentPeriodEnd.toISOString(),
-          description: `Subscription: ${subscription.plan?.name || "Unknown Plan"}`,
+          description: `Subscription: ${subscriptionPlan?.name || 'Unknown Plan'}`,
           lineItems: {
             items: [
               {
-                description: subscription.plan?.name || "Unknown Plan",
+                description: subscriptionPlan?.name || 'Unknown Plan',
                 quantity: 1,
-                unitPrice: subscription.plan?.amount || 0,
-                amount: subscription.plan?.amount || 0,
+                unitPrice: subscriptionPlan?.amount || 0,
+                amount: subscriptionPlan?.amount || 0,
               },
             ],
           } as Record<string, unknown>,
@@ -1529,20 +1439,20 @@ export class BillingService {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Subscription confirmation sent",
-        "BillingService",
-        { subscriptionId },
+        'Subscription confirmation sent',
+        'BillingService',
+        { subscriptionId }
       );
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to send subscription confirmation",
-        "BillingService",
+        'Failed to send subscription confirmation',
+        'BillingService',
         {
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error',
           subscriptionId,
-        },
+        }
       );
     }
   }

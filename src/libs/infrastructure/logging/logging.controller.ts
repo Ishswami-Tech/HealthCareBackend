@@ -1,18 +1,20 @@
-import { Controller, Get, Query, Res, Post } from "@nestjs/common";
-import { FastifyReply } from "fastify";
-import { LoggingService } from "./logging.service";
-import { LogType, LogLevel } from "./types/logging.types";
-import { ApiTags } from "@nestjs/swagger";
-import { Logger } from "@nestjs/common";
+// External imports
+import { Controller, Get, Query, Res, Post, HttpStatus } from '@nestjs/common';
+import { FastifyReply } from 'fastify';
+import { ApiTags } from '@nestjs/swagger';
 
-@ApiTags("Logging")
-@Controller("logger")
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Types
+import { LogType, LogLevel } from '@core/types';
+
+@ApiTags('Logging')
+@Controller('logger')
 export class LoggingController {
-  private readonly logger = new Logger(LoggingController.name);
-
   constructor(private readonly loggingService: LoggingService) {}
 
-  private getHtmlTemplate(activeTab: "logs" | "events" = "logs"): string {
+  private getHtmlTemplate(activeTab: 'logs' | 'events' = 'logs'): string {
     return `<!DOCTYPE html>
     <html>
     <head>
@@ -111,11 +113,11 @@ export class LoggingController {
       <div class="container">
         <h1>Logging Dashboard</h1>
         <div class="tabs">
-          <button class="tab ${activeTab === "logs" ? "active" : ""}" onclick="switchTab('logs')">Logs</button>
-          <button class="tab ${activeTab === "events" ? "active" : ""}" onclick="switchTab('events')">Events</button>
+          <button class="tab ${activeTab === 'logs' ? 'active' : ''}" onclick="switchTab('logs')">Logs</button>
+          <button class="tab ${activeTab === 'events' ? 'active' : ''}" onclick="switchTab('events')">Events</button>
         </div>
         
-        <div id="logsPanel" style="display: ${activeTab === "logs" ? "block" : "none"}">
+        <div id="logsPanel" style="display: ${activeTab === 'logs' ? 'block' : 'none'}">
           <div class="filters">
             <select id="logType">
               <option value="">All Types</option>
@@ -157,7 +159,7 @@ export class LoggingController {
           <div id="logsContent"></div>
         </div>
         
-        <div id="eventsPanel" style="display: ${activeTab === "events" ? "block" : "none"}">
+        <div id="eventsPanel" style="display: ${activeTab === 'events' ? 'block' : 'none'}">
           <div class="controls">
             <select id="eventType">
               <option value="">All Types</option>
@@ -212,7 +214,15 @@ export class LoggingController {
           
           try {
             const response = await fetch('/logger/logs/clear', { method: 'POST' });
-            if (!response.ok) throw new Error('Failed to clear logs');
+            if (!response.ok) {
+              throw new HealthcareError(
+                ErrorCode.LOGGING_CLEAR_FAILED,
+                'Failed to clear logs',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                {},
+                'LoggingController.clearLogs'
+              );
+            }
             refreshContent();
           } catch (error) {
             console.error('Error clearing logs:', error);
@@ -225,7 +235,15 @@ export class LoggingController {
           
           try {
             const response = await fetch('/logger/events/clear', { method: 'POST' });
-            if (!response.ok) throw new Error('Failed to clear events');
+            if (!response.ok) {
+              throw new HealthcareError(
+                ErrorCode.LOGGING_CLEAR_FAILED,
+                'Failed to clear events',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                {},
+                'LoggingController.clearEvents'
+              );
+            }
             refreshContent();
           } catch (error) {
             console.error('Error clearing events:', error);
@@ -285,7 +303,13 @@ export class LoggingController {
 
             const response = await fetch(url);
             if (!response.ok) {
-              throw new Error('Failed to fetch data');
+              throw new HealthcareError(
+                ErrorCode.LOGGING_RETRIEVAL_FAILED,
+                'Failed to fetch data',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                {},
+                'LoggingController.refreshContent'
+              );
             }
             
             const data = await response.json();
@@ -381,29 +405,29 @@ export class LoggingController {
 
   @Get()
   async getUI(@Res() reply: FastifyReply) {
-    reply.header("Content-Type", "text/html");
-    return reply.send(this.getHtmlTemplate("logs"));
+    reply.header('Content-Type', 'text/html');
+    return reply.send(this.getHtmlTemplate('logs'));
   }
 
-  @Get("events")
+  @Get('events')
   async getEventsPage(@Res() reply: FastifyReply) {
-    reply.header("Content-Type", "text/html");
-    return reply.send(this.getHtmlTemplate("events"));
+    reply.header('Content-Type', 'text/html');
+    return reply.send(this.getHtmlTemplate('events'));
   }
 
-  @Get("logs/data")
+  @Get('logs/data')
   async getLogs(
-    @Query("type") type?: LogType,
-    @Query("level") level?: string,
-    @Query("startTime") startTime?: string,
-    @Query("endTime") endTime?: string,
+    @Query('type') type?: LogType,
+    @Query('level') level?: string,
+    @Query('startTime') startTime?: string,
+    @Query('endTime') endTime?: string
   ): Promise<unknown[]> {
     try {
       const logs = await this.loggingService.getLogs(
         type,
         startTime ? new Date(startTime) : undefined,
         endTime ? new Date(endTime) : undefined,
-        (level as LogLevel) || undefined,
+        (level as LogLevel) || undefined
       );
 
       return logs.map((log: unknown) => ({
@@ -411,22 +435,31 @@ export class LoggingController {
         disabled: false, // Ensure disabled property is always set
       }));
     } catch (error) {
-      this.logger.error(`Failed to fetch logs: ${(error as Error).message}`);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to fetch logs',
+        'LoggingController',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       return []; // Return empty array instead of null
     }
   }
 
-  @Get("events/data")
-  async getEvents(@Query("type") type?: string) {
+  @Get('events/data')
+  async getEvents(@Query('type') type?: string) {
     return this.loggingService.getEvents(type);
   }
 
-  @Post("logs/clear")
+  @Post('logs/clear')
   async clearLogs() {
     return this.loggingService.clearLogs();
   }
 
-  @Post("events/clear")
+  @Post('events/clear')
   async clearEvents() {
     return this.loggingService.clearEvents();
   }

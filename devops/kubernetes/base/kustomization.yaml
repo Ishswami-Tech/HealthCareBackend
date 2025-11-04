@@ -7,6 +7,8 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - network-policies.yaml
+  - limitrange.yaml
+  - resourcequota.yaml
   - configmap.yaml
   - postgres-config.yaml
   - api-deployment.yaml

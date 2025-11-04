@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { DatabaseService } from "../../libs/infrastructure/database";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
 import {
   MedicalHistoryRecord,
   LabReportRecord,
@@ -12,28 +12,18 @@ import {
   PatientSummary,
   SearchResultItem,
   CriticalAlert,
-  PrismaUserSelect,
-  PrismaCountResult,
-  PrismaGroupByResult,
-  PrismaUserWithRelations,
+  ClinicEHRRecordFilters,
   GetClinicRecordsByFilterResult,
   GetClinicEHRAnalyticsResult,
   GetClinicPatientsSummaryResult,
   SearchClinicRecordsResult,
   GetClinicCriticalAlertsResult,
-} from "./types/ehr.types";
-import { CacheService } from "../../libs/infrastructure/cache";
-import { LoggingService } from "../../libs/infrastructure/logging/logging.service";
-import { EventService } from "../../libs/infrastructure/events/event.service";
-import {
-  LogLevel,
-  LogType,
-} from "../../libs/infrastructure/logging/types/logging.types";
-import {
-  addDateRangeFilter,
-  addStringFilter,
-  USER_SELECT_FIELDS,
-} from "../../libs/utils/query";
+} from '@core/types/ehr.types';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { EventService } from '@infrastructure/events';
+import { LogLevel, LogType } from '@core/types';
+import { addDateRangeFilter, addStringFilter, USER_SELECT_FIELDS } from '@utils/query';
 import {
   CreateMedicalHistoryDto,
   UpdateMedicalHistoryDto,
@@ -52,7 +42,7 @@ import {
   CreateImmunizationDto,
   UpdateImmunizationDto,
   HealthRecordSummaryDto,
-} from "./dto/ehr.dto";
+} from './dto/ehr.dto';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,
@@ -64,7 +54,7 @@ import type {
   ImmunizationResponse,
   FamilyHistoryResponse,
   LifestyleAssessmentResponse,
-} from "./types/ehr.types";
+} from '@core/types/ehr.types';
 import type {
   MedicalHistory,
   LabReport,
@@ -76,7 +66,7 @@ import type {
   Immunization,
   FamilyHistory,
   LifestyleAssessment,
-} from ".prisma/client";
+} from '.prisma/client';
 
 @Injectable()
 export class EHRService {
@@ -84,7 +74,7 @@ export class EHRService {
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly eventService: EventService,
+    private readonly eventService: EventService
   ) {}
 
   // ============ Comprehensive Health Record ============
@@ -92,7 +82,7 @@ export class EHRService {
   async getComprehensiveHealthRecord(
     userId: string,
 
-    _clinicId?: string,
+    _clinicId?: string
   ): Promise<HealthRecordSummaryDto> {
     const cacheKey = `ehr:comprehensive:${userId}`;
 
@@ -122,87 +112,96 @@ export class EHRService {
           FamilyHistory[],
           LifestyleAssessment | null,
         ] = await Promise.all([
-          this.databaseService.getPrismaClient().medicalHistory.findMany({
-            where: { userId },
-            orderBy: { date: "desc" },
+          // Use executeHealthcareRead for all queries with full optimization layers
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.medicalHistory.findMany({
+              where: { userId },
+              orderBy: { date: 'desc' },
+            });
           }),
-          this.databaseService.getPrismaClient().labReport.findMany({
-            where: { userId },
-            orderBy: { date: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.labReport.findMany({
+              where: { userId },
+              orderBy: { date: 'desc' },
+            });
           }),
-          this.databaseService.getPrismaClient().radiologyReport.findMany({
-            where: { userId },
-            orderBy: { date: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.radiologyReport.findMany({
+              where: { userId },
+              orderBy: { date: 'desc' },
+            });
           }),
-          this.databaseService.getPrismaClient().surgicalRecord.findMany({
-            where: { userId },
-            orderBy: { date: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.surgicalRecord.findMany({
+              where: { userId },
+              orderBy: { date: 'desc' },
+            });
           }),
-          this.databaseService.getPrismaClient().vital.findMany({
-            where: { userId },
-            orderBy: { recordedAt: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.vital.findMany({
+              where: { userId },
+              orderBy: { recordedAt: 'desc' },
+            });
           }),
-          this.databaseService.getPrismaClient().allergy.findMany({
-            where: { userId },
-            orderBy: { diagnosedDate: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.allergy.findMany({
+              where: { userId },
+              orderBy: { diagnosedDate: 'desc' },
+            });
           }),
-          this.databaseService.getPrismaClient().medication.findMany({
-            where: { userId },
-            orderBy: { startDate: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.medication.findMany({
+              where: { userId },
+              orderBy: { startDate: 'desc' },
+            });
           }),
-          this.databaseService.getPrismaClient().immunization.findMany({
-            where: { userId },
-            orderBy: { dateAdministered: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.immunization.findMany({
+              where: { userId },
+              orderBy: { dateAdministered: 'desc' },
+            });
           }),
-          this.databaseService
-            .getPrismaClient()
-            .familyHistory.findMany({ where: { userId } }),
-          this.databaseService.getPrismaClient().lifestyleAssessment.findFirst({
-            where: { userId },
-            orderBy: { createdAt: "desc" },
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.familyHistory.findMany({ where: { userId } });
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.lifestyleAssessment.findFirst({
+              where: { userId },
+              orderBy: { createdAt: 'desc' },
+            });
           }),
         ]);
 
         // Transform to response types
-        const medicalHistory = medicalHistoryRaw.map((record) =>
-          this.transformMedicalHistory(record),
+        const medicalHistory = medicalHistoryRaw.map(record =>
+          this.transformMedicalHistory(record)
         );
-        const labReports = labReportsRaw.map((record) =>
-          this.transformLabReport(record),
+        const labReports = labReportsRaw.map(record => this.transformLabReport(record));
+        const radiologyReports = radiologyReportsRaw.map(record =>
+          this.transformRadiologyReport(record)
         );
-        const radiologyReports = radiologyReportsRaw.map((record) =>
-          this.transformRadiologyReport(record),
+        const surgicalRecords = surgicalRecordsRaw.map(record =>
+          this.transformSurgicalRecord(record)
         );
-        const surgicalRecords = surgicalRecordsRaw.map((record) =>
-          this.transformSurgicalRecord(record),
-        );
-        const vitals = vitalsRaw.map((record) => this.transformVital(record));
-        const allergies = allergiesRaw.map((record) =>
-          this.transformAllergy(record),
-        );
-        const medications = medicationsRaw.map((record) =>
-          this.transformMedication(record),
-        );
-        const immunizations = immunizationsRaw.map((record) =>
-          this.transformImmunization(record),
-        );
-        const familyHistory = familyHistoryRaw.map((record) =>
-          this.transformFamilyHistory(record),
-        );
+        const vitals = vitalsRaw.map(record => this.transformVital(record));
+        const allergies = allergiesRaw.map(record => this.transformAllergy(record));
+        const medications = medicationsRaw.map(record => this.transformMedication(record));
+        const immunizations = immunizationsRaw.map(record => this.transformImmunization(record));
+        const familyHistory = familyHistoryRaw.map(record => this.transformFamilyHistory(record));
         const lifestyleAssessment = lifestyleAssessmentRaw
           ? this.transformLifestyleAssessment(lifestyleAssessmentRaw)
           : {
-              id: "",
-              userId: "",
-              clinicId: "",
-              doctorId: "",
-              diet: "",
-              exercise: "",
-              smoking: "",
-              alcohol: "",
-              sleep: "",
-              stress: "",
-              notes: "",
+              id: '',
+              userId: '',
+              clinicId: '',
+              doctorId: '',
+              diet: '',
+              exercise: '',
+              smoking: '',
+              alcohol: '',
+              sleep: '',
+              stress: '',
+              notes: '',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
             };
@@ -223,9 +222,9 @@ export class EHRService {
       {
         ttl: 1800,
         tags: [`ehr:${userId}`],
-        priority: "high",
+        priority: 'high',
         containsPHI: true,
-      },
+      }
     );
   }
 
@@ -235,30 +234,51 @@ export class EHRService {
 
   // ============ Medical History ============
 
-  async createMedicalHistory(
-    data: CreateMedicalHistoryDto,
-  ): Promise<MedicalHistoryResponse> {
-    const record = await this.databaseService
-      .getPrismaClient()
-      .medicalHistory.create({
-        data: {
+  async createMedicalHistory(data: CreateMedicalHistoryDto): Promise<MedicalHistoryResponse> {
+    // Use executeHealthcareWrite for create with audit logging
+    const record = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const createData: {
+          userId: string;
+          clinicId?: string;
+          condition: string;
+          notes?: string;
+          date: Date;
+        } = {
           userId: data.userId,
-          clinicId: data.clinicId,
           condition: data.condition,
-          notes: data.notes,
           date: new Date(data.date),
-        },
-      });
+        };
+        if (data.clinicId) {
+          createData.clinicId = data.clinicId;
+        }
+        if (data.notes) {
+          createData.notes = data.notes;
+        }
+        return await client.medicalHistory.create({
+          data: createData,
+        });
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: data.clinicId || '',
+        resourceType: 'MEDICAL_HISTORY',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, condition: data.condition },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Medical history record created",
-      "EHRService",
-      { recordId: record.id, userId: data.userId, clinicId: data.clinicId },
+      'Medical history record created',
+      'EHRService',
+      { recordId: record.id, userId: data.userId, clinicId: data.clinicId }
     );
 
-    await this.eventService.emit("ehr.medical_history.created", {
+    await this.eventService.emit('ehr.medical_history.created', {
       recordId: record.id,
     });
     await this.invalidateUserEHRCache(data.userId);
@@ -269,42 +289,61 @@ export class EHRService {
     return this.transformMedicalHistory(record);
   }
 
-  async getMedicalHistory(
-    userId: string,
-    clinicId?: string,
-  ): Promise<MedicalHistoryResponse[]> {
+  async getMedicalHistory(userId: string, clinicId?: string): Promise<MedicalHistoryResponse[]> {
     const where: { userId: string; clinicId?: string } = { userId };
     if (clinicId) {
       where.clinicId = clinicId;
     }
 
-    const records = await this.databaseService
-      .getPrismaClient()
-      .medicalHistory.findMany({
+    // Use executeHealthcareRead for optimized query
+    const records = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.medicalHistory.findMany({
         where,
-        orderBy: { date: "desc" },
+        orderBy: { date: 'desc' },
       });
+    });
 
-    return records.map((record: MedicalHistory) =>
-      this.transformMedicalHistory(record),
-    );
+    return records.map((record: MedicalHistory) => this.transformMedicalHistory(record));
   }
 
   async updateMedicalHistory(
     id: string,
-    data: UpdateMedicalHistoryDto,
+    data: UpdateMedicalHistoryDto
   ): Promise<MedicalHistoryResponse> {
-    const record = await this.databaseService
-      .getPrismaClient()
-      .medicalHistory.update({
-        where: { id },
-        data: {
-          ...data,
-          date: data.date ? new Date(data.date) : undefined,
-        },
-      });
+    // Use executeHealthcareWrite for update with audit logging
+    const record = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          condition?: string;
+          notes?: string;
+          date?: Date;
+        } = {};
+        if (data.condition) {
+          updateData.condition = data.condition;
+        }
+        if (data.notes) {
+          updateData.notes = data.notes;
+        }
+        if (data.date) {
+          updateData.date = new Date(data.date);
+        }
+        return await client.medicalHistory.update({
+          where: { id },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'MEDICAL_HISTORY',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.medical_history.updated", {
+    await this.eventService.emit('ehr.medical_history.updated', {
       recordId: id,
     });
     await this.invalidateUserEHRCache(record.userId);
@@ -313,20 +352,30 @@ export class EHRService {
   }
 
   async deleteMedicalHistory(id: string): Promise<void> {
-    const record = await this.databaseService
-      .getPrismaClient()
-      .medicalHistory.findUnique({
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const record = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.medicalHistory.findUnique({
         where: { id },
       });
-    if (!record)
-      throw new NotFoundException(
-        `Medical history record with ID ${id} not found`,
-      );
+    });
+    if (!record) throw new NotFoundException(`Medical history record with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .medicalHistory.delete({ where: { id } });
-    await this.eventService.emit("ehr.medical_history.deleted", {
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.medicalHistory.delete({ where: { id } });
+      },
+      {
+        userId: record.userId,
+        clinicId: record.clinicId || '',
+        resourceType: 'MEDICAL_HISTORY',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: record.userId },
+      }
+    );
+    await this.eventService.emit('ehr.medical_history.deleted', {
       recordId: id,
     });
     await this.invalidateUserEHRCache(record.userId);
@@ -335,108 +384,183 @@ export class EHRService {
   // ============ Lab Reports ============
 
   async createLabReport(data: CreateLabReportDto): Promise<LabReportResponse> {
-    const report = await this.databaseService
-      .getPrismaClient()
-      .labReport.create({
-        data: {
+    // Use executeHealthcareWrite for create with audit logging
+    const report = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const createData: {
+          userId: string;
+          testName: string;
+          result: string;
+          unit?: string;
+          normalRange?: string;
+          date: Date;
+        } = {
           userId: data.userId,
           testName: data.testName,
           result: data.result,
-          unit: data.unit,
-          normalRange: data.normalRange,
           date: new Date(data.date),
-        },
-      });
+        };
+        if (data.unit) {
+          createData.unit = data.unit;
+        }
+        if (data.normalRange) {
+          createData.normalRange = data.normalRange;
+        }
+        return await client.labReport.create({
+          data: createData,
+        });
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: data.clinicId || '',
+        resourceType: 'LAB_REPORT',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, testName: data.testName },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Lab report created",
-      "EHRService",
-      { reportId: report.id, userId: data.userId },
+      'Lab report created',
+      'EHRService',
+      { reportId: report.id, userId: data.userId }
     );
 
-    await this.eventService.emit("ehr.lab_report.created", {
+    await this.eventService.emit('ehr.lab_report.created', {
       reportId: report.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return report;
+    return this.transformLabReport(report);
   }
 
   async getLabReports(userId: string): Promise<LabReportResponse[]> {
-    const records = await this.databaseService
-      .getPrismaClient()
-      .labReport.findMany({
+    // Use executeHealthcareRead for optimized query
+    const records = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.labReport.findMany({
         where: { userId },
-        orderBy: { date: "desc" },
+        orderBy: { date: 'desc' },
       });
+    });
 
     return records.map((record: LabReport) => this.transformLabReport(record));
   }
 
-  async updateLabReport(
-    id: string,
-    data: UpdateLabReportDto,
-  ): Promise<LabReportResponse> {
-    const report = await this.databaseService
-      .getPrismaClient()
-      .labReport.update({
-        where: { id },
-        data: {
-          ...data,
-          date: data.date ? new Date(data.date) : undefined,
-        },
-      });
+  async updateLabReport(id: string, data: UpdateLabReportDto): Promise<LabReportResponse> {
+    // Use executeHealthcareWrite for update with audit logging
+    const report = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          testName?: string;
+          result?: string;
+          unit?: string;
+          normalRange?: string;
+          date?: Date;
+        } = {};
+        if (data.testName) {
+          updateData.testName = data.testName;
+        }
+        if (data.result) {
+          updateData.result = data.result;
+        }
+        if (data.unit) {
+          updateData.unit = data.unit;
+        }
+        if (data.normalRange) {
+          updateData.normalRange = data.normalRange;
+        }
+        if (data.date) {
+          updateData.date = new Date(data.date);
+        }
+        return await client.labReport.update({
+          where: { id },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'LAB_REPORT',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.lab_report.updated", { reportId: id });
+    await this.eventService.emit('ehr.lab_report.updated', { reportId: id });
     await this.invalidateUserEHRCache(report.userId);
 
-    return report;
+    return this.transformLabReport(report);
   }
 
   async deleteLabReport(id: string): Promise<void> {
-    const report = await this.databaseService
-      .getPrismaClient()
-      .labReport.findUnique({
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const report = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.labReport.findUnique({
         where: { id },
       });
-    if (!report)
-      throw new NotFoundException(`Lab report with ID ${id} not found`);
+    });
+    if (!report) throw new NotFoundException(`Lab report with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .labReport.delete({ where: { id } });
-    await this.eventService.emit("ehr.lab_report.deleted", { reportId: id });
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.labReport.delete({ where: { id } });
+      },
+      {
+        userId: report.userId,
+        clinicId: report.clinicId || '',
+        resourceType: 'LAB_REPORT',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: report.userId },
+      }
+    );
+    await this.eventService.emit('ehr.lab_report.deleted', { reportId: id });
     await this.invalidateUserEHRCache(report.userId);
   }
 
   // ============ Radiology Reports ============
 
-  async createRadiologyReport(
-    data: CreateRadiologyReportDto,
-  ): Promise<unknown> {
-    const report = await this.databaseService
-      .getPrismaClient()
-      .radiologyReport.create({
-        data: {
-          userId: data.userId,
-          imageType: data.imageType,
-          findings: data.findings,
-          conclusion: data.conclusion,
-          date: new Date(data.date),
-        },
-      });
+  async createRadiologyReport(data: CreateRadiologyReportDto): Promise<unknown> {
+    // Use executeHealthcareWrite for create with audit logging
+    const report = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.radiologyReport.create({
+          data: {
+            userId: data.userId,
+            imageType: data.imageType,
+            findings: data.findings,
+            conclusion: data.conclusion,
+            date: new Date(data.date),
+          },
+        });
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: '',
+        resourceType: 'RADIOLOGY_REPORT',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, imageType: data.imageType },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Radiology report created",
-      "EHRService",
-      { reportId: report.id, userId: data.userId },
+      'Radiology report created',
+      'EHRService',
+      { reportId: report.id, userId: data.userId }
     );
 
-    await this.eventService.emit("ehr.radiology_report.created", {
+    await this.eventService.emit('ehr.radiology_report.created', {
       reportId: report.id,
     });
     await this.invalidateUserEHRCache(data.userId);
@@ -444,56 +568,92 @@ export class EHRService {
     return report;
   }
 
-  async getRadiologyReports(
-    userId: string,
-  ): Promise<RadiologyReportResponse[]> {
-    const records = await this.databaseService
-      .getPrismaClient()
-      .radiologyReport.findMany({
+  async getRadiologyReports(userId: string): Promise<RadiologyReportResponse[]> {
+    // Use executeHealthcareRead for optimized query
+    const records = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.radiologyReport.findMany({
         where: { userId },
-        orderBy: { date: "desc" },
+        orderBy: { date: 'desc' },
       });
+    });
 
-    return records.map((record: RadiologyReport) =>
-      this.transformRadiologyReport(record),
-    );
+    return records.map((record: RadiologyReport) => this.transformRadiologyReport(record));
   }
 
   async updateRadiologyReport(
     id: string,
-    data: UpdateRadiologyReportDto,
+    data: UpdateRadiologyReportDto
   ): Promise<RadiologyReportResponse> {
-    const report = await this.databaseService
-      .getPrismaClient()
-      .radiologyReport.update({
-        where: { id },
-        data: {
-          ...data,
-          date: data.date ? new Date(data.date) : undefined,
-        },
-      });
+    // Use executeHealthcareWrite for update with audit logging
+    const report = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          imageType?: string;
+          findings?: string;
+          conclusion?: string;
+          date?: Date;
+        } = {};
+        if (data.imageType) {
+          updateData.imageType = data.imageType;
+        }
+        if (data.findings) {
+          updateData.findings = data.findings;
+        }
+        if (data.conclusion) {
+          updateData.conclusion = data.conclusion;
+        }
+        if (data.date) {
+          updateData.date = new Date(data.date);
+        }
+        return await client.radiologyReport.update({
+          where: { id },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'RADIOLOGY_REPORT',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.radiology_report.updated", {
+    await this.eventService.emit('ehr.radiology_report.updated', {
       reportId: id,
     });
     await this.invalidateUserEHRCache(report.userId);
 
-    return report;
+    return this.transformRadiologyReport(report);
   }
 
   async deleteRadiologyReport(id: string): Promise<void> {
-    const report = await this.databaseService
-      .getPrismaClient()
-      .radiologyReport.findUnique({
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const report = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.radiologyReport.findUnique({
         where: { id },
       });
-    if (!report)
-      throw new NotFoundException(`Radiology report with ID ${id} not found`);
+    });
+    if (!report) throw new NotFoundException(`Radiology report with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .radiologyReport.delete({ where: { id } });
-    await this.eventService.emit("ehr.radiology_report.deleted", {
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.radiologyReport.delete({ where: { id } });
+      },
+      {
+        userId: report.userId,
+        clinicId: report.clinicId || '',
+        resourceType: 'RADIOLOGY_REPORT',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: report.userId },
+      }
+    );
+    await this.eventService.emit('ehr.radiology_report.deleted', {
       reportId: id,
     });
     await this.invalidateUserEHRCache(report.userId);
@@ -501,85 +661,142 @@ export class EHRService {
 
   // ============ Surgical Records ============
 
-  async createSurgicalRecord(
-    data: CreateSurgicalRecordDto,
-  ): Promise<SurgicalRecordResponse> {
-    const record = await this.databaseService
-      .getPrismaClient()
-      .surgicalRecord.create({
-        data: {
+  async createSurgicalRecord(data: CreateSurgicalRecordDto): Promise<SurgicalRecordResponse> {
+    // Use executeHealthcareWrite for create with audit logging
+    const record = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const createData: {
+          userId: string;
+          surgeryName: string;
+          surgeon: string;
+          notes?: string;
+          date: Date;
+        } = {
           userId: data.userId,
           surgeryName: data.surgeryName,
           surgeon: data.surgeon,
-          notes: data.notes,
           date: new Date(data.date),
-        },
-      });
+        };
+        if (data.notes) {
+          createData.notes = data.notes;
+        }
+        return await client.surgicalRecord.create({
+          data: createData,
+        });
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: '',
+        resourceType: 'SURGICAL_RECORD',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, surgeryName: data.surgeryName },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Surgical record created",
-      "EHRService",
-      { recordId: record.id, userId: data.userId },
+      'Surgical record created',
+      'EHRService',
+      { recordId: record.id, userId: data.userId }
     );
 
-    await this.eventService.emit("ehr.surgical_record.created", {
+    await this.eventService.emit('ehr.surgical_record.created', {
       recordId: record.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return record;
+    return this.transformSurgicalRecord(record);
   }
 
   async getSurgicalRecords(userId: string): Promise<SurgicalRecordResponse[]> {
-    const records = await this.databaseService
-      .getPrismaClient()
-      .surgicalRecord.findMany({
+    // Use executeHealthcareRead for optimized query
+    const records = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.surgicalRecord.findMany({
         where: { userId },
-        orderBy: { date: "desc" },
+        orderBy: { date: 'desc' },
       });
+    });
 
-    return records.map((record: SurgicalRecord) =>
-      this.transformSurgicalRecord(record),
-    );
+    return records.map((record: SurgicalRecord) => this.transformSurgicalRecord(record));
   }
 
   async updateSurgicalRecord(
     id: string,
-    data: UpdateSurgicalRecordDto,
+    data: UpdateSurgicalRecordDto
   ): Promise<SurgicalRecordResponse> {
-    const record = await this.databaseService
-      .getPrismaClient()
-      .surgicalRecord.update({
-        where: { id },
-        data: {
-          ...data,
-          date: data.date ? new Date(data.date) : undefined,
-        },
-      });
+    // Use executeHealthcareWrite for update with audit logging
+    const record = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          surgeryName?: string;
+          surgeon?: string;
+          notes?: string;
+          date?: Date;
+        } = {};
+        if (data.surgeryName) {
+          updateData.surgeryName = data.surgeryName;
+        }
+        if (data.surgeon) {
+          updateData.surgeon = data.surgeon;
+        }
+        if (data.notes) {
+          updateData.notes = data.notes;
+        }
+        if (data.date) {
+          updateData.date = new Date(data.date);
+        }
+        return await client.surgicalRecord.update({
+          where: { id },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'SURGICAL_RECORD',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.surgical_record.updated", {
+    await this.eventService.emit('ehr.surgical_record.updated', {
       recordId: id,
     });
     await this.invalidateUserEHRCache(record.userId);
 
-    return record;
+    return this.transformSurgicalRecord(record);
   }
 
   async deleteSurgicalRecord(id: string): Promise<void> {
-    const record = await this.databaseService
-      .getPrismaClient()
-      .surgicalRecord.findUnique({
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const record = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.surgicalRecord.findUnique({
         where: { id },
       });
-    if (!record)
-      throw new NotFoundException(`Surgical record with ID ${id} not found`);
+    });
+    if (!record) throw new NotFoundException(`Surgical record with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .surgicalRecord.delete({ where: { id } });
-    await this.eventService.emit("ehr.surgical_record.deleted", {
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.surgicalRecord.delete({ where: { id } });
+      },
+      {
+        userId: record.userId,
+        clinicId: record.clinicId || '',
+        resourceType: 'SURGICAL_RECORD',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: record.userId },
+      }
+    );
+    await this.eventService.emit('ehr.surgical_record.deleted', {
       recordId: id,
     });
     await this.invalidateUserEHRCache(record.userId);
@@ -588,230 +805,428 @@ export class EHRService {
   // ============ Vitals ============
 
   async createVital(data: CreateVitalDto): Promise<VitalResponse> {
-    const vital = await this.databaseService.getPrismaClient().vital.create({
-      data: {
-        userId: data.userId,
-        type: data.type,
-        value: data.value,
-        recordedAt: new Date(data.recordedAt),
+    // Use executeHealthcareWrite for create with audit logging
+    const vital = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.vital.create({
+          data: {
+            userId: data.userId,
+            type: data.type,
+            value: data.value,
+            recordedAt: new Date(data.recordedAt),
+          },
+        });
       },
-    });
+      {
+        userId: data.userId || 'system',
+        clinicId: '',
+        resourceType: 'VITAL',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, type: data.type },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Vital record created",
-      "EHRService",
-      { vitalId: vital.id, userId: data.userId, type: data.type },
+      'Vital record created',
+      'EHRService',
+      { vitalId: vital.id, userId: data.userId, type: data.type }
     );
 
-    await this.eventService.emit("ehr.vital.created", { vitalId: vital.id });
+    await this.eventService.emit('ehr.vital.created', { vitalId: vital.id });
     await this.invalidateUserEHRCache(data.userId);
 
-    return vital;
+    return this.transformVital(vital);
   }
 
   async getVitals(userId: string, type?: string) {
-    return await this.databaseService.getPrismaClient().vital.findMany({
-      where: {
-        userId,
-        ...(type && { type }),
-      },
-      orderBy: { recordedAt: "desc" },
+    // Use executeHealthcareRead for optimized query
+    return await this.databaseService.executeHealthcareRead(async client => {
+      return await client.vital.findMany({
+        where: {
+          userId,
+          ...(type && { type }),
+        },
+        orderBy: { recordedAt: 'desc' },
+      });
     });
   }
 
   async updateVital(id: string, data: UpdateVitalDto): Promise<VitalResponse> {
-    const vital = await this.databaseService.getPrismaClient().vital.update({
-      where: { id },
-      data: {
-        ...data,
-        recordedAt: data.recordedAt ? new Date(data.recordedAt) : undefined,
+    // Use executeHealthcareWrite for update with audit logging
+    const vital = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          type?: string;
+          value?: string;
+          recordedAt?: Date;
+        } = {};
+        if (data.type) {
+          updateData.type = data.type;
+        }
+        if (data.value) {
+          updateData.value = data.value;
+        }
+        if (data.recordedAt) {
+          updateData.recordedAt = new Date(data.recordedAt);
+        }
+        return await client.vital.update({
+          where: { id },
+          data: updateData,
+        });
       },
-    });
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'VITAL',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.vital.updated", { vitalId: id });
+    await this.eventService.emit('ehr.vital.updated', { vitalId: id });
     await this.invalidateUserEHRCache(vital.userId);
 
-    return vital;
+    return this.transformVital(vital);
   }
 
   async deleteVital(id: string): Promise<void> {
-    const vital = await this.databaseService
-      .getPrismaClient()
-      .vital.findUnique({
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const vital = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.vital.findUnique({
         where: { id },
       });
-    if (!vital)
-      throw new NotFoundException(`Vital record with ID ${id} not found`);
+    });
+    if (!vital) throw new NotFoundException(`Vital record with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .vital.delete({ where: { id } });
-    await this.eventService.emit("ehr.vital.deleted", { vitalId: id });
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.vital.delete({ where: { id } });
+      },
+      {
+        userId: vital.userId,
+        clinicId: vital.clinicId || '',
+        resourceType: 'VITAL',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: vital.userId },
+      }
+    );
+    await this.eventService.emit('ehr.vital.deleted', { vitalId: id });
     await this.invalidateUserEHRCache(vital.userId);
   }
 
   // ============ Allergies ============
 
   async createAllergy(data: CreateAllergyDto): Promise<AllergyResponse> {
-    const allergy = await this.databaseService
-      .getPrismaClient()
-      .allergy.create({
-        data: {
+    // Use executeHealthcareWrite for create with audit logging
+    const allergy = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const createData: {
+          userId: string;
+          allergen: string;
+          severity: string;
+          reaction: string;
+          diagnosedDate: Date;
+          notes?: string;
+        } = {
           userId: data.userId,
           allergen: data.allergen,
           severity: data.severity,
           reaction: data.reaction,
           diagnosedDate: new Date(data.diagnosedDate),
-          notes: data.notes,
-        },
-      });
+        };
+        if (data.notes) {
+          createData.notes = data.notes;
+        }
+        return await client.allergy.create({
+          data: createData,
+        });
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: '',
+        resourceType: 'ALLERGY',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, allergen: data.allergen },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Allergy record created",
-      "EHRService",
-      { allergyId: allergy.id, userId: data.userId },
+      'Allergy record created',
+      'EHRService',
+      { allergyId: allergy.id, userId: data.userId }
     );
 
-    await this.eventService.emit("ehr.allergy.created", {
+    await this.eventService.emit('ehr.allergy.created', {
       allergyId: allergy.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return allergy;
+    return this.transformAllergy(allergy);
   }
 
   async getAllergies(userId: string) {
-    return await this.databaseService.getPrismaClient().allergy.findMany({
-      where: { userId },
-      orderBy: { diagnosedDate: "desc" },
+    // Use executeHealthcareRead for optimized query
+    return await this.databaseService.executeHealthcareRead(async client => {
+      return await client.allergy.findMany({
+        where: { userId },
+        orderBy: { diagnosedDate: 'desc' },
+      });
     });
   }
 
-  async updateAllergy(
-    id: string,
-    data: UpdateAllergyDto,
-  ): Promise<AllergyResponse> {
-    const allergy = await this.databaseService
-      .getPrismaClient()
-      .allergy.update({
-        where: { id },
-        data: {
-          ...data,
-          diagnosedDate: data.diagnosedDate
-            ? new Date(data.diagnosedDate)
-            : undefined,
-        },
-      });
+  async updateAllergy(id: string, data: UpdateAllergyDto): Promise<AllergyResponse> {
+    // Use executeHealthcareWrite for update with audit logging
+    const allergy = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          allergen?: string;
+          severity?: string;
+          reaction?: string;
+          diagnosedDate?: Date;
+          notes?: string;
+        } = {};
+        if (data.allergen) {
+          updateData.allergen = data.allergen;
+        }
+        if (data.severity) {
+          updateData.severity = data.severity;
+        }
+        if (data.reaction) {
+          updateData.reaction = data.reaction;
+        }
+        if (data.diagnosedDate) {
+          updateData.diagnosedDate = new Date(data.diagnosedDate);
+        }
+        if (data.notes) {
+          updateData.notes = data.notes;
+        }
+        return await client.allergy.update({
+          where: { id },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'ALLERGY',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.allergy.updated", { allergyId: id });
+    await this.eventService.emit('ehr.allergy.updated', { allergyId: id });
     await this.invalidateUserEHRCache(allergy.userId);
 
-    return allergy;
+    return this.transformAllergy(allergy);
   }
 
   async deleteAllergy(id: string): Promise<void> {
-    const allergy = await this.databaseService
-      .getPrismaClient()
-      .allergy.findUnique({
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const allergy = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.allergy.findUnique({
         where: { id },
       });
-    if (!allergy)
-      throw new NotFoundException(`Allergy record with ID ${id} not found`);
+    });
+    if (!allergy) throw new NotFoundException(`Allergy record with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .allergy.delete({ where: { id } });
-    await this.eventService.emit("ehr.allergy.deleted", { allergyId: id });
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.allergy.delete({ where: { id } });
+      },
+      {
+        userId: allergy.userId,
+        clinicId: allergy.clinicId || '',
+        resourceType: 'ALLERGY',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: allergy.userId },
+      }
+    );
+    await this.eventService.emit('ehr.allergy.deleted', { allergyId: id });
     await this.invalidateUserEHRCache(allergy.userId);
   }
 
   // ============ Medications ============
 
-  async createMedication(
-    data: CreateMedicationDto,
-  ): Promise<MedicationResponse> {
-    const medication = await this.databaseService
-      .getPrismaClient()
-      .medication.create({
-        data: {
+  async createMedication(data: CreateMedicationDto): Promise<MedicationResponse> {
+    // Use executeHealthcareWrite for create with audit logging
+    const medication = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const createData: {
+          userId: string;
+          name: string;
+          dosage: string;
+          frequency: string;
+          startDate: Date;
+          endDate?: Date;
+          prescribedBy: string;
+          purpose?: string;
+          sideEffects?: string;
+        } = {
           userId: data.userId,
           name: data.name,
           dosage: data.dosage,
           frequency: data.frequency,
           startDate: new Date(data.startDate),
-          endDate: data.endDate ? new Date(data.endDate) : undefined,
           prescribedBy: data.prescribedBy,
-          purpose: data.purpose,
-          sideEffects: data.sideEffects,
-        },
-      });
+        };
+        if (data.endDate) {
+          createData.endDate = new Date(data.endDate);
+        }
+        if (data.purpose) {
+          createData.purpose = data.purpose;
+        }
+        if (data.sideEffects) {
+          createData.sideEffects = data.sideEffects;
+        }
+        return await client.medication.create({
+          data: createData,
+        });
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: '',
+        resourceType: 'MEDICATION',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, name: data.name },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Medication record created",
-      "EHRService",
-      { medicationId: medication.id, userId: data.userId },
+      'Medication record created',
+      'EHRService',
+      { medicationId: medication.id, userId: data.userId }
     );
 
-    await this.eventService.emit("ehr.medication.created", {
+    await this.eventService.emit('ehr.medication.created', {
       medicationId: medication.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return medication;
+    return this.transformMedication(medication);
   }
 
   async getMedications(userId: string, activeOnly: boolean = false) {
-    return await this.databaseService.getPrismaClient().medication.findMany({
-      where: {
-        userId,
-        ...(activeOnly && { isActive: true }),
-      },
-      orderBy: { startDate: "desc" },
+    // Use executeHealthcareRead for optimized query
+    return await this.databaseService.executeHealthcareRead(async client => {
+      return await client.medication.findMany({
+        where: {
+          userId,
+          ...(activeOnly && { isActive: true }),
+        },
+        orderBy: { startDate: 'desc' },
+      });
     });
   }
 
-  async updateMedication(
-    id: string,
-    data: UpdateMedicationDto,
-  ): Promise<MedicationResponse> {
-    const medication = await this.databaseService
-      .getPrismaClient()
-      .medication.update({
-        where: { id },
-        data: {
-          ...data,
-          startDate: data.startDate ? new Date(data.startDate) : undefined,
-          endDate: data.endDate ? new Date(data.endDate) : undefined,
-        },
-      });
+  async updateMedication(id: string, data: UpdateMedicationDto): Promise<MedicationResponse> {
+    // Use executeHealthcareWrite for update with audit logging
+    const medication = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          name?: string;
+          dosage?: string;
+          frequency?: string;
+          startDate?: Date;
+          endDate?: Date;
+          prescribedBy?: string;
+          purpose?: string;
+          sideEffects?: string;
+        } = {};
+        if (data.name) {
+          updateData.name = data.name;
+        }
+        if (data.dosage) {
+          updateData.dosage = data.dosage;
+        }
+        if (data.frequency) {
+          updateData.frequency = data.frequency;
+        }
+        if (data.startDate) {
+          updateData.startDate = new Date(data.startDate);
+        }
+        if (data.endDate) {
+          updateData.endDate = new Date(data.endDate);
+        }
+        if (data.prescribedBy) {
+          updateData.prescribedBy = data.prescribedBy;
+        }
+        if (data.purpose) {
+          updateData.purpose = data.purpose;
+        }
+        if (data.sideEffects) {
+          updateData.sideEffects = data.sideEffects;
+        }
+        return await client.medication.update({
+          where: { id },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'MEDICATION',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.medication.updated", {
+    await this.eventService.emit('ehr.medication.updated', {
       medicationId: id,
     });
     await this.invalidateUserEHRCache(medication.userId);
 
-    return medication;
+    return this.transformMedication(medication);
   }
 
   async deleteMedication(id: string): Promise<void> {
-    const medication = await this.databaseService
-      .getPrismaClient()
-      .medication.findUnique({
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const medication = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.medication.findUnique({
         where: { id },
       });
-    if (!medication)
-      throw new NotFoundException(`Medication record with ID ${id} not found`);
+    });
+    if (!medication) throw new NotFoundException(`Medication record with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .medication.delete({ where: { id } });
-    await this.eventService.emit("ehr.medication.deleted", {
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.medication.delete({ where: { id } });
+      },
+      {
+        userId: medication.userId,
+        clinicId: medication.clinicId || '',
+        resourceType: 'MEDICATION',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: medication.userId },
+      }
+    );
+    await this.eventService.emit('ehr.medication.deleted', {
       medicationId: id,
     });
     await this.invalidateUserEHRCache(medication.userId);
@@ -819,73 +1234,135 @@ export class EHRService {
 
   // ============ Immunizations ============
 
-  async createImmunization(
-    data: CreateImmunizationDto,
-  ): Promise<ImmunizationResponse> {
-    const immunization = await this.databaseService
-      .getPrismaClient()
-      .immunization.create({
-        data: {
+  async createImmunization(data: CreateImmunizationDto): Promise<ImmunizationResponse> {
+    // Use executeHealthcareWrite for create with audit logging
+    const immunization = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const createData: {
+          userId: string;
+          vaccineName: string;
+          dateAdministered: Date;
+          nextDueDate?: Date;
+          batchNumber?: string;
+          administrator?: string;
+          location?: string;
+          notes?: string;
+        } = {
           userId: data.userId,
           vaccineName: data.vaccineName,
           dateAdministered: new Date(data.dateAdministered),
-          nextDueDate: data.nextDueDate
-            ? new Date(data.nextDueDate)
-            : undefined,
-          batchNumber: data.batchNumber,
-          administrator: data.administrator,
-          location: data.location,
-          notes: data.notes,
-        },
-      });
+        };
+        if (data.nextDueDate) {
+          createData.nextDueDate = new Date(data.nextDueDate);
+        }
+        if (data.batchNumber) {
+          createData.batchNumber = data.batchNumber;
+        }
+        if (data.administrator) {
+          createData.administrator = data.administrator;
+        }
+        if (data.location) {
+          createData.location = data.location;
+        }
+        if (data.notes) {
+          createData.notes = data.notes;
+        }
+        return await client.immunization.create({
+          data: createData,
+        });
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: '',
+        resourceType: 'IMMUNIZATION',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, vaccineName: data.vaccineName },
+      }
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      "Immunization record created",
-      "EHRService",
-      { immunizationId: immunization.id, userId: data.userId },
+      'Immunization record created',
+      'EHRService',
+      { immunizationId: immunization.id, userId: data.userId }
     );
 
-    await this.eventService.emit("ehr.immunization.created", {
+    await this.eventService.emit('ehr.immunization.created', {
       immunizationId: immunization.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return immunization;
+    return this.transformImmunization(immunization);
   }
 
   async getImmunizations(userId: string): Promise<ImmunizationResponse[]> {
-    const records: Immunization[] = await this.databaseService
-      .getPrismaClient()
-      .immunization.findMany({
-        where: { userId },
-        orderBy: { dateAdministered: "desc" },
-      });
+    // Use executeHealthcareRead for optimized query
+    const records: Immunization[] = await this.databaseService.executeHealthcareRead(
+      async client => {
+        return await client.immunization.findMany({
+          where: { userId },
+          orderBy: { dateAdministered: 'desc' },
+        });
+      }
+    );
 
-    return records.map((record) => this.transformImmunization(record));
+    return records.map(record => this.transformImmunization(record));
   }
 
-  async updateImmunization(
-    id: string,
-    data: UpdateImmunizationDto,
-  ): Promise<ImmunizationResponse> {
-    const immunization: Immunization = await this.databaseService
-      .getPrismaClient()
-      .immunization.update({
-        where: { id },
-        data: {
-          ...data,
-          dateAdministered: data.dateAdministered
-            ? new Date(data.dateAdministered)
-            : undefined,
-          nextDueDate: data.nextDueDate
-            ? new Date(data.nextDueDate)
-            : undefined,
-        },
-      });
+  async updateImmunization(id: string, data: UpdateImmunizationDto): Promise<ImmunizationResponse> {
+    // Use executeHealthcareWrite for update with audit logging
+    const immunization: Immunization = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          vaccineName?: string;
+          dateAdministered?: Date;
+          nextDueDate?: Date;
+          batchNumber?: string;
+          administrator?: string;
+          location?: string;
+          notes?: string;
+        } = {};
+        if (data.vaccineName) {
+          updateData.vaccineName = data.vaccineName;
+        }
+        if (data.dateAdministered) {
+          updateData.dateAdministered = new Date(data.dateAdministered);
+        }
+        if (data.nextDueDate) {
+          updateData.nextDueDate = new Date(data.nextDueDate);
+        }
+        if (data.batchNumber) {
+          updateData.batchNumber = data.batchNumber;
+        }
+        if (data.administrator) {
+          updateData.administrator = data.administrator;
+        }
+        if (data.location) {
+          updateData.location = data.location;
+        }
+        if (data.notes) {
+          updateData.notes = data.notes;
+        }
+        return await client.immunization.update({
+          where: { id },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'IMMUNIZATION',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
 
-    await this.eventService.emit("ehr.immunization.updated", {
+    await this.eventService.emit('ehr.immunization.updated', {
       immunizationId: id,
     });
     await this.invalidateUserEHRCache(immunization.userId);
@@ -894,20 +1371,32 @@ export class EHRService {
   }
 
   async deleteImmunization(id: string): Promise<void> {
-    const immunization: Immunization | null = await this.databaseService
-      .getPrismaClient()
-      .immunization.findUnique({
-        where: { id },
-      });
-    if (!immunization)
-      throw new NotFoundException(
-        `Immunization record with ID ${id} not found`,
-      );
+    // Use executeHealthcareRead first to get record for cache invalidation
+    const immunization: Immunization | null = await this.databaseService.executeHealthcareRead(
+      async client => {
+        return await client.immunization.findUnique({
+          where: { id },
+        });
+      }
+    );
+    if (!immunization) throw new NotFoundException(`Immunization record with ID ${id} not found`);
 
-    await this.databaseService
-      .getPrismaClient()
-      .immunization.delete({ where: { id } });
-    await this.eventService.emit("ehr.immunization.deleted", {
+    // Use executeHealthcareWrite for delete with audit logging
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await client.immunization.delete({ where: { id } });
+      },
+      {
+        userId: immunization.userId,
+        clinicId: immunization.clinicId || '',
+        resourceType: 'IMMUNIZATION',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: immunization.userId },
+      }
+    );
+    await this.eventService.emit('ehr.immunization.deleted', {
       immunizationId: id,
     });
     await this.invalidateUserEHRCache(immunization.userId);
@@ -919,7 +1408,7 @@ export class EHRService {
     userId: string,
     vitalType: string,
     startDate?: Date,
-    endDate?: Date,
+    endDate?: Date
   ): Promise<{ vitalType: string; data: Vital[]; count: number }> {
     const where: {
       userId: string;
@@ -939,12 +1428,13 @@ export class EHRService {
       if (endDate) where.recordedAt.lte = endDate;
     }
 
-    const vitals: Vital[] = await this.databaseService
-      .getPrismaClient()
-      .vital.findMany({
+    // Use executeHealthcareRead for optimized query
+    const vitals: Vital[] = await this.databaseService.executeHealthcareRead(async client => {
+      return await client.vital.findMany({
         where,
-        orderBy: { recordedAt: "asc" },
+        orderBy: { recordedAt: 'asc' },
       });
+    });
 
     return {
       vitalType,
@@ -954,16 +1444,19 @@ export class EHRService {
   }
 
   async getMedicationAdherence(
-    userId: string,
+    userId: string
   ): Promise<{ totalActive: number; medications: Medication[] }> {
-    const medications: Medication[] = await this.databaseService
-      .getPrismaClient()
-      .medication.findMany({
-        where: {
-          userId,
-          isActive: true,
-        },
-      });
+    // Use executeHealthcareRead for optimized query
+    const medications: Medication[] = await this.databaseService.executeHealthcareRead(
+      async client => {
+        return await client.medication.findMany({
+          where: {
+            userId,
+            isActive: true,
+          },
+        });
+      }
+    );
 
     return {
       totalActive: medications.length,
@@ -979,95 +1472,11 @@ export class EHRService {
   async getClinicPatientsRecords(
     clinicId: string,
     role: string,
-    filters?: {
-      recordType?: string;
-      hasCondition?: string;
-      hasAllergy?: string;
-      onMedication?: string;
-      dateFrom?: Date;
-      dateTo?: Date;
-    },
-  ): Promise<{
-    conditions: Array<{
-      id: string;
-      user: {
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string | null;
-      } | null;
-      condition: string;
-      date: Date;
-      notes?: string;
-    }>;
-    allergies: Array<{
-      id: string;
-      user: {
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string | null;
-      } | null;
-      allergen: string;
-      severity: string;
-      reaction: string;
-      diagnosedDate: Date;
-    }>;
-    medications: Array<{
-      id: string;
-      user: {
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string | null;
-      } | null;
-      name: string;
-      dosage: string;
-      frequency: string;
-      startDate: Date;
-      isActive: boolean;
-    }>;
-    totalRecords: number;
-  }> {
-    let conditions: Array<{
-      id: string;
-      user: {
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string | null;
-      } | null;
-      condition: string;
-      date: Date;
-      notes?: string;
-    }> = [];
-    let allergies: Array<{
-      id: string;
-      user: {
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string | null;
-      } | null;
-      allergen: string;
-      severity: string;
-      reaction: string;
-      diagnosedDate: Date;
-    }> = [];
-    let medications: Array<{
-      id: string;
-      user: {
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string | null;
-      } | null;
-      name: string;
-      dosage: string;
-      frequency: string;
-      startDate: Date;
-      isActive: boolean;
-    }> = [];
+    filters?: ClinicEHRRecordFilters
+  ): Promise<GetClinicRecordsByFilterResult> {
+    let conditions: MedicalHistoryRecord[] = [];
+    let allergies: AllergyRecord[] = [];
+    let medications: MedicationRecord[] = [];
 
     interface BaseWhereClause {
       clinicId: string;
@@ -1079,157 +1488,453 @@ export class EHRService {
     }
 
     interface MedicalHistoryWhere extends BaseWhereClause {
-      condition?: { contains: string; mode: "insensitive" };
+      condition?: { contains: string; mode: 'insensitive' };
     }
 
     interface AllergyWhere extends BaseWhereClause {
-      allergen?: { contains: string; mode: "insensitive" };
+      allergen?: { contains: string; mode: 'insensitive' };
     }
 
     interface MedicationWhere extends BaseWhereClause {
-      name?: { contains: string; mode: "insensitive" };
+      name?: { contains: string; mode: 'insensitive' };
     }
 
     switch (filters?.recordType) {
-      case "medical_history": {
+      case 'medical_history': {
         let where: MedicalHistoryWhere = { clinicId };
-        where = addStringFilter(where, "condition", filters.hasCondition);
+        where = addStringFilter(where, 'condition', filters.hasCondition);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
-        const medicalHistoryRecords = await this.databaseService
-          .getPrismaClient()
-          .medicalHistory.findMany({
-            where,
-            include: { user: { select: USER_SELECT_FIELDS } },
-            orderBy: { date: "desc" },
-          });
-        conditions = medicalHistoryRecords.map((record: any) => ({
-          id: record.id,
-          user: record.user,
-          condition: record.condition,
-          date: record.date,
-          notes: record.notes || "",
-        }));
+        // Use executeHealthcareRead for optimized query
+        const medicalHistoryRecords = await this.databaseService.executeHealthcareRead(
+          async client => {
+            return (await client.medicalHistory.findMany({
+              where,
+              select: {
+                id: true,
+                userId: true,
+                clinicId: true,
+                condition: true,
+                diagnosis: true,
+                treatment: true,
+                date: true,
+                doctorId: true,
+                notes: true,
+                createdAt: true,
+                updatedAt: true,
+              } as {
+                id: boolean;
+                userId: boolean;
+                clinicId: boolean;
+                condition: boolean;
+                diagnosis: boolean;
+                treatment: boolean;
+                date: boolean;
+                doctorId: boolean;
+                notes: boolean;
+                createdAt: boolean;
+                updatedAt: boolean;
+              },
+              orderBy: { date: 'desc' },
+            })) as Array<{
+              id: string;
+              userId: string;
+              clinicId: string | null;
+              condition: string;
+              diagnosis: string | null;
+              treatment: string | null;
+              date: Date;
+              doctorId: string | null;
+              notes: string | null;
+              createdAt: Date;
+              updatedAt: Date;
+            }>;
+          }
+        );
+        conditions = medicalHistoryRecords.map((record): MedicalHistoryRecord => {
+          const result: MedicalHistoryRecord = {
+            id: record.id,
+            userId: record.userId,
+            clinicId: record.clinicId || '',
+            condition: record.condition,
+            diagnosis: record.diagnosis || '',
+            treatment: record.treatment || '',
+            date: record.date,
+            doctorId: record.doctorId || '',
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+          if (record.notes) {
+            result.notes = record.notes;
+          }
+          return result;
+        });
         break;
       }
 
-      case "lab_report": {
+      case 'lab_report': {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
-        const labReportRecords = await this.databaseService
-          .getPrismaClient()
-          .labReport.findMany({
+        // Use executeHealthcareRead for optimized query
+        const labReportRecords = await this.databaseService.executeHealthcareRead(async client => {
+          return await client.labReport.findMany({
             where,
             include: { user: { select: USER_SELECT_FIELDS } },
-            orderBy: { date: "desc" },
+            orderBy: { date: 'desc' },
           });
+        });
         // Lab reports don't fit into our current structure, skip for now
         break;
       }
 
-      case "vital": {
+      case 'vital': {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
-        const vitalRecords = await this.databaseService
-          .getPrismaClient()
-          .vital.findMany({
+        // Use executeHealthcareRead for optimized query
+        const vitalRecords = await this.databaseService.executeHealthcareRead(async client => {
+          return await client.vital.findMany({
             where,
             include: { user: { select: USER_SELECT_FIELDS } },
-            orderBy: { recordedAt: "desc" },
+            orderBy: { recordedAt: 'desc' },
           });
+        });
         // Vitals don't fit into our current structure, skip for now
         break;
       }
 
-      case "allergy": {
+      case 'allergy': {
         let where: AllergyWhere = { clinicId };
-        where = addStringFilter(where, "allergen", filters.hasAllergy);
+        where = addStringFilter(where, 'allergen', filters.hasAllergy);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
-        const allergyRecords = await this.databaseService
-          .getPrismaClient()
-          .allergy.findMany({
+        // Use executeHealthcareRead for optimized query
+        const allergyRecords = await this.databaseService.executeHealthcareRead(async client => {
+          return (await client.allergy.findMany({
             where,
-            include: { user: { select: USER_SELECT_FIELDS } },
-            orderBy: { diagnosedDate: "desc" },
-          });
-        allergies = allergyRecords.map((record: any) => ({
-          id: record.id,
-          user: record.user,
-          allergen: record.allergen,
-          severity: record.severity,
-          reaction: record.reaction,
-          diagnosedDate: record.diagnosedDate.toISOString(),
-        }));
+            select: {
+              id: true,
+              userId: true,
+              clinicId: true,
+              allergen: true,
+              severity: true,
+              reaction: true,
+              diagnosedDate: true,
+              doctorId: true,
+              notes: true,
+              createdAt: true,
+              updatedAt: true,
+            } as {
+              id: boolean;
+              userId: boolean;
+              clinicId: boolean;
+              allergen: boolean;
+              severity: boolean;
+              reaction: boolean;
+              diagnosedDate: boolean;
+              doctorId: boolean;
+              notes: boolean;
+              createdAt: boolean;
+              updatedAt: boolean;
+            },
+            orderBy: { diagnosedDate: 'desc' },
+          })) as Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            allergen: string;
+            severity: string;
+            reaction: string;
+            diagnosedDate: Date;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>;
+        });
+        allergies = allergyRecords.map((record): AllergyRecord => {
+          const result: AllergyRecord = {
+            id: record.id,
+            userId: record.userId,
+            clinicId: record.clinicId || '',
+            allergen: record.allergen,
+            severity: record.severity,
+            reaction: record.reaction,
+            diagnosedDate: record.diagnosedDate,
+            doctorId: record.doctorId || '',
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+          if (record.notes) {
+            result.notes = record.notes;
+          }
+          return result;
+        });
         break;
       }
 
-      case "medication": {
+      case 'medication': {
         let where: MedicationWhere = { clinicId };
-        where = addStringFilter(where, "name", filters.onMedication);
+        where = addStringFilter(where, 'name', filters.onMedication);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
-        const medicationRecords = await this.databaseService
-          .getPrismaClient()
-          .medication.findMany({
+        // Use executeHealthcareRead for optimized query
+        const medicationRecords = await this.databaseService.executeHealthcareRead(async client => {
+          return (await client.medication.findMany({
             where,
-            include: { user: { select: USER_SELECT_FIELDS } },
-            orderBy: { startDate: "desc" },
-          });
-        medications = medicationRecords.map((record: any) => ({
-          id: record.id,
-          user: record.user,
-          name: record.name,
-          dosage: record.dosage,
-          frequency: record.frequency,
-          startDate: record.startDate.toISOString(),
-          isActive: record.isActive,
-        }));
+            select: {
+              id: true,
+              userId: true,
+              clinicId: true,
+              name: true,
+              dosage: true,
+              frequency: true,
+              startDate: true,
+              endDate: true,
+              doctorId: true,
+              notes: true,
+              createdAt: true,
+              updatedAt: true,
+            } as {
+              id: boolean;
+              userId: boolean;
+              clinicId: boolean;
+              name: boolean;
+              dosage: boolean;
+              frequency: boolean;
+              startDate: boolean;
+              endDate: boolean;
+              doctorId: boolean;
+              notes: boolean;
+              createdAt: boolean;
+              updatedAt: boolean;
+            },
+            orderBy: { startDate: 'desc' },
+          })) as Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            name: string;
+            dosage: string;
+            frequency: string;
+            startDate: Date;
+            endDate: Date | null;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>;
+        });
+        medications = medicationRecords.map((record): MedicationRecord => {
+          const result: MedicationRecord = {
+            id: record.id,
+            userId: record.userId,
+            clinicId: record.clinicId || '',
+            name: record.name,
+            dosage: record.dosage,
+            frequency: record.frequency,
+            startDate: record.startDate,
+            doctorId: record.doctorId || '',
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+          if (record.endDate) {
+            result.endDate = record.endDate;
+          }
+          // notes field not in Medication Prisma schema - skip
+          return result;
+        });
         break;
       }
 
       default: {
-        // Get all record types
-        const [medicalHistoryRecords, allergyRecords, medicationRecords] =
-          await Promise.all([
-            this.databaseService.getPrismaClient().medicalHistory.findMany({
+        // Get all record types using executeHealthcareRead for optimized queries
+        const [medicalHistoryRecords, allergyRecords, medicationRecords] = await Promise.all([
+          this.databaseService.executeHealthcareRead(async client => {
+            return (await client.medicalHistory.findMany({
               where: { clinicId },
-              include: { user: { select: USER_SELECT_FIELDS } },
-              orderBy: { date: "desc" },
-            }),
-            this.databaseService.getPrismaClient().allergy.findMany({
+              select: {
+                id: true,
+                userId: true,
+                clinicId: true,
+                condition: true,
+                diagnosis: true,
+                treatment: true,
+                date: true,
+                doctorId: true,
+                notes: true,
+                createdAt: true,
+                updatedAt: true,
+              } as {
+                id: boolean;
+                userId: boolean;
+                clinicId: boolean;
+                condition: boolean;
+                diagnosis: boolean;
+                treatment: boolean;
+                date: boolean;
+                doctorId: boolean;
+                notes: boolean;
+                createdAt: boolean;
+                updatedAt: boolean;
+              },
+              orderBy: { date: 'desc' },
+            })) as Array<{
+              id: string;
+              userId: string;
+              clinicId: string | null;
+              condition: string;
+              diagnosis: string | null;
+              treatment: string | null;
+              date: Date;
+              doctorId: string | null;
+              notes: string | null;
+              createdAt: Date;
+              updatedAt: Date;
+            }>;
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return (await client.allergy.findMany({
               where: { clinicId },
-              include: { user: { select: USER_SELECT_FIELDS } },
-              orderBy: { diagnosedDate: "desc" },
-            }),
-            this.databaseService.getPrismaClient().medication.findMany({
+              select: {
+                id: true,
+                userId: true,
+                clinicId: true,
+                allergen: true,
+                severity: true,
+                reaction: true,
+                diagnosedDate: true,
+                doctorId: true,
+                notes: true,
+                createdAt: true,
+                updatedAt: true,
+              } as {
+                id: boolean;
+                userId: boolean;
+                clinicId: boolean;
+                allergen: boolean;
+                severity: boolean;
+                reaction: boolean;
+                diagnosedDate: boolean;
+                doctorId: boolean;
+                notes: boolean;
+                createdAt: boolean;
+                updatedAt: boolean;
+              },
+              orderBy: { diagnosedDate: 'desc' },
+            })) as Array<{
+              id: string;
+              userId: string;
+              clinicId: string | null;
+              allergen: string;
+              severity: string;
+              reaction: string;
+              diagnosedDate: Date;
+              doctorId: string | null;
+              notes: string | null;
+              createdAt: Date;
+              updatedAt: Date;
+            }>;
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return (await client.medication.findMany({
               where: { clinicId },
-              include: { user: { select: USER_SELECT_FIELDS } },
-              orderBy: { startDate: "desc" },
-            }),
-          ]);
+              select: {
+                id: true,
+                userId: true,
+                clinicId: true,
+                name: true,
+                dosage: true,
+                frequency: true,
+                startDate: true,
+                endDate: true,
+                doctorId: true,
+                notes: true,
+                createdAt: true,
+                updatedAt: true,
+              } as {
+                id: boolean;
+                userId: boolean;
+                clinicId: boolean;
+                name: boolean;
+                dosage: boolean;
+                frequency: boolean;
+                startDate: boolean;
+                endDate: boolean;
+                doctorId: boolean;
+                notes: boolean;
+                createdAt: boolean;
+                updatedAt: boolean;
+              },
+              orderBy: { startDate: 'desc' },
+            })) as Array<{
+              id: string;
+              userId: string;
+              clinicId: string | null;
+              name: string;
+              dosage: string;
+              frequency: string;
+              startDate: Date;
+              endDate: Date | null;
+              doctorId: string | null;
+              notes: string | null;
+              createdAt: Date;
+              updatedAt: Date;
+            }>;
+          }),
+        ]);
 
-        conditions = medicalHistoryRecords.map((record: any) => ({
-          id: record.id,
-          user: record.user,
-          condition: record.condition,
-          date: record.date,
-          notes: record.notes || "",
-        }));
-        allergies = allergyRecords.map((record: any) => ({
-          id: record.id,
-          user: record.user,
-          allergen: record.allergen,
-          severity: record.severity,
-          reaction: record.reaction,
-          diagnosedDate: record.diagnosedDate.toISOString(),
-        }));
-        medications = medicationRecords.map((record: any) => ({
-          id: record.id,
-          user: record.user,
-          name: record.name,
-          dosage: record.dosage,
-          frequency: record.frequency,
-          startDate: record.startDate.toISOString(),
-          isActive: record.isActive,
-        }));
+        conditions = medicalHistoryRecords.map((record): MedicalHistoryRecord => {
+          const result: MedicalHistoryRecord = {
+            id: record.id,
+            userId: record.userId,
+            clinicId: record.clinicId || '',
+            condition: record.condition,
+            diagnosis: record.diagnosis || '',
+            treatment: record.treatment || '',
+            date: record.date,
+            doctorId: record.doctorId || '',
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+          if (record.notes) {
+            result.notes = record.notes;
+          }
+          return result;
+        });
+        allergies = allergyRecords.map((record): AllergyRecord => {
+          const result: AllergyRecord = {
+            id: record.id,
+            userId: record.userId,
+            clinicId: record.clinicId || '',
+            allergen: record.allergen,
+            severity: record.severity,
+            reaction: record.reaction,
+            diagnosedDate: record.diagnosedDate,
+            doctorId: record.doctorId || '',
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+          if (record.notes) {
+            result.notes = record.notes;
+          }
+          return result;
+        });
+        medications = medicationRecords.map((record): MedicationRecord => {
+          const result: MedicationRecord = {
+            id: record.id,
+            userId: record.userId,
+            clinicId: record.clinicId || '',
+            name: record.name,
+            dosage: record.dosage,
+            frequency: record.frequency,
+            startDate: record.startDate,
+            doctorId: record.doctorId || '',
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+          if (record.endDate) {
+            result.endDate = record.endDate;
+          }
+          // notes field not in Medication Prisma schema - skip
+          return result;
+        });
         break;
       }
     }
@@ -1238,7 +1943,7 @@ export class EHRService {
       conditions,
       allergies,
       medications,
-      totalRecords: conditions.length + allergies.length + medications.length,
+      total: conditions.length + allergies.length + medications.length,
     };
   }
 
@@ -1282,58 +1987,71 @@ export class EHRService {
           commonConditions,
           commonAllergies,
         ] = await Promise.all([
-          this.databaseService.getPrismaClient().medicalHistory.findMany({
-            where: { clinicId },
-            select: { userId: true },
-            distinct: ["userId"],
-          }) as Promise<PrismaUserSelect[]>,
-          this.databaseService
-            .getPrismaClient()
-            .medicalHistory.count({ where: { clinicId } }) as Promise<number>,
-          this.databaseService
-            .getPrismaClient()
-            .labReport.count({ where: { clinicId } }) as Promise<number>,
-          this.databaseService
-            .getPrismaClient()
-            .vital.count({ where: { clinicId } }) as Promise<number>,
-          this.databaseService
-            .getPrismaClient()
-            .allergy.count({ where: { clinicId } }) as Promise<number>,
-          this.databaseService.getPrismaClient().medication.count({
-            where: { clinicId, isActive: true },
-          }) as Promise<number>,
+          // Use executeHealthcareRead for optimized queries
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.medicalHistory.findMany({
+              where: { clinicId },
+              select: { userId: true },
+              distinct: ['userId'],
+            });
+          }) as Promise<Array<{ userId: string }>>,
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.medicalHistory.count({ where: { clinicId } });
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.labReport.count({ where: { clinicId } });
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.vital.count({ where: { clinicId } });
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.allergy.count({ where: { clinicId } });
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.medication.count({
+              where: { clinicId, isActive: true },
+            });
+          }),
           Promise.all([
-            this.databaseService.getPrismaClient().medicalHistory.count({
-              where: {
-                clinicId,
-                createdAt: {
-                  gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+            this.databaseService.executeHealthcareRead(async client => {
+              return await client.medicalHistory.count({
+                where: {
+                  clinicId,
+                  createdAt: {
+                    gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                  },
                 },
-              },
-            }) as Promise<number>,
-            this.databaseService.getPrismaClient().labReport.count({
-              where: {
-                clinicId,
-                createdAt: {
-                  gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+              });
+            }),
+            this.databaseService.executeHealthcareRead(async client => {
+              return await client.labReport.count({
+                where: {
+                  clinicId,
+                  createdAt: {
+                    gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                  },
                 },
-              },
-            }) as Promise<number>,
+              });
+            }),
           ]),
-          this.databaseService.getPrismaClient().medicalHistory.groupBy({
-            by: ["condition"],
-            where: { clinicId },
-            _count: { condition: true },
-            orderBy: { _count: { condition: "desc" } },
-            take: 10,
-          }) as Promise<PrismaGroupByResult[]>,
-          this.databaseService.getPrismaClient().allergy.groupBy({
-            by: ["allergen"],
-            where: { clinicId },
-            _count: { allergen: true },
-            orderBy: { _count: { allergen: "desc" } },
-            take: 10,
-          }) as Promise<PrismaGroupByResult[]>,
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.medicalHistory.groupBy({
+              by: ['condition'],
+              where: { clinicId },
+              _count: { condition: true },
+              orderBy: { _count: { condition: 'desc' } },
+              take: 10,
+            });
+          }),
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.allergy.groupBy({
+              by: ['allergen'],
+              where: { clinicId },
+              _count: { allergen: true },
+              orderBy: { _count: { allergen: 'desc' } },
+              take: 10,
+            });
+          }),
         ]);
 
         return {
@@ -1353,12 +2071,12 @@ export class EHRService {
             },
           },
           insights: {
-            commonConditions: commonConditions.map((c) => ({
-              condition: c.condition || "",
+            commonConditions: commonConditions.map(c => ({
+              condition: c.condition || '',
               count: c._count?.condition || 0,
             })),
-            commonAllergies: commonAllergies.map((a) => ({
-              allergen: a.allergen || "",
+            commonAllergies: commonAllergies.map(a => ({
+              allergen: a.allergen || '',
               count: a._count?.allergen || 0,
             })),
           },
@@ -1366,9 +2084,9 @@ export class EHRService {
       },
       {
         ttl: 3600,
-        tags: [`clinic:${clinicId}`, "analytics"],
-        priority: "normal",
-      },
+        tags: [`clinic:${clinicId}`, 'analytics'],
+        priority: 'normal',
+      }
     );
   }
 
@@ -1397,44 +2115,58 @@ export class EHRService {
     return this.cacheService.cache(
       `ehr:patients:summary:${clinicId}`,
       async () => {
-        const patientsWithRecords = await this.databaseService
-          .getPrismaClient()
-          .user.findMany({
-            where: {
-              OR: [
-                { medicalHistories: { some: { clinicId } } },
-                { labReports: { some: { clinicId } } },
-                { vitals: { some: { clinicId } } },
-                { allergies: { some: { clinicId } } },
-                { medications: { some: { clinicId } } },
-              ],
-            },
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              dateOfBirth: true,
-              gender: true,
-              medicalHistories: {
-                where: { clinicId },
-                orderBy: { date: "desc" },
-                take: 1,
+        // Use executeHealthcareRead for optimized query
+        const patientsWithRecords = (await this.databaseService.executeHealthcareRead(
+          async client => {
+            return await client.user.findMany({
+              where: {
+                OR: [
+                  { medicalHistories: { some: { clinicId } } },
+                  { labReports: { some: { clinicId } } },
+                  { vitals: { some: { clinicId } } },
+                  { allergies: { some: { clinicId } } },
+                  { medications: { some: { clinicId } } },
+                ],
               },
-              allergies: {
-                where: { clinicId },
-                select: { allergen: true, severity: true },
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+                dateOfBirth: true,
+                gender: true,
+                medicalHistories: {
+                  where: { clinicId },
+                  orderBy: { date: 'desc' },
+                  take: 1,
+                },
+                allergies: {
+                  where: { clinicId },
+                  select: { allergen: true, severity: true },
+                },
+                medications: {
+                  where: { clinicId, isActive: true },
+                  select: { name: true, dosage: true },
+                },
               },
-              medications: {
-                where: { clinicId, isActive: true },
-                select: { name: true, dosage: true },
-              },
-            },
-          });
+            });
+          }
+        )) as Array<{
+          id: string;
+          firstName: string;
+          lastName: string;
+          email: string | null;
+          phone: string | null;
+          dateOfBirth: Date | null;
+          gender: string | null;
+          medicalHistories: Array<{ date: Date }>;
+          allergies: Array<{ allergen: string; severity: string }>;
+          medications: Array<{ name: string; dosage: string }>;
+        }>;
 
         type PatientWithRecords = (typeof patientsWithRecords)[number];
-        type AllergyRecord = PatientWithRecords["allergies"][number];
+        type AllergyRecord = PatientWithRecords['allergies'][number];
 
         return {
           clinicId,
@@ -1446,8 +2178,7 @@ export class EHRService {
             phone: patient.phone,
             age: patient.dateOfBirth
               ? Math.floor(
-                  (Date.now() - patient.dateOfBirth.getTime()) /
-                    (365.25 * 24 * 60 * 60 * 1000),
+                  (Date.now() - patient.dateOfBirth.getTime()) / (365.25 * 24 * 60 * 60 * 1000)
                 )
               : null,
             gender: patient.gender,
@@ -1455,17 +2186,17 @@ export class EHRService {
             activeAllergies: patient.allergies.length,
             activeMedications: patient.medications.length,
             criticalAllergies: patient.allergies.filter(
-              (a: AllergyRecord) => a.severity === "Severe",
+              (a: AllergyRecord) => a.severity === 'Severe'
             ),
           })),
         };
       },
       {
         ttl: 1800,
-        tags: [`clinic:${clinicId}`, "patients_summary"],
-        priority: "high",
+        tags: [`clinic:${clinicId}`, 'patients_summary'],
+        priority: 'high',
         containsPHI: true,
-      },
+      }
     );
   }
 
@@ -1475,7 +2206,7 @@ export class EHRService {
   async searchClinicRecords(
     clinicId: string,
     searchTerm: string,
-    searchTypes?: string[],
+    searchTypes?: string[]
   ): Promise<{
     clinicId: string;
     searchTerm: string;
@@ -1549,22 +2280,17 @@ export class EHRService {
         notes?: string;
       }>;
     } = {};
-    const types = searchTypes || [
-      "conditions",
-      "allergies",
-      "medications",
-      "procedures",
-    ];
+    const types = searchTypes || ['conditions', 'allergies', 'medications', 'procedures'];
 
-    if (types.includes("conditions")) {
-      results.conditions = await this.databaseService
-        .getPrismaClient()
-        .medicalHistory.findMany({
+    if (types.includes('conditions')) {
+      // Use executeHealthcareRead for optimized query
+      results.conditions = (await this.databaseService.executeHealthcareRead(async client => {
+        return await client.medicalHistory.findMany({
           where: {
             clinicId,
             OR: [
-              { condition: { contains: searchTerm, mode: "insensitive" } },
-              { notes: { contains: searchTerm, mode: "insensitive" } },
+              { condition: { contains: searchTerm, mode: 'insensitive' } },
+              { notes: { contains: searchTerm, mode: 'insensitive' } },
             ],
           },
           include: {
@@ -1572,51 +2298,83 @@ export class EHRService {
           },
           take: 20,
         });
+      })) as Array<{
+        id: string;
+        user: { id: string; firstName: string; lastName: string } | null;
+        condition: string;
+        date: Date;
+        notes?: string;
+      }>;
     }
 
-    if (types.includes("allergies")) {
-      results.allergies = await this.databaseService
-        .getPrismaClient()
-        .allergy.findMany({
+    if (types.includes('allergies')) {
+      // Use executeHealthcareRead for optimized query
+      results.allergies = (await this.databaseService.executeHealthcareRead(async client => {
+        return await client.allergy.findMany({
           where: {
             clinicId,
-            allergen: { contains: searchTerm, mode: "insensitive" },
+            allergen: { contains: searchTerm, mode: 'insensitive' },
           },
           include: {
             user: { select: { id: true, firstName: true, lastName: true } },
           },
           take: 20,
         });
+      })) as Array<{
+        id: string;
+        user: { id: string; firstName: string; lastName: string } | null;
+        allergen: string;
+        severity: string;
+        reaction: string;
+        diagnosedDate: Date;
+      }>;
     }
 
-    if (types.includes("medications")) {
-      results.medications = await this.databaseService
-        .getPrismaClient()
-        .medication.findMany({
+    if (types.includes('medications')) {
+      // Use executeHealthcareRead for optimized query
+      results.medications = (await this.databaseService.executeHealthcareRead(async client => {
+        return await client.medication.findMany({
           where: {
             clinicId,
-            name: { contains: searchTerm, mode: "insensitive" },
+            name: { contains: searchTerm, mode: 'insensitive' },
           },
           include: {
             user: { select: { id: true, firstName: true, lastName: true } },
           },
           take: 20,
         });
+      })) as Array<{
+        id: string;
+        user: { id: string; firstName: string; lastName: string } | null;
+        name: string;
+        dosage: string;
+        frequency: string;
+        startDate: Date;
+        isActive: boolean;
+      }>;
     }
 
-    if (types.includes("procedures")) {
-      results.procedures = await this.databaseService
-        .getPrismaClient()
-        .surgicalRecord.findMany({
+    if (types.includes('procedures')) {
+      // Use executeHealthcareRead for optimized query
+      results.procedures = (await this.databaseService.executeHealthcareRead(async client => {
+        return await client.surgicalRecord.findMany({
           where: {
             clinicId,
-            surgeryName: { contains: searchTerm, mode: "insensitive" },
+            surgeryName: { contains: searchTerm, mode: 'insensitive' },
           },
           include: {
             user: { select: { id: true, firstName: true, lastName: true } },
           },
           take: 20,
         });
+      })) as Array<{
+        id: string;
+        user: { id: string; firstName: string; lastName: string } | null;
+        surgeryName: string;
+        surgeon: string;
+        date: Date;
+        notes?: string;
+      }>;
     }
 
     return {
@@ -1663,12 +2421,13 @@ export class EHRService {
     return this.cacheService.cache(
       `ehr:alerts:${clinicId}`,
       async () => {
-        const [severeAllergies, criticalVitals]: [Allergy[], Vital[]] =
-          await Promise.all([
-            this.databaseService.getPrismaClient().allergy.findMany({
+        // Use executeHealthcareRead for optimized queries
+        const [severeAllergies, criticalVitals]: [Allergy[], Vital[]] = await Promise.all([
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.allergy.findMany({
               where: {
                 clinicId,
-                severity: "Severe",
+                severity: 'Severe',
               },
               include: {
                 user: {
@@ -1680,11 +2439,13 @@ export class EHRService {
                   },
                 },
               },
-            }),
-            this.databaseService.getPrismaClient().vital.findMany({
+            });
+          }) as Promise<Allergy[]>,
+          this.databaseService.executeHealthcareRead(async client => {
+            return await client.vital.findMany({
               where: {
                 clinicId,
-                type: { in: ["blood_pressure", "heart_rate", "temperature"] },
+                type: { in: ['blood_pressure', 'heart_rate', 'temperature'] },
                 recordedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
               },
               include: {
@@ -1697,41 +2458,69 @@ export class EHRService {
                   },
                 },
               },
-              orderBy: { recordedAt: "desc" },
-            }),
-          ]);
+              orderBy: { recordedAt: 'desc' },
+            });
+          }) as Promise<Vital[]>,
+        ]);
 
-        type VitalRecord = (typeof criticalVitals)[number];
-        type AllergyRecord = (typeof severeAllergies)[number];
+        // Define types for records with user relation
+        type VitalRecordWithUser = {
+          id: string;
+          userId: string;
+          clinicId: string | null;
+          type: string;
+          value: string;
+          recordedAt: Date;
+          user?: {
+            id: string;
+            firstName: string | null;
+            lastName: string | null;
+            phone: string | null;
+          } | null;
+        };
 
-        const criticalVitalAlerts = criticalVitals.filter(
-          (vital: VitalRecord) => {
-            if (vital.type === "blood_pressure") {
-              const [systolic] = vital.value.split("/").map(Number);
-              return (systolic ?? 0) >= 180 || (systolic ?? 0) <= 90;
-            }
-            if (vital.type === "heart_rate") {
-              const hr = Number(vital.value);
-              return hr >= 120 || hr <= 50;
-            }
-            if (vital.type === "temperature") {
-              const temp = Number(vital.value);
-              return temp >= 103 || temp <= 95;
-            }
-            return false;
-          },
-        );
+        type AllergyRecordWithUser = {
+          id: string;
+          userId: string;
+          allergen: string;
+          severity: string;
+          reaction: string;
+          diagnosedDate: Date;
+          user?: {
+            id: string;
+            firstName: string | null;
+            lastName: string | null;
+            phone: string | null;
+          } | null;
+        };
+
+        const criticalVitalAlerts = (criticalVitals as VitalRecordWithUser[]).filter(vital => {
+          if (vital.type === 'blood_pressure') {
+            const [systolicStr] = String(vital.value).split('/');
+            const systolic = systolicStr ? Number(systolicStr) : 0;
+            return systolic >= 180 || systolic <= 90;
+          }
+          if (vital.type === 'heart_rate') {
+            const hr = Number(vital.value);
+            return hr >= 120 || hr <= 50;
+          }
+          if (vital.type === 'temperature') {
+            const temp = Number(vital.value);
+            return temp >= 103 || temp <= 95;
+          }
+          return false;
+        });
 
         return {
           clinicId,
           alerts: {
             severeAllergies: {
               count: severeAllergies.length,
-              patients: severeAllergies.map((a: AllergyRecord) => ({
+              patients: (severeAllergies as AllergyRecordWithUser[]).map(a => ({
                 patientId: a.userId,
-                patientName: (a as any).user
-                  ? `${(a as any).user.firstName} ${(a as any).user.lastName}`
-                  : "Unknown",
+                patientName: a.user
+                  ? `${a.user.firstName || ''} ${a.user.lastName || ''}`.trim() || 'Unknown'
+                  : 'Unknown',
                 allergen: a.allergen,
                 reaction: a.reaction,
                 diagnosedDate: a.diagnosedDate,
@@ -1739,45 +2528,47 @@ export class EHRService {
             },
             criticalVitals: {
               count: criticalVitalAlerts.length,
-              readings: criticalVitalAlerts.map((v: VitalRecord) => ({
+              readings: criticalVitalAlerts.map(v => ({
                 patientId: v.userId,
-                patientName: (v as any).user
-                  ? `${(v as any).user.firstName} ${(v as any).user.lastName}`
-                  : "Unknown",
+                patientName: v.user
+                  ? `${v.user.firstName || ''} ${v.user.lastName || ''}`.trim() || 'Unknown'
+                  : 'Unknown',
                 vitalType: v.type,
-                value: v.value,
+                value: String(v.value),
                 recordedAt: v.recordedAt,
               })),
             },
           },
-          totalCriticalAlerts:
-            severeAllergies.length + criticalVitalAlerts.length,
+          totalCriticalAlerts: severeAllergies.length + criticalVitalAlerts.length,
         };
       },
       {
         ttl: 300,
-        tags: [`clinic:${clinicId}`, "alerts"],
-        priority: "high",
+        tags: [`clinic:${clinicId}`, 'alerts'],
+        priority: 'high',
         containsPHI: true,
-      },
+      }
     );
   }
 
   // ============ Transform Methods ============
 
-  private transformMedicalHistory(
-    record: MedicalHistory,
-  ): MedicalHistoryResponse {
+  private transformMedicalHistory(record: MedicalHistory): MedicalHistoryResponse {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       condition: record.condition,
-      diagnosis: (record as any).diagnosis || "",
-      treatment: (record as any).treatment || "",
+      diagnosis:
+        'diagnosis' in record && typeof record.diagnosis === 'string' ? record.diagnosis : '',
+      treatment:
+        'treatment' in record && typeof record.treatment === 'string' ? record.treatment : '',
       date: record.date.toISOString(),
-      doctorId: (record as any).doctorId || "",
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
@@ -1787,50 +2578,56 @@ export class EHRService {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       testName: record.testName,
       result: record.result,
-      unit: (record as any).unit || "",
-      normalRange: record.normalRange || "",
+      unit: 'unit' in record && typeof record.unit === 'string' ? record.unit : '',
+      normalRange:
+        'normalRange' in record && typeof record.normalRange === 'string' ? record.normalRange : '',
       date: record.date.toISOString(),
-      doctorId: (record as any).doctorId || "",
-      labName: (record as any).labName || "",
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      labName: 'labName' in record && typeof record.labName === 'string' ? record.labName : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
   }
 
-  private transformRadiologyReport(
-    record: RadiologyReport,
-  ): RadiologyReportResponse {
+  private transformRadiologyReport(record: RadiologyReport): RadiologyReportResponse {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       imageType: record.imageType,
       findings: record.findings,
       conclusion: record.conclusion,
       date: record.date.toISOString(),
-      doctorId: (record as any).doctorId || "",
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
   }
 
-  private transformSurgicalRecord(
-    record: SurgicalRecord,
-  ): SurgicalRecordResponse {
+  private transformSurgicalRecord(record: SurgicalRecord): SurgicalRecordResponse {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       surgeryName: record.surgeryName,
       surgeon: record.surgeon,
       date: record.date.toISOString(),
-      doctorId: (record as any).doctorId || "",
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
@@ -1840,13 +2637,16 @@ export class EHRService {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       type: record.type,
       value: Number(record.value),
-      unit: (record as any).unit || "",
+      unit: 'unit' in record && typeof record.unit === 'string' ? record.unit : '',
       recordedAt: record.recordedAt.toISOString(),
-      doctorId: (record as any).doctorId || "",
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
@@ -1856,13 +2656,16 @@ export class EHRService {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       allergen: record.allergen,
       severity: record.severity,
       reaction: record.reaction,
       diagnosedDate: record.diagnosedDate.toISOString(),
-      doctorId: (record as any).doctorId || "",
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
@@ -1872,18 +2675,26 @@ export class EHRService {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       name: record.name,
       dosage: record.dosage,
       frequency: record.frequency,
       startDate: record.startDate.toISOString(),
       ...(record.endDate && { endDate: record.endDate.toISOString() }),
-      doctorId: (record as any).doctorId || "",
-      prescribedBy: (record as any).prescribedBy || "",
-      purpose: (record as any).purpose || "",
-      sideEffects: (record as any).sideEffects || "",
-      isActive: (record as any).isActive || false,
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      prescribedBy:
+        'prescribedBy' in record && typeof record.prescribedBy === 'string'
+          ? record.prescribedBy
+          : '',
+      purpose: 'purpose' in record && typeof record.purpose === 'string' ? record.purpose : '',
+      sideEffects:
+        'sideEffects' in record && typeof record.sideEffects === 'string' ? record.sideEffects : '',
+      isActive:
+        'isActive' in record && typeof record.isActive === 'boolean' ? record.isActive : false,
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
@@ -1893,54 +2704,81 @@ export class EHRService {
     return {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
       vaccineName: record.vaccineName,
       dateAdministered: record.dateAdministered.toISOString(),
-      doctorId: (record as any).doctorId || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
       ...(record.nextDueDate && {
         nextDueDate: record.nextDueDate.toISOString(),
       }),
-      batchNumber: (record as any).batchNumber || "",
-      administrator: (record as any).administrator || "",
-      location: (record as any).location || "",
-      notes: (record as any).notes || "",
+      batchNumber:
+        'batchNumber' in record && typeof record.batchNumber === 'string' ? record.batchNumber : '',
+      administrator:
+        'administrator' in record && typeof record.administrator === 'string'
+          ? record.administrator
+          : '',
+      location: 'location' in record && typeof record.location === 'string' ? record.location : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
   }
 
   private transformFamilyHistory(record: FamilyHistory): FamilyHistoryResponse {
-    return {
+    const result: FamilyHistoryResponse = {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
-      relation: (record as any).relation || "",
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
+      relation: 'relation' in record && typeof record.relation === 'string' ? record.relation : '',
       condition: record.condition,
-      doctorId: (record as any).doctorId || "",
-      diagnosedAge: (record as any).diagnosedAge || undefined,
-      notes: (record as any).notes || "",
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
+    if ('diagnosedAge' in record && typeof record.diagnosedAge === 'number') {
+      result.diagnosedAge = record.diagnosedAge;
+    }
+    return result;
   }
 
-  private transformLifestyleAssessment(
-    record: LifestyleAssessment,
-  ): LifestyleAssessmentResponse {
-    return {
+  private transformLifestyleAssessment(record: LifestyleAssessment): LifestyleAssessmentResponse {
+    const result: LifestyleAssessmentResponse = {
       id: record.id,
       userId: record.userId,
-      clinicId: (record as any).clinicId || undefined,
-      doctorId: (record as any).doctorId || "",
-      diet: (record as any).diet || undefined,
-      exercise: (record as any).exercise || undefined,
-      smoking: (record as any).smoking || undefined,
-      alcohol: (record as any).alcohol || undefined,
-      sleep: (record as any).sleep || undefined,
-      stress: (record as any).stress || undefined,
-      notes: (record as any).notes || "",
+      clinicId:
+        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
+          ? record.clinicId
+          : '',
+      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
+    if ('diet' in record && typeof record.diet === 'string') {
+      result.diet = record.diet;
+    }
+    if ('exercise' in record && typeof record.exercise === 'string') {
+      result.exercise = record.exercise;
+    }
+    if ('smoking' in record && typeof record.smoking === 'string') {
+      result.smoking = record.smoking;
+    }
+    if ('alcohol' in record && typeof record.alcohol === 'string') {
+      result.alcohol = record.alcohol;
+    }
+    if ('sleep' in record && typeof record.sleep === 'string') {
+      result.sleep = record.sleep;
+    }
+    if ('stress' in record && typeof record.stress === 'string') {
+      result.stress = record.stress;
+    }
+    return result;
   }
 }

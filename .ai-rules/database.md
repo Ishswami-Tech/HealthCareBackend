@@ -1,6 +1,42 @@
 # 🗄️ Database & Repository Patterns
 
 ## 🎯 Database Architecture
+### Centralized Types Mapping (MANDATORY)
+- Database-generated types (e.g., Prisma) live in `@database/types`.
+- Business/domain types live in `@types` and act as the canonical contract.
+- Implement mappers between `@database/types` and `@types`. Business logic and DTOs must consume `@types` only.
+
+```typescript
+// Example mapper (DB -> Domain)
+import type { User as DbUser } from '@database/types';
+import type { User } from '@types';
+
+export function mapDbUserToDomain(db: DbUser): User {
+  return {
+    id: db.id,
+    name: db.name,
+    email: db.email,
+    clinicId: db.clinicId,
+    roleType: db.roleType
+  };
+}
+```
+
+Checklist:
+- DTOs never import from `@database/types`.
+- Services/controllers depend on `@types` and mappers, not DB models.
+
+## 📈 Database at 10M Users
+- Migrations Policy: always online, backward-compatible expand→migrate→contract; toggle-based rollouts; guard for long locks.
+- Query Budgets: documented max scans/latency for hot queries; enforce indexes before merging changes that add filters.
+- Partitioning/Shard Strategy: per-tenant/clinic partitioning where feasible; time-based partitioning for logs/audits.
+- Read Scaling: replicas for read-heavy endpoints; lag-aware reads; fallback to primary if required.
+- Indexing: composite indexes for high-cardinality filters; regular index health audits.
+- Hot Paths: denormalized read models for top queries (e.g., appointment summaries) updated via events.
+- Write Contention: batch writes where safe; queue buffering for spikes; idempotent upserts.
+- Caching: Redis with tenant-aware keys; TTL + SWR; cache stampede protection (locks/jitter).
+- Migrations: online, backward-compatible; expand-and-contract pattern; dark migrations for big tables.
+
 
 ### **Prisma Service Configuration**
 ```typescript

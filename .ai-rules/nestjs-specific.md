@@ -22,6 +22,46 @@ async function bootstrap() {
 import { NestExpressApplication } from '@nestjs/platform-express';
 ```
 
+## 📦 Alias & Centralized Types Usage (MANDATORY)
+```typescript
+// Infrastructure aliases
+import { LoggingService } from '@logging';
+import { RedisService } from '@cache';
+import { EventsService } from '@events';
+import { QueueService } from '@queue';
+import { PrismaService } from '@infrastructure/database';
+
+// Core and communication
+import { JwtAuthGuard } from '@core/guards';
+import { SessionService } from '@core/session';
+import { SocketGateway } from '@communication/socket';
+
+// Types and DTOs
+import type { RequestContext, User } from '@types';
+import { CreateUserDto } from '@dtos';
+
+// Services
+import { UserService } from '@services/users';
+
+// ❌ FORBIDDEN
+// import { LoggingService } from '../../libs/infrastructure/logging/logging.service';
+// import type { RequestContext } from '../../libs/core/types/request.types';
+```
+
+### Rules
+- Use `@types/*` as the single source of truth for shared domain types/interfaces.
+- DTOs and controllers/services must not import from `@database/types`; use mappers to `@types` instead.
+- Infrastructure imports must use `@logging`, `@cache`, `@events`, `@queue`, and `@infrastructure/database`.
+- No relative imports for internal modules.
+
+## 🔢 API Versioning & Deprecation
+- Use URI versioning (e.g., `/api/v1`) or header-based versioning consistently.
+- For deprecations, return `Deprecation: true`, `Sunset: <RFC8594-date>`, and `Link: <migration-guide>` when applicable.
+
+## 🧾 Error Envelope
+- Return a consistent error shape: `{ code: string; message: string; correlationId?: string; details?: any }`.
+- Map infra errors to domain codes; avoid leaking stack traces or PII.
+
 ### **Module Structure**
 ```typescript
 @Module({
@@ -240,6 +280,15 @@ export class LoggingInterceptor implements NestInterceptor {
   }
 }
 ```
+
+## ⚙️ High-Load Tuning (10M Users)
+- Fastify settings: proper body limits, keep-alive, compression thresholds; disable unnecessary plugins.
+- Concurrency: limit per-instance concurrency; apply backpressure on event loop saturation.
+- Timeouts: global HTTP timeouts; per-route timeouts for heavy endpoints.
+- Streaming: prefer streams for large payloads; pagination/windowing for lists.
+- Serialization: avoid heavy class-transformer usage on hot paths; manual mapping where needed.
+- Validation: global whitelist + forbidNonWhitelisted; light DTOs on hot endpoints.
+- WebSocket: Redis adapter for horizontal scale; per-tenant channels; auth + rate limit.
 
 ### **Transform Interceptor**
 ```typescript

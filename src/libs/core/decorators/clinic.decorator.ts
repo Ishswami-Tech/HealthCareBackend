@@ -1,9 +1,5 @@
-import { SetMetadata } from "@nestjs/common";
-import {
-  createParamDecorator,
-  ExecutionContext,
-  BadRequestException,
-} from "@nestjs/common";
+import { SetMetadata } from '@nestjs/common';
+import { createParamDecorator, ExecutionContext, BadRequestException } from '@nestjs/common';
 
 /**
  * NestJS request interface with clinic-specific properties
@@ -15,7 +11,7 @@ interface NestJSRequest {
     /** Authorization header */
     readonly authorization?: string;
     /** Clinic ID header */
-    readonly "x-clinic-id"?: string;
+    readonly 'x-clinic-id'?: string;
     /** Additional headers */
     readonly [key: string]: string | undefined;
   };
@@ -49,7 +45,7 @@ interface JWTPayload {
 /**
  * Clinic decorator metadata key
  */
-export const CLINIC_KEY = "clinic" as const;
+export const CLINIC_KEY = 'clinic' as const;
 
 /**
  * Clinic decorator for marking routes that require clinic context
@@ -72,8 +68,7 @@ export const CLINIC_KEY = "clinic" as const;
  * }
  * ```
  */
-export const Clinic = (): MethodDecorator & ClassDecorator =>
-  SetMetadata(CLINIC_KEY, true);
+export const Clinic = (): MethodDecorator & ClassDecorator => SetMetadata(CLINIC_KEY, true);
 
 /**
  * Clinic ID parameter decorator
@@ -98,56 +93,50 @@ export const Clinic = (): MethodDecorator & ClassDecorator =>
  * }
  * ```
  */
-export const ClinicId = createParamDecorator(
-  (data: unknown, ctx: ExecutionContext): string => {
-    const request = ctx.switchToHttp().getRequest<NestJSRequest>();
+export const ClinicId = createParamDecorator((data: unknown, ctx: ExecutionContext): string => {
+  const request = ctx.switchToHttp().getRequest<NestJSRequest>();
 
-    // Priority 1: Check Authorization header for clinic context
-    const authHeader = request.headers?.authorization;
-    if (
-      authHeader &&
-      typeof authHeader === "string" &&
-      authHeader.startsWith("Bearer ")
-    ) {
-      try {
-        const token = authHeader.substring(7);
-        const tokenParts = token.split(".");
-        if (tokenParts.length === 3) {
-          const payload = JSON.parse(
-            Buffer.from(tokenParts[1] as string, "base64").toString(),
-          ) as JWTPayload;
-          if (payload.clinicId && typeof payload.clinicId === "string") {
-            return payload.clinicId;
-          }
+  // Priority 1: Check Authorization header for clinic context
+  const authHeader = request.headers?.authorization;
+  if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.substring(7);
+      const tokenParts = token.split('.');
+      if (tokenParts.length === 3) {
+        const payload = JSON.parse(
+          Buffer.from(tokenParts[1] as string, 'base64').toString()
+        ) as JWTPayload;
+        if (payload.clinicId && typeof payload.clinicId === 'string') {
+          return payload.clinicId;
         }
-      } catch {
-        // Continue to other methods if JWT parsing fails
       }
+    } catch {
+      // Continue to other methods if JWT parsing fails
     }
+  }
 
-    // Priority 2: Check X-Clinic-ID header
-    const clinicIdHeader = request.headers?.["x-clinic-id"];
-    if (clinicIdHeader && typeof clinicIdHeader === "string") {
-      return clinicIdHeader;
-    }
+  // Priority 2: Check X-Clinic-ID header
+  const clinicIdHeader = request.headers?.['x-clinic-id'];
+  if (clinicIdHeader && typeof clinicIdHeader === 'string') {
+    return clinicIdHeader;
+  }
 
-    // Priority 3: Check request body
-    const clinicIdBody = request.body?.clinicId;
-    if (clinicIdBody && typeof clinicIdBody === "string") {
-      return clinicIdBody;
-    }
+  // Priority 3: Check request body
+  const clinicIdBody = request.body?.clinicId;
+  if (clinicIdBody && typeof clinicIdBody === 'string') {
+    return clinicIdBody;
+  }
 
-    // Priority 4: Check query parameters
-    const clinicIdQuery = request.query?.clinicId;
-    if (clinicIdQuery && typeof clinicIdQuery === "string") {
-      return clinicIdQuery;
-    }
+  // Priority 4: Check query parameters
+  const clinicIdQuery = request.query?.clinicId;
+  if (clinicIdQuery && typeof clinicIdQuery === 'string') {
+    return clinicIdQuery;
+  }
 
-    throw new BadRequestException(
-      "Clinic ID is required. Provide it via X-Clinic-ID header, request body, or query parameter.",
-    );
-  },
-);
+  throw new BadRequestException(
+    'Clinic ID is required. Provide it via X-Clinic-ID header, request body, or query parameter.'
+  );
+});
 
 /**
  * Optional clinic ID parameter decorator
@@ -176,19 +165,15 @@ export const OptionalClinicId = createParamDecorator(
 
     // Priority 1: Check Authorization header for clinic context
     const authHeader = request.headers?.authorization;
-    if (
-      authHeader &&
-      typeof authHeader === "string" &&
-      authHeader.startsWith("Bearer ")
-    ) {
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
       try {
         const token = authHeader.substring(7);
-        const tokenParts = token.split(".");
+        const tokenParts = token.split('.');
         if (tokenParts.length === 3) {
           const payload = JSON.parse(
-            Buffer.from(tokenParts[1] as string, "base64").toString(),
+            Buffer.from(tokenParts[1] as string, 'base64').toString()
           ) as JWTPayload;
-          if (payload.clinicId && typeof payload.clinicId === "string") {
+          if (payload.clinicId && typeof payload.clinicId === 'string') {
             return payload.clinicId;
           }
         }
@@ -198,23 +183,23 @@ export const OptionalClinicId = createParamDecorator(
     }
 
     // Priority 2: Check X-Clinic-ID header
-    const clinicIdHeader = request.headers?.["x-clinic-id"];
-    if (clinicIdHeader && typeof clinicIdHeader === "string") {
+    const clinicIdHeader = request.headers?.['x-clinic-id'];
+    if (clinicIdHeader && typeof clinicIdHeader === 'string') {
       return clinicIdHeader;
     }
 
     // Priority 3: Check request body
     const clinicIdBody = request.body?.clinicId;
-    if (clinicIdBody && typeof clinicIdBody === "string") {
+    if (clinicIdBody && typeof clinicIdBody === 'string') {
       return clinicIdBody;
     }
 
     // Priority 4: Check query parameters
     const clinicIdQuery = request.query?.clinicId;
-    if (clinicIdQuery && typeof clinicIdQuery === "string") {
+    if (clinicIdQuery && typeof clinicIdQuery === 'string') {
       return clinicIdQuery;
     }
 
     return undefined;
-  },
+  }
 );

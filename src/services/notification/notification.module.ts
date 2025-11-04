@@ -1,23 +1,29 @@
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { EventEmitterModule } from "@nestjs/event-emitter";
-import { BullModule } from "@nestjs/bull";
-import { NotificationService } from "./notification.service";
-import { NotificationController } from "./notification.controller";
-import { PushNotificationService } from "../../libs/communication/messaging/push/push.service";
-import { SESEmailService } from "../../libs/communication/messaging/email/ses-email.service";
-import { SNSBackupService } from "../../libs/communication/messaging/push/sns-backup.service";
-import { ChatBackupService } from "../../libs/communication/messaging/chat/chat-backup.service";
-import { DeviceTokenService } from "../../libs/communication/messaging/push/device-token.service";
-import { EmailTemplatesService } from "../../libs/communication/messaging/email/email-templates.service";
-import { EmailQueueService } from "../../libs/communication/messaging/email/email-queue.service";
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { BullModule } from '@nestjs/bull';
+import { LoggingModule } from '@infrastructure/logging';
+import { NotificationService } from './notification.service';
+import { NotificationController } from './notification.controller';
+import {
+  PushNotificationService,
+  SNSBackupService,
+  DeviceTokenService,
+} from '@communication/messaging/push';
+import {
+  SESEmailService,
+  EmailTemplatesService,
+  EmailQueueService,
+} from '@communication/messaging/email';
+import { ChatBackupService } from '@communication/messaging/chat/chat-backup.service';
 
 @Module({
   imports: [
     ConfigModule,
     EventEmitterModule,
+    LoggingModule,
     BullModule.registerQueue({
-      name: "email",
+      name: 'email',
     }),
   ],
   controllers: [NotificationController],

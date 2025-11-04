@@ -1,41 +1,37 @@
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { ClinicIsolationService } from "../clinic-isolation.service";
-import { RepositoryResult } from "../types/repository-result";
-
-export interface PatientWithUser {
-  id: string;
-  userId: string;
-  prakriti: string | null;
-  dosha: string | null;
-  createdAt: Date;
-  user: {
-    id: string;
-    name: string;
-    firstName?: string;
-    lastName?: string;
-    email: string;
-    phone?: string;
-    dateOfBirth?: Date;
-    gender?: string;
-    address?: string;
-    emergencyContact?: string;
-    isVerified: boolean;
-  };
-  appointments?: unknown[];
-  healthRecords?: unknown[];
-}
+import { Injectable, Optional } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
+import { RepositoryResult } from '@core/types/database.types';
+import type { PatientWithUser, PatientWithUserOrNull } from '@core/types/database.types';
+import { CacheService } from '@infrastructure/cache';
+import { HealthcareDatabaseClient } from '../clients/healthcare-database.client';
+import { LoggingService } from '@infrastructure/logging';
+import type { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 
 /**
- * Simple Patient Repository for clinic-specific operations
- * Works with the actual Patient model that references User
+ * Simple Patient Repository - INTERNAL INFRASTRUCTURE COMPONENT
+ *
+ * NOT FOR DIRECT USE - Use DatabaseService instead.
+ * This repository is an internal component used by DatabaseService optimization layers.
+ * Works with the actual Patient model that references User.
+ * @internal
  */
 @Injectable()
 export class SimplePatientRepository {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly clinicIsolationService: ClinicIsolationService,
+    @Optional() private readonly cacheService?: CacheService,
+    @Optional() private readonly loggingService?: LoggingService
   ) {}
+
+  /**
+   * Generate cache key for patient operations
+   */
+  private getCacheKey(operation: string, ...parts: Array<string | number | undefined>): string {
+    const filteredParts = parts.filter(p => p !== undefined && p !== null);
+    return `patient:${operation}:${filteredParts.join(':')}`;
+  }
 
   /**
    * Get patients for a specific clinic
@@ -47,7 +43,7 @@ export class SimplePatientRepository {
       limit?: number;
       includeAppointments?: boolean;
       includeHealthRecords?: boolean;
-    } = {},
+    } = {}
   ): Promise<
     RepositoryResult<{
       data: PatientWithUser[];
@@ -95,7 +91,7 @@ export class SimplePatientRepository {
           ...(includeAppointments && {
             appointments: {
               where: { clinicId },
-              orderBy: { date: "desc" as const },
+              orderBy: { date: 'desc' as const },
               take: 5,
               select: {
                 id: true,
@@ -108,40 +104,126 @@ export class SimplePatientRepository {
           }),
           ...(includeHealthRecords && {
             healthRecords: {
-              orderBy: { createdAt: "desc" as const },
+              orderBy: { createdAt: 'desc' as const },
               take: 5,
             },
           }),
         };
 
-        const [data, total] = await Promise.all([
-          this.prisma.patient.findMany({
-            where: whereClause,
-            include,
-            orderBy: { createdAt: "desc" as const },
-            skip,
-            take: limit,
-          }),
-          this.prisma.patient.count({ where: whereClause }),
-        ]);
+        // Use HealthcareDatabaseClient for optimization layers
+        const databaseClient = this.databaseService;
+        type PatientDelegate = {
+          findMany: <T>(args: T) => Promise<unknown>;
+          count: <T>(args: T) => Promise<number>;
+        };
 
-        const totalPages = Math.ceil(total / limit);
+        // Try cache first if enabled
+        const cacheKey = this.getCacheKey(
+          'clinic',
+          clinicId,
+          'page',
+          page,
+          'limit',
+          limit,
+          String(includeAppointments),
+          String(includeHealthRecords)
+        );
+        let typedData: PatientWithUser[] | null = null;
+        let total: number | null = null;
+        let cacheHit = false;
+
+        if (this.cacheService) {
+          try {
+            const cached = await this.cacheService.get<{ data: PatientWithUser[]; total: number }>(
+              cacheKey
+            );
+            if (cached) {
+              typedData = cached.data;
+              total = cached.total;
+              cacheHit = true;
+            }
+          } catch (cacheError) {
+            void this.loggingService?.log(
+              'DATABASE' as any,
+              'WARN' as any,
+              `Cache lookup failed, falling back to database: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
+              'SimplePatientRepository'
+            );
+          }
+        }
+
+        if (!cacheHit) {
+          // Get Prisma client through internal accessor
+          const prismaClient = (
+            databaseClient as unknown as {
+              getInternalPrismaClient: () => { patient: PatientDelegate };
+            }
+          ).getInternalPrismaClient();
+          const patientDelegate = prismaClient.patient;
+
+          const [data, totalResult] = await Promise.all([
+            databaseClient.executeHealthcareRead(async client => {
+              return await patientDelegate.findMany({
+                where: whereClause,
+                include,
+                orderBy: { createdAt: 'desc' as const },
+                skip,
+                take: limit,
+              } as never);
+            }),
+            databaseClient.executeHealthcareRead(async client => {
+              return await patientDelegate.count({ where: whereClause } as never);
+            }),
+          ]);
+
+          typedData = data as PatientWithUser[];
+          total = totalResult;
+
+          // Cache the result
+          if (this.cacheService) {
+            await this.cacheService
+              .set(
+                cacheKey,
+                { data: typedData, total },
+                3600 // 1 hour TTL
+              )
+              .catch(() => {
+                // Cache write failed - non-critical
+              });
+          }
+        }
+
+        // Ensure typedData and total are not null before using
+        const safeTotal = total ?? 0;
+        const safeData = typedData ?? [];
+        const totalPages = Math.ceil(safeTotal / limit);
 
         return {
-          data: data as PatientWithUser[],
-          total,
+          data: safeData,
+          total: safeTotal,
           page,
           totalPages,
         };
-      },
+      }
     );
 
     // Convert ClinicIsolationResult to RepositoryResult
     if (result.success && result.data) {
-      return RepositoryResult.success(result.data);
+      const data = result.data;
+      // Ensure data and total are not null
+      if (data.data && data.total !== null && data.total !== undefined) {
+        return RepositoryResult.success({
+          data: data.data,
+          total: data.total,
+          page: data.page,
+          totalPages: data.totalPages,
+        });
+      } else {
+        return RepositoryResult.failure(new Error('Invalid data returned from clinic operation'));
+      }
     } else {
       return RepositoryResult.failure(
-        new Error(result.error || "Failed to get patients for clinic"),
+        new Error(result.error || 'Failed to get patients for clinic')
       );
     }
   }
@@ -151,77 +233,103 @@ export class SimplePatientRepository {
    */
   async getPatientById(
     patientId: string,
-    clinicId: string,
-  ): Promise<RepositoryResult<PatientWithUser | null>> {
+    clinicId: string
+  ): Promise<RepositoryResult<PatientWithUserOrNull>> {
     const result = await this.clinicIsolationService.executeWithClinicContext(
       clinicId,
-      async () => {
-        const patient = await this.prisma.patient.findFirst({
-          where: {
-            id: patientId,
-            appointments: {
-              some: {
-                clinicId: clinicId,
-              },
-            },
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                phone: true,
-                dateOfBirth: true,
-                gender: true,
-                address: true,
-                emergencyContact: true,
-                isVerified: true,
-              },
-            },
-            appointments: {
-              where: { clinicId },
-              orderBy: { date: "desc" as const },
-              select: {
-                id: true,
-                date: true,
-                time: true,
-                status: true,
-                type: true,
-                doctor: {
-                  select: {
-                    id: true,
-                    user: {
-                      select: {
-                        name: true,
-                        firstName: true,
-                        lastName: true,
-                      },
-                    },
+      async (): Promise<PatientWithUserOrNull> => {
+        // Use HealthcareDatabaseClient for optimization layers
+        const databaseClient = this.databaseService;
+        type PatientDelegate = {
+          findFirst: <T>(args: T) => Promise<unknown>;
+        };
+
+        // Try cache first if enabled
+        const cacheKey = this.getCacheKey('id', patientId, 'clinic', clinicId);
+        let patient: PatientWithUserOrNull | null = null;
+        let cacheHit = false;
+
+        if (this.cacheService) {
+          try {
+            patient = await this.cacheService.get<PatientWithUserOrNull>(cacheKey);
+            if (patient !== null) {
+              cacheHit = true;
+            }
+          } catch (cacheError) {
+            void this.loggingService?.log(
+              'DATABASE' as any,
+              'WARN' as any,
+              `Cache lookup failed, falling back to database: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
+              'SimplePatientRepository'
+            );
+          }
+        }
+
+        if (!cacheHit) {
+          // Get Prisma client through internal accessor
+          const prismaClient = (
+            databaseClient as unknown as {
+              getInternalPrismaClient: () => { patient: PatientDelegate };
+            }
+          ).getInternalPrismaClient();
+          const patientDelegate = prismaClient.patient;
+          patient = (await databaseClient.executeHealthcareRead(async client => {
+            return await patientDelegate.findFirst({
+              where: {
+                id: patientId,
+                appointments: {
+                  some: {
+                    clinicId: clinicId,
                   },
                 },
               },
-            },
-            healthRecords: {
-              orderBy: { createdAt: "desc" as const },
-              take: 10,
-            },
-          },
-        });
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                    phone: true,
+                    dateOfBirth: true,
+                    gender: true,
+                    address: true,
+                    emergencyContact: true,
+                    isVerified: true,
+                  },
+                },
+              },
+            } as never);
+          })) as PatientWithUserOrNull;
 
-        return patient as PatientWithUser | null;
-      },
+          // Cache the result
+          if (this.cacheService && patient) {
+            await this.cacheService
+              .set(
+                cacheKey,
+                patient,
+                3600 // 1 hour TTL
+              )
+              .catch(() => {
+                // Cache write failed - non-critical
+              });
+          }
+        }
+
+        return patient;
+      }
     );
 
     // Convert ClinicIsolationResult to RepositoryResult
     if (result.success) {
-      return RepositoryResult.success(result.data || null);
+      if (result.data === null || result.data === undefined) {
+        return RepositoryResult.success(null as PatientWithUserOrNull);
+      }
+      const resultData = result.data as unknown as PatientWithUserOrNull;
+      return RepositoryResult.success(resultData);
     } else {
-      return RepositoryResult.failure(
-        new Error(result.error || "Failed to get patient by ID"),
-      );
+      return RepositoryResult.failure(new Error(result.error || 'Failed to get patient by ID'));
     }
   }
 
@@ -231,7 +339,7 @@ export class SimplePatientRepository {
   async searchPatients(
     query: string,
     clinicId: string,
-    options: { page?: number; limit?: number } = {},
+    options: { page?: number; limit?: number } = {}
   ): Promise<
     RepositoryResult<{
       data: PatientWithUser[];
@@ -257,39 +365,47 @@ export class SimplePatientRepository {
               {
                 name: {
                   contains: query,
-                  mode: "insensitive" as const,
+                  mode: 'insensitive' as const,
                 },
               },
               {
                 firstName: {
                   contains: query,
-                  mode: "insensitive" as const,
+                  mode: 'insensitive' as const,
                 },
               },
               {
                 lastName: {
                   contains: query,
-                  mode: "insensitive" as const,
+                  mode: 'insensitive' as const,
                 },
               },
               {
                 email: {
                   contains: query,
-                  mode: "insensitive" as const,
+                  mode: 'insensitive' as const,
                 },
               },
               {
                 phone: {
                   contains: query,
-                  mode: "insensitive" as const,
+                  mode: 'insensitive' as const,
                 },
               },
             ],
           },
         };
 
+        const prismaClient = (
+          this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+        ).getInternalPrismaClient();
+        type PatientDelegate = {
+          findMany: <T>(args: T) => Promise<unknown>;
+          count: <T>(args: T) => Promise<number>;
+        };
+        const patientDelegate = (prismaClient as unknown as { patient: PatientDelegate }).patient;
         const [data, total] = await Promise.all([
-          this.prisma.patient.findMany({
+          patientDelegate.findMany({
             where: whereClause,
             include: {
               user: {
@@ -308,31 +424,30 @@ export class SimplePatientRepository {
                 },
               },
             },
-            orderBy: { createdAt: "desc" as const },
+            orderBy: { createdAt: 'desc' as const },
             skip,
             take: limit,
-          }),
-          this.prisma.patient.count({ where: whereClause }),
+          } as never),
+          patientDelegate.count({ where: whereClause } as never),
         ]);
+        const typedData = data as PatientWithUser[];
 
         const totalPages = Math.ceil(total / limit);
 
         return {
-          data: data as PatientWithUser[],
+          data: typedData,
           total,
           page,
           totalPages,
         };
-      },
+      }
     );
 
     // Convert ClinicIsolationResult to RepositoryResult
     if (result.success && result.data) {
       return RepositoryResult.success(result.data);
     } else {
-      return RepositoryResult.failure(
-        new Error(result.error || "Failed to search patients"),
-      );
+      return RepositoryResult.failure(new Error(result.error || 'Failed to search patients'));
     }
   }
 
@@ -341,7 +456,7 @@ export class SimplePatientRepository {
    */
   async getPatientStatistics(
     clinicId: string,
-    dateRange?: { from: Date; to: Date },
+    dateRange?: { from: Date; to: Date }
   ): Promise<
     RepositoryResult<{
       totalPatients: number;
@@ -362,48 +477,54 @@ export class SimplePatientRepository {
           }),
         };
 
-        const [totalPatients, newPatients, patientsWithRecentAppointments] =
-          await Promise.all([
-            // Total patients who have appointments in this clinic
-            this.prisma.patient.count({
-              where: {
-                appointments: {
-                  some: { clinicId },
-                },
+        const prismaClient = (
+          this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+        ).getInternalPrismaClient();
+        type PatientDelegate = {
+          count: <T>(args: T) => Promise<number>;
+        };
+        const patientDelegate = (prismaClient as unknown as { patient: PatientDelegate }).patient;
+        const [totalPatients, newPatients, patientsWithRecentAppointments] = await Promise.all([
+          // Total patients who have appointments in this clinic
+          patientDelegate.count({
+            where: {
+              appointments: {
+                some: { clinicId },
               },
-            }),
+            },
+          } as never),
 
-            // New patients (created in date range) with appointments in clinic
-            this.prisma.patient.count({
-              where: {
-                appointments: {
-                  some: { clinicId },
-                },
-                ...(dateRange && {
-                  createdAt: {
-                    gte: dateRange.from,
-                    lte: dateRange.to,
-                  },
-                }),
+          // New patients (created in date range) with appointments in clinic
+          patientDelegate.count({
+            where: {
+              appointments: {
+                some: { clinicId },
               },
-            }),
+              ...(dateRange && {
+                createdAt: {
+                  gte: dateRange.from,
+                  lte: dateRange.to,
+                },
+              }),
+            },
+          } as never),
 
-            // Patients with recent appointments
-            this.prisma.patient.count({
-              where: {
-                appointments: {
-                  some: baseAppointmentWhere,
-                },
+          // Patients with recent appointments
+          patientDelegate.count({
+            where: {
+              appointments: {
+                some: baseAppointmentWhere,
               },
-            }),
-          ]);
+            },
+          } as never),
+        ]);
 
         return {
           totalPatients,
           newPatients,
           patientsWithRecentAppointments,
         };
-      },
+      }
     );
 
     // Convert ClinicIsolationResult to RepositoryResult
@@ -411,7 +532,7 @@ export class SimplePatientRepository {
       return RepositoryResult.success(result.data);
     } else {
       return RepositoryResult.failure(
-        new Error(result.error || "Failed to get patient statistics"),
+        new Error(result.error || 'Failed to get patient statistics')
       );
     }
   }

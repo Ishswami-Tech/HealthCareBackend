@@ -1,31 +1,10 @@
-import { HttpStatus } from "@nestjs/common";
-import { ErrorCode } from "./error-codes.enum";
-import { ErrorMessages } from "./error-messages.constant";
+import { HttpStatus } from '@nestjs/common';
+import { ErrorCode } from './error-codes.enum';
+import { ErrorMessages } from './error-messages.constant';
+import type { ErrorMetadata, ApiErrorResponse } from '@core/types/error.types';
 
-/**
- * Error metadata interface for structured error information
- *
- * @interface ErrorMetadata
- * @description Defines the structure for error metadata
- */
-export interface ErrorMetadata {
-  readonly [key: string]: unknown;
-}
-
-/**
- * API response error structure
- *
- * @interface ApiErrorResponse
- * @description Defines the structure for API error responses
- */
-export interface ApiErrorResponse {
-  readonly error: {
-    readonly code: ErrorCode;
-    readonly message: string;
-    readonly timestamp: string;
-    readonly metadata?: ErrorMetadata;
-  };
-}
+// Re-export types for backward compatibility
+export type { ErrorMetadata, ApiErrorResponse } from '@core/types/error.types';
 
 /**
  * Custom Healthcare Error class that extends the standard Error
@@ -67,18 +46,18 @@ export class HealthcareError extends Error {
     message?: string,
     statusCode: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR,
     metadata?: ErrorMetadata,
-    context?: string,
+    context?: string
   ) {
     const errorMessage = message || ErrorMessages[code];
     super(errorMessage);
 
-    this.name = "HealthcareError";
+    this.name = 'HealthcareError';
     this.code = code;
     this.statusCode = statusCode;
     this.timestamp = new Date().toISOString();
     this.metadata = metadata || {};
     this.isOperational = true;
-    this.context = context || "";
+    this.context = context || '';
 
     // Maintains proper stack trace for where our error was thrown
     Error.captureStackTrace(this, HealthcareError);
@@ -150,19 +129,19 @@ export class HealthcareError extends Error {
 
     // List of sensitive fields that should not be exposed
     const sensitiveFields = [
-      "password",
-      "token",
-      "secret",
-      "key",
-      "credential",
-      "ssn",
-      "social_security",
-      "credit_card",
-      "bank_account",
+      'password',
+      'token',
+      'secret',
+      'key',
+      'credential',
+      'ssn',
+      'social_security',
+      'credit_card',
+      'bank_account',
     ];
 
     const metadataString = JSON.stringify(this.metadata).toLowerCase();
-    return !sensitiveFields.some((field) => metadataString.includes(field));
+    return !sensitiveFields.some(field => metadataString.includes(field));
   }
 
   /**
@@ -177,13 +156,7 @@ export class HealthcareError extends Error {
    * ```
    */
   withContext(context: string): HealthcareError {
-    return new HealthcareError(
-      this.code,
-      this.message,
-      this.statusCode,
-      this.metadata,
-      context,
-    );
+    return new HealthcareError(this.code, this.message, this.statusCode, this.metadata, context);
   }
 
   /**
@@ -203,7 +176,7 @@ export class HealthcareError extends Error {
       this.message,
       this.statusCode,
       { ...this.metadata, ...(metadata || {}) },
-      this.context,
+      this.context
     );
   }
 }

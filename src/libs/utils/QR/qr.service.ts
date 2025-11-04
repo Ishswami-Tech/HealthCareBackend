@@ -1,6 +1,13 @@
-import { Injectable } from "@nestjs/common";
-import * as QRCode from "qrcode";
-import { Logger } from "@nestjs/common";
+import { Injectable, HttpStatus } from '@nestjs/common';
+import * as QRCode from 'qrcode';
+
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { LogType, LogLevel } from '@core/types';
 
 /**
  * QR Code Service for Healthcare Applications
@@ -28,12 +35,10 @@ import { Logger } from "@nestjs/common";
  */
 @Injectable()
 export class QrService {
-  private readonly logger = new Logger(QrService.name);
-
   /**
    * Creates an instance of QrService
    */
-  constructor() {}
+  constructor(private readonly loggingService: LoggingService) {}
 
   /**
    * Generate a QR code for an appointment
@@ -62,11 +67,23 @@ export class QrService {
       const qrCodeDataUrl = await QRCode.toDataURL(token);
       return qrCodeDataUrl;
     } catch (_error) {
-      const _message =
-        _error instanceof Error ? _error.message : "Unknown error";
-      const _stack = _error instanceof Error ? _error.stack : undefined;
-      this.logger.error(`Failed to generate QR code: ${_message}`, _stack);
-      throw new Error("Failed to generate QR code");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to generate QR code for appointment`,
+        'QrService',
+        {
+          appointmentId,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+      throw new HealthcareError(
+        ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
+        'Failed to generate QR code',
+        HttpStatus.SERVICE_UNAVAILABLE,
+        { appointmentId }
+      );
     }
   }
 
@@ -90,23 +107,47 @@ export class QrService {
   verifyAppointmentQR(qrData: string): string {
     try {
       // Validate QR data format
-      const parts = qrData.split(":");
-      if (parts.length !== 3 || parts[0] !== "appointment") {
-        throw new Error("Invalid QR code format");
+      const parts = qrData.split(':');
+      if (parts.length !== 3 || parts[0] !== 'appointment') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Invalid QR code format',
+          HttpStatus.BAD_REQUEST,
+          { qrData }
+        );
       }
 
       // Extract appointment ID
       const appointmentId = parts[1];
       if (!appointmentId) {
-        throw new Error("Invalid QR code format - missing appointment ID");
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_REQUIRED_FIELD,
+          'Invalid QR code format - missing appointment ID',
+          HttpStatus.BAD_REQUEST,
+          { qrData }
+        );
       }
       return appointmentId;
     } catch (_error) {
-      const _message =
-        _error instanceof Error ? _error.message : "Unknown error";
-      const _stack = _error instanceof Error ? _error.stack : undefined;
-      this.logger.error(`Failed to verify QR code: ${_message}`, _stack);
-      throw new Error("Failed to verify QR code");
+      if (_error instanceof HealthcareError) {
+        throw _error;
+      }
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to verify QR code`,
+        'QrService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_INVALID_FORMAT,
+        'Failed to verify QR code',
+        HttpStatus.BAD_REQUEST,
+        {}
+      );
     }
   }
 
@@ -131,9 +172,22 @@ export class QrService {
     try {
       return await QRCode.toDataURL(data);
     } catch (_error) {
-      const _message =
-        _error instanceof Error ? _error.message : "Unknown error";
-      throw new Error(`Failed to generate QR code: ${_message}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to generate QR code`,
+        'QrService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+      throw new HealthcareError(
+        ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
+        'Failed to generate QR code',
+        HttpStatus.SERVICE_UNAVAILABLE,
+        {}
+      );
     }
   }
 
@@ -158,9 +212,12 @@ export class QrService {
     try {
       return JSON.parse(qrData);
     } catch (_error) {
-      const _message =
-        _error instanceof Error ? _error.message : "Unknown error";
-      throw new Error(`Invalid QR code data: ${_message}`);
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_INVALID_FORMAT,
+        'Invalid QR code data - not valid JSON',
+        HttpStatus.BAD_REQUEST,
+        { qrData }
+      );
     }
   }
 }

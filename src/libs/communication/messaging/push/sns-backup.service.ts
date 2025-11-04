@@ -1,23 +1,27 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import {
   SNSClient,
   PublishCommand,
   CreatePlatformEndpointCommand,
   DeleteEndpointCommand,
   SetEndpointAttributesCommand,
-} from "@aws-sdk/client-sns";
-import { PushNotificationData, PushNotificationResult } from "./push.service";
+} from '@aws-sdk/client-sns';
+import {
+  PushNotificationData,
+  PushNotificationResult,
+} from '@communication/messaging/push/push.service';
 
 export interface SNSPlatformEndpoint {
   endpointArn: string;
   deviceToken: string;
-  platform: "ios" | "android";
+  platform: 'ios' | 'android';
 }
 
 @Injectable()
 export class SNSBackupService implements OnModuleInit {
-  private readonly logger = new Logger(SNSBackupService.name);
   private snsClient: SNSClient | null = null;
   private isInitialized = false;
   private platformApplicationArn: {
@@ -25,7 +29,10 @@ export class SNSBackupService implements OnModuleInit {
     android?: string;
   } = {};
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly loggingService: LoggingService
+  ) {}
 
   onModuleInit(): void {
     this.initializeAWSSNS();
@@ -33,16 +40,16 @@ export class SNSBackupService implements OnModuleInit {
 
   private initializeAWSSNS(): void {
     try {
-      const awsRegion = this.configService.get<string>("AWS_REGION");
-      const awsAccessKeyId =
-        this.configService.get<string>("AWS_ACCESS_KEY_ID");
-      const awsSecretAccessKey = this.configService.get<string>(
-        "AWS_SECRET_ACCESS_KEY",
-      );
+      const awsRegion = this.configService.get<string>('AWS_REGION');
+      const awsAccessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
+      const awsSecretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
-        this.logger.warn(
-          "AWS credentials not provided, SNS backup service will be disabled",
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'AWS credentials not provided, SNS backup service will be disabled',
+          'SNSBackupService'
         );
         this.isInitialized = false;
         return;
@@ -58,26 +65,34 @@ export class SNSBackupService implements OnModuleInit {
 
       // Get platform application ARNs from config
       this.platformApplicationArn.ios =
-        this.configService.get<string>("AWS_SNS_IOS_PLATFORM_ARN") || "";
+        this.configService.get<string>('AWS_SNS_IOS_PLATFORM_ARN') || '';
       this.platformApplicationArn.android =
-        this.configService.get<string>("AWS_SNS_ANDROID_PLATFORM_ARN") || "";
+        this.configService.get<string>('AWS_SNS_ANDROID_PLATFORM_ARN') || '';
 
-      if (
-        !this.platformApplicationArn.ios &&
-        !this.platformApplicationArn.android
-      ) {
-        this.logger.warn(
-          "No platform application ARNs configured, SNS backup service will be limited",
+      if (!this.platformApplicationArn.ios && !this.platformApplicationArn.android) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'No platform application ARNs configured, SNS backup service will be limited',
+          'SNSBackupService'
         );
       }
 
       this.isInitialized = true;
-      this.logger.log("AWS SNS backup service initialized successfully");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'AWS SNS backup service initialized successfully',
+        'SNSBackupService'
+      );
     } catch (error) {
-      this.logger.error("Failed to initialize AWS SNS:", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to initialize AWS SNS: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SNSBackupService',
+        { stack: (error as Error)?.stack }
+      );
       this.isInitialized = false;
     }
   }
@@ -85,23 +100,23 @@ export class SNSBackupService implements OnModuleInit {
   async sendPushNotification(
     deviceToken: string,
     notification: PushNotificationData,
-    platform: "ios" | "android" = "android",
+    platform: 'ios' | 'android' = 'android'
   ): Promise<PushNotificationResult> {
     if (!this.isInitialized || !this.snsClient) {
-      this.logger.warn(
-        "SNS backup service is not initialized, skipping notification",
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'SNS backup service is not initialized, skipping notification',
+        'SNSBackupService'
       );
-      return { success: false, error: "Service not initialized" };
+      return { success: false, error: 'Service not initialized' };
     }
 
     try {
       // Create platform endpoint if needed
-      const endpointArn = await this.createOrGetPlatformEndpoint(
-        deviceToken,
-        platform,
-      );
+      const endpointArn = await this.createOrGetPlatformEndpoint(deviceToken, platform);
       if (!endpointArn) {
-        return { success: false, error: "Failed to create platform endpoint" };
+        return { success: false, error: 'Failed to create platform endpoint' };
       }
 
       // Prepare platform-specific payload
@@ -110,100 +125,120 @@ export class SNSBackupService implements OnModuleInit {
       const command = new PublishCommand({
         TargetArn: endpointArn,
         Message: JSON.stringify(message),
-        MessageStructure: "json",
+        MessageStructure: 'json',
       });
 
       const response = await this.snsClient.send(command);
 
-      this.logger.log("SNS push notification sent successfully", {
-        messageId: response.MessageId,
-        platform,
-        deviceToken: this.maskToken(deviceToken),
-        title: notification.title,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'SNS push notification sent successfully',
+        'SNSBackupService',
+        {
+          messageId: response.MessageId,
+          platform,
+          deviceToken: this.maskToken(deviceToken),
+          title: notification.title,
+        }
+      );
 
       return {
         success: true,
         ...(response.MessageId && { messageId: response.MessageId }),
       };
     } catch (error) {
-      this.logger.error("Failed to send SNS push notification", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-        platform,
-        deviceToken: this.maskToken(deviceToken),
-        title: notification.title,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send SNS push notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SNSBackupService',
+        {
+          stack: (error as Error)?.stack,
+          platform,
+          deviceToken: this.maskToken(deviceToken),
+          title: notification.title,
+        }
+      );
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
   async sendToMultiplePlatformEndpoints(
     endpoints: SNSPlatformEndpoint[],
-    notification: PushNotificationData,
+    notification: PushNotificationData
   ): Promise<PushNotificationResult> {
     if (!this.isInitialized || !this.snsClient) {
-      this.logger.warn("SNS backup service is not initialized");
-      return { success: false, error: "Service not initialized" };
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'SNS backup service is not initialized',
+        'SNSBackupService'
+      );
+      return { success: false, error: 'Service not initialized' };
     }
 
     let successCount = 0;
     let failureCount = 0;
     const errors: string[] = [];
 
-    const promises = endpoints.map(async (endpoint) => {
+    const promises = endpoints.map(async endpoint => {
       try {
         const result = await this.sendToEndpoint(
           endpoint.endpointArn,
           notification,
-          endpoint.platform,
+          endpoint.platform
         );
         if (result.success) {
           successCount++;
         } else {
           failureCount++;
           if (result.error) {
-            errors.push(
-              `${this.maskToken(endpoint.deviceToken)}: ${result.error}`,
-            );
+            errors.push(`${this.maskToken(endpoint.deviceToken)}: ${result.error}`);
           }
         }
       } catch (error) {
         failureCount++;
         errors.push(
-          `${this.maskToken(endpoint.deviceToken)}: ${error instanceof Error ? error.message : "Unknown error"}`,
+          `${this.maskToken(endpoint.deviceToken)}: ${error instanceof Error ? error.message : 'Unknown error'}`
         );
       }
     });
 
     await Promise.all(promises);
 
-    this.logger.log("SNS bulk push notifications completed", {
-      successCount,
-      failureCount,
-      totalEndpoints: endpoints.length,
-      title: notification.title,
-    });
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'SNS bulk push notifications completed',
+      'SNSBackupService',
+      {
+        successCount,
+        failureCount,
+        totalEndpoints: endpoints.length,
+        title: notification.title,
+      }
+    );
 
     return {
       success: successCount > 0,
       successCount,
       failureCount,
-      ...(errors.length > 0 && { error: errors.join("; ") }),
+      ...(errors.length > 0 && { error: errors.join('; ') }),
     };
   }
 
   private async sendToEndpoint(
     endpointArn: string,
     notification: PushNotificationData,
-    platform: "ios" | "android",
+    platform: 'ios' | 'android'
   ): Promise<PushNotificationResult> {
     if (!this.snsClient) {
-      return { success: false, error: "SNS client not initialized" };
+      return { success: false, error: 'SNS client not initialized' };
     }
 
     try {
@@ -212,7 +247,7 @@ export class SNSBackupService implements OnModuleInit {
       const command = new PublishCommand({
         TargetArn: endpointArn,
         Message: JSON.stringify(message),
-        MessageStructure: "json",
+        MessageStructure: 'json',
       });
 
       const response = await this.snsClient.send(command);
@@ -223,14 +258,14 @@ export class SNSBackupService implements OnModuleInit {
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
   private async createOrGetPlatformEndpoint(
     deviceToken: string,
-    platform: "ios" | "android",
+    platform: 'ios' | 'android'
   ): Promise<string | null> {
     if (!this.snsClient) {
       return null;
@@ -239,8 +274,11 @@ export class SNSBackupService implements OnModuleInit {
     try {
       const platformArn = this.platformApplicationArn[platform];
       if (!platformArn) {
-        this.logger.warn(
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
           `Platform application ARN not configured for ${platform}`,
+          'SNSBackupService'
         );
         return null;
       }
@@ -256,42 +294,56 @@ export class SNSBackupService implements OnModuleInit {
 
       const response = await this.snsClient.send(command);
 
-      this.logger.debug("Platform endpoint created", {
-        endpointArn: response.EndpointArn,
-        platform,
-        deviceToken: this.maskToken(deviceToken),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
+        'Platform endpoint created',
+        'SNSBackupService',
+        {
+          endpointArn: response.EndpointArn,
+          platform,
+          deviceToken: this.maskToken(deviceToken),
+        }
+      );
 
       return response.EndpointArn || null;
     } catch (error) {
       // If endpoint already exists, try to get it
-      if (error instanceof Error && error.message.includes("already exists")) {
-        this.logger.debug("Platform endpoint already exists", {
-          platform,
-          deviceToken: this.maskToken(deviceToken),
-        });
+      if (error instanceof Error && error.message.includes('already exists')) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          'Platform endpoint already exists',
+          'SNSBackupService',
+          {
+            platform,
+            deviceToken: this.maskToken(deviceToken),
+          }
+        );
         // In a real implementation, you would need to store endpoint ARNs
         // or implement a method to retrieve existing endpoints
       }
 
-      this.logger.error("Failed to create platform endpoint", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        platform,
-        deviceToken: this.maskToken(deviceToken),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to create platform endpoint: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SNSBackupService',
+        { platform, deviceToken: this.maskToken(deviceToken) }
+      );
       return null;
     }
   }
 
   private createPlatformMessage(
     notification: PushNotificationData,
-    platform: "ios" | "android",
+    platform: 'ios' | 'android'
   ): Record<string, string> {
     const baseMessage = {
       default: notification.body,
     };
 
-    if (platform === "ios") {
+    if (platform === 'ios') {
       return {
         ...baseMessage,
         APNS: JSON.stringify({
@@ -301,7 +353,7 @@ export class SNSBackupService implements OnModuleInit {
               body: notification.body,
             },
             badge: 1,
-            sound: "default",
+            sound: 'default',
           },
           ...(notification.data && { customData: notification.data }),
         }),
@@ -312,7 +364,7 @@ export class SNSBackupService implements OnModuleInit {
               body: notification.body,
             },
             badge: 1,
-            sound: "default",
+            sound: 'default',
           },
           ...(notification.data && { customData: notification.data }),
         }),
@@ -324,8 +376,8 @@ export class SNSBackupService implements OnModuleInit {
           notification: {
             title: notification.title,
             body: notification.body,
-            icon: "healthcare_icon",
-            color: "#4CAF50",
+            icon: 'healthcare_icon',
+            color: '#4CAF50',
           },
           data: {
             ...notification.data,
@@ -334,8 +386,8 @@ export class SNSBackupService implements OnModuleInit {
           },
           android: {
             notification: {
-              channel_id: "healthcare_notifications",
-              priority: "high",
+              channel_id: 'healthcare_notifications',
+              priority: 'high',
             },
           },
         }),
@@ -355,21 +407,27 @@ export class SNSBackupService implements OnModuleInit {
 
       await this.snsClient.send(command);
 
-      this.logger.log("Platform endpoint deleted", { endpointArn });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Platform endpoint deleted',
+        'SNSBackupService',
+        { endpointArn }
+      );
       return true;
     } catch (error) {
-      this.logger.error("Failed to delete platform endpoint", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        endpointArn,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to delete platform endpoint: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SNSBackupService',
+        { endpointArn }
+      );
       return false;
     }
   }
 
-  async updateEndpointToken(
-    endpointArn: string,
-    newDeviceToken: string,
-  ): Promise<boolean> {
+  async updateEndpointToken(endpointArn: string, newDeviceToken: string): Promise<boolean> {
     if (!this.snsClient) {
       return false;
     }
@@ -379,29 +437,34 @@ export class SNSBackupService implements OnModuleInit {
         EndpointArn: endpointArn,
         Attributes: {
           Token: newDeviceToken,
-          Enabled: "true",
+          Enabled: 'true',
         },
       });
 
       await this.snsClient.send(command);
 
-      this.logger.log("Platform endpoint token updated", {
-        endpointArn,
-        newToken: this.maskToken(newDeviceToken),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Platform endpoint token updated',
+        'SNSBackupService',
+        { endpointArn, newToken: this.maskToken(newDeviceToken) }
+      );
       return true;
     } catch (error) {
-      this.logger.error("Failed to update platform endpoint token", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        endpointArn,
-        newToken: this.maskToken(newDeviceToken),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to update platform endpoint token: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SNSBackupService',
+        { endpointArn, newToken: this.maskToken(newDeviceToken) }
+      );
       return false;
     }
   }
 
   private maskToken(token: string): string {
-    if (!token || token.length < 10) return "INVALID_TOKEN";
+    if (!token || token.length < 10) return 'INVALID_TOKEN';
     return `${token.substring(0, 6)}...${token.substring(token.length - 4)}`;
   }
 

@@ -1,37 +1,10 @@
-import { Injectable, Logger, BadRequestException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { DatabaseService } from "../../../libs/infrastructure/database";
-import { EmailService } from "../../../libs/communication/messaging/email/email.service";
-import { EmailTemplate } from "../../../libs/core/types/email.types";
-// import { User } from "../../../libs/infrastructure/database/prisma/prisma.types";
-import {
-  UserCreateInput,
-  UserUpdateInput,
-  UserWhereInput,
-} from "../../../libs/infrastructure/database/prisma/prisma.service";
-
-export interface SocialAuthProvider {
-  name: string;
-  clientId: string;
-  clientSecret: string;
-  redirectUri: string;
-}
-
-export interface SocialUser {
-  id: string;
-  email: string;
-  firstName?: string;
-  lastName?: string;
-  profilePicture?: string;
-  provider: "google" | "facebook" | "apple";
-}
-
-export interface SocialAuthResult {
-  success: boolean;
-  user?: unknown;
-  isNewUser?: boolean;
-  message?: string;
-}
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { DatabaseService } from '@infrastructure/database';
+import { EmailService } from '@communication/messaging/email/email.service';
+import { EmailTemplate } from '@core/types/common.types';
+import type { SocialAuthProvider, SocialUser, SocialAuthResult } from '@core/types/auth.types';
+import type { UserCreateInput, UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 
 @Injectable()
 export class SocialAuthService {
@@ -41,38 +14,9 @@ export class SocialAuthService {
   constructor(
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
-    private readonly emailService: EmailService,
+    private readonly emailService: EmailService
   ) {
     this.initializeProviders();
-  }
-
-  // Comprehensive type-safe database operations
-  async findUserByIdSafe(id: string) {
-    return this.databaseService.findUserByIdSafe(id);
-  }
-
-  async findUserByEmailSafe(email: string) {
-    return this.databaseService.findUserByEmailSafe(email);
-  }
-
-  async findUsersSafe(where: UserWhereInput) {
-    return this.databaseService.findUsersSafe(where);
-  }
-
-  async createUserSafe(data: UserCreateInput) {
-    return this.databaseService.createUserSafe(data);
-  }
-
-  async updateUserSafe(id: string, data: UserUpdateInput) {
-    return this.databaseService.updateUserSafe(id, data);
-  }
-
-  async deleteUserSafe(id: string) {
-    return this.databaseService.deleteUserSafe(id);
-  }
-
-  async countUsersSafe(where: UserWhereInput) {
-    return this.databaseService.countUsersSafe(where);
   }
 
   /**
@@ -80,27 +24,27 @@ export class SocialAuthService {
    */
   private initializeProviders(): void {
     // Google
-    this.providers.set("google", {
-      name: "google",
-      clientId: this.configService.get("GOOGLE_CLIENT_ID") || "",
-      clientSecret: this.configService.get("GOOGLE_CLIENT_SECRET") || "",
-      redirectUri: this.configService.get("GOOGLE_REDIRECT_URI") || "",
+    this.providers.set('google', {
+      name: 'google',
+      clientId: this.configService.get('GOOGLE_CLIENT_ID') || '',
+      clientSecret: this.configService.get('GOOGLE_CLIENT_SECRET') || '',
+      redirectUri: this.configService.get('GOOGLE_REDIRECT_URI') || '',
     });
 
     // Facebook
-    this.providers.set("facebook", {
-      name: "facebook",
-      clientId: this.configService.get("FACEBOOK_APP_ID") || "",
-      clientSecret: this.configService.get("FACEBOOK_APP_SECRET") || "",
-      redirectUri: this.configService.get("FACEBOOK_REDIRECT_URI") || "",
+    this.providers.set('facebook', {
+      name: 'facebook',
+      clientId: this.configService.get('FACEBOOK_APP_ID') || '',
+      clientSecret: this.configService.get('FACEBOOK_APP_SECRET') || '',
+      redirectUri: this.configService.get('FACEBOOK_REDIRECT_URI') || '',
     });
 
     // Apple
-    this.providers.set("apple", {
-      name: "apple",
-      clientId: this.configService.get("APPLE_CLIENT_ID") || "",
-      clientSecret: this.configService.get("APPLE_CLIENT_SECRET") || "",
-      redirectUri: this.configService.get("APPLE_REDIRECT_URI") || "",
+    this.providers.set('apple', {
+      name: 'apple',
+      clientId: this.configService.get('APPLE_CLIENT_ID') || '',
+      clientSecret: this.configService.get('APPLE_CLIENT_SECRET') || '',
+      redirectUri: this.configService.get('APPLE_REDIRECT_URI') || '',
     });
   }
 
@@ -114,63 +58,48 @@ export class SocialAuthService {
       const googleUser = await this.verifyGoogleToken(googleToken);
 
       return await this.processSocialUser({
-        id: (googleUser as Record<string, unknown>)["id"] as string,
-        email: (googleUser as Record<string, unknown>)["email"] as string,
-        firstName: (googleUser as Record<string, unknown>)[
-          "given_name"
-        ] as string,
-        lastName: (googleUser as Record<string, unknown>)[
-          "family_name"
-        ] as string,
-        profilePicture: (googleUser as Record<string, unknown>)[
-          "picture"
-        ] as string,
-        provider: "google",
+        id: (googleUser as Record<string, unknown>)['id'] as string,
+        email: (googleUser as Record<string, unknown>)['email'] as string,
+        firstName: (googleUser as Record<string, unknown>)['given_name'] as string,
+        lastName: (googleUser as Record<string, unknown>)['family_name'] as string,
+        profilePicture: (googleUser as Record<string, unknown>)['picture'] as string,
+        provider: 'google',
       });
     } catch (_error) {
       this.logger.error(
-        "Google authentication failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Google authentication failed',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
-      throw new BadRequestException("Google authentication failed");
+      throw new BadRequestException('Google authentication failed');
     }
   }
 
   /**
    * Authenticate with Facebook
    */
-  async authenticateWithFacebook(
-    facebookToken: string,
-  ): Promise<SocialAuthResult> {
+  async authenticateWithFacebook(facebookToken: string): Promise<SocialAuthResult> {
     try {
       // In a real implementation, you would verify the Facebook token
       const facebookUser = await this.verifyFacebookToken(facebookToken);
 
       return await this.processSocialUser({
-        id: (facebookUser as Record<string, unknown>)["id"] as string,
-        email: (facebookUser as Record<string, unknown>)["email"] as string,
-        firstName: (facebookUser as Record<string, unknown>)[
-          "first_name"
-        ] as string,
-        lastName: (facebookUser as Record<string, unknown>)[
-          "last_name"
-        ] as string,
+        id: (facebookUser as Record<string, unknown>)['id'] as string,
+        email: (facebookUser as Record<string, unknown>)['email'] as string,
+        firstName: (facebookUser as Record<string, unknown>)['first_name'] as string,
+        lastName: (facebookUser as Record<string, unknown>)['last_name'] as string,
         profilePicture: (
-          (
-            (facebookUser as Record<string, unknown>)["picture"] as Record<
-              string,
-              unknown
-            >
-          )?.["data"] as Record<string, unknown>
-        )?.["url"] as string,
-        provider: "facebook",
+          ((facebookUser as Record<string, unknown>)['picture'] as Record<string, unknown>)?.[
+            'data'
+          ] as Record<string, unknown>
+        )?.['url'] as string,
+        provider: 'facebook',
       });
     } catch (_error) {
       this.logger.error(
-        "Facebook authentication failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Facebook authentication failed',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
-      throw new BadRequestException("Facebook authentication failed");
+      throw new BadRequestException('Facebook authentication failed');
     }
   }
 
@@ -183,36 +112,28 @@ export class SocialAuthService {
       const appleUser = await this.verifyAppleToken(appleToken);
 
       return await this.processSocialUser({
-        id: (appleUser as Record<string, unknown>)["sub"] as string,
-        email: (appleUser as Record<string, unknown>)["email"] as string,
-        firstName: (appleUser as Record<string, unknown>)[
-          "given_name"
-        ] as string,
-        lastName: (appleUser as Record<string, unknown>)[
-          "family_name"
-        ] as string,
-        provider: "apple",
+        id: (appleUser as Record<string, unknown>)['sub'] as string,
+        email: (appleUser as Record<string, unknown>)['email'] as string,
+        firstName: (appleUser as Record<string, unknown>)['given_name'] as string,
+        lastName: (appleUser as Record<string, unknown>)['family_name'] as string,
+        provider: 'apple',
       });
     } catch (_error) {
       this.logger.error(
-        "Apple authentication failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'Apple authentication failed',
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
-      throw new BadRequestException("Apple authentication failed");
+      throw new BadRequestException('Apple authentication failed');
     }
   }
 
   /**
    * Process social user (create or update)
    */
-  private async processSocialUser(
-    socialUser: SocialUser,
-  ): Promise<SocialAuthResult> {
+  private async processSocialUser(socialUser: SocialUser): Promise<SocialAuthResult> {
     try {
       // Check if user exists by email
-      let user = await this.databaseService.findUserByEmailSafe(
-        socialUser.email,
-      );
+      let user = await this.databaseService.findUserByEmailSafe(socialUser.email);
 
       let isNewUser = false;
 
@@ -222,59 +143,55 @@ export class SocialAuthService {
           userid: `user_${Date.now()}_${Math.random().toString(36).substring(2)}`,
           email: socialUser.email,
           name:
-            `${socialUser.firstName || ""} ${socialUser.lastName || ""}`.trim() ||
-            socialUser.email,
+            `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim() || socialUser.email,
           age: 18, // Default age
-          firstName: socialUser.firstName || "",
-          lastName: socialUser.lastName || "",
+          firstName: socialUser.firstName || '',
+          lastName: socialUser.lastName || '',
           profilePicture: socialUser.profilePicture,
-          password: "", // No password for social auth
-          role: "PATIENT",
+          password: '', // No password for social auth
+          role: 'PATIENT',
           isVerified: true, // Social auth users are pre-verified
           [this.getSocialIdField(socialUser.provider)]: socialUser.id,
         };
 
-        user = await this.databaseService.createUserSafe(
-          userData as UserCreateInput,
-        );
+        const userDataForCreate: UserCreateInput & Record<string, unknown> = {
+          ...userData,
+        } as UserCreateInput & Record<string, unknown>;
+        user = await this.databaseService.createUserSafe(userDataForCreate);
 
         isNewUser = true;
 
         // Send welcome email
         await this.emailService.sendEmail({
           to: user.email,
-          subject: "Welcome to HealthCare App",
+          subject: 'Welcome to HealthCare App',
           template: EmailTemplate.WELCOME,
           context: {
             name: `${user.firstName} ${user.lastName}`,
             role: user.role,
-            isGoogleAccount: socialUser.provider === "google",
+            isGoogleAccount: socialUser.provider === 'google',
           },
         });
 
-        this.logger.log(
-          `New social user created: ${user.email} via ${socialUser.provider}`,
-        );
+        this.logger.log(`New social user created: ${user.email} via ${socialUser.provider}`);
       } else {
         // Update existing user with social ID if not already set
         const socialIdField = this.getSocialIdField(socialUser.provider);
-        const currentSocialId = (user as Record<string, unknown>)[
-          socialIdField
-        ];
+        const userRecord = user as unknown as Record<string, unknown>;
+        const currentSocialId = userRecord[socialIdField];
         if (!currentSocialId) {
-          const updateData: Record<string, unknown> = {
-            [socialIdField]: socialUser.id,
-            profilePicture: socialUser.profilePicture || user.profilePicture,
+          const updateData: UserUpdateInput = {
+            ...(socialIdField === 'googleId' && { googleId: socialUser.id }),
+            ...(socialIdField === 'facebookId' && { facebookId: socialUser.id }),
+            ...(socialIdField === 'appleId' && { appleId: socialUser.id }),
+            ...(socialUser.profilePicture && { profilePicture: socialUser.profilePicture }),
           };
 
-          user = await this.databaseService.updateUserSafe(
-            user.id,
-            updateData as UserUpdateInput,
-          );
+          user = await this.databaseService.updateUserSafe(user.id, updateData);
         }
 
         this.logger.log(
-          `Existing user logged in via social: ${user.email} via ${socialUser.provider}`,
+          `Existing user logged in via social: ${user.email} via ${socialUser.provider}`
         );
       }
 
@@ -290,14 +207,12 @@ export class SocialAuthService {
           profilePicture: user.profilePicture,
         },
         isNewUser,
-        message: isNewUser
-          ? "Account created successfully"
-          : "Login successful",
+        message: isNewUser ? 'Account created successfully' : 'Login successful',
       };
     } catch (_error) {
       this.logger.error(
         `Failed to process social user: ${socialUser.email}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        _error instanceof Error ? _error.stack : 'No stack trace available'
       );
       throw _error;
     }
@@ -308,16 +223,14 @@ export class SocialAuthService {
    */
   private getSocialIdField(provider: string): string {
     switch (provider) {
-      case "google":
-        return "googleId";
-      case "facebook":
-        return "facebookId";
-      case "apple":
-        return "appleId";
+      case 'google':
+        return 'googleId';
+      case 'facebook':
+        return 'facebookId';
+      case 'apple':
+        return 'appleId';
       default:
-        throw new BadRequestException(
-          `Unsupported social provider: ${provider}`,
-        );
+        throw new BadRequestException(`Unsupported social provider: ${provider}`);
     }
   }
 
@@ -332,11 +245,11 @@ export class SocialAuthService {
 
     // For now, return mock data
     return {
-      id: "google_user_123",
-      email: "user@gmail.com",
-      given_name: "John",
-      family_name: "Doe",
-      picture: "https://example.com/avatar.jpg",
+      id: 'google_user_123',
+      email: 'user@gmail.com',
+      given_name: 'John',
+      family_name: 'Doe',
+      picture: 'https://example.com/avatar.jpg',
     };
   }
 
@@ -351,13 +264,13 @@ export class SocialAuthService {
 
     // For now, return mock data
     return {
-      id: "facebook_user_123",
-      email: "user@facebook.com",
-      first_name: "Jane",
-      last_name: "Smith",
+      id: 'facebook_user_123',
+      email: 'user@facebook.com',
+      first_name: 'Jane',
+      last_name: 'Smith',
       picture: {
         data: {
-          url: "https://example.com/avatar.jpg",
+          url: 'https://example.com/avatar.jpg',
         },
       },
     };
@@ -374,10 +287,10 @@ export class SocialAuthService {
 
     // For now, return mock data
     return {
-      sub: "apple_user_123",
-      email: "user@icloud.com",
-      given_name: "Bob",
-      family_name: "Johnson",
+      sub: 'apple_user_123',
+      email: 'user@icloud.com',
+      given_name: 'Bob',
+      family_name: 'Johnson',
     };
   }
 

@@ -1,37 +1,17 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { CacheService } from "../../../../libs/infrastructure/cache";
-import { LoggingService } from "../../../../libs/infrastructure/logging/logging.service";
-import { LogType, LogLevel } from "../../../../libs/infrastructure/logging";
+import { Injectable, Logger } from '@nestjs/common';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
-export interface PaymentData {
-  amount: number;
-  currency: string;
-  paymentMethod: string;
-  customerId: string;
-  appointmentId: string;
-  description?: string;
-}
+import type {
+  PaymentData,
+  RefundData,
+  SubscriptionData,
+  PayoutData,
+} from '@core/types/billing.types';
 
-export interface RefundData {
-  paymentId: string;
-  amount: number;
-  reason: string;
-  customerId: string;
-}
-
-export interface SubscriptionData {
-  customerId: string;
-  planId: string;
-  amount: number;
-  interval: "monthly" | "yearly";
-}
-
-export interface PayoutData {
-  providerId: string;
-  amount: number;
-  currency: string;
-  description: string;
-}
+// Re-export types for backward compatibility
+export type { PaymentData, RefundData, SubscriptionData, PayoutData };
 
 @Injectable()
 export class PaymentService {
@@ -40,7 +20,7 @@ export class PaymentService {
 
   constructor(
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService,
+    private readonly loggingService: LoggingService
   ) {}
 
   processPayment(paymentId: string): unknown {
@@ -51,7 +31,7 @@ export class PaymentService {
       // For now, return mock result
       const result = {
         paymentId,
-        status: "completed",
+        status: 'completed',
         transactionId: `txn_${Date.now()}`,
         processedAt: new Date().toISOString(),
       };
@@ -59,9 +39,9 @@ export class PaymentService {
       void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
-        "Payment processed successfully",
-        "PaymentService",
-        { paymentId, responseTime: Date.now() - startTime },
+        'Payment processed successfully',
+        'PaymentService',
+        { paymentId, responseTime: Date.now() - startTime }
       );
 
       return result;
@@ -70,11 +50,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process payment: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           paymentId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -90,19 +70,19 @@ export class PaymentService {
         refundId: `ref_${Date.now()}`,
         paymentId: refundData.paymentId,
         amount: refundData.amount,
-        status: "completed",
+        status: 'completed',
         refundedAt: new Date().toISOString(),
       };
 
       void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
-        "Payment refunded successfully",
-        "PaymentService",
+        'Payment refunded successfully',
+        'PaymentService',
         {
           paymentId: refundData.paymentId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return result;
@@ -111,11 +91,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to refund payment: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           paymentId: refundData.paymentId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -136,26 +116,22 @@ export class PaymentService {
       // For now, return mock data
       const status = {
         paymentId,
-        status: "completed",
+        status: 'completed',
         amount: 100.0,
-        currency: "USD",
+        currency: 'USD',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
       // Cache the result
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(status),
-        this.PAYMENT_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, JSON.stringify(status), this.PAYMENT_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Payment status retrieved successfully",
-        "PaymentService",
-        { paymentId, responseTime: Date.now() - startTime },
+        'Payment status retrieved successfully',
+        'PaymentService',
+        { paymentId, responseTime: Date.now() - startTime }
       );
 
       return status;
@@ -164,11 +140,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get payment status: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           paymentId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -183,16 +159,16 @@ export class PaymentService {
       const result = {
         subscriptionId,
         paymentId: `sub_${Date.now()}`,
-        status: "completed",
+        status: 'completed',
         processedAt: new Date().toISOString(),
       };
 
       void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
-        "Subscription payment processed successfully",
-        "PaymentService",
-        { subscriptionId, responseTime: Date.now() - startTime },
+        'Subscription payment processed successfully',
+        'PaymentService',
+        { subscriptionId, responseTime: Date.now() - startTime }
       );
 
       return result;
@@ -201,11 +177,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process subscription payment: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           subscriptionId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -219,16 +195,16 @@ export class PaymentService {
       // For now, return mock result
       const result = {
         subscriptionId,
-        status: "cancelled",
+        status: 'cancelled',
         cancelledAt: new Date().toISOString(),
       };
 
       void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
-        "Subscription cancelled successfully",
-        "PaymentService",
-        { subscriptionId, responseTime: Date.now() - startTime },
+        'Subscription cancelled successfully',
+        'PaymentService',
+        { subscriptionId, responseTime: Date.now() - startTime }
       );
 
       return result;
@@ -237,11 +213,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to cancel subscription: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           subscriptionId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -255,16 +231,16 @@ export class PaymentService {
       // For now, return mock result
       const result = {
         claimId: `claim_${Date.now()}`,
-        status: "submitted",
+        status: 'submitted',
         submittedAt: new Date().toISOString(),
       };
 
       void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
-        "Insurance claim processed successfully",
-        "PaymentService",
-        { claimData, responseTime: Date.now() - startTime },
+        'Insurance claim processed successfully',
+        'PaymentService',
+        { claimData, responseTime: Date.now() - startTime }
       );
 
       return result;
@@ -273,11 +249,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process insurance claim: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           claimData,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -293,19 +269,19 @@ export class PaymentService {
         payoutId: `payout_${Date.now()}`,
         providerId: payoutData.providerId,
         amount: payoutData.amount,
-        status: "completed",
+        status: 'completed',
         processedAt: new Date().toISOString(),
       };
 
       void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
-        "Designer payout processed successfully",
-        "PaymentService",
+        'Designer payout processed successfully',
+        'PaymentService',
         {
           providerId: payoutData.providerId,
           responseTime: Date.now() - startTime,
-        },
+        }
       );
 
       return result;
@@ -314,11 +290,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process designer payout: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           providerId: payoutData.providerId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -334,7 +310,7 @@ export class PaymentService {
         receiptId: `receipt_${Date.now()}`,
         paymentId,
         amount: 100.0,
-        currency: "USD",
+        currency: 'USD',
         generatedAt: new Date().toISOString(),
         downloadUrl: `https://receipts.example.com/${paymentId}.pdf`,
       };
@@ -342,9 +318,9 @@ export class PaymentService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Receipt generated successfully",
-        "PaymentService",
-        { paymentId, responseTime: Date.now() - startTime },
+        'Receipt generated successfully',
+        'PaymentService',
+        { paymentId, responseTime: Date.now() - startTime }
       );
 
       return receipt;
@@ -353,11 +329,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to generate receipt: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           paymentId,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }
@@ -374,17 +350,17 @@ export class PaymentService {
         totalPayments: 1000,
         totalAmount: 50000.0,
         averageAmount: 50.0,
-        currency: "USD",
-        period: params["period"] || "month",
+        currency: 'USD',
+        period: params['period'] || 'month',
         generatedAt: new Date().toISOString(),
       };
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        "Payment analytics retrieved successfully",
-        "PaymentService",
-        { analyticsParams, responseTime: Date.now() - startTime },
+        'Payment analytics retrieved successfully',
+        'PaymentService',
+        { analyticsParams, responseTime: Date.now() - startTime }
       );
 
       return analytics;
@@ -393,11 +369,11 @@ export class PaymentService {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get payment analytics: ${_error instanceof Error ? _error.message : String(_error)}`,
-        "PaymentService",
+        'PaymentService',
         {
           analyticsParams,
           _error: _error instanceof Error ? _error.stack : undefined,
-        },
+        }
       );
       throw _error;
     }

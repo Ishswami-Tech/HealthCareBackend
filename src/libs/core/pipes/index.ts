@@ -22,7 +22,7 @@
  */
 
 // Main validation pipe
-export { ValidationPipe } from "./validation.pipe";
+export { ValidationPipe } from './validation.pipe';
 
 // Re-export types for convenience
-export type { ValidationPipe as ValidationPipeType } from "./validation.pipe";
+export type { ValidationPipe as ValidationPipeType } from './validation.pipe';

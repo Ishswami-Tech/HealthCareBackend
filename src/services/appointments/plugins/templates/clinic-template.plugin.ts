@@ -1,9 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { BaseAppointmentPlugin } from "../base/base-plugin.service";
-import {
-  AppointmentTemplateService,
-  AppointmentTemplate,
-} from "./appointment-template.service";
+import { Injectable, Logger } from '@nestjs/common';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentTemplateService } from './appointment-template.service';
+import type { AppointmentTemplate } from '@core/types/appointment.types';
 
 @Injectable()
 export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
@@ -14,25 +12,25 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
   }
 
   get name(): string {
-    return "clinic-template";
+    return 'clinic-template';
   }
 
   get version(): string {
-    return "1.0.0";
+    return '1.0.0';
   }
 
   get features(): string[] {
-    return ["templates", "recurring", "series"];
+    return ['templates', 'recurring', 'series'];
   }
 
   getSupportedOperations(): string[] {
     return [
-      "createTemplate",
-      "getClinicTemplates",
-      "createRecurringSeries",
-      "getTemplate",
-      "updateTemplate",
-      "deleteTemplate",
+      'createTemplate',
+      'getClinicTemplates',
+      'createRecurringSeries',
+      'getTemplate',
+      'updateTemplate',
+      'deleteTemplate',
     ];
   }
 
@@ -44,52 +42,47 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
 
     this.logger.log(`Processing template operation: ${operation}`, {
       operation,
-      clinicId: (params as Record<string, unknown>)["clinicId"] as string,
+      clinicId: (params as Record<string, unknown>)['clinicId'] as string,
     });
 
     try {
       switch (operation) {
-        case "createTemplate":
+        case 'createTemplate':
           return await this.templateService.createTemplate(
-            (params as Record<string, unknown>)["templateData"] as Omit<
+            (params as Record<string, unknown>)['templateData'] as Omit<
               AppointmentTemplate,
-              "id" | "createdAt" | "updatedAt"
-            >,
+              'id' | 'createdAt' | 'updatedAt'
+            >
           );
 
-        case "getClinicTemplates":
+        case 'getClinicTemplates':
           return await this.templateService.getClinicTemplates(
-            (params as Record<string, unknown>)["clinicId"] as string,
+            (params as Record<string, unknown>)['clinicId'] as string
           );
 
-        case "createRecurringSeries":
+        case 'createRecurringSeries':
           return await this.templateService.createRecurringSeries(
-            (params as Record<string, unknown>)["templateId"] as string,
-            (params as Record<string, unknown>)["patientId"] as string,
-            (params as Record<string, unknown>)["clinicId"] as string,
-            new Date(
-              (params as Record<string, unknown>)["startDate"] as string,
-            ),
-            new Date((params as Record<string, unknown>)["endDate"] as string),
+            (params as Record<string, unknown>)['templateId'] as string,
+            (params as Record<string, unknown>)['patientId'] as string,
+            (params as Record<string, unknown>)['clinicId'] as string,
+            new Date((params as Record<string, unknown>)['startDate'] as string),
+            new Date((params as Record<string, unknown>)['endDate'] as string)
           );
 
-        case "getTemplate":
+        case 'getTemplate':
           return await this.templateService.getTemplate(
-            (params as Record<string, unknown>)["templateId"] as string,
+            (params as Record<string, unknown>)['templateId'] as string
           );
 
-        case "updateTemplate":
+        case 'updateTemplate':
           return await this.templateService.updateTemplate(
-            (params as Record<string, unknown>)["templateId"] as string,
-            (params as Record<string, unknown>)["updateData"] as Record<
-              string,
-              unknown
-            >,
+            (params as Record<string, unknown>)['templateId'] as string,
+            (params as Record<string, unknown>)['updateData'] as Record<string, unknown>
           );
 
-        case "deleteTemplate":
+        case 'deleteTemplate':
           return await this.templateService.deleteTemplate(
-            (params as Record<string, unknown>)["templateId"] as string,
+            (params as Record<string, unknown>)['templateId'] as string
           );
 
         default:
@@ -110,57 +103,45 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
 
     // Validate required parameters based on operation
     switch (operation) {
-      case "createTemplate":
+      case 'createTemplate':
         return Promise.resolve(
           !!(
-            (params as Record<string, unknown>)["templateData"] &&
-            (
-              (params as Record<string, unknown>)["templateData"] as Record<
-                string,
-                unknown
-              >
-            )["name"] &&
-            (
-              (params as Record<string, unknown>)["templateData"] as Record<
-                string,
-                unknown
-              >
-            )["clinicId"]
-          ),
+            (params as Record<string, unknown>)['templateData'] &&
+            ((params as Record<string, unknown>)['templateData'] as Record<string, unknown>)[
+              'name'
+            ] &&
+            ((params as Record<string, unknown>)['templateData'] as Record<string, unknown>)[
+              'clinicId'
+            ]
+          )
         );
 
-      case "getClinicTemplates":
-        return Promise.resolve(
-          !!(params as Record<string, unknown>)["clinicId"],
-        );
+      case 'getClinicTemplates':
+        return Promise.resolve(!!(params as Record<string, unknown>)['clinicId']);
 
-      case "createRecurringSeries":
+      case 'createRecurringSeries':
         return Promise.resolve(
           !!(
-            (params as Record<string, unknown>)["templateId"] &&
-            (params as Record<string, unknown>)["patientId"] &&
-            (params as Record<string, unknown>)["clinicId"] &&
-            (params as Record<string, unknown>)["startDate"]
-          ),
+            (params as Record<string, unknown>)['templateId'] &&
+            (params as Record<string, unknown>)['patientId'] &&
+            (params as Record<string, unknown>)['clinicId'] &&
+            (params as Record<string, unknown>)['startDate']
+          )
         );
 
-      case "getTemplate":
-        return Promise.resolve(
-          !!(params as Record<string, unknown>)["templateId"],
-        );
+      case 'getTemplate':
+        return Promise.resolve(!!(params as Record<string, unknown>)['templateId']);
 
-      case "updateTemplate":
+      case 'updateTemplate':
         return Promise.resolve(
           !!(
-            (params as Record<string, unknown>)["templateId"] &&
-            (params as Record<string, unknown>)["updateData"]
-          ),
+            (params as Record<string, unknown>)['templateId'] &&
+            (params as Record<string, unknown>)['updateData']
+          )
         );
 
-      case "deleteTemplate":
-        return Promise.resolve(
-          !!(params as Record<string, unknown>)["templateId"],
-        );
+      case 'deleteTemplate':
+        return Promise.resolve(!!(params as Record<string, unknown>)['templateId']);
 
       default:
         return Promise.resolve(false);
@@ -169,18 +150,18 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
 
   getRequiredParameters(operation: string): string[] {
     switch (operation) {
-      case "createTemplate":
-        return ["templateData"];
-      case "getClinicTemplates":
-        return ["clinicId"];
-      case "createRecurringSeries":
-        return ["templateId", "patientId", "clinicId", "startDate"];
-      case "getTemplate":
-        return ["templateId"];
-      case "updateTemplate":
-        return ["templateId", "updateData"];
-      case "deleteTemplate":
-        return ["templateId"];
+      case 'createTemplate':
+        return ['templateData'];
+      case 'getClinicTemplates':
+        return ['clinicId'];
+      case 'createRecurringSeries':
+        return ['templateId', 'patientId', 'clinicId', 'startDate'];
+      case 'getTemplate':
+        return ['templateId'];
+      case 'updateTemplate':
+        return ['templateId', 'updateData'];
+      case 'deleteTemplate':
+        return ['templateId'];
       default:
         return [];
     }
@@ -190,7 +171,7 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
     return {
       plugin: this.name,
       version: this.version,
-      status: "healthy",
+      status: 'healthy',
       operations: this.getSupportedOperations().length,
       lastCheck: new Date().toISOString(),
     };

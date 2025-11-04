@@ -1,4 +1,4 @@
-import { registerAs } from "@nestjs/config";
+import { registerAs } from '@nestjs/config';
 // import { ENV_VARS } from "./constants"; // Not used in this file
 
 /**
@@ -54,7 +54,7 @@ function parseRateLimitInteger(
   value: string | undefined,
   defaultValue: number,
   min = 1,
-  max = Number.MAX_SAFE_INTEGER,
+  max = Number.MAX_SAFE_INTEGER
 ): number {
   const parsed = value ? parseInt(value, 10) : defaultValue;
 
@@ -72,107 +72,77 @@ function parseRateLimitInteger(
  */
 function validateRateLimitConfig(config: RateLimitConfig): void {
   if (config.security.maxAttempts < 1) {
-    throw new Error("maxAttempts must be at least 1");
+    throw new Error('maxAttempts must be at least 1');
   }
 
   if (config.security.attemptWindow < 60) {
-    throw new Error("attemptWindow must be at least 60 seconds");
+    throw new Error('attemptWindow must be at least 60 seconds');
   }
 
-  if (config.security.lockoutIntervals.some((interval) => interval < 1)) {
-    throw new Error("lockoutIntervals must be positive numbers");
+  if (config.security.lockoutIntervals.some(interval => interval < 1)) {
+    throw new Error('lockoutIntervals must be positive numbers');
   }
 
   if (config.security.maxConcurrentSessions < 1) {
-    throw new Error("maxConcurrentSessions must be at least 1");
+    throw new Error('maxConcurrentSessions must be at least 1');
   }
 
   if (config.security.sessionInactivityThreshold < 60) {
-    throw new Error("sessionInactivityThreshold must be at least 60 seconds");
+    throw new Error('sessionInactivityThreshold must be at least 60 seconds');
   }
 }
 
 /**
  * Rate limit configuration factory
  */
-export default registerAs("rateLimit", (): RateLimitConfig => {
+export default registerAs('rateLimit', (): RateLimitConfig => {
   const config: RateLimitConfig = {
-    enabled: process.env["RATE_LIMIT_ENABLED"] !== "false",
+    enabled: process.env['RATE_LIMIT_ENABLED'] !== 'false',
     rules: {
       // API endpoints
       api: {
-        limit: parseRateLimitInteger(
-          process.env["API_RATE_LIMIT"],
-          100,
-          1,
-          10000,
-        ),
+        limit: parseRateLimitInteger(process.env['API_RATE_LIMIT'], 100, 1, 10000),
         window: 60, // 1 minute
         burst: 20, // Allow 20 extra requests for bursts
       },
       // Authentication endpoints
       auth: {
-        limit: parseRateLimitInteger(process.env["AUTH_RATE_LIMIT"], 5, 1, 100),
+        limit: parseRateLimitInteger(process.env['AUTH_RATE_LIMIT'], 5, 1, 100),
         window: 60, // 1 minute
         burst: 2, // Allow 2 extra attempts
       },
       // Heavy operations (e.g., file uploads, reports)
       heavy: {
-        limit: parseRateLimitInteger(
-          process.env["HEAVY_RATE_LIMIT"],
-          10,
-          1,
-          100,
-        ),
+        limit: parseRateLimitInteger(process.env['HEAVY_RATE_LIMIT'], 10, 1, 100),
         window: 300, // 5 minutes
         cost: 2, // Each request counts as 2
       },
       // User profile operations
       user: {
-        limit: parseRateLimitInteger(
-          process.env["USER_RATE_LIMIT"],
-          50,
-          1,
-          1000,
-        ),
+        limit: parseRateLimitInteger(process.env['USER_RATE_LIMIT'], 50, 1, 1000),
         window: 60, // 1 minute
       },
       // Health check endpoints
       health: {
-        limit: parseRateLimitInteger(
-          process.env["HEALTH_RATE_LIMIT"],
-          200,
-          1,
-          10000,
-        ),
+        limit: parseRateLimitInteger(process.env['HEALTH_RATE_LIMIT'], 200, 1, 10000),
         window: 60, // 1 minute
       },
     },
     security: {
-      maxAttempts: parseRateLimitInteger(
-        process.env["MAX_AUTH_ATTEMPTS"],
-        5,
-        1,
-        20,
-      ),
-      attemptWindow: parseRateLimitInteger(
-        process.env["AUTH_ATTEMPT_WINDOW"],
-        1800,
-        60,
-        86400,
-      ), // 30 minutes
+      maxAttempts: parseRateLimitInteger(process.env['MAX_AUTH_ATTEMPTS'], 5, 1, 20),
+      attemptWindow: parseRateLimitInteger(process.env['AUTH_ATTEMPT_WINDOW'], 1800, 60, 86400), // 30 minutes
       lockoutIntervals: [10, 25, 45, 60, 360] as const, // Progressive lockout in minutes
       maxConcurrentSessions: parseRateLimitInteger(
-        process.env["MAX_CONCURRENT_SESSIONS"],
+        process.env['MAX_CONCURRENT_SESSIONS'],
         5,
         1,
-        50,
+        50
       ),
       sessionInactivityThreshold: parseRateLimitInteger(
-        process.env["SESSION_INACTIVITY_THRESHOLD"],
+        process.env['SESSION_INACTIVITY_THRESHOLD'],
         900,
         60,
-        86400,
+        86400
       ), // 15 minutes
     },
   };

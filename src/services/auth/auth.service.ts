@@ -1,18 +1,16 @@
-import {
-  Injectable,
-  Logger,
-  UnauthorizedException,
-  BadRequestException,
-} from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
-import { ConfigService } from "@nestjs/config";
-import { DatabaseService } from "../../libs/infrastructure/database";
-import { CacheService } from "../../libs/infrastructure/cache/cache.service";
-import { LoggingService } from "../../libs/infrastructure/logging/logging.service";
-import { EmailService } from "../../libs/communication/messaging/email/email.service";
-import { SessionManagementService } from "../../libs/core/session/session-management.service";
-import { RbacService } from "../../libs/core/rbac/rbac.service";
-import { JwtAuthService } from "./core/jwt.service";
+import { Injectable } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { EventService } from '@infrastructure/events';
+import { HealthcareErrorsService } from '@core/errors';
+import { LogType, LogLevel } from '@core/types';
+import { EmailService } from '@communication/messaging/email/email.service';
+import { SessionManagementService } from '@core/session/session-management.service';
+import { RbacService } from '@core/rbac/rbac.service';
+import { JwtAuthService } from './core/jwt.service';
 import {
   LoginDto,
   RegisterDto,
@@ -23,27 +21,26 @@ import {
   ChangePasswordDto,
   RequestOtpDto,
   VerifyOtpRequestDto,
-} from "../../libs/dtos/auth.dto";
-import { Role, Gender } from "../../libs/dtos/user.dto";
-import { AuthTokens, TokenPayload, UserProfile } from "../../libs/core/types";
-import { EmailTemplate } from "../../libs/core/types/email.types";
-import {
-  UserWithPassword,
-  UserCreateData,
-  // UserSelectResult,
-} from "../../libs/infrastructure/database/prisma/user.types";
-import {
-  UserCreateInput,
-  UserUpdateInput,
-  UserWhereInput,
-} from "../../libs/infrastructure/database/prisma/prisma.service";
-// import { UserWithRelations } from "../../libs/infrastructure/database/prisma/prisma.service";
-import * as bcrypt from "bcryptjs";
-import { v4 as uuidv4 } from "uuid";
+} from '@dtos/auth.dto';
+import { Role } from '@core/types/enums.types';
+import type { Gender } from '@dtos/user.dto';
+import type { AuthTokens, TokenPayload, UserProfile } from '@core/types';
+import { EmailTemplate } from '@core/types/common.types';
+import type { UserCreateInput, UserUpdateInput, UserWhereInput } from '@core/types/input.types';
+import type { UserWithPassword, UserCreateData } from '@core/types/user.types';
+// UserWithPassword and UserCreateData types are handled internally by DatabaseService
+// No direct import needed as they're part of database operations
+// UserWhereInput, UserCreateInput, UserUpdateInput are Prisma-specific input types
+// These are used internally via DatabaseService.executeHealthcareRead/Write
+// No direct import needed as they're handled by DatabaseService methods
+// Types should be imported from @types, but UserCreateInput, UserUpdateInput, UserWhereInput
+// are Prisma-specific input types. These will need to be accessed via databaseService methods
+// For now, keeping direct Prisma access for input types only (temporary until we create DTOs)
+import * as bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
   private readonly CACHE_TTL = 3600; // 1 hour
 
   constructor(
@@ -52,10 +49,12 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly logging: LoggingService,
+    private readonly eventService: EventService,
+    private readonly errors: HealthcareErrorsService,
     private readonly emailService: EmailService,
     private readonly sessionService: SessionManagementService,
     private readonly rbacService: RbacService,
-    private readonly jwtAuthService: JwtAuthService,
+    private readonly jwtAuthService: JwtAuthService
   ) {}
 
   // Comprehensive type-safe database operations
@@ -90,11 +89,8 @@ export class AuthService {
   /**
    * Get user profile with enterprise healthcare caching
    */
-  async getUserProfile(
-    userId: string,
-    clinicId?: string,
-  ): Promise<UserProfile> {
-    const cacheKey = `user:${userId}:profile:${clinicId || "default"}`;
+  async getUserProfile(userId: string, clinicId?: string): Promise<UserProfile> {
+    const cacheKey = `user:${userId}:profile:${clinicId || 'default'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -102,7 +98,7 @@ export class AuthService {
         const user = await this.databaseService.findUserByIdSafe(userId);
 
         if (!user) {
-          throw new UnauthorizedException("User not found");
+          throw this.errors.userNotFound(userId, 'AuthService.getUserProfile');
         }
 
         return {
@@ -115,26 +111,19 @@ export class AuthService {
       },
       {
         ttl: 1800, // 30 minutes
-        tags: [
-          `user:${userId}`,
-          "user_profiles",
-          clinicId ? `clinic:${clinicId}` : "global",
-        ],
-        priority: "high",
+        tags: [`user:${userId}`, 'user_profiles', clinicId ? `clinic:${clinicId}` : 'global'],
+        priority: 'high',
         enableSwr: true,
         compress: true, // Compress user profiles
         containsPHI: true, // User profiles contain PHI
-      },
+      }
     );
   }
 
   /**
    * Get user permissions with enterprise RBAC caching
    */
-  async getUserPermissions(
-    userId: string,
-    clinicId: string,
-  ): Promise<string[]> {
+  async getUserPermissions(userId: string, clinicId: string): Promise<string[]> {
     const cacheKey = `user:${userId}:clinic:${clinicId}:permissions`;
 
     return this.cacheService.cache(
@@ -143,27 +132,24 @@ export class AuthService {
         // First get user roles
         const userRoles = await this.rbacService.getUserRoles(userId, clinicId);
         // Then get permissions for those roles
-        const roleIds = userRoles.map((role) => role.roleId);
+        const roleIds = userRoles.map(role => role.roleId);
         return await this.rbacService.getRolePermissions(roleIds);
       },
       {
         ttl: 3600, // 1 hour
-        tags: [`user:${userId}`, `clinic:${clinicId}`, "permissions", "rbac"],
-        priority: "high",
+        tags: [`user:${userId}`, `clinic:${clinicId}`, 'permissions', 'rbac'],
+        priority: 'high',
         enableSwr: true,
         compress: true, // Compress permission data
         containsPHI: false, // Permissions are not PHI
-      },
+      }
     );
   }
 
   /**
    * Invalidate user cache when user data changes
    */
-  private async invalidateUserCache(
-    userId: string,
-    clinicId?: string,
-  ): Promise<void> {
+  private async invalidateUserCache(userId: string, clinicId?: string): Promise<void> {
     try {
       // Invalidate user profile cache
       await this.cacheService.invalidatePatientCache(userId, clinicId);
@@ -176,13 +162,20 @@ export class AuthService {
         await this.cacheService.invalidateClinicCache(clinicId);
       }
 
-      this.logger.debug(
-        `Invalidated cache for user: ${userId}, clinic: ${clinicId || "all"}`,
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
+        `Invalidated cache for user: ${userId}, clinic: ${clinicId || 'all'}`,
+        'AuthService.invalidateUserCache',
+        { userId, clinicId }
       );
     } catch (_error) {
-      this.logger.error(
-        `Failed to invalidate user cache for ${userId}:`,
-        _error,
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to invalidate user cache for ${userId}`,
+        'AuthService.invalidateUserCache',
+        { userId, clinicId, error: _error instanceof Error ? _error.message : String(_error) }
       );
     }
   }
@@ -193,60 +186,71 @@ export class AuthService {
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
     try {
       // Check if user already exists
-      const existingUser = await this.databaseService.findUserByEmailSafe(
-        registerDto.email,
-      );
+      const existingUser = await this.databaseService.findUserByEmailSafe(registerDto.email);
 
       if (existingUser) {
-        throw new BadRequestException("User with this email already exists");
+        throw this.errors.emailAlreadyExists(registerDto.email, 'AuthService.register');
       }
 
       // Hash password
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
 
-      // Create user data with proper typing
-      const userData: UserCreateData = {
-        userid: uuidv4(), // Generate unique userid
+      // Calculate age from dateOfBirth if provided, otherwise default to 25
+      const age = registerDto.dateOfBirth
+        ? Math.floor(
+            (Date.now() - new Date(registerDto.dateOfBirth).getTime()) /
+              (365.25 * 24 * 60 * 60 * 1000)
+          )
+        : 25;
+
+      // Create user data with proper typing using UserCreateInput
+      const userCreateInput: UserCreateInput = {
         email: registerDto.email,
         password: hashedPassword,
-        name: `${registerDto.firstName} ${registerDto.lastName}`, // Required name field
-        age: 25, // Default age, should be provided in DTO
+        userid: uuidv4(),
+        name: `${registerDto.firstName} ${registerDto.lastName}`,
+        age,
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
         phone: registerDto.phone,
+        ...(registerDto.dateOfBirth && {
+          dateOfBirth: new Date(registerDto.dateOfBirth),
+        }),
+        ...(registerDto.gender && { gender: registerDto.gender }),
+        ...(registerDto.address && { address: registerDto.address }),
+        ...(registerDto.role && { role: registerDto.role }),
+        ...(registerDto.clinicId && { primaryClinicId: registerDto.clinicId }),
+        ...(registerDto.googleId && { googleId: registerDto.googleId }),
+        isActive: true,
+        isVerified: false,
       };
 
-      // Add optional fields only if they exist
-      if (registerDto.role) userData.role = registerDto.role as Role;
-      if (registerDto.gender) userData.gender = registerDto.gender as Gender;
-      if (registerDto.dateOfBirth)
-        userData.dateOfBirth = registerDto.dateOfBirth;
-      if (registerDto.address) userData.address = registerDto.address;
-      if (registerDto.clinicId) userData.primaryClinicId = registerDto.clinicId;
-      if (registerDto.googleId) userData.googleId = registerDto.googleId;
-
-      const { dateOfBirth, ...userDataWithoutDate } = userData;
-      const user = await this.databaseService.createUserSafe({
-        ...userDataWithoutDate,
-        ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
-      });
+      // Use createUserSafe from DatabaseService
+      const user = await this.databaseService.createUserSafe(userCreateInput);
 
       // Create session first
       const session = await this.sessionService.createSession({
         userId: user.id,
-        userAgent: "Registration",
-        ipAddress: "127.0.0.1",
+        userAgent: 'Registration',
+        ipAddress: '127.0.0.1',
         metadata: { registration: true },
         ...(registerDto.clinicId && { clinicId: registerDto.clinicId }),
       });
 
-      // Generate tokens with session ID
-      const tokens = await this.generateTokens(user, session.sessionId);
+      // Generate tokens with session ID - handle null phone
+      const userForTokens: UserProfile = {
+        id: user.id,
+        email: user.email,
+        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        role: user.role,
+        ...(user.phone && { phone: user.phone }),
+      };
+      const tokens = await this.generateTokens(userForTokens, session.sessionId);
 
       // Send welcome email
       await this.emailService.sendEmail({
         to: user.email,
-        subject: "Welcome to Healthcare App",
+        subject: 'Welcome to Healthcare App',
         template: EmailTemplate.WELCOME,
         context: {
           name: `${user.firstName} ${user.lastName}`,
@@ -259,7 +263,22 @@ export class AuthService {
         await this.cacheService.invalidateClinicCache(registerDto.clinicId);
       }
 
-      this.logger.log(`User registered successfully: ${user.email}`);
+      // Emit user registration event
+      await this.eventService.emit('user.registered', {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        clinicId: registerDto.clinicId,
+        sessionId: session.sessionId,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `User registered successfully: ${user.email}`,
+        'AuthService.register',
+        { userId: user.id, email: user.email, role: user.role }
+      );
 
       return {
         accessToken: tokens.accessToken,
@@ -274,9 +293,16 @@ export class AuthService {
         },
       };
     } catch (_error) {
-      this.logger.error(
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Registration failed for ${registerDto.email}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'AuthService.register',
+        {
+          email: registerDto.email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -291,55 +317,68 @@ export class AuthService {
       const user = await this.cacheService.cache(
         `user:login:${loginDto.email}`,
         async (): Promise<UserWithPassword | null> => {
-          const result = await this.databaseService.findUserByEmailSafe(
-            loginDto.email,
-          );
+          const result = await this.databaseService.findUserByEmailSafe(loginDto.email);
           return result as UserWithPassword | null;
         },
         {
           ttl: 300, // 5 minutes for login attempts
-          tags: ["user_login"],
-          priority: "high",
+          tags: ['user_login'],
+          priority: 'high',
           enableSwr: false, // No SWR for login data
-        },
+        }
       );
 
       if (!user) {
-        throw new UnauthorizedException("Invalid credentials");
+        throw this.errors.invalidCredentials('AuthService.login');
       }
 
       // Verify password
-      const isPasswordValid = await bcrypt.compare(
-        loginDto.password,
-        user.password,
-      );
+      const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
       if (!isPasswordValid) {
-        throw new UnauthorizedException("Invalid credentials");
+        throw this.errors.invalidCredentials('AuthService.login');
       }
 
-      // Create session first
+      // Create session first - handle null clinicId
+      const clinicId = loginDto.clinicId || user.primaryClinicId || undefined;
       const session = await this.sessionService.createSession({
         userId: user.id,
-        userAgent: "Login",
-        ipAddress: "127.0.0.1",
+        userAgent: 'Login',
+        ipAddress: '127.0.0.1',
         metadata: { login: true },
-        ...((loginDto.clinicId || user.primaryClinicId) && {
-          clinicId: loginDto.clinicId || user.primaryClinicId,
-        }),
+        ...(clinicId && { clinicId }),
       });
 
-      this.logger.log(`DEBUG: Session created: ${JSON.stringify(session)}`);
-      this.logger.log(`DEBUG: Session ID: ${session?.sessionId}`);
-
-      // Generate tokens with session ID
-      const tokens = await this.generateTokens(user, session.sessionId);
+      // Generate tokens with session ID - handle null phone
+      const userForTokens: UserProfile = {
+        id: user.id,
+        email: user.email,
+        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        role: user.role,
+        ...(user.phone && { phone: user.phone }),
+      };
+      const tokens = await this.generateTokens(userForTokens, session.sessionId);
 
       // Update last login
       await this.databaseService.updateUserSafe(user.id, {
         lastLoginAt: new Date(),
       });
 
-      this.logger.log(`User logged in successfully: ${user.email}`);
+      // Emit user login event
+      await this.eventService.emit('user.logged_in', {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        clinicId,
+        sessionId: session.sessionId,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `User logged in successfully: ${user.email}`,
+        'AuthService.login',
+        { userId: user.id, email: user.email, role: user.role, clinicId }
+      );
 
       return {
         accessToken: tokens.accessToken,
@@ -355,9 +394,16 @@ export class AuthService {
         },
       };
     } catch (_error) {
-      this.logger.error(
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Login failed for ${loginDto.email}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'AuthService.login',
+        {
+          email: loginDto.email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -373,36 +419,58 @@ export class AuthService {
         refreshTokenDto.refreshToken,
         refreshTokenDto.deviceFingerprint,
         refreshTokenDto.userAgent,
-        refreshTokenDto.ipAddress,
+        refreshTokenDto.ipAddress
       );
     } catch (_error) {
-      this.logger.error(
-        "Enhanced token refresh failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Enhanced token refresh failed',
+        'AuthService.refreshToken',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
-      throw new UnauthorizedException("Invalid refresh token");
+      throw this.errors.tokenExpired('AuthService.refreshToken');
     }
   }
 
   /**
    * Logout user
    */
-  async logout(
-    sessionId: string,
-  ): Promise<{ success: boolean; message: string }> {
+  async logout(sessionId: string): Promise<{ success: boolean; message: string }> {
     try {
       await this.sessionService.invalidateSession(sessionId);
 
-      this.logger.log(`User logged out: session ${sessionId}`);
+      // Emit user logout event
+      await this.eventService.emit('user.logged_out', {
+        sessionId,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `User logged out: session ${sessionId}`,
+        'AuthService.logout',
+        { sessionId }
+      );
 
       return {
         success: true,
-        message: "Logout successful",
+        message: 'Logout successful',
       };
     } catch (_error) {
-      this.logger.error(
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Logout failed for session ${sessionId}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'AuthService.logout',
+        {
+          sessionId,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -412,18 +480,16 @@ export class AuthService {
    * Request password reset
    */
   async requestPasswordReset(
-    requestDto: PasswordResetRequestDto,
+    requestDto: PasswordResetRequestDto
   ): Promise<{ success: boolean; message: string }> {
     try {
-      const user = await this.databaseService.findUserByEmailSafe(
-        requestDto.email,
-      );
+      const user = await this.databaseService.findUserByEmailSafe(requestDto.email);
 
       if (!user) {
         // Don't reveal if user exists
         return {
           success: true,
-          message: "If the email exists, a password reset link has been sent",
+          message: 'If the email exists, a password reset link has been sent',
         };
       }
 
@@ -434,30 +500,49 @@ export class AuthService {
       await this.cacheService.set(
         `password_reset:${resetToken}`,
         user.id,
-        900, // 15 minutes
+        900 // 15 minutes
       );
 
       // Send reset email
       await this.emailService.sendEmail({
         to: user.email,
-        subject: "Password Reset Request",
+        subject: 'Password Reset Request',
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.get("FRONTEND_URL")}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService.get('FRONTEND_URL')}/reset-password?token=${resetToken}`,
         },
       });
 
-      this.logger.log(`Password reset requested for: ${user.email}`);
+      // Emit password reset requested event
+      await this.eventService.emit('user.password_reset_requested', {
+        userId: user.id,
+        email: user.email,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `Password reset requested for: ${user.email}`,
+        'AuthService.requestPasswordReset',
+        { userId: user.id, email: user.email }
+      );
 
       return {
         success: true,
-        message: "If the email exists, a password reset link has been sent",
+        message: 'If the email exists, a password reset link has been sent',
       };
     } catch (_error) {
-      this.logger.error(
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Password reset request failed for ${requestDto.email}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'AuthService.requestPasswordReset',
+        {
+          email: requestDto.email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -466,24 +551,24 @@ export class AuthService {
   /**
    * Reset password
    */
-  async resetPassword(
-    resetDto: PasswordResetDto,
-  ): Promise<{ success: boolean; message: string }> {
+  async resetPassword(resetDto: PasswordResetDto): Promise<{ success: boolean; message: string }> {
     try {
       // Verify reset token
-      const userId = await this.cacheService.get<string>(
-        `password_reset:${resetDto.token}`,
-      );
+      const userId = await this.cacheService.get<string>(`password_reset:${resetDto.token}`);
 
       if (!userId) {
-        throw new BadRequestException("Invalid or expired reset token");
+        throw this.errors.validationError(
+          'token',
+          'Invalid or expired reset token',
+          'AuthService.resetPassword'
+        );
       }
 
       // Find user
       const user = await this.databaseService.findUserByIdSafe(userId);
 
       if (!user) {
-        throw new BadRequestException("User not found");
+        throw this.errors.userNotFound(userId, 'AuthService.resetPassword');
       }
 
       // Hash new password
@@ -498,24 +583,39 @@ export class AuthService {
       await this.sessionService.revokeAllUserSessions(user.id);
 
       // Invalidate user cache
-      await this.invalidateUserCache(
-        user.id,
-        user.primaryClinicId || undefined,
-      );
+      await this.invalidateUserCache(user.id, user.primaryClinicId || undefined);
 
       // Remove reset token
       await this.cacheService.del(`password_reset:${resetDto.token}`);
 
-      this.logger.log(`Password reset successful for: ${user.email}`);
+      // Emit password reset completed event
+      await this.eventService.emit('user.password_reset_completed', {
+        userId: user.id,
+        email: user.email,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `Password reset successful for: ${user.email}`,
+        'AuthService.resetPassword',
+        { userId: user.id, email: user.email }
+      );
 
       return {
         success: true,
-        message: "Password reset successful",
+        message: 'Password reset successful',
       };
     } catch (_error) {
-      this.logger.error(
-        "Password reset failed",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Password reset failed',
+        'AuthService.resetPassword',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -526,29 +626,30 @@ export class AuthService {
    */
   async changePassword(
     userId: string,
-    changePasswordDto: ChangePasswordDto,
+    changePasswordDto: ChangePasswordDto
   ): Promise<{ success: boolean; message: string }> {
     try {
       const user = await this.databaseService.findUserByIdSafe(userId);
 
       if (!user) {
-        throw new BadRequestException("User not found");
+        throw this.errors.userNotFound(userId, 'AuthService.changePassword');
       }
 
       // Verify current password
       const isCurrentPasswordValid = await bcrypt.compare(
         changePasswordDto.currentPassword,
-        user.password,
+        user.password
       );
       if (!isCurrentPasswordValid) {
-        throw new BadRequestException("Current password is incorrect");
+        throw this.errors.validationError(
+          'currentPassword',
+          'Current password is incorrect',
+          'AuthService.changePassword'
+        );
       }
 
       // Hash new password
-      const _hashedPassword = await bcrypt.hash(
-        changePasswordDto.newPassword,
-        12,
-      );
+      const _hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 12);
 
       // Update password
       await this.databaseService.updateUserSafe(user.id, {
@@ -558,16 +659,35 @@ export class AuthService {
       // Invalidate all user sessions except current
       await this.sessionService.revokeAllUserSessions(user.id);
 
-      this.logger.log(`Password changed successfully for: ${user.email}`);
+      // Emit password changed event
+      await this.eventService.emit('user.password_changed', {
+        userId: user.id,
+        email: user.email,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `Password changed successfully for: ${user.email}`,
+        'AuthService.changePassword',
+        { userId: user.id, email: user.email }
+      );
 
       return {
         success: true,
-        message: "Password changed successfully",
+        message: 'Password changed successfully',
       };
     } catch (_error) {
-      this.logger.error(
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `Password change failed for user ${userId}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'AuthService.changePassword',
+        {
+          userId,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -576,16 +696,12 @@ export class AuthService {
   /**
    * Request OTP
    */
-  async requestOtp(
-    requestDto: RequestOtpDto,
-  ): Promise<{ success: boolean; message: string }> {
+  async requestOtp(requestDto: RequestOtpDto): Promise<{ success: boolean; message: string }> {
     try {
-      const user = await this.databaseService.findUserByEmailSafe(
-        requestDto.identifier,
-      );
+      const user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
 
       if (!user) {
-        throw new BadRequestException("User not found");
+        throw this.errors.userNotFound(undefined, 'AuthService.requestOtp');
       }
 
       // Generate OTP
@@ -595,13 +711,13 @@ export class AuthService {
       await this.cacheService.set(
         `otp:${user.id}`,
         otp,
-        300, // 5 minutes
+        300 // 5 minutes
       );
 
       // Send OTP email
       await this.emailService.sendEmail({
         to: user.email,
-        subject: "Your OTP Code",
+        subject: 'Your OTP Code',
         template: EmailTemplate.OTP_LOGIN,
         context: {
           name: `${user.firstName} ${user.lastName}`,
@@ -609,16 +725,35 @@ export class AuthService {
         },
       });
 
-      this.logger.log(`OTP sent to: ${user.email}`);
+      // Emit OTP requested event
+      await this.eventService.emit('user.otp_requested', {
+        userId: user.id,
+        email: user.email,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `OTP sent to: ${user.email}`,
+        'AuthService.requestOtp',
+        { userId: user.id, email: user.email }
+      );
 
       return {
         success: true,
-        message: "OTP sent successfully",
+        message: 'OTP sent successfully',
       };
     } catch (_error) {
-      this.logger.error(
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `OTP request failed for ${requestDto.identifier}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'AuthService.requestOtp',
+        {
+          identifier: requestDto.identifier,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -629,44 +764,63 @@ export class AuthService {
    */
   async verifyOtp(verifyDto: VerifyOtpRequestDto): Promise<AuthResponse> {
     try {
-      const user = await this.databaseService.findUserByEmailSafe(
-        verifyDto.email,
-      );
+      const user = await this.databaseService.findUserByEmailSafe(verifyDto.email);
 
       if (!user) {
-        throw new BadRequestException("User not found");
+        throw this.errors.userNotFound(undefined, 'AuthService.verifyOtp');
       }
 
       // Verify OTP
       const storedOtp = await this.cacheService.get(`otp:${user.id}`);
 
       if (!storedOtp || storedOtp !== verifyDto.otp) {
-        throw new BadRequestException("Invalid or expired OTP");
+        throw this.errors.otpInvalid('AuthService.verifyOtp');
       }
 
       // Remove OTP
       await this.cacheService.del(`otp:${user.id}`);
 
       // Create session first
+      const clinicId = verifyDto.clinicId || user.primaryClinicId || undefined;
       const session = await this.sessionService.createSession({
         userId: user.id,
-        userAgent: "OTP Login",
-        ipAddress: "127.0.0.1",
+        userAgent: 'OTP Login',
+        ipAddress: '127.0.0.1',
         metadata: { otpLogin: true },
-        ...((verifyDto.clinicId || user.primaryClinicId) && {
-          clinicId: verifyDto.clinicId || user.primaryClinicId,
-        }),
+        ...(clinicId && { clinicId }),
       });
 
-      // Generate tokens with session ID
-      const tokens = await this.generateTokens(user, session.sessionId);
+      // Generate tokens with session ID - handle null phone
+      const userForTokens: UserProfile = {
+        id: user.id,
+        email: user.email,
+        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        role: user.role,
+        ...(user.phone && { phone: user.phone }),
+      };
+      const tokens = await this.generateTokens(userForTokens, session.sessionId);
 
       // Update last login
       await this.databaseService.updateUserSafe(user.id, {
         lastLoginAt: new Date(),
       });
 
-      this.logger.log(`OTP login successful for: ${user.email}`);
+      // Emit OTP login event
+      await this.eventService.emit('user.otp_logged_in', {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        clinicId,
+        sessionId: session.sessionId,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `OTP login successful for: ${user.email}`,
+        'AuthService.verifyOtp',
+        { userId: user.id, email: user.email, role: user.role, clinicId }
+      );
 
       return {
         accessToken: tokens.accessToken,
@@ -682,9 +836,16 @@ export class AuthService {
         },
       };
     } catch (_error) {
-      this.logger.error(
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
         `OTP verification failed for ${verifyDto.email}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+        'AuthService.verifyOtp',
+        {
+          email: verifyDto.email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -698,16 +859,15 @@ export class AuthService {
     sessionId: string,
     deviceFingerprint?: string,
     userAgent?: string,
-    ipAddress?: string,
+    ipAddress?: string
   ): Promise<AuthTokens> {
     const payload: TokenPayload = {
       sub: user.id,
       email: user.email,
-      role: user.role || "",
-      domain: "healthcare",
+      role: user.role || '',
+      domain: 'healthcare',
       sessionId: sessionId,
-      ...("primaryClinicId" in user &&
-        user.primaryClinicId && { clinicId: user.primaryClinicId }),
+      ...('primaryClinicId' in user && user.primaryClinicId && { clinicId: user.primaryClinicId }),
     };
 
     // Use enhanced JWT service for advanced features
@@ -715,7 +875,7 @@ export class AuthService {
       payload,
       deviceFingerprint,
       userAgent,
-      ipAddress,
+      ipAddress
     );
   }
 }

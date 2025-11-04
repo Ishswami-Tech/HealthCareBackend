@@ -1,114 +1,178 @@
-import { Processor, Process } from "@nestjs/bull";
-import { Logger } from "@nestjs/common";
-import { Job } from "bull";
-import { PaymentData, PaymentDto } from "../types/queue-job.types";
+import { Processor, Process } from '@nestjs/bull';
+import { Job } from 'bull';
 
-@Processor("payment-processing")
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Types
+import type { PaymentData, PaymentDto } from '@core/types';
+
+// Internal imports - Core
+import { LogType, LogLevel } from '@core/types';
+
+@Processor('payment-processing')
 export class PaymentProcessingProcessor {
-  private readonly logger = new Logger(PaymentProcessingProcessor.name);
+  constructor(private readonly loggingService: LoggingService) {}
 
-  @Process("domain-processing")
+  @Process('domain-processing')
   handleDomainProcessing(
     job: Job<{
       payment: PaymentData;
       paymentDto: PaymentDto;
       domain: string;
-    }>,
+    }>
   ) {
     const { payment, domain } = job.data;
 
     try {
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Processing domain-specific logic for payment: ${payment.id}, domain: ${domain}`,
+        'PaymentProcessingProcessor'
       );
 
       // Domain-specific processing logic will be handled by the payment service
       // This processor just ensures the job is properly queued and tracked
 
-      this.logger.log(`Domain processing completed for payment: ${payment.id}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Domain processing completed for payment: ${payment.id}`,
+        'PaymentProcessingProcessor'
+      );
     } catch (_error) {
-      this.logger.error(
-        `Domain processing failed for payment ${payment.id}: ${(_error as Error).message}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Domain processing failed for payment ${payment.id}: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'PaymentProcessingProcessor',
+        {
+          paymentId: payment.id,
+          domain,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
       throw _error;
     }
   }
 
-  @Process("subscription-processing")
+  @Process('subscription-processing')
   handleSubscriptionProcessing(
     job: Job<{
       payment: PaymentData;
       timestamp: Date;
-    }>,
+    }>
   ) {
     const { payment } = job.data;
 
     try {
-      this.logger.log(`Processing subscription for payment: ${payment.id}`);
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Processing subscription for payment: ${payment.id}`,
+        'PaymentProcessingProcessor'
+      );
 
       // Subscription processing logic will be handled by the subscription service
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Subscription processing completed for payment: ${payment.id}`,
+        'PaymentProcessingProcessor'
       );
     } catch (_error) {
-      this.logger.error(
-        `Subscription processing failed for payment ${payment.id}: ${(_error as Error).message}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Subscription processing failed for payment ${payment.id}: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'PaymentProcessingProcessor',
+        {
+          paymentId: payment.id,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
       throw _error;
     }
   }
 
-  @Process("manual-review")
+  @Process('manual-review')
   handleManualReview(
     job: Job<{
       paymentDto: PaymentDto;
       fraudScore: number;
       timestamp: Date;
-    }>,
+    }>
   ) {
     const { paymentDto, fraudScore } = job.data;
 
     try {
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Queuing payment for manual review: userId=${paymentDto.userId}, fraudScore=${fraudScore}`,
+        'PaymentProcessingProcessor'
       );
 
       // Manual review processing logic
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Manual review queued successfully for user: ${paymentDto.userId}`,
+        'PaymentProcessingProcessor'
       );
     } catch (_error) {
-      this.logger.error(
-        `Failed to queue manual review: ${(_error as Error).message}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to queue manual review: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'PaymentProcessingProcessor',
+        {
+          userId: paymentDto.userId,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
       throw _error;
     }
   }
 
-  @Process("payment-reconciliation")
+  @Process('payment-reconciliation')
   handlePaymentReconciliation(
     job: Job<{
       paymentIds: string[];
-      reconciliationType: "daily" | "weekly" | "monthly";
-    }>,
+      reconciliationType: 'daily' | 'weekly' | 'monthly';
+    }>
   ) {
     const { paymentIds, reconciliationType } = job.data;
 
     try {
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Starting payment reconciliation: ${reconciliationType}, ${paymentIds.length} payments`,
+        'PaymentProcessingProcessor'
       );
 
       // Payment reconciliation logic
 
-      this.logger.log(
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
         `Payment reconciliation completed: ${reconciliationType}`,
+        'PaymentProcessingProcessor'
       );
     } catch (_error) {
-      this.logger.error(
-        `Payment reconciliation failed: ${(_error as Error).message}`,
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Payment reconciliation failed: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'PaymentProcessingProcessor',
+        {
+          reconciliationType,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
       );
       throw _error;
     }

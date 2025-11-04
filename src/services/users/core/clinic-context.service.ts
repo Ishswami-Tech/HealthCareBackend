@@ -1,187 +1,64 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  ForbiddenException,
-} from "@nestjs/common";
-import { AsyncLocalStorage } from "async_hooks";
+import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { AsyncLocalStorage } from 'async_hooks';
+import type {
+  ClinicContext,
+  ClinicInfo,
+  ClinicLocation,
+  ClinicSettings,
+  UserClinicAssociation,
+} from '@core/types/clinic.types';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
-export interface ClinicContext {
-  clinicId: string;
-  clinicName: string;
-  locationId?: string;
-  locationName?: string;
-  userId: string;
-  userRole: string;
-  permissions: string[];
-  metadata: {
-    requestId: string;
-    timestamp: Date;
-    ipAddress?: string;
-    userAgent?: string;
-    sessionId?: string;
-  };
-}
-
-export interface ClinicInfo {
-  id: string;
-  name: string;
-  code: string;
-  type: "hospital" | "clinic" | "diagnostic" | "specialty";
-  status: "active" | "inactive" | "suspended";
-  locations: ClinicLocation[];
-  settings: ClinicSettings;
-  subscription: {
-    plan: "basic" | "professional" | "enterprise";
-    maxUsers: number;
-    maxPatients: number;
-    expiresAt: Date;
-  };
-  metadata: {
-    createdAt: Date;
-    updatedAt: Date;
-    ownerId: string;
-    timezone: string;
-    locale: string;
-  };
-}
-
-export interface ClinicLocation {
-  id: string;
-  name: string;
-  address: {
-    street: string;
-    city: string;
-    state: string;
-    zipCode: string;
-    country: string;
-  };
-  contact: {
-    phone: string;
-    email: string;
-    website?: string;
-  };
-  operatingHours: {
-    [key: string]: {
-      // day of week
-      open: string; // HH:mm
-      close: string; // HH:mm
-      isOpen: boolean;
-    };
-  };
-  services: string[];
-  capacity: {
-    maxAppointments: number;
-    maxConcurrent: number;
-  };
-}
-
-export interface ClinicSettings {
-  appointmentSettings: {
-    defaultDuration: number;
-    bufferTime: number;
-    maxAdvanceBooking: number; // days
-    allowOnlineBooking: boolean;
-    requireApproval: boolean;
-  };
-  notificationSettings: {
-    emailEnabled: boolean;
-    smsEnabled: boolean;
-    reminderHours: number[];
-  };
-  billingSettings: {
-    currency: string;
-    taxRate: number;
-    paymentMethods: string[];
-    invoicePrefix: string;
-  };
-  securitySettings: {
-    mfaRequired: boolean;
-    sessionTimeout: number; // minutes
-    passwordPolicy: {
-      minLength: number;
-      requireSpecialChars: boolean;
-      requireNumbers: boolean;
-      expirationDays: number;
-    };
-  };
-  integrationSettings: {
-    enabledIntegrations: string[];
-    webhookUrl?: string;
-    apiKeys: Record<string, string>;
-  };
-}
-
-export interface UserClinicAssociation {
-  userId: string;
-  clinicId: string;
-  role: string;
-  permissions: string[];
-  locations: string[]; // Location IDs user has access to
-  restrictions: {
-    timeRestricted: boolean;
-    ipRestricted: boolean;
-    allowedIPs: string[];
-    workingHours: {
-      start: string; // HH:mm
-      end: string; // HH:mm
-      days: number[]; // 0-6, Sunday = 0
-    };
-  };
-  status: "active" | "inactive" | "suspended";
-  metadata: {
-    assignedAt: Date;
-    assignedBy: string;
-    lastLogin?: Date;
-  };
-}
+// Re-export types for backward compatibility
+export type { ClinicContext, ClinicInfo, ClinicLocation, ClinicSettings, UserClinicAssociation };
 
 @Injectable()
 export class ClinicContextService {
-  private readonly logger = new Logger(ClinicContextService.name);
   private readonly contextStore = new AsyncLocalStorage<ClinicContext>();
 
   // In-memory cache for clinic data (in production, this would be Redis/Database)
   private clinicCache = new Map<string, ClinicInfo>();
   private userClinicCache = new Map<string, UserClinicAssociation[]>();
 
-  constructor() {
+  constructor(private readonly loggingService: LoggingService) {
     this.initializeDefaultClinics();
   }
 
   private initializeDefaultClinics(): void {
     // Initialize sample clinic data for development
     const sampleClinic: ClinicInfo = {
-      id: "clinic-1",
-      name: "HealthCare Plus",
-      code: "HCP001",
-      type: "clinic",
-      status: "active",
+      id: 'clinic-1',
+      name: 'HealthCare Plus',
+      appName: 'HealthCare Plus',
+      isActive: true,
+      createdAt: new Date('2024-01-01'),
+      code: 'HCP001',
+      type: 'clinic',
+      status: 'active',
       locations: [
         {
-          id: "loc-1",
-          name: "Main Branch",
-          address: {
-            street: "123 Healthcare Street",
-            city: "Medical City",
-            state: "Health State",
-            zipCode: "12345",
-            country: "India",
-          },
-          contact: {
-            phone: "+91-9876543210",
-            email: "contact@healthcareplus.com",
-          },
+          id: 'loc-1',
+          locationId: 'loc-1',
+          name: 'Main Branch',
+          address: '123 Healthcare Street, Medical City, Health State, 12345, India',
+          city: 'Medical City',
+          state: 'Health State',
+          country: 'India',
+          zipCode: '12345',
+          phone: '+91-9876543210',
+          email: 'contact@healthcareplus.com',
+          timezone: 'Asia/Kolkata',
+          isActive: true,
           operatingHours: {
-            monday: { open: "09:00", close: "18:00", isOpen: true },
-            tuesday: { open: "09:00", close: "18:00", isOpen: true },
-            wednesday: { open: "09:00", close: "18:00", isOpen: true },
-            thursday: { open: "09:00", close: "18:00", isOpen: true },
-            friday: { open: "09:00", close: "18:00", isOpen: true },
-            saturday: { open: "09:00", close: "14:00", isOpen: true },
-            sunday: { open: "10:00", close: "14:00", isOpen: false },
+            monday: { open: '09:00', close: '18:00', isOpen: true },
+            tuesday: { open: '09:00', close: '18:00', isOpen: true },
+            wednesday: { open: '09:00', close: '18:00', isOpen: true },
+            thursday: { open: '09:00', close: '18:00', isOpen: true },
+            friday: { open: '09:00', close: '18:00', isOpen: true },
+            saturday: { open: '09:00', close: '14:00', isOpen: true },
+            sunday: { open: '10:00', close: '14:00', isOpen: false },
           },
-          services: ["general-consultation", "diagnostics", "pharmacy"],
           capacity: {
             maxAppointments: 100,
             maxConcurrent: 20,
@@ -202,10 +79,10 @@ export class ClinicContextService {
           reminderHours: [24, 2],
         },
         billingSettings: {
-          currency: "INR",
+          currency: 'INR',
           taxRate: 18,
-          paymentMethods: ["cash", "card", "upi", "netbanking"],
-          invoicePrefix: "HCP",
+          paymentMethods: ['cash', 'card', 'upi', 'netbanking'],
+          invoicePrefix: 'HCP',
         },
         securitySettings: {
           mfaRequired: false,
@@ -218,27 +95,33 @@ export class ClinicContextService {
           },
         },
         integrationSettings: {
-          enabledIntegrations: ["email", "sms"],
+          enabledIntegrations: ['email', 'sms'],
           apiKeys: {},
         },
       },
       subscription: {
-        plan: "professional",
+        plan: 'professional',
         maxUsers: 50,
         maxPatients: 10000,
-        expiresAt: new Date("2025-12-31"),
+        expiresAt: new Date('2025-12-31'),
       },
       metadata: {
-        createdAt: new Date("2024-01-01"),
+        createdAt: new Date('2024-01-01'),
         updatedAt: new Date(),
-        ownerId: "owner-1",
-        timezone: "Asia/Kolkata",
-        locale: "en-IN",
+        ownerId: 'owner-1',
+        timezone: 'Asia/Kolkata',
+        locale: 'en-IN',
       },
     };
 
     this.clinicCache.set(sampleClinic.id, sampleClinic);
-    this.logger.log("📋 Initialized sample clinic data");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Initialized sample clinic data',
+      'ClinicContextService',
+      { clinicId: sampleClinic.id, clinicName: sampleClinic.name }
+    );
   }
 
   // Context Management
@@ -250,8 +133,12 @@ export class ClinicContextService {
     // Store context in AsyncLocalStorage
     this.contextStore.enterWith(context);
 
-    this.logger.debug(
-      `🏥 Set clinic context: ${context.clinicId} for user ${context.userId}`,
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.DEBUG,
+      'Set clinic context',
+      'ClinicContextService',
+      { clinicId: context.clinicId, userId: context.userId }
     );
   }
 
@@ -262,37 +149,34 @@ export class ClinicContextService {
   getCurrentClinicId(): string {
     const context = this.getContext();
     if (!context) {
-      throw new BadRequestException("Clinic context not available");
+      throw new BadRequestException('Clinic context not available');
     }
     return context.clinicId;
   }
 
   getCurrentUserId(): string {
     const context = this.getContext();
-    if (!context) {
-      throw new BadRequestException("User context not available");
+    if (!context || !context.userId) {
+      throw new BadRequestException('User context not available');
     }
     return context.userId;
   }
 
   getCurrentUserRole(): string {
     const context = this.getContext();
-    if (!context) {
-      throw new BadRequestException("User role context not available");
+    if (!context || !context.userRole) {
+      throw new BadRequestException('User role context not available');
     }
     return context.userRole;
   }
 
   hasPermission(permission: string): boolean {
     const context = this.getContext();
-    if (!context) return false;
+    if (!context || !context.permissions) return false;
     return context.permissions.includes(permission);
   }
 
-  async runWithContext<T>(
-    context: ClinicContext,
-    fn: () => Promise<T>,
-  ): Promise<T> {
+  async runWithContext<T>(context: ClinicContext, fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       void this.contextStore.run(context, async () => {
         try {
@@ -317,9 +201,7 @@ export class ClinicContextService {
 
   getUserClinics(userId: string): Promise<UserClinicAssociation[]> {
     const associations = this.userClinicCache.get(userId) || [];
-    return Promise.resolve(
-      associations.filter((assoc) => assoc.status === "active"),
-    );
+    return Promise.resolve(associations.filter(assoc => assoc.status === 'active'));
   }
 
   async addUserToClinic(
@@ -330,8 +212,8 @@ export class ClinicContextService {
     assignedBy: string,
     options: {
       locations?: string[];
-      restrictions?: Partial<UserClinicAssociation["restrictions"]>;
-    } = {},
+      restrictions?: Partial<UserClinicAssociation['restrictions']>;
+    } = {}
   ): Promise<UserClinicAssociation> {
     // Validate clinic exists
     await this.getClinicInfo(clinicId);
@@ -347,13 +229,13 @@ export class ClinicContextService {
         ipRestricted: false,
         allowedIPs: [],
         workingHours: {
-          start: "09:00",
-          end: "18:00",
+          start: '09:00',
+          end: '18:00',
           days: [1, 2, 3, 4, 5], // Monday to Friday
         },
         ...options.restrictions,
       },
-      status: "active",
+      status: 'active',
       metadata: {
         assignedAt: new Date(),
         assignedBy,
@@ -364,9 +246,7 @@ export class ClinicContextService {
     const existingAssociations = this.userClinicCache.get(userId) || [];
 
     // Check if association already exists
-    const existingIndex = existingAssociations.findIndex(
-      (assoc) => assoc.clinicId === clinicId,
-    );
+    const existingIndex = existingAssociations.findIndex(assoc => assoc.clinicId === clinicId);
 
     if (existingIndex >= 0) {
       // Update existing association
@@ -378,8 +258,12 @@ export class ClinicContextService {
 
     this.userClinicCache.set(userId, existingAssociations);
 
-    this.logger.log(
-      `👤 Added user ${userId} to clinic ${clinicId} with role ${role}`,
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Added user to clinic',
+      'ClinicContextService',
+      { userId, clinicId, role, assignedBy }
     );
 
     return association;
@@ -387,13 +271,17 @@ export class ClinicContextService {
 
   removeUserFromClinic(userId: string, clinicId: string): Promise<boolean> {
     const associations = this.userClinicCache.get(userId) || [];
-    const updatedAssociations = associations.filter(
-      (assoc) => assoc.clinicId !== clinicId,
-    );
+    const updatedAssociations = associations.filter(assoc => assoc.clinicId !== clinicId);
 
     if (updatedAssociations.length < associations.length) {
       this.userClinicCache.set(userId, updatedAssociations);
-      this.logger.log(`👤 Removed user ${userId} from clinic ${clinicId}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Removed user from clinic',
+        'ClinicContextService',
+        { userId, clinicId }
+      );
       return Promise.resolve(true);
     }
 
@@ -405,21 +293,19 @@ export class ClinicContextService {
   async validateUserAccess(
     userId: string,
     clinicId: string,
-    requiredPermissions: string[] = [],
+    requiredPermissions: string[] = []
   ): Promise<{
     hasAccess: boolean;
     association?: UserClinicAssociation;
     restrictions: string[];
   }> {
     const userClinics = await this.getUserClinics(userId);
-    const association = userClinics.find(
-      (assoc) => assoc.clinicId === clinicId,
-    );
+    const association = userClinics.find(assoc => assoc.clinicId === clinicId);
 
     if (!association) {
       return {
         hasAccess: false,
-        restrictions: ["User not associated with clinic"],
+        restrictions: ['User not associated with clinic'],
       };
     }
 
@@ -427,31 +313,26 @@ export class ClinicContextService {
 
     // Check permissions
     const missingPermissions = requiredPermissions.filter(
-      (perm) => !association.permissions.includes(perm),
+      perm => !association.permissions.includes(perm)
     );
 
     if (missingPermissions.length > 0) {
-      restrictions.push(
-        `Missing permissions: ${missingPermissions.join(", ")}`,
-      );
+      restrictions.push(`Missing permissions: ${missingPermissions.join(', ')}`);
     }
 
     // Check time restrictions
     if (association.restrictions.timeRestricted) {
       const now = new Date();
       const currentDay = now.getDay();
-      const currentTime = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
       const workingHours = association.restrictions.workingHours;
 
       if (!workingHours.days.includes(currentDay)) {
-        restrictions.push("Access not allowed on current day");
-      } else if (
-        currentTime < workingHours.start ||
-        currentTime > workingHours.end
-      ) {
+        restrictions.push('Access not allowed on current day');
+      } else if (currentTime < workingHours.start || currentTime > workingHours.end) {
         restrictions.push(
-          `Access only allowed between ${workingHours.start} and ${workingHours.end}`,
+          `Access only allowed between ${workingHours.start} and ${workingHours.end}`
         );
       }
     }
@@ -467,31 +348,35 @@ export class ClinicContextService {
     // Validate clinic exists
     const clinic = await this.getClinicInfo(context.clinicId);
 
-    if (clinic.status !== "active") {
+    if (clinic.status !== 'active') {
       throw new ForbiddenException(`Clinic ${context.clinicId} is not active`);
     }
 
     // Validate user access
+    const requiredPermissions = context.permissions || [];
+    const userId = context.userId;
+    if (!userId) {
+      throw new BadRequestException('User ID is required in context');
+    }
     const accessResult = await this.validateUserAccess(
-      context.userId,
+      userId,
       context.clinicId,
-      context.permissions,
+      requiredPermissions
     );
 
     if (!accessResult.hasAccess) {
-      throw new ForbiddenException(
-        `User access denied: ${accessResult.restrictions.join(", ")}`,
-      );
+      throw new ForbiddenException(`User access denied: ${accessResult.restrictions.join(', ')}`);
     }
 
     // Validate location if specified
     if (context.locationId) {
-      const location = clinic.locations.find(
-        (loc) => loc.id === context.locationId,
-      );
+      if (!clinic.locations || clinic.locations.length === 0) {
+        throw new BadRequestException(`Clinic ${context.clinicId} has no locations`);
+      }
+      const location = clinic.locations.find(loc => loc.id === context.locationId);
       if (!location) {
         throw new BadRequestException(
-          `Location ${context.locationId} not found in clinic ${context.clinicId}`,
+          `Location ${context.locationId} not found in clinic ${context.clinicId}`
         );
       }
 
@@ -500,30 +385,24 @@ export class ClinicContextService {
         accessResult.association!.locations.length > 0 &&
         !accessResult.association!.locations.includes(context.locationId)
       ) {
-        throw new ForbiddenException(
-          `User does not have access to location ${context.locationId}`,
-        );
+        throw new ForbiddenException(`User does not have access to location ${context.locationId}`);
       }
     }
   }
 
   // Data Isolation Helpers
 
-  addClinicFilter<T extends Record<string, unknown>>(
-    filter: T,
-  ): T & { clinicId: string } {
+  addClinicFilter<T extends Record<string, unknown>>(filter: T): T & { clinicId: string } {
     const clinicId = this.getCurrentClinicId();
     return { ...filter, clinicId };
   }
 
   addLocationFilter<T extends Record<string, unknown>>(
-    filter: T,
+    filter: T
   ): T & { clinicId: string; locationId?: string } {
     const context = this.getContext();
     if (!context) {
-      throw new BadRequestException(
-        "Context not available for location filtering",
-      );
+      throw new BadRequestException('Context not available for location filtering');
     }
 
     const result: T & { clinicId: string; locationId?: string } = {
@@ -543,15 +422,22 @@ export class ClinicContextService {
   async getClinicSettings(clinicId?: string): Promise<ClinicSettings> {
     const targetClinicId = clinicId || this.getCurrentClinicId();
     const clinic = await this.getClinicInfo(targetClinicId);
+    if (!clinic.settings) {
+      throw new BadRequestException(`Clinic ${targetClinicId} has no settings configured`);
+    }
     return clinic.settings;
   }
 
   async updateClinicSettings(
     settings: Partial<ClinicSettings>,
-    clinicId?: string,
+    clinicId?: string
   ): Promise<ClinicSettings> {
     const targetClinicId = clinicId || this.getCurrentClinicId();
     const clinic = await this.getClinicInfo(targetClinicId);
+
+    if (!clinic.settings) {
+      throw new BadRequestException(`Clinic ${targetClinicId} has no settings to update`);
+    }
 
     // Deep merge settings
     const updatedSettings = {
@@ -588,18 +474,31 @@ export class ClinicContextService {
     };
 
     // Update clinic in cache
+    const existingMetadata = clinic.metadata || {
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ownerId: '',
+      timezone: 'UTC',
+      locale: 'en',
+    };
     const updatedClinic = {
       ...clinic,
       settings: updatedSettings,
       metadata: {
-        ...(clinic.metadata || {}),
+        ...existingMetadata,
         updatedAt: new Date(),
       },
     };
 
     this.clinicCache.set(targetClinicId, updatedClinic);
 
-    this.logger.log(`⚙️ Updated settings for clinic ${targetClinicId}`);
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Updated clinic settings',
+      'ClinicContextService',
+      { clinicId: targetClinicId }
+    );
 
     return updatedSettings;
   }
@@ -613,12 +512,12 @@ export class ClinicContextService {
     cacheSize: number;
   } {
     const activeClinics = Array.from(this.clinicCache.values()).filter(
-      (clinic) => clinic.status === "active",
+      clinic => clinic.status === 'active'
     ).length;
 
     const totalUsers = Array.from(this.userClinicCache.values()).reduce(
       (total, associations) => total + associations.length,
-      0,
+      0
     );
 
     return {
@@ -632,11 +531,23 @@ export class ClinicContextService {
   clearCache(clinicId?: string): void {
     if (clinicId) {
       this.clinicCache.delete(clinicId);
-      this.logger.log(`🧹 Cleared cache for clinic ${clinicId}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Cleared cache for clinic',
+        'ClinicContextService',
+        { clinicId }
+      );
     } else {
       this.clinicCache.clear();
       this.userClinicCache.clear();
-      this.logger.log("🧹 Cleared all clinic context cache");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Cleared all clinic context cache',
+        'ClinicContextService',
+        {}
+      );
     }
   }
 
@@ -646,28 +557,21 @@ export class ClinicContextService {
     const targetClinicId = clinicId || this.getCurrentClinicId();
     const clinic = this.clinicCache.get(targetClinicId);
 
-    if (!clinic) return false;
+    if (!clinic || !clinic.locations || clinic.locations.length === 0) return false;
 
     const location = locationId
-      ? clinic.locations.find((loc) => loc.id === locationId)
+      ? clinic.locations.find(loc => loc.id === locationId)
       : clinic.locations[0];
 
-    if (!location) return false;
+    if (!location || !location.operatingHours) return false;
 
     const now = new Date();
-    const dayName = [
-      "sunday",
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "friday",
-      "saturday",
-    ][now.getDay()];
-    const currentTime = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+    const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][
+      now.getDay()
+    ];
+    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
-    const daySchedule =
-      location.operatingHours[dayName as keyof typeof location.operatingHours];
+    const daySchedule = location.operatingHours[dayName as keyof typeof location.operatingHours];
 
     return !!(
       daySchedule &&
@@ -679,7 +583,7 @@ export class ClinicContextService {
 
   async getClinicCapacity(
     clinicId?: string,
-    locationId?: string,
+    locationId?: string
   ): Promise<{
     maxAppointments: number;
     maxConcurrent: number;
@@ -689,22 +593,35 @@ export class ClinicContextService {
     const targetClinicId = clinicId || this.getCurrentClinicId();
     const clinic = await this.getClinicInfo(targetClinicId);
 
+    if (!clinic.locations || clinic.locations.length === 0) {
+      throw new BadRequestException('No locations found for clinic');
+    }
+
     const location = locationId
-      ? clinic.locations.find((loc) => loc.id === locationId)
+      ? clinic.locations.find(loc => loc.id === locationId)
       : clinic.locations[0];
 
     if (!location) {
-      throw new BadRequestException("Location not found");
+      throw new BadRequestException('Location not found');
     }
+
+    // Default capacity if not specified
+    const defaultCapacity = {
+      maxAppointments: 100,
+      maxConcurrent: 20,
+    };
+
+    const capacity = location.capacity || defaultCapacity;
 
     // This would integrate with actual appointment data to get current load
     const currentLoad = 0; // Placeholder
 
     return {
-      maxAppointments: location.capacity.maxAppointments,
-      maxConcurrent: location.capacity.maxConcurrent,
+      maxAppointments: capacity.maxAppointments,
+      maxConcurrent: capacity.maxConcurrent,
       currentLoad,
-      utilizationRate: (currentLoad / location.capacity.maxAppointments) * 100,
+      utilizationRate:
+        capacity.maxAppointments > 0 ? (currentLoad / capacity.maxAppointments) * 100 : 0,
     };
   }
 }

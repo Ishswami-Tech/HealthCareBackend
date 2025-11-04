@@ -1,8 +1,17 @@
-import { Injectable, OnModuleInit } from "@nestjs/common";
-import { EventEmitter2 } from "@nestjs/event-emitter";
-import { LoggingService } from "../logging/logging.service";
-import { LogLevel, LogType } from "../logging/types/logging.types";
-import { RedisService } from "../cache/redis/redis.service";
+// External imports
+import { Injectable, OnModuleInit, HttpStatus } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+import { RedisService } from '@infrastructure/cache/redis/redis.service';
+
+// Internal imports - Types
+import { LogType, LogLevel } from '@core/types';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 /**
  * Event service for managing application events
@@ -18,24 +27,30 @@ export class EventService implements OnModuleInit {
   constructor(
     private readonly eventEmitter: EventEmitter2,
     private readonly loggingService: LoggingService,
-    private readonly redisService: RedisService,
+    private readonly redisService: RedisService
   ) {}
 
   /**
    * Initialize event service and set up event logging
    */
-  onModuleInit() {
+  onModuleInit(): void {
     // Subscribe to all events for logging
-    // @ts-expect-error - EventEmitter2 onAny method typing issue
-    this.eventEmitter.onAny((event: string, ...args: unknown[]) => {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        `Event emitted: ${event}`,
-        "EventService",
-        { args },
-      );
-    });
+    // EventEmitter2.onAny is dynamically added, so we use type assertion
+    const emitterWithOnAny = this.eventEmitter as EventEmitter2 & {
+      onAny: (listener: (event: string, ...args: unknown[]) => void) => void;
+    };
+
+    if (emitterWithOnAny.onAny && typeof emitterWithOnAny.onAny === 'function') {
+      emitterWithOnAny.onAny((event: string, ...args: unknown[]) => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Event emitted: ${event}`,
+          'EventService',
+          { args }
+        );
+      });
+    }
   }
 
   /**
@@ -57,9 +72,9 @@ export class EventService implements OnModuleInit {
     };
 
     // Store event in Redis
-    await this.redisService.rPush("events", JSON.stringify(eventData));
+    await this.redisService.rPush('events', JSON.stringify(eventData));
     // Keep only last 1000 events
-    await this.redisService.lTrim("events", -1000, -1);
+    await this.redisService.lTrim('events', -1000, -1);
 
     // Emit the event
     this.eventEmitter.emit(event, payload);
@@ -84,9 +99,9 @@ export class EventService implements OnModuleInit {
     };
 
     // Store event in Redis
-    await this.redisService.rPush("events", JSON.stringify(eventData));
+    await this.redisService.rPush('events', JSON.stringify(eventData));
     // Keep only last 1000 events
-    await this.redisService.lTrim("events", -1000, -1);
+    await this.redisService.lTrim('events', -1000, -1);
 
     // Emit the event
     await this.eventEmitter.emitAsync(event, payload);
@@ -103,24 +118,19 @@ export class EventService implements OnModuleInit {
    * const events = await eventService.getEvents('user.created', '2023-01-01', '2023-12-31');
    * ```
    */
-  async getEvents(
-    type?: string,
-    startTime?: string,
-    endTime?: string,
-  ): Promise<unknown[]> {
+  async getEvents(type?: string, startTime?: string, endTime?: string): Promise<unknown[]> {
     try {
       // Get events from Redis
-      const redisEvents = await this.redisService.lRange("events", 0, -1);
-      let events = redisEvents.map((event) => JSON.parse(event) as unknown);
+      const redisEvents = await this.redisService.lRange('events', 0, -1);
+      let events = redisEvents.map(event => JSON.parse(event) as unknown);
 
       // Apply filters
       if (type || startTime || endTime) {
-        events = events.filter((event) => {
+        events = events.filter(event => {
           const eventObj = event as { timestamp: string; type: string };
           const eventTime = new Date(eventObj.timestamp);
           const matchesType = !type || eventObj.type === type;
-          const matchesStartTime =
-            !startTime || eventTime >= new Date(startTime);
+          const matchesStartTime = !startTime || eventTime >= new Date(startTime);
           const matchesEndTime = !endTime || eventTime <= new Date(endTime);
           return matchesType && matchesStartTime && matchesEndTime;
         });
@@ -130,18 +140,21 @@ export class EventService implements OnModuleInit {
       return events.sort((a, b) => {
         const aEvent = a as { timestamp: string };
         const bEvent = b as { timestamp: string };
-        return (
-          new Date(bEvent.timestamp).getTime() -
-          new Date(aEvent.timestamp).getTime()
-        );
+        return new Date(bEvent.timestamp).getTime() - new Date(aEvent.timestamp).getTime();
       });
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        "Failed to retrieve events",
-        "EventService",
-        { error: (error as Error).message },
+        'Failed to retrieve events',
+        'EventService',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          type,
+          startTime,
+          endTime,
+        }
       );
       return [];
     }
@@ -204,16 +217,38 @@ export class EventService implements OnModuleInit {
    * @example
    * ```typescript
    * const result = await eventService.clearEvents();
-   * console.log(result.message);
    * ```
    */
   async clearEvents(): Promise<{ success: boolean; message: string }> {
     try {
-      await this.redisService.del("events");
-      return { success: true, message: "Events cleared successfully" };
+      await this.redisService.del('events');
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Events cleared successfully',
+        'EventService',
+        {}
+      );
+      return { success: true, message: 'Events cleared successfully' };
     } catch (error) {
-      console.error("Error clearing events:", error);
-      throw new Error("Failed to clear events");
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to clear events',
+        'EventService',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
+
+      throw new HealthcareError(
+        ErrorCode.EVENT_PROCESSING_FAILED,
+        'Failed to clear events',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        { operation: 'clearEvents' },
+        'EventService.clearEvents'
+      );
     }
   }
 }

@@ -1,54 +1,20 @@
 // Simple DTOs without decorators for now to avoid TypeScript compatibility issues
+// All enums are imported from centralized @core/types/enums.types
 
-export enum BillingInterval {
-  DAILY = "DAILY",
-  WEEKLY = "WEEKLY",
-  MONTHLY = "MONTHLY",
-  QUARTERLY = "QUARTERLY",
-  YEARLY = "YEARLY",
-}
-
-export enum SubscriptionStatus {
-  ACTIVE = "ACTIVE",
-  PAST_DUE = "PAST_DUE",
-  CANCELLED = "CANCELLED",
-  INCOMPLETE = "INCOMPLETE",
-  INCOMPLETE_EXPIRED = "INCOMPLETE_EXPIRED",
-  TRIALING = "TRIALING",
-  PAUSED = "PAUSED",
-}
-
-export enum InvoiceStatus {
-  DRAFT = "DRAFT",
-  OPEN = "OPEN",
-  PAID = "PAID",
-  VOID = "VOID",
-  UNCOLLECTIBLE = "UNCOLLECTIBLE",
-  OVERDUE = "OVERDUE",
-}
-
-export enum PaymentStatus {
-  PENDING = "PENDING",
-  COMPLETED = "COMPLETED",
-  FAILED = "FAILED",
-  REFUNDED = "REFUNDED",
-}
-
-export enum PaymentMethod {
-  CASH = "CASH",
-  CARD = "CARD",
-  UPI = "UPI",
-  NET_BANKING = "NET_BANKING",
-  WALLET = "WALLET",
-  INSURANCE = "INSURANCE",
-}
+import {
+  BillingInterval,
+  SubscriptionStatus,
+  InvoiceStatus,
+  PaymentStatus,
+  PaymentMethod,
+} from '@core/types/enums.types';
 
 // Billing Plan DTOs
 export class CreateBillingPlanDto {
   name!: string;
   description?: string;
   amount!: number;
-  currency?: string = "INR";
+  currency?: string = 'INR';
   interval!: BillingInterval;
   intervalCount?: number = 1;
   trialPeriodDays?: number;

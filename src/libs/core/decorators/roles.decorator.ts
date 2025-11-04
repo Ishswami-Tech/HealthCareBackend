@@ -1,10 +1,10 @@
-import { SetMetadata } from "@nestjs/common";
-import { Role } from "../../infrastructure/database/prisma/prisma.types";
+import { SetMetadata } from '@nestjs/common';
+import { Role } from '@core/types';
 
 /**
  * Roles metadata key
  */
-export const ROLES_KEY = "roles" as const;
+export const ROLES_KEY = 'roles' as const;
 
 /**
  * Roles decorator for specifying required roles for route access
@@ -29,6 +29,5 @@ export const ROLES_KEY = "roles" as const;
  * }
  * ```
  */
-export const Roles = (
-  ...roles: readonly Role[]
-): MethodDecorator & ClassDecorator => SetMetadata(ROLES_KEY, roles);
+export const Roles = (...roles: readonly Role[]): MethodDecorator & ClassDecorator =>
+  SetMetadata(ROLES_KEY, roles);

@@ -1,102 +1,17 @@
-import {
-  ExceptionFilter,
-  Catch,
-  ArgumentsHost,
-  HttpException,
-  HttpStatus,
-  Logger,
-} from "@nestjs/common";
-import { FastifyReply } from "fastify";
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import { FastifyReply } from 'fastify';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import type {
+  AuthenticatedUser,
+  RequestHeaders,
+  ErrorLog,
+  ErrorResponse,
+  CustomFastifyRequest,
+} from '@core/types/filter.types';
 
-/**
- * User information interface for request context
- *
- * @interface RequestUser
- * @description Defines the structure of user information in request context
- */
-export interface RequestUser {
-  readonly sub: string;
-  readonly role: string;
-  readonly [key: string]: unknown;
-}
-
-/**
- * Request headers interface with healthcare-specific headers
- *
- * @interface RequestHeaders
- * @description Defines the structure of request headers including healthcare-specific ones
- */
-export interface RequestHeaders {
-  readonly "user-agent"?: string;
-  readonly "x-forwarded-for"?: string;
-  readonly "x-real-ip"?: string;
-  readonly "x-clinic-id"?: string;
-  readonly authorization?: string;
-  readonly cookie?: string;
-  readonly [key: string]: string | undefined;
-}
-
-/**
- * Custom Fastify request interface with healthcare-specific properties
- *
- * @interface CustomFastifyRequest
- * @description Enhanced request interface for healthcare applications
- */
-export interface CustomFastifyRequest {
-  readonly url: string;
-  readonly method: string;
-  readonly body?: unknown;
-  readonly headers: RequestHeaders;
-  readonly query?: Record<string, unknown>;
-  readonly params?: Record<string, unknown>;
-  readonly ip?: string;
-  readonly user?: RequestUser;
-}
-
-/**
- * Error log structure for comprehensive error tracking
- *
- * @interface ErrorLog
- * @description Defines the structure of error logs for debugging and monitoring
- */
-export interface ErrorLog {
-  readonly path: string;
-  readonly method: string;
-  readonly statusCode: number;
-  readonly timestamp: string;
-  readonly message: string;
-  readonly stack?: string;
-  readonly body: Record<string, unknown>;
-  readonly headers: Record<string, unknown>;
-  readonly query?: Record<string, unknown>;
-  readonly params?: Record<string, unknown>;
-  readonly userAgent?: string;
-  readonly ip?: string;
-  readonly clinicId?: string;
-  readonly errorType?: string;
-  readonly userInfo?:
-    | {
-        readonly id: string;
-        readonly role: string;
-      }
-    | "unauthenticated";
-}
-
-/**
- * Error response structure for API responses
- *
- * @interface ErrorResponse
- * @description Defines the structure of error responses sent to clients
- */
-export interface ErrorResponse {
-  readonly statusCode: number;
-  readonly timestamp: string;
-  readonly path: string;
-  readonly method: string;
-  readonly message?: string;
-  readonly suggestion?: string;
-  readonly [key: string]: unknown;
-}
+// Export CustomFastifyRequest for use in other modules
+export type { CustomFastifyRequest } from '@core/types/filter.types';
 
 /**
  * Global HTTP Exception Filter for Healthcare Applications
@@ -125,7 +40,7 @@ export interface ErrorResponse {
  */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(HttpExceptionFilter.name);
+  constructor(private readonly loggingService: LoggingService) {}
 
   /**
    * Patterns for 404 errors that should be ignored in logging
@@ -170,7 +85,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
    */
   private isIgnored404(path: string, status: number): boolean {
     if (status !== 404) return false;
-    return this.ignored404Patterns.some((pattern) => pattern.test(path));
+    return this.ignored404Patterns.some(pattern => pattern.test(path));
   }
 
   /**
@@ -187,14 +102,23 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // Get status code and message
     const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const exceptionResponse =
       exception instanceof HttpException
         ? exception.getResponse()
-        : { message: "Internal server error" };
+        : { message: 'Internal server error' };
+
+    // Extract error message safely
+    const errorMessage =
+      exception instanceof Error
+        ? exception.message
+        : typeof exception === 'string'
+          ? exception
+          : 'Internal server error';
+
+    // Extract stack trace safely
+    const stackTrace = exception instanceof Error ? exception.stack : undefined;
 
     // Enhanced error logging with better context
     const errorLog: ErrorLog = {
@@ -202,33 +126,31 @@ export class HttpExceptionFilter implements ExceptionFilter {
       method: request.method,
       statusCode: status,
       timestamp: new Date().toISOString(),
-      message: (exception as Error).message || "Internal server error",
-      ...((exception as Error).stack && { stack: (exception as Error).stack }),
+      message: errorMessage,
+      ...(stackTrace && { stack: stackTrace }),
       body: this.sanitizeRequestBody(request.body),
       headers: this.sanitizeHeaders(request.headers),
       ...(request.query && { query: request.query }),
       ...(request.params && { params: request.params }),
-      ...(request.headers["user-agent"] && {
-        userAgent: request.headers["user-agent"],
+      ...(request.headers['user-agent'] && {
+        userAgent: request.headers['user-agent'],
       }),
-      ...((request.ip ||
-        request.headers["x-forwarded-for"] ||
-        request.headers["x-real-ip"]) && {
-        ip:
-          request.ip ||
-          request.headers["x-forwarded-for"] ||
-          request.headers["x-real-ip"],
+      ...((request.ip || request.headers['x-forwarded-for'] || request.headers['x-real-ip']) && {
+        ip: request.ip || request.headers['x-forwarded-for'] || request.headers['x-real-ip'],
       }),
-      ...(request.headers["x-clinic-id"] && {
-        clinicId: request.headers["x-clinic-id"],
+      ...(request.headers['x-clinic-id'] && {
+        clinicId: request.headers['x-clinic-id'],
       }),
     };
 
     // Enhanced error categorization and logging
     if (status >= 500) {
-      this.logger.error(
-        `[ERROR] [API] ${request.method} ${request.url} failed: ${(exception as Error).message}`,
-        errorLog,
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `[ERROR] [API] ${request.method} ${request.url} failed: ${errorMessage}`,
+        'HttpExceptionFilter',
+        errorLog as unknown as Record<string, unknown>
       );
     } else if (status === 404 && this.isIgnored404(request.url, status)) {
       // Skip logging for ignored 404 paths
@@ -236,49 +158,52 @@ export class HttpExceptionFilter implements ExceptionFilter {
     } else if (status >= 400) {
       // Enhanced client error logging
       const errorType = this.categorizeError(status);
-      this.logger.warn(
-        `[${errorType}] [API] ${request.method} ${request.url} failed: ${(exception as Error).message}`,
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `[${errorType}] [API] ${request.method} ${request.url} failed: ${errorMessage}`,
+        'HttpExceptionFilter',
         {
           ...errorLog,
           errorType,
           userInfo: request.user
             ? { id: request.user.sub, role: request.user.role }
-            : "unauthenticated",
-        },
+            : 'unauthenticated',
+        } as unknown as Record<string, unknown>
       );
     }
 
     // Enhanced error response with more context
+    // Create a mutable response object since ErrorResponse has readonly properties
     const errorResponse: Record<string, unknown> = {
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
       method: request.method,
-      ...(typeof exceptionResponse === "object"
-        ? exceptionResponse
-        : { message: exceptionResponse }),
+      ...(typeof exceptionResponse === 'object' && exceptionResponse !== null
+        ? (exceptionResponse as Record<string, unknown>)
+        : { message: String(exceptionResponse) }),
     };
 
     // Add additional context for specific error types
     if (status === 404) {
-      errorResponse["suggestion"] =
-        "Check if the endpoint exists and you have the correct permissions";
+      errorResponse['suggestion'] =
+        'Check if the endpoint exists and you have the correct permissions';
     } else if (status === 401) {
-      errorResponse["suggestion"] =
-        "Please provide valid authentication credentials";
+      errorResponse['suggestion'] = 'Please provide valid authentication credentials';
     } else if (status === 403) {
-      errorResponse["suggestion"] =
-        "You do not have permission to access this resource";
+      errorResponse['suggestion'] = 'You do not have permission to access this resource';
     } else if (status === 422) {
-      errorResponse["suggestion"] =
-        "Please check your request data and try again";
+      errorResponse['suggestion'] = 'Please check your request data and try again';
     } else if (status >= 500) {
-      errorResponse["suggestion"] =
-        "An internal server error occurred. Please try again later";
+      errorResponse['suggestion'] = 'An internal server error occurred. Please try again later';
       // Don't expose internal error details in production
-      if (process.env["NODE_ENV"] === "production") {
-        errorResponse["message"] = "Internal server error";
-        delete errorResponse["stack"];
+      if (process.env['NODE_ENV'] === 'production') {
+        errorResponse['message'] = 'Internal server error';
+        // Remove stack trace if present
+        if ('stack' in errorResponse) {
+          delete errorResponse['stack'];
+        }
       }
     }
 
@@ -294,15 +219,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
    * @private
    */
   private categorizeError(status: number): string {
-    if (status === 400) return "BAD_REQUEST";
-    if (status === 401) return "UNAUTHORIZED";
-    if (status === 403) return "FORBIDDEN";
-    if (status === 404) return "NOT_FOUND";
-    if (status === 409) return "CONFLICT";
-    if (status === 422) return "VALIDATION_ERROR";
-    if (status === 429) return "RATE_LIMIT";
-    if (status >= 500) return "SERVER_ERROR";
-    return "CLIENT_ERROR";
+    if (status === 400) return 'BAD_REQUEST';
+    if (status === 401) return 'UNAUTHORIZED';
+    if (status === 403) return 'FORBIDDEN';
+    if (status === 404) return 'NOT_FOUND';
+    if (status === 409) return 'CONFLICT';
+    if (status === 422) return 'VALIDATION_ERROR';
+    if (status === 429) return 'RATE_LIMIT';
+    if (status >= 500) return 'SERVER_ERROR';
+    return 'CLIENT_ERROR';
   }
 
   /**
@@ -313,28 +238,36 @@ export class HttpExceptionFilter implements ExceptionFilter {
    * @private
    */
   private sanitizeRequestBody(body: unknown): Record<string, unknown> {
-    if (!body || typeof body !== "object") return {};
+    if (!body || typeof body !== 'object' || body === null) {
+      return {};
+    }
 
-    const sanitized = { ...(body as Record<string, unknown>) };
+    // Type guard to ensure body is a record-like object
+    if (Array.isArray(body)) {
+      return {};
+    }
+
+    const sanitized: Record<string, unknown> = { ...(body as Record<string, unknown>) };
 
     // Remove sensitive fields
-    const sensitiveFields = [
-      "password",
-      "token",
-      "accessToken",
-      "refreshToken",
-      "credit_card",
-      "creditCard",
-      "ssn",
-      "social_security",
-      "api_key",
-      "apiKey",
-      "secret",
-      "private_key",
-    ];
-    sensitiveFields.forEach((field) => {
-      if (field in sanitized && sanitized[field]) {
-        sanitized[field] = "[REDACTED]";
+    const sensitiveFields: readonly string[] = [
+      'password',
+      'token',
+      'accessToken',
+      'refreshToken',
+      'credit_card',
+      'creditCard',
+      'ssn',
+      'social_security',
+      'api_key',
+      'apiKey',
+      'secret',
+      'private_key',
+    ] as const;
+
+    sensitiveFields.forEach(field => {
+      if (field in sanitized && sanitized[field] !== null && sanitized[field] !== undefined) {
+        sanitized[field] = '[REDACTED]';
       }
     });
 
@@ -348,23 +281,36 @@ export class HttpExceptionFilter implements ExceptionFilter {
    * @returns Sanitized headers with sensitive fields redacted
    * @private
    */
-  private sanitizeHeaders(headers: unknown): Record<string, unknown> {
-    if (!headers || typeof headers !== "object") return {};
+  private sanitizeHeaders(headers: RequestHeaders | unknown): Record<string, unknown> {
+    if (!headers || typeof headers !== 'object' || headers === null) {
+      return {};
+    }
 
-    const sanitized = { ...(headers as Record<string, unknown>) };
+    // Type guard to ensure headers is a record-like object
+    if (Array.isArray(headers)) {
+      return {};
+    }
+
+    const sanitized: Record<string, unknown> = { ...(headers as Record<string, unknown>) };
 
     // Remove sensitive headers
-    const sensitiveHeaders = [
-      "authorization",
-      "cookie",
-      "x-session-id",
-      "x-api-key",
-      "x-auth-token",
-      "x-secret",
-    ];
-    sensitiveHeaders.forEach((header) => {
-      if (header in sanitized && sanitized[header]) {
-        sanitized[header] = "[REDACTED]";
+    const sensitiveHeaders: readonly string[] = [
+      'authorization',
+      'cookie',
+      'x-session-id',
+      'x-api-key',
+      'x-auth-token',
+      'x-secret',
+    ] as const;
+
+    sensitiveHeaders.forEach(header => {
+      if (
+        header in sanitized &&
+        sanitized[header] !== null &&
+        sanitized[header] !== undefined &&
+        sanitized[header] !== ''
+      ) {
+        sanitized[header] = '[REDACTED]';
       }
     });
 

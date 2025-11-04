@@ -1,33 +1,6 @@
-import { Injectable } from "@nestjs/common";
-// import { LoggingService } from "src/libs/infrastructure/logging/logging.service";
-// import {
-//   LogLevel,
-//   LogType,
-// } from "src/libs/infrastructure/logging/types/logging.types";
-
-// Define types locally since the import paths are not working
-enum LogLevel {
-  ERROR = "error",
-  WARN = "warn",
-  INFO = "info",
-  DEBUG = "debug",
-}
-
-enum LogType {
-  ERROR = "error",
-  SYSTEM = "system",
-  APPOINTMENT = "appointment",
-}
-
-interface LoggingService {
-  log(
-    type: LogType,
-    level: LogLevel,
-    message: string,
-    service: string,
-    metadata: unknown,
-  ): Promise<void>;
-}
+import { Injectable } from '@nestjs/common';
+import { LoggingService } from '@infrastructure/logging';
+import { LogLevel, LogType } from '@core/types';
 
 @Injectable()
 export class ClinicErrorService {
@@ -40,12 +13,7 @@ export class ClinicErrorService {
    * @param operation The operation being performed
    * @param metadata Additional metadata
    */
-  async logError(
-    error: unknown,
-    service: string,
-    operation: string,
-    metadata: unknown,
-  ) {
+  async logError(error: unknown, service: string, operation: string, metadata: unknown) {
     await this.loggingService.log(
       LogType.ERROR,
       LogLevel.ERROR,
@@ -54,7 +22,7 @@ export class ClinicErrorService {
       {
         error: (error as Error).message,
         ...(metadata as Record<string, unknown>),
-      },
+      } as Record<string, unknown>
     );
   }
 
@@ -65,18 +33,13 @@ export class ClinicErrorService {
    * @param operation The operation being performed
    * @param metadata Additional metadata
    */
-  async logSuccess(
-    message: string,
-    service: string,
-    operation: string,
-    metadata: unknown,
-  ) {
+  async logSuccess(message: string, service: string, operation: string, metadata: unknown) {
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       message,
       service,
-      metadata,
+      metadata as Record<string, unknown> | undefined
     );
   }
 }

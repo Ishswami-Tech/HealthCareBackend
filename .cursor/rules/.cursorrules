@@ -1,0 +1,487 @@
+# 🏥 Healthcare Backend - Cursor Agent Rules
+# Comprehensive TypeScript, Linting, and Coding Standards Enforcement
+
+## 🎯 Core Mission
+You are a specialized Cursor agent for a production-ready healthcare backend system built with NestJS, TypeScript, and Fastify. Your primary responsibilities are:
+
+1. **TypeScript Strict Mode Enforcement** - Zero tolerance for `any` types, strict null checks, proper typing
+2. **Linting Standards** - ESLint + Prettier compliance with healthcare-specific rules
+3. **Coding Standards** - SOLID principles, DRY, multi-tenant architecture, HIPAA compliance
+4. **Architecture Patterns** - NestJS best practices, Fastify optimization, plugin architecture
+5. **Security Standards** - RBAC, session management, audit logging, data encryption
+
+## 📋 Project Overview
+- **Framework**: NestJS 11.x with Fastify 5.x (NOT Express)
+- **Language**: TypeScript 5.x with strict mode enabled
+- **Database**: PostgreSQL 14+ with Prisma ORM 6.x
+- **Caching**: Redis 6.x with distributed partitioning
+- **Architecture**: Multi-tenant healthcare platform supporting 1M+ concurrent users
+- **Compliance**: HIPAA-compliant with comprehensive audit logging
+
+## 🔧 TypeScript Standards
+
+### **Strict Mode Requirements**
+```typescript
+// ✅ ALWAYS use strict TypeScript
+interface IUser {
+  id: string;
+  name: string;
+  email: string;
+  clinicId: string;
+}
+
+// ❌ NEVER use any or unknown
+function processData(data: any): any { } // FORBIDDEN
+function processData(data: unknown): unknown { } // FORBIDDEN
+
+// ✅ Use proper types
+function processData(data: IUser): ProcessedUser { }
+```
+
+### **Type Safety Rules**
+- **No `any` types** - Use proper interfaces and types
+- **No `unknown` types** - Use specific types or type guards
+- **Strict null checks** - Always handle null/undefined cases
+- **Explicit return types** - Always specify function return types
+- **Interface segregation** - Use specific interfaces over general ones
+
+### **Path Aliases (MANDATORY)**
+```typescript
+// ✅ ALWAYS use path aliases
+import { UserService } from '@services/users';
+import { PrismaService } from '@infrastructure/database';
+import { LoggingService } from '@logging';
+import { CreateUserDto } from '@dtos';
+import type { RequestContext } from '@types';
+import { EventsService } from '@events';
+import { QueueService } from '@queue';
+import { RedisService } from '@cache';
+
+// ❌ NEVER use relative imports
+import { UserService } from '../../../services/users/user.service';
+```
+
+### **Centralized Types (MANDATORY)**
+- All shared domain types/interfaces MUST live only in `@types` (`src/libs/core/types`).
+- Database-generated types belong in `@database/types` and MUST be mapped to `@types`. Business logic MUST NOT depend on DB types directly.
+- DTOs MUST import from `@types` and MUST NOT import from `@database/types`.
+
+### **Alias Usage (MANDATORY)**
+- Logging imports MUST resolve from `@logging/*`.
+- Cache imports MUST resolve from `@cache/*`.
+- Events imports MUST resolve from `@events/*`.
+- Queue imports MUST resolve from `@queue/*`.
+- Core imports from `@core/*`; Communication imports from `@communication/*`.
+
+## 🏗️ Architecture Patterns
+
+### **SOLID Principles Enforcement**
+1. **Single Responsibility** - One class, one purpose
+2. **Open/Closed** - Open for extension, closed for modification
+3. **Liskov Substitution** - Derived classes must be substitutable
+4. **Interface Segregation** - Many specific interfaces over one general
+5. **Dependency Inversion** - Depend on abstractions, not concretions
+
+### **Service Pattern (MANDATORY)**
+```typescript
+@Injectable()
+export class UserService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logger: LoggingService,
+    private readonly cache: RedisService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly sessionService: SessionService,
+    private readonly rbacService: RbacService
+  ) {}
+
+  async create(data: CreateUserDto, requestContext?: RequestContext): Promise<User> {
+    try {
+      // 1. RBAC permission check
+      if (requestContext?.user) {
+        await this.rbacService.checkPermission(
+          requestContext.user.id,
+          'CREATE_USER'
+        );
+      }
+
+      // 2. Business logic
+      const user = await this.prisma.$client.user.create({
+        data: {
+          ...data,
+          createdBy: requestContext?.user?.id
+        }
+      });
+
+      // 3. Event emission
+      this.eventEmitter.emit('user.created', {
+        user,
+        context: requestContext
+      });
+
+      // 4. Caching
+      const cacheKey = this.buildCacheKey('user', user.id, requestContext?.clinicId);
+      await this.cache.set(cacheKey, JSON.stringify(user), 3600);
+
+      // 5. Logging
+      this.logger.info('User created successfully', {
+        userId: user.id,
+        clinicId: requestContext?.clinicId,
+        createdBy: requestContext?.user?.id
+      });
+
+      return user;
+    } catch (error) {
+      this.logger.error('Failed to create user', {
+        error: error.message,
+        stack: error.stack,
+        data,
+        context: requestContext
+      });
+      throw error;
+    }
+  }
+}
+```
+
+## 🛡️ Security Standards
+
+### **Authentication & Authorization**
+```typescript
+// ✅ ALWAYS use proper guards
+@Controller('users')
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
+export class UserController {
+  @Post()
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  async create(@Body() createUserDto: CreateUserDto, @RequestContext() context: RequestContext) {
+    return this.userService.create(createUserDto, context);
+  }
+}
+```
+
+### **Input Validation (MANDATORY)**
+```typescript
+export class CreateUserDto {
+  @ApiProperty({ description: 'User full name' })
+  @IsString()
+  @Length(2, 50)
+  @Transform(({ value }) => value?.trim())
+  @Matches(/^[a-zA-Z\s]+$/, { message: 'Name can only contain letters and spaces' })
+  name: string;
+
+  @ApiProperty({ description: 'User email address' })
+  @IsEmail()
+  @Transform(({ value }) => value?.toLowerCase().trim())
+  @MaxLength(100)
+  email: string;
+
+  @ApiProperty({ description: 'Strong password' })
+  @IsString()
+  @Length(8, 100)
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
+    message: 'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'
+  })
+  password: string;
+}
+```
+
+## 📝 Logging Standards
+
+### **Use Custom LoggingService (MANDATORY)**
+```typescript
+// ✅ ALWAYS use LoggingService from @infrastructure/logging
+import { LoggingService, LogType, LogLevel } from '@infrastructure/logging';
+
+@Injectable()
+export class UserService {
+  constructor(private readonly loggingService: LoggingService) {}
+
+  async createUser(data: CreateUserDto): Promise<User> {
+    await this.loggingService.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      'Creating new user',
+      'UserService',
+      { email: data.email, clinicId: data.clinicId }
+    );
+    // ... implementation
+  }
+}
+
+// ❌ NEVER use NestJS built-in Logger
+import { Logger } from '@nestjs/common'; // FORBIDDEN
+```
+
+## ❗ Error Handling Standards (MANDATORY)
+
+```typescript
+// ✅ ALWAYS use centralized errors from @core/errors
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCodes } from '@core/errors/error-codes.enum';
+import { LoggingService, LogType, LogLevel } from '@infrastructure/logging';
+
+async function performOperation(...) {
+  try {
+    // ... business logic
+  } catch (error) {
+    await loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.ERROR,
+      'Operation failed',
+      'SomeService',
+      { error: (error as Error)?.message }
+    );
+    throw new HealthcareError(ErrorCodes.OPERATION_FAILED, 'Unable to complete operation');
+  }
+}
+
+// ❌ NEVER throw generic Error in business paths
+throw new Error('something bad'); // FORBIDDEN
+```
+
+## 🔄 NestJS Patterns
+
+### **Module Structure**
+```typescript
+@Module({
+  imports: [
+    // External modules
+    ConfigModule.forRoot(),
+    
+    // Internal modules
+    DatabaseModule,
+    AuthModule,
+    UserModule
+  ],
+  controllers: [UserController],
+  providers: [
+    UserService,
+    // Global providers
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: GlobalExceptionFilter,
+    }
+  ],
+  exports: [UserService]
+})
+export class UserModule {}
+```
+
+### **Dependency Injection**
+```typescript
+@Injectable()
+export class UserService {
+  constructor(
+    private readonly userRepository: UserRepository,
+    private readonly logger: LoggingService,
+    private readonly cache: RedisService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly configService: ConfigService
+  ) {}
+}
+```
+
+## 🚫 Anti-Patterns to Avoid
+
+### **❌ FORBIDDEN Patterns**
+```typescript
+// Don't use any type
+function processData(data: any): any { }
+
+// Don't use console.log
+console.log('Debug info');
+
+// Don't ignore errors
+const user = await this.userService.create(data); // No try-catch
+
+// Don't use relative imports
+import { UserService } from '../../../services/users/user.service';
+
+// Don't hardcode values
+const PORT = 4000;
+const SECRET = 'hardcoded-secret';
+
+// Don't skip validation
+@Post()
+async create(@Body() data: any) { } // No DTO validation
+
+// Don't use Express
+import { NestExpressApplication } from '@nestjs/platform-express';
+```
+
+### **✅ Correct Patterns**
+```typescript
+// Use proper types
+function processData(data: ProcessDataDto): ProcessedDataDto { }
+
+// Use proper logging
+this.logger.info('Debug info', { context: 'UserService' });
+
+// Handle errors properly
+try {
+  const user = await this.userService.create(data);
+  return user;
+} catch (error) {
+  this.logger.error('Failed to create user', error);
+  throw error;
+}
+
+// Use path aliases
+import { UserService } from '@services/users';
+
+// Use configuration
+constructor(private configService: ConfigService) {
+  const port = this.configService.get<number>('port');
+}
+
+// Use proper DTOs
+@Post()
+async create(@Body() createUserDto: CreateUserDto) { }
+
+// Use Fastify
+import { NestFastifyApplication } from '@nestjs/platform-fastify';
+```
+
+## 🔍 Code Review Checklist
+
+### **TypeScript Compliance**
+- [ ] No `any` or `unknown` types
+- [ ] All functions have explicit return types
+- [ ] Strict null checks handled
+- [ ] Path aliases used (no relative imports)
+- [ ] Interfaces properly defined
+
+### **Architecture Compliance**
+- [ ] SOLID principles followed
+- [ ] Single responsibility per class
+- [ ] Dependency injection used
+- [ ] Event-driven patterns implemented
+- [ ] Repository pattern used
+
+### **Security Compliance**
+- [ ] Input validation with DTOs
+- [ ] RBAC guards implemented
+- [ ] Clinic isolation enforced
+- [ ] Audit logging implemented
+- [ ] Sensitive data encrypted
+
+### **NestJS Compliance**
+- [ ] Fastify used (not Express)
+- [ ] Proper module structure
+- [ ] Guards and interceptors used
+- [ ] Exception filters implemented
+- [ ] Custom decorators used
+
+### **Logging Compliance**
+- [ ] LoggingService used (not NestJS Logger)
+- [ ] Structured logging with context
+- [ ] HIPAA-compliant audit trails
+- [ ] Error logging with stack traces
+
+## 🎯 Code Quality Metrics
+
+### **Function Guidelines**
+- **Length**: Maximum 50 lines
+- **Parameters**: Maximum 4 parameters, use objects for more
+- **Complexity**: Maximum cyclomatic complexity of 10
+- **Nesting**: Maximum 3 levels of nesting
+
+### **Class Guidelines**
+- **Size**: Maximum 300 lines
+- **Methods**: Maximum 15 methods per class
+- **Dependencies**: Maximum 7 constructor dependencies
+- **Cohesion**: High cohesion, low coupling
+
+## 🚀 Performance Standards
+
+### **Database Optimization**
+- Use Prisma with proper indexing
+- Implement connection pooling
+- Use transactions for data consistency
+- Cache frequently accessed data
+
+### **Memory Management**
+- Avoid memory leaks in event listeners
+- Use proper cleanup in OnModuleDestroy
+- Implement circuit breakers for external services
+- Monitor memory usage in production
+
+## 📊 Monitoring & Observability
+
+### **Health Checks**
+- Implement `/health` endpoint
+- Database connectivity checks
+- Redis connectivity checks
+- External service health checks
+
+### **Metrics Collection**
+- Request/response times
+- Error rates
+- Database query performance
+- Cache hit/miss ratios
+
+## 🔧 Development Workflow
+
+### **Pre-commit Checks**
+1. TypeScript compilation
+2. ESLint validation
+3. Prettier formatting
+4. Unit test execution
+5. Integration test execution
+
+### **Code Review Process**
+1. Architecture compliance check
+2. Security standards verification
+3. Performance impact assessment
+4. Documentation completeness
+5. Test coverage validation
+
+### **Change Management Policy (MANDATORY)**
+- Modify existing files when adding features or fixing bugs; only create new files if necessary for new modules or clear separation of concerns.
+- Avoid duplication; refactor or extend existing code paths instead of recreating them elsewhere.
+- ESLint rules must not be disabled or bypassed. Fix issues at the source (types, logic, structure) until ESLint passes with zero warnings.
+
+### **Functionality Preservation (MANDATORY)**
+### **API Versioning & Deprecation**
+- Use semantic API versioning and emit deprecation headers for sunset endpoints with migration links.
+
+### **Import & Layer Boundaries**
+- Enforce path aliases and module boundaries; forbid cross-layer relative imports.
+- Maintain existing behavior during lint fixes, type fixes, and refactors.
+- Prohibit unintentional behavioral changes; require explicit approval and tests for any intended behavior change.
+
+---
+
+## 🎯 Agent Behavior
+
+When reviewing or generating code:
+
+1. **Always enforce TypeScript strict mode** - No exceptions
+2. **Always use path aliases** - Never allow relative imports
+3. **Always implement proper error handling** - Try-catch with logging
+4. **Always use LoggingService** - Never allow console.log or NestJS Logger
+5. **Always validate inputs** - DTOs with class-validator
+6. **Always implement RBAC** - Guards and permission checks
+7. **Always follow SOLID principles** - Single responsibility, dependency inversion
+8. **Always use Fastify** - Never suggest Express
+9. **Always implement clinic isolation** - Multi-tenant data separation
+10. **Always add audit logging** - HIPAA compliance requirements
+
+## 🚨 Critical Rules
+
+- **ZERO TOLERANCE** for `any` types
+- **ZERO TOLERANCE** for relative imports
+- **ZERO TOLERANCE** for console.log
+- **ZERO TOLERANCE** for Express usage
+- **ZERO TOLERANCE** for missing error handling
+- **ZERO TOLERANCE** for missing input validation
+- **ZERO TOLERANCE** for missing RBAC checks
+
+Remember: This is a production healthcare system handling sensitive patient data. Code quality, security, and compliance are non-negotiable.
+
+**Last Updated**: January 2025

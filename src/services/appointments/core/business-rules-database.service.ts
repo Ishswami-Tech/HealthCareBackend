@@ -1,72 +1,100 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { PrismaService } from "@database/prisma/prisma.service";
-import { CacheService } from "@infrastructure/cache";
+import { Injectable } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
-export interface BusinessRuleEntity {
-  id: string;
-  name: string;
-  description: string;
-  priority: number;
-  isActive: boolean;
-  conditions: Record<string, unknown>;
-  actions: Record<string, unknown>;
-  clinicId?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import type { BusinessRule } from '@core/types/appointment.types';
+
+// Use BusinessRule from centralized types, alias as BusinessRuleEntity for backward compatibility
+export type BusinessRuleEntity = BusinessRule;
 
 @Injectable()
 export class BusinessRulesDatabaseService {
-  private readonly logger = new Logger(BusinessRulesDatabaseService.name);
   private readonly RULES_CACHE_TTL = 1800; // 30 minutes
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
+    private readonly loggingService: LoggingService
   ) {}
 
   /**
    * Create business rule
    */
   async createRule(
-    ruleData: Omit<BusinessRuleEntity, "id" | "createdAt" | "updatedAt">,
+    ruleData: Omit<BusinessRuleEntity, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<BusinessRuleEntity> {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const rule = await this.prisma["businessRule"].create({
-        data: {
-          name: ruleData.name,
-          description: ruleData.description,
-          priority: ruleData.priority,
-          isActive: ruleData.isActive,
-          conditions: ruleData.conditions,
-          actions: ruleData.actions,
-          clinicId: ruleData.clinicId,
+      // Use executeHealthcareWrite with client parameter (businessRule model doesn't have safe method yet)
+      const rule = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              businessRule: {
+                create: <T>(args: T) => Promise<BusinessRuleEntity>;
+              };
+            }
+          ).businessRule.create({
+            data: {
+              name: ruleData.name,
+              description: ruleData.description,
+              priority: ruleData.priority,
+              isActive: ruleData.isActive,
+              category: ruleData.category,
+              version: ruleData.version,
+              tags: ruleData.tags,
+              conditions: ruleData.conditions,
+              actions: ruleData.actions,
+              clinicId: ruleData.clinicId,
+            },
+          } as never);
         },
-      });
+        {
+          userId: 'system',
+          clinicId: ruleData.clinicId || '',
+          resourceType: 'BUSINESS_RULE',
+          operation: 'CREATE',
+          resourceId: '',
+          userRole: 'system',
+          details: { ruleName: ruleData.name },
+        }
+      );
 
       // Cache the rule
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
       const cacheKey = `business_rule:${rule.id}`;
       await this.cacheService.set(cacheKey, rule, this.RULES_CACHE_TTL);
 
       // Invalidate rules cache
       await this.invalidateRulesCache(ruleData.clinicId);
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      this.logger.log(`Created business rule ${rule.id}`, {
-        name: ruleData.name,
-        clinicId: ruleData.clinicId,
-        priority: ruleData.priority,
-      });
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Created business rule ${(rule as { id: string }).id}`,
+        'BusinessRulesDatabaseService.createRule',
+        {
+          ruleId: (rule as { id: string }).id,
+          name: ruleData.name,
+          clinicId: ruleData.clinicId,
+          priority: ruleData.priority,
+        }
+      );
 
-      return rule as BusinessRuleEntity;
+      return rule;
     } catch (error) {
-      this.logger.error(`Failed to create business rule`, {
-        ruleName: ruleData.name,
-        clinicId: ruleData.clinicId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to create business rule: ${error instanceof Error ? error.message : String(error)}`,
+        'BusinessRulesDatabaseService.createRule',
+        {
+          ruleName: ruleData.name,
+          clinicId: ruleData.clinicId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       throw error;
     }
   }
@@ -75,7 +103,7 @@ export class BusinessRulesDatabaseService {
    * Get rules for clinic
    */
   async getClinicRules(clinicId?: string): Promise<BusinessRuleEntity[]> {
-    const cacheKey = `clinic_rules:${clinicId || "global"}`;
+    const cacheKey = `clinic_rules:${clinicId || 'global'}`;
 
     try {
       const cached = await this.cacheService.get(cacheKey);
@@ -83,25 +111,39 @@ export class BusinessRulesDatabaseService {
         return cached as BusinessRuleEntity[];
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const rules = await this.prisma["businessRule"].findMany({
-        where: {
-          isActive: true,
-          OR: [
-            { clinicId: clinicId },
-            { clinicId: null }, // Global rules
-          ],
-        },
-        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      // Use executeHealthcareRead with client parameter (businessRule model doesn't have safe method yet)
+      const rules = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            businessRule: {
+              findMany: <T>(args: T) => Promise<BusinessRuleEntity[]>;
+            };
+          }
+        ).businessRule.findMany({
+          where: {
+            isActive: true,
+            OR: [
+              { clinicId: clinicId },
+              { clinicId: null }, // Global rules
+            ],
+          },
+          orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        } as never);
       });
 
       await this.cacheService.set(cacheKey, rules, this.RULES_CACHE_TTL);
-      return rules as BusinessRuleEntity[];
+      return rules;
     } catch (error) {
-      this.logger.error(`Failed to get clinic rules`, {
-        clinicId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get clinic rules: ${error instanceof Error ? error.message : String(error)}`,
+        'BusinessRulesDatabaseService.getClinicRules',
+        {
+          clinicId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       throw error;
     }
   }
@@ -111,40 +153,75 @@ export class BusinessRulesDatabaseService {
    */
   async updateRule(
     ruleId: string,
-    updateData: Partial<BusinessRuleEntity>,
+    updateData: Partial<BusinessRuleEntity>
   ): Promise<BusinessRuleEntity> {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const rule = await this.prisma["businessRule"].update({
-        where: { id: ruleId },
-        data: {
-          name: updateData.name,
-          description: updateData.description,
-          priority: updateData.priority,
-          isActive: updateData.isActive,
-          conditions: updateData.conditions,
-          actions: updateData.actions,
+      // Use executeHealthcareWrite with client parameter
+      const rule = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              businessRule: {
+                update: <T>(args: T) => Promise<BusinessRuleEntity>;
+              };
+            }
+          ).businessRule.update({
+            where: { id: ruleId },
+            data: {
+              ...(updateData.name && { name: updateData.name }),
+              ...(updateData.description && { description: updateData.description }),
+              ...(updateData.priority !== undefined && { priority: updateData.priority }),
+              ...(updateData.isActive !== undefined && { isActive: updateData.isActive }),
+              ...(updateData.category && { category: updateData.category }),
+              ...(updateData.version && { version: updateData.version }),
+              ...(updateData.tags && { tags: updateData.tags }),
+              ...(updateData.conditions && { conditions: updateData.conditions }),
+              ...(updateData.actions && { actions: updateData.actions }),
+              ...(updateData.clinicId !== undefined && { clinicId: updateData.clinicId }),
+            },
+          } as never);
         },
-      });
+        {
+          userId: 'system',
+          clinicId: (updateData as { clinicId?: string }).clinicId || '',
+          resourceType: 'BUSINESS_RULE',
+          operation: 'UPDATE',
+          resourceId: ruleId,
+          userRole: 'system',
+          details: { updates: Object.keys(updateData) },
+        }
+      );
 
       // Update cache
       const cacheKey = `business_rule:${ruleId}`;
       await this.cacheService.set(cacheKey, rule, this.RULES_CACHE_TTL);
 
       // Invalidate rules cache
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
-      await this.invalidateRulesCache(rule.clinicId);
+      await this.invalidateRulesCache((rule as { clinicId?: string }).clinicId);
 
-      this.logger.log(`Updated business rule ${ruleId}`, {
-        updates: Object.keys(updateData),
-      });
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Updated business rule ${ruleId}`,
+        'BusinessRulesDatabaseService.updateRule',
+        {
+          ruleId,
+          updates: Object.keys(updateData),
+        }
+      );
 
-      return rule as BusinessRuleEntity;
+      return rule;
     } catch (error) {
-      this.logger.error(`Failed to update business rule`, {
-        ruleId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to update business rule: ${error instanceof Error ? error.message : String(error)}`,
+        'BusinessRulesDatabaseService.updateRule',
+        {
+          ruleId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       throw error;
     }
   }
@@ -154,10 +231,29 @@ export class BusinessRulesDatabaseService {
    */
   async deleteRule(ruleId: string): Promise<boolean> {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await this.prisma["businessRule"].delete({
-        where: { id: ruleId },
-      });
+      // Use executeHealthcareWrite with client parameter
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              businessRule: {
+                delete: <T>(args: T) => Promise<BusinessRuleEntity>;
+              };
+            }
+          ).businessRule.delete({
+            where: { id: ruleId },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: '',
+          resourceType: 'BUSINESS_RULE',
+          operation: 'DELETE',
+          resourceId: ruleId,
+          userRole: 'system',
+          details: {},
+        }
+      );
 
       // Remove from cache
       const cacheKey = `business_rule:${ruleId}`;
@@ -166,13 +262,25 @@ export class BusinessRulesDatabaseService {
       // Invalidate rules cache
       await this.invalidateRulesCache();
 
-      this.logger.log(`Deleted business rule ${ruleId}`);
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Deleted business rule ${ruleId}`,
+        'BusinessRulesDatabaseService.deleteRule',
+        { ruleId }
+      );
       return true;
     } catch (error) {
-      this.logger.error(`Failed to delete business rule`, {
-        ruleId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to delete business rule: ${error instanceof Error ? error.message : String(error)}`,
+        'BusinessRulesDatabaseService.deleteRule',
+        {
+          ruleId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return false;
     }
   }
@@ -189,21 +297,35 @@ export class BusinessRulesDatabaseService {
         return cached as BusinessRuleEntity;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const rule = await this.prisma["businessRule"].findUnique({
-        where: { id: ruleId },
+      // Use executeHealthcareRead with client parameter
+      const rule = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            businessRule: {
+              findUnique: <T>(args: T) => Promise<BusinessRuleEntity | null>;
+            };
+          }
+        ).businessRule.findUnique({
+          where: { id: ruleId },
+        } as never);
       });
 
       if (rule) {
         await this.cacheService.set(cacheKey, rule, this.RULES_CACHE_TTL);
       }
 
-      return rule as BusinessRuleEntity | null;
+      return rule;
     } catch (error) {
-      this.logger.error(`Failed to get business rule`, {
-        ruleId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get business rule: ${error instanceof Error ? error.message : String(error)}`,
+        'BusinessRulesDatabaseService.getRule',
+        {
+          ruleId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return null;
     }
   }
@@ -213,49 +335,84 @@ export class BusinessRulesDatabaseService {
    */
   async initializeDefaultRules(): Promise<void> {
     try {
-      const defaultRules = [
+      const defaultRules: Array<Omit<BusinessRuleEntity, 'id' | 'createdAt' | 'updatedAt'>> = [
         {
-          name: "appointment-time-validation",
-          description: "Appointment must be during working hours",
+          name: 'appointment-time-validation',
+          description: 'Appointment must be during working hours',
           priority: 1,
           isActive: true,
-          conditions: {
-            type: "time_validation",
-            workingHours: { start: "09:00", end: "18:00" },
-          },
-          actions: { notify: true, block: false },
-          clinicId: undefined, // Global rule
+          category: 'appointment_creation',
+          version: '1.0.0',
+          tags: [],
+          conditions: [
+            {
+              type: 'custom',
+              field: 'time_validation',
+              value: { workingHours: { start: '09:00', end: '18:00' } },
+              operator: 'AND',
+            },
+          ] as readonly import('@core/types').RuleCondition[],
+          actions: [
+            { type: 'notify', message: 'Time validation required', severity: 'medium' },
+            { type: 'log', message: 'Working hours check', severity: 'low' },
+          ] as readonly import('@core/types').RuleAction[],
         },
         {
-          name: "double-booking-prevention",
-          description: "Doctor cannot have overlapping appointments",
+          name: 'double-booking-prevention',
+          description: 'Doctor cannot have overlapping appointments',
           priority: 2,
           isActive: true,
-          conditions: {
-            type: "conflict_check",
-            bufferMinutes: 15,
-          },
-          actions: { block: true, suggestAlternatives: true },
-          clinicId: undefined, // Global rule
+          category: 'appointment_creation',
+          version: '1.0.0',
+          tags: [],
+          conditions: [
+            {
+              type: 'custom',
+              field: 'conflict_check',
+              value: { bufferMinutes: 15 },
+              operator: 'AND',
+            },
+          ] as readonly import('@core/types').RuleCondition[],
+          actions: [
+            { type: 'block', message: 'Double booking detected', severity: 'high' },
+            { type: 'notify', message: 'Suggest alternatives', severity: 'medium' },
+          ] as readonly import('@core/types').RuleAction[],
         },
         {
-          name: "emergency-override",
-          description: "Emergency appointments can override conflicts",
+          name: 'emergency-override',
+          description: 'Emergency appointments can override conflicts',
           priority: 0,
           isActive: true,
-          conditions: {
-            type: "priority_check",
-            priority: "emergency",
-          },
-          actions: { override: true, notify: true },
-          // clinicId: undefined, // Global rule - omit for global rules
+          category: 'appointment_creation',
+          version: '1.0.0',
+          tags: [],
+          conditions: [
+            {
+              type: 'custom',
+              field: 'priority_check',
+              value: { priority: 'emergency' },
+              operator: 'AND',
+            },
+          ] as readonly import('@core/types').RuleCondition[],
+          actions: [
+            { type: 'allow', message: 'Emergency override', severity: 'low' },
+            { type: 'notify', message: 'Emergency appointment', severity: 'high' },
+          ] as readonly import('@core/types').RuleAction[],
         },
       ];
 
       for (const ruleData of defaultRules) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        const existing = await this.prisma["businessRule"].findFirst({
-          where: { name: ruleData.name },
+        // Use executeHealthcareRead with client parameter
+        const existing = await this.databaseService.executeHealthcareRead(async client => {
+          return await (
+            client as unknown as {
+              businessRule: {
+                findFirst: <T>(args: T) => Promise<BusinessRuleEntity | null>;
+              };
+            }
+          ).businessRule.findFirst({
+            where: { name: ruleData.name },
+          } as never);
         });
 
         if (!existing) {
@@ -266,11 +423,22 @@ export class BusinessRulesDatabaseService {
         }
       }
 
-      this.logger.log("Initialized default business rules");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Initialized default business rules',
+        'BusinessRulesDatabaseService.initializeDefaultRules'
+      );
     } catch (error) {
-      this.logger.error("Failed to initialize default business rules", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to initialize default business rules: ${error instanceof Error ? error.message : String(error)}`,
+        'BusinessRulesDatabaseService.initializeDefaultRules',
+        {
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       throw error;
     }
   }
@@ -279,10 +447,7 @@ export class BusinessRulesDatabaseService {
    * Invalidate rules cache
    */
   private async invalidateRulesCache(clinicId?: string): Promise<void> {
-    const cacheKeys = [
-      `clinic_rules:${clinicId || "global"}`,
-      `clinic_rules:all`,
-    ];
+    const cacheKeys = [`clinic_rules:${clinicId || 'global'}`, `clinic_rules:all`];
 
     for (const cacheKey of cacheKeys) {
       await this.cacheService.delete(cacheKey);

@@ -1,99 +1,25 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { EventEmitter2 } from "@nestjs/event-emitter";
+import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import type {
+  TimeSlot,
+  ConflictResolutionOptions,
+  ConflictResolutionResult,
+  ConflictDetails,
+  AlternativeSlot,
+  ResolutionAction,
+  AppointmentRequest,
+} from '@core/types/appointment.types';
 
-export interface TimeSlot {
-  startTime: Date;
-  endTime: Date;
-  doctorId: string;
-  clinicId: string;
-  isAvailable: boolean;
-  appointmentId?: string;
-  bufferMinutes?: number;
-}
-
-export interface ConflictResolutionOptions {
-  allowOverlap: boolean;
-  bufferMinutes: number;
-  emergencyOverride: boolean;
-  suggestAlternatives: boolean;
-  maxAlternatives: number;
-  timeWindow: {
-    startHour: number; // 9 AM
-    endHour: number; // 18 PM
-  };
-  priorityLevels: {
-    emergency: number;
-    vip: number;
-    regular: number;
-    followup: number;
-  };
-}
-
-export interface ConflictResolutionResult {
-  canSchedule: boolean;
-  conflicts: ConflictDetails[];
-  alternatives: AlternativeSlot[];
-  resolution: {
-    strategy: "allow" | "reject" | "reschedule" | "override";
-    reason: string;
-    actions: ResolutionAction[];
-  };
-  warnings: string[];
-  metadata: {
-    processingTimeMs: number;
-    rulesApplied: string[];
-    timestamp: Date;
-  };
-}
-
-export interface ConflictDetails {
-  type:
-    | "time_overlap"
-    | "doctor_unavailable"
-    | "resource_conflict"
-    | "business_rule"
-    | "capacity_exceeded";
-  severity: "low" | "medium" | "high" | "critical";
-  description: string;
-  conflictingAppointmentId?: string;
-  conflictingTimeSlot?: TimeSlot;
-  affectedResources: string[];
-  resolution?: string;
-}
-
-export interface AlternativeSlot {
-  startTime: Date;
-  endTime: Date;
-  doctorId: string;
-  score: number; // 0-100, higher is better
-  reason: string;
-  availability: "available" | "preferred" | "suboptimal";
-  estimatedWaitTime?: number;
-}
-
-export interface ResolutionAction {
-  type:
-    | "move_appointment"
-    | "notify_patient"
-    | "extend_hours"
-    | "add_resource"
-    | "escalate";
-  description: string;
-  parameters: Record<string, unknown>;
-  requiredApproval?: boolean;
-}
-
-export interface AppointmentRequest {
-  patientId: string;
-  doctorId: string;
-  clinicId: string;
-  requestedTime: Date;
-  duration: number; // minutes
-  priority: "emergency" | "vip" | "regular" | "followup";
-  serviceType: string;
-  notes?: string;
-  preferredAlternatives?: Date[];
-}
+// Re-export for backward compatibility
+export type {
+  TimeSlot,
+  ConflictResolutionOptions,
+  ConflictResolutionResult,
+  ConflictDetails,
+  AlternativeSlot,
+  ResolutionAction,
+  AppointmentRequest,
+};
 
 @Injectable()
 export class ConflictResolutionService {
@@ -122,13 +48,13 @@ export class ConflictResolutionService {
   async resolveSchedulingConflict(
     request: AppointmentRequest,
     existingAppointments: TimeSlot[],
-    options: Partial<ConflictResolutionOptions> = {},
+    options: Partial<ConflictResolutionOptions> = {}
   ): Promise<ConflictResolutionResult> {
     const startTime = Date.now();
     const resolvedOptions = { ...this.defaultOptions, ...options };
 
     this.logger.log(
-      `🔍 Resolving scheduling conflict for ${request.priority} appointment at ${request.requestedTime.toISOString()}`,
+      `🔍 Resolving scheduling conflict for ${request.priority} appointment at ${request.requestedTime.toISOString()}`
     );
 
     const result: ConflictResolutionResult = {
@@ -136,8 +62,8 @@ export class ConflictResolutionService {
       conflicts: [],
       alternatives: [],
       resolution: {
-        strategy: "reject",
-        reason: "",
+        strategy: 'reject',
+        reason: '',
         actions: [],
       },
       warnings: [],
@@ -150,41 +76,32 @@ export class ConflictResolutionService {
 
     try {
       // Step 1: Detect all conflicts
-      const conflicts = this.detectConflicts(
-        request,
-        existingAppointments,
-        resolvedOptions,
-      );
+      const conflicts = this.detectConflicts(request, existingAppointments, resolvedOptions);
       result.conflicts = conflicts;
 
       // Step 2: Analyze conflict severity
-      const criticalConflicts = conflicts.filter(
-        (c) => c.severity === "critical",
-      );
-      const _highConflicts = conflicts.filter((c) => c.severity === "high");
+      const criticalConflicts = conflicts.filter(c => c.severity === 'critical');
+      const _highConflicts = conflicts.filter(c => c.severity === 'high');
 
       // Step 3: Apply intelligent conflict resolution
       if (conflicts.length === 0) {
         // No conflicts - schedule normally
         result.canSchedule = true;
         result.resolution = {
-          strategy: "allow",
-          reason: "No conflicts detected",
+          strategy: 'allow',
+          reason: 'No conflicts detected',
           actions: [],
         };
-      } else if (
-        request.priority === "emergency" &&
-        resolvedOptions.emergencyOverride
-      ) {
+      } else if (request.priority === 'emergency' && resolvedOptions.emergencyOverride) {
         // Emergency override logic
         result.canSchedule = true;
         result.resolution = {
-          strategy: "override",
-          reason: "Emergency appointment override",
+          strategy: 'override',
+          reason: 'Emergency appointment override',
           actions: this.createEmergencyResolutionActions(request, conflicts),
         };
         result.warnings.push(
-          "Emergency appointment may cause conflicts with existing appointments",
+          'Emergency appointment may cause conflicts with existing appointments'
         );
       } else if (
         criticalConflicts.length === 0 &&
@@ -193,20 +110,16 @@ export class ConflictResolutionService {
         // Conflicts can be resolved
         result.canSchedule = true;
         result.resolution = {
-          strategy: "reschedule",
-          reason: "Conflicts resolved through intelligent rescheduling",
-          actions: this.createResolutionActions(
-            conflicts,
-            request,
-            resolvedOptions,
-          ),
+          strategy: 'reschedule',
+          reason: 'Conflicts resolved through intelligent rescheduling',
+          actions: this.createResolutionActions(conflicts, request, resolvedOptions),
         };
       } else {
         // Cannot resolve conflicts - suggest alternatives
         result.canSchedule = false;
         result.resolution = {
-          strategy: "reject",
-          reason: "Unresolvable conflicts detected",
+          strategy: 'reject',
+          reason: 'Unresolvable conflicts detected',
           actions: [],
         };
       }
@@ -216,42 +129,38 @@ export class ConflictResolutionService {
         result.alternatives = this.generateAlternatives(
           request,
           existingAppointments,
-          resolvedOptions,
+          resolvedOptions
         );
       }
 
       // Step 5: Apply business rules validation
-      ((result as { meta?: unknown }).meta as Record<string, unknown>)[
-        "rulesApplied"
-      ] = this.applyBusinessRules(request, result, resolvedOptions);
+      ((result as { meta?: unknown }).meta as Record<string, unknown>)['rulesApplied'] =
+        this.applyBusinessRules(request, result, resolvedOptions);
 
-      ((result as { meta?: unknown }).meta as Record<string, unknown>)[
-        "processingTimeMs"
-      ] = Date.now() - startTime;
+      ((result as { meta?: unknown }).meta as Record<string, unknown>)['processingTimeMs'] =
+        Date.now() - startTime;
 
       // Emit resolution event for monitoring
-      await this.eventEmitter.emitAsync("appointment.conflict-resolved", {
+      await this.eventEmitter.emitAsync('appointment.conflict-resolved', {
         request,
         result,
-        processingTime: (
-          (result as { meta?: unknown }).meta as Record<string, unknown>
-        )["processingTimeMs"],
+        processingTime: ((result as { meta?: unknown }).meta as Record<string, unknown>)[
+          'processingTimeMs'
+        ],
       });
 
       this.logger.log(
-        `✅ Conflict resolution complete: ${result.resolution.strategy} (${String(((result as { meta?: unknown }).meta as Record<string, unknown>)["processingTimeMs"])}ms)`,
+        `✅ Conflict resolution complete: ${result.resolution.strategy} (${String(((result as { meta?: unknown }).meta as Record<string, unknown>)['processingTimeMs'])}ms)`
       );
 
       return result;
     } catch (_error) {
-      this.logger.error(
-        `❌ Conflict resolution failed: ${(_error as Error).message}`,
-      );
+      this.logger.error(`❌ Conflict resolution failed: ${(_error as Error).message}`);
       result.conflicts.push({
-        type: "business_rule",
-        severity: "critical",
+        type: 'business_rule',
+        severity: 'critical',
         description: `System _error during conflict resolution: ${(_error as Error).message}`,
-        affectedResources: ["system"],
+        affectedResources: ['system'],
       });
       return result;
     }
@@ -260,19 +169,15 @@ export class ConflictResolutionService {
   private detectConflicts(
     request: AppointmentRequest,
     existingAppointments: TimeSlot[],
-    options: ConflictResolutionOptions,
+    options: ConflictResolutionOptions
   ): ConflictDetails[] {
     const conflicts: ConflictDetails[] = [];
 
-    const requestEndTime = new Date(
-      request.requestedTime.getTime() + request.duration * 60000,
-    );
+    const requestEndTime = new Date(request.requestedTime.getTime() + request.duration * 60000);
     const bufferStartTime = new Date(
-      request.requestedTime.getTime() - options.bufferMinutes * 60000,
+      request.requestedTime.getTime() - options.bufferMinutes * 60000
     );
-    const bufferEndTime = new Date(
-      requestEndTime.getTime() + options.bufferMinutes * 60000,
-    );
+    const bufferEndTime = new Date(requestEndTime.getTime() + options.bufferMinutes * 60000);
 
     // Check for time overlaps with existing appointments
     for (const appointment of existingAppointments) {
@@ -283,91 +188,73 @@ export class ConflictResolutionService {
         bufferStartTime,
         bufferEndTime,
         appointment.startTime,
-        appointment.endTime,
+        appointment.endTime
       );
 
       if (hasTimeOverlap) {
-        const severity = this.calculateConflictSeverity(
-          request,
-          appointment,
-          options,
-        );
+        const severity = this.calculateConflictSeverity(request, appointment, options);
 
         conflicts.push({
-          type: "time_overlap",
+          type: 'time_overlap',
           severity,
           description: `Time overlap with existing appointment ${appointment.appointmentId}`,
           ...(appointment.appointmentId && {
             conflictingAppointmentId: appointment.appointmentId,
           }),
           conflictingTimeSlot: appointment,
-          affectedResources: ["doctor", "time-slot"],
+          affectedResources: ['doctor', 'time-slot'],
         });
       }
     }
 
     // Check business hours
     const requestHour = request.requestedTime.getHours();
-    if (
-      requestHour < options.timeWindow.startHour ||
-      requestHour >= options.timeWindow.endHour
-    ) {
+    if (requestHour < options.timeWindow.startHour || requestHour >= options.timeWindow.endHour) {
       conflicts.push({
-        type: "business_rule",
-        severity: "medium",
+        type: 'business_rule',
+        severity: 'medium',
         description: `Appointment outside business hours (${options.timeWindow.startHour}:00-${options.timeWindow.endHour}:00)`,
-        affectedResources: ["business-hours"],
+        affectedResources: ['business-hours'],
       });
     }
 
     // Check doctor availability (this would integrate with doctor schedule)
-    const doctorAvailable = this.checkDoctorAvailability(
-      request.doctorId,
-      request.requestedTime,
-    );
+    const doctorAvailable = this.checkDoctorAvailability(request.doctorId, request.requestedTime);
     if (!doctorAvailable) {
       conflicts.push({
-        type: "doctor_unavailable",
-        severity: "high",
-        description: "Doctor is not available at requested time",
-        affectedResources: ["doctor"],
+        type: 'doctor_unavailable',
+        severity: 'high',
+        description: 'Doctor is not available at requested time',
+        affectedResources: ['doctor'],
       });
     }
 
     // Check clinic capacity
-    const clinicCapacity = this.checkClinicCapacity(
-      request.clinicId,
-      request.requestedTime,
-    );
+    const clinicCapacity = this.checkClinicCapacity(request.clinicId, request.requestedTime);
     if (!clinicCapacity.available) {
       conflicts.push({
-        type: "capacity_exceeded",
-        severity: "high",
+        type: 'capacity_exceeded',
+        severity: 'high',
         description: `Clinic capacity exceeded (${clinicCapacity.current}/${clinicCapacity.maximum})`,
-        affectedResources: ["clinic-capacity"],
+        affectedResources: ['clinic-capacity'],
       });
     }
 
     return conflicts;
   }
 
-  private hasTimeOverlap(
-    start1: Date,
-    end1: Date,
-    start2: Date,
-    end2: Date,
-  ): boolean {
+  private hasTimeOverlap(start1: Date, end1: Date, start2: Date, end2: Date): boolean {
     return start1 < end2 && end1 > start2;
   }
 
   private calculateConflictSeverity(
     request: AppointmentRequest,
     existingAppointment: TimeSlot,
-    _options: ConflictResolutionOptions,
-  ): "low" | "medium" | "high" | "critical" {
+    _options: ConflictResolutionOptions
+  ): 'low' | 'medium' | 'high' | 'critical' {
     // Emergency appointments get highest priority
-    if (request.priority === "emergency") {
-      return "low"; // Emergency can override others
+    if (request.priority === 'emergency') {
+      return 'low'; // Emergency can override others
     }
 
     // If overlapping with another emergency, it's critical
@@ -378,21 +265,16 @@ export class ConflictResolutionService {
       request.requestedTime,
       new Date(request.requestedTime.getTime() + request.duration * 60000),
       existingAppointment.startTime,
-      existingAppointment.endTime,
+      existingAppointment.endTime
     );
 
-    if (overlapMinutes > 30) return "critical";
-    if (overlapMinutes > 15) return "high";
-    if (overlapMinutes > 5) return "medium";
-    return "low";
+    if (overlapMinutes > 30) return 'critical';
+    if (overlapMinutes > 15) return 'high';
+    if (overlapMinutes > 5) return 'medium';
+    return 'low';
   }
 
-  private calculateOverlapMinutes(
-    start1: Date,
-    end1: Date,
-    start2: Date,
-    end2: Date,
-  ): number {
+  private calculateOverlapMinutes(start1: Date, end1: Date, start2: Date, end2: Date): number {
     const overlapStart = new Date(Math.max(start1.getTime(), start2.getTime()));
     const overlapEnd = new Date(Math.min(end1.getTime(), end2.getTime()));
 
@@ -404,15 +286,15 @@ export class ConflictResolutionService {
   private canResolveConflicts(
     conflicts: ConflictDetails[],
     _request: AppointmentRequest,
-    _options: ConflictResolutionOptions,
+    _options: ConflictResolutionOptions
   ): boolean {
     // Check if all conflicts are resolvable
     for (const conflict of conflicts) {
-      if (conflict.severity === "critical") {
+      if (conflict.severity === 'critical') {
         return false; // Cannot resolve critical conflicts
       }
 
-      if (conflict.type === "doctor_unavailable") {
+      if (conflict.type === 'doctor_unavailable') {
         return false; // Cannot schedule when doctor is unavailable
       }
     }
@@ -422,33 +304,30 @@ export class ConflictResolutionService {
 
   private createEmergencyResolutionActions(
     request: AppointmentRequest,
-    conflicts: ConflictDetails[],
+    conflicts: ConflictDetails[]
   ): ResolutionAction[] {
     const actions: ResolutionAction[] = [];
 
     for (const conflict of conflicts) {
-      if (
-        conflict.type === "time_overlap" &&
-        conflict.conflictingAppointmentId
-      ) {
+      if (conflict.type === 'time_overlap' && conflict.conflictingAppointmentId) {
         actions.push({
-          type: "move_appointment",
+          type: 'move_appointment',
           description: `Reschedule conflicting appointment ${conflict.conflictingAppointmentId} to accommodate emergency`,
           parameters: {
             appointmentId: conflict.conflictingAppointmentId,
-            reason: "Emergency override",
-            priority: "high",
+            reason: 'Emergency override',
+            priority: 'high',
           },
           requiredApproval: true,
         });
 
         actions.push({
-          type: "notify_patient",
-          description: "Notify affected patient of emergency rescheduling",
+          type: 'notify_patient',
+          description: 'Notify affected patient of emergency rescheduling',
           parameters: {
             appointmentId: conflict.conflictingAppointmentId,
-            notificationType: "emergency_reschedule",
-            urgency: "high",
+            notificationType: 'emergency_reschedule',
+            urgency: 'high',
           },
         });
       }
@@ -456,11 +335,11 @@ export class ConflictResolutionService {
 
     // Add escalation for emergency appointments
     actions.push({
-      type: "escalate",
-      description: "Escalate emergency appointment to clinic administrator",
+      type: 'escalate',
+      description: 'Escalate emergency appointment to clinic administrator',
       parameters: {
-        escalationLevel: "emergency",
-        reason: "Emergency appointment conflict resolution",
+        escalationLevel: 'emergency',
+        reason: 'Emergency appointment conflict resolution',
       },
     });
 
@@ -470,43 +349,43 @@ export class ConflictResolutionService {
   private createResolutionActions(
     conflicts: ConflictDetails[],
     request: AppointmentRequest,
-    options: ConflictResolutionOptions,
+    options: ConflictResolutionOptions
   ): ResolutionAction[] {
     const actions: ResolutionAction[] = [];
 
     for (const conflict of conflicts) {
       switch (conflict.type) {
-        case "time_overlap":
-          if (conflict.severity === "low" || conflict.severity === "medium") {
+        case 'time_overlap':
+          if (conflict.severity === 'low' || conflict.severity === 'medium') {
             actions.push({
-              type: "move_appointment",
-              description: "Adjust appointment time to resolve minor overlap",
+              type: 'move_appointment',
+              description: 'Adjust appointment time to resolve minor overlap',
               parameters: {
                 timeAdjustmentMinutes: options.bufferMinutes,
-                direction: "later",
+                direction: 'later',
               },
             });
           }
           break;
 
-        case "capacity_exceeded":
+        case 'capacity_exceeded':
           actions.push({
-            type: "extend_hours",
-            description: "Extend clinic hours to accommodate appointment",
+            type: 'extend_hours',
+            description: 'Extend clinic hours to accommodate appointment',
             parameters: {
               extensionMinutes: 30,
-              reason: "Capacity management",
+              reason: 'Capacity management',
             },
             requiredApproval: true,
           });
           break;
 
-        case "business_rule":
+        case 'business_rule':
           actions.push({
-            type: "escalate",
-            description: "Escalate business rule conflict for manual review",
+            type: 'escalate',
+            description: 'Escalate business rule conflict for manual review',
             parameters: {
-              escalationLevel: "supervisor",
+              escalationLevel: 'supervisor',
               reason: conflict.description,
             },
           });
@@ -520,7 +399,7 @@ export class ConflictResolutionService {
   private generateAlternatives(
     request: AppointmentRequest,
     existingAppointments: TimeSlot[],
-    options: ConflictResolutionOptions,
+    options: ConflictResolutionOptions
   ): AlternativeSlot[] {
     const alternatives: AlternativeSlot[] = [];
     const baseTime = new Date(request.requestedTime);
@@ -533,26 +412,23 @@ export class ConflictResolutionService {
       const conflicts = this.detectConflicts(
         { ...request, requestedTime: alternativeTime },
         existingAppointments,
-        options,
+        options
       );
 
       if (conflicts.length === 0) {
         const score = this.calculateAlternativeScore(
           request.requestedTime,
           alternativeTime,
-          request.priority,
+          request.priority
         );
 
         alternatives.push({
           startTime: alternativeTime,
-          endTime: new Date(
-            alternativeTime.getTime() + request.duration * 60000,
-          ),
+          endTime: new Date(alternativeTime.getTime() + request.duration * 60000),
           doctorId: request.doctorId,
           score,
           reason: `Available slot ${Math.round(i * 0.5)} hours from requested time`,
-          availability:
-            score > 80 ? "preferred" : score > 60 ? "available" : "suboptimal",
+          availability: score > 80 ? 'preferred' : score > 60 ? 'available' : 'suboptimal',
         });
       }
 
@@ -565,29 +441,23 @@ export class ConflictResolutionService {
       nextDay.setDate(nextDay.getDate() + 1);
       nextDay.setHours(options.timeWindow.startHour, 0, 0, 0);
 
-      for (
-        let hour = 0;
-        hour < options.timeWindow.endHour - options.timeWindow.startHour;
-        hour++
-      ) {
+      for (let hour = 0; hour < options.timeWindow.endHour - options.timeWindow.startHour; hour++) {
         const alternativeTime = new Date(nextDay.getTime() + hour * 60 * 60000);
 
         const conflicts = this.detectConflicts(
           { ...request, requestedTime: alternativeTime },
           existingAppointments,
-          options,
+          options
         );
 
         if (conflicts.length === 0) {
           alternatives.push({
             startTime: alternativeTime,
-            endTime: new Date(
-              alternativeTime.getTime() + request.duration * 60000,
-            ),
+            endTime: new Date(alternativeTime.getTime() + request.duration * 60000),
             doctorId: request.doctorId,
             score: 70, // Next day gets moderate score
-            reason: "Available next day",
-            availability: "available",
+            reason: 'Available next day',
+            availability: 'available',
           });
         }
 
@@ -604,11 +474,10 @@ export class ConflictResolutionService {
   private calculateAlternativeScore(
     requestedTime: Date,
     alternativeTime: Date,
-    priority: string,
+    priority: string
   ): number {
     const timeDiffHours =
-      Math.abs(alternativeTime.getTime() - requestedTime.getTime()) /
-      (1000 * 60 * 60);
+      Math.abs(alternativeTime.getTime() - requestedTime.getTime()) / (1000 * 60 * 60);
 
     let score = 100;
 
@@ -616,9 +485,9 @@ export class ConflictResolutionService {
     score -= timeDiffHours * 5; // 5 points per hour difference
 
     // Priority adjustments
-    if (priority === "emergency") {
+    if (priority === 'emergency') {
       score += 20; // Emergency appointments get bonus
-    } else if (priority === "vip") {
+    } else if (priority === 'vip') {
       score += 10; // VIP appointments get bonus
     }
 
@@ -634,25 +503,25 @@ export class ConflictResolutionService {
   private applyBusinessRules(
     request: AppointmentRequest,
     result: ConflictResolutionResult,
-    options: ConflictResolutionOptions,
+    options: ConflictResolutionOptions
   ): string[] {
     const appliedRules: string[] = [];
 
     // Rule: Emergency override
-    if (request.priority === "emergency" && options.emergencyOverride) {
-      appliedRules.push("emergency-override");
+    if (request.priority === 'emergency' && options.emergencyOverride) {
+      appliedRules.push('emergency-override');
     }
 
     // Rule: VIP priority
-    if (request.priority === "vip") {
-      appliedRules.push("vip-priority");
+    if (request.priority === 'vip') {
+      appliedRules.push('vip-priority');
     }
 
     // Rule: Buffer time validation
-    appliedRules.push("buffer-time-validation");
+    appliedRules.push('buffer-time-validation');
 
     // Rule: Business hours check
-    appliedRules.push("business-hours-check");
+    appliedRules.push('business-hours-check');
 
     return appliedRules;
   }
@@ -667,7 +536,7 @@ export class ConflictResolutionService {
 
   private checkClinicCapacity(
     _clinicId: string,
-    _time: Date,
+    _time: Date
   ): {
     available: boolean;
     current: number;
@@ -688,7 +557,7 @@ export class ConflictResolutionService {
     _doctorId: string,
     _clinicId: string,
     fromTime: Date,
-    _duration: number,
+    _duration: number
   ): Date | null {
     // Simplified implementation - would integrate with actual appointment data
     const nextSlot = new Date(fromTime.getTime() + 60 * 60000); // Next hour
@@ -697,7 +566,7 @@ export class ConflictResolutionService {
 
   getConflictStatistics(
     _clinicId: string,
-    _dateRange: { from: Date; to: Date },
+    _dateRange: { from: Date; to: Date }
   ): {
     totalConflicts: number;
     resolvedConflicts: number;

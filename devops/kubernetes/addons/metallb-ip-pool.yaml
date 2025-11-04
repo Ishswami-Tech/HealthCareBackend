@@ -1,0 +1,19 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: healthcare-lb-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    # Replace with a free range routed to your nodes (Contabo public subnet)
+    - 203.0.113.50-203.0.113.60
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: healthcare-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - healthcare-lb-pool
+

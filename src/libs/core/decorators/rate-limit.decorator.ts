@@ -7,12 +7,12 @@
  * @module RateLimitDecorators
  */
 
-import { SetMetadata } from "@nestjs/common";
+import { SetMetadata } from '@nestjs/common';
 
 /**
  * Rate limit metadata key
  */
-export const RATE_LIMIT_KEY = "rateLimit" as const;
+export const RATE_LIMIT_KEY = 'rateLimit' as const;
 
 /**
  * Rate limit options interface
@@ -88,12 +88,12 @@ export const RateLimit = (options: RateLimitOptions): MethodDecorator =>
  */
 export const StrictRateLimit = (
   max: number = 3,
-  windowMs: number = 15 * 60 * 1000, // 15 minutes
+  windowMs: number = 15 * 60 * 1000 // 15 minutes
 ): MethodDecorator =>
   SetMetadata(RATE_LIMIT_KEY, {
     max,
     windowMs,
-    message: "Too many requests, please try again later",
+    message: 'Too many requests, please try again later',
   });
 
 /**
@@ -120,12 +120,12 @@ export const StrictRateLimit = (
  */
 export const LenientRateLimit = (
   max: number = 100,
-  windowMs: number = 60 * 1000, // 1 minute
+  windowMs: number = 60 * 1000 // 1 minute
 ): MethodDecorator =>
   SetMetadata(RATE_LIMIT_KEY, {
     max,
     windowMs,
-    message: "Rate limit exceeded, please slow down your requests",
+    message: 'Rate limit exceeded, please slow down your requests',
   });
 
 /**

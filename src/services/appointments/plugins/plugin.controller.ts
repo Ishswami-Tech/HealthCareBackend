@@ -1,45 +1,43 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unused-vars */
-import { Controller, Get, Post, Body, Param, Logger } from "@nestjs/common";
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiSecurity,
-} from "@nestjs/swagger";
-import { AppointmentEnterprisePluginManager } from "./enterprise-plugin-manager";
-import { PluginConfigService } from "./config/plugin-config.service";
-import { PluginHealthService } from "./health/plugin-health.service";
+import { Controller, Get, Post, Body, Param, Logger } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { EnterprisePluginManager } from '@core/plugin-interface';
+import { PluginConfigService } from './config/plugin-config.service';
+import { PluginHealthService } from './health/plugin-health.service';
+import type {
+  PluginInfo,
+  PluginOperationResult,
+  DomainHealthInfo,
+  BasePlugin,
+} from '@core/types';
 
-@ApiTags("Appointment Plugins")
-@Controller("api/appointments/plugins")
+@ApiTags('Appointment Plugins')
+@Controller('api/appointments/plugins')
 @ApiBearerAuth()
-@ApiSecurity("session-id")
+@ApiSecurity('session-id')
 export class AppointmentPluginController {
   private readonly logger = new Logger(AppointmentPluginController.name);
 
   constructor(
-    private readonly enterprisePluginManager: AppointmentEnterprisePluginManager,
+    private readonly enterprisePluginManager: EnterprisePluginManager,
     private readonly pluginConfigService: PluginConfigService,
-    private readonly pluginHealthService: PluginHealthService,
+    private readonly pluginHealthService: PluginHealthService
   ) {}
 
-  @Get("info")
+  @Get('info')
   @ApiOperation({
-    summary: "Get plugin information",
-    description: "Get information about all registered plugins",
+    summary: 'Get plugin information',
+    description: 'Get information about all registered plugins',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin information retrieved successfully",
+    description: 'Plugin information retrieved successfully',
   })
   getPluginInfo() {
     const startTime = Date.now();
 
     try {
-      const pluginInfo = (
-        this.enterprisePluginManager.getEnterpriseRegistry() as any
-      ).getPluginInfo() as any[];
+      const registry = this.enterprisePluginManager.getEnterpriseRegistry();
+      const pluginInfo = registry.getPluginInfo();
 
       const duration = Date.now() - startTime;
       this.logger.log(`Plugin info retrieved successfully in ${duration}ms`);
@@ -49,78 +47,70 @@ export class AppointmentPluginController {
         total: pluginInfo.length,
         retrievedAt: new Date().toISOString(),
       };
-    } catch (_error) {
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to get plugin info: ${errorMessage}`);
-      throw _error;
+      throw error;
     }
   }
 
-  @Get("domain/:domain")
+  @Get('domain/:domain')
   @ApiOperation({
-    summary: "Get domain plugins",
-    description: "Get all plugins for a specific domain",
+    summary: 'Get domain plugins',
+    description: 'Get all plugins for a specific domain',
   })
   @ApiResponse({
     status: 200,
-    description: "Domain plugins retrieved successfully",
+    description: 'Domain plugins retrieved successfully',
   })
-  @ApiResponse({ status: 404, description: "Domain not found" })
-  getDomainPlugins(@Param("domain") domain: string) {
+  @ApiResponse({ status: 404, description: 'Domain not found' })
+  getDomainPlugins(@Param('domain') domain: string) {
     const startTime = Date.now();
 
     try {
-      const plugins = (
-        this.enterprisePluginManager.getEnterpriseRegistry() as any
-      ).getPluginsByFeature(domain) as any[];
+      const registry = this.enterprisePluginManager.getEnterpriseRegistry();
+      const plugins = registry.getPluginsByFeature(domain);
 
       const duration = Date.now() - startTime;
-      this.logger.log(
-        `Domain plugins retrieved for ${domain} in ${duration}ms`,
-      );
+      this.logger.log(`Domain plugins retrieved for ${domain} in ${duration}ms`);
 
       return {
         domain,
-        plugins: plugins.map((plugin: any) => ({
+        plugins: plugins.map((plugin: BasePlugin) => ({
           name: plugin.name,
           version: plugin.version,
           features: plugin.features || [],
         })),
-        features: plugins.map((p: any) => p.features || []).flat(),
+        features: plugins.map((p: BasePlugin) => p.features || []).flat(),
         total: plugins.length,
         retrievedAt: new Date().toISOString(),
       };
-    } catch (_error) {
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to get domain plugins: ${errorMessage}`);
-      throw _error;
+      throw error;
     }
   }
 
-  @Get("domain/:domain/features")
+  @Get('domain/:domain/features')
   @ApiOperation({
-    summary: "Get domain features",
-    description: "Get all available features for a specific domain",
+    summary: 'Get domain features',
+    description: 'Get all available features for a specific domain',
   })
   @ApiResponse({
     status: 200,
-    description: "Domain features retrieved successfully",
+    description: 'Domain features retrieved successfully',
   })
-  @ApiResponse({ status: 404, description: "Domain not found" })
-  getDomainFeatures(@Param("domain") domain: string) {
+  @ApiResponse({ status: 404, description: 'Domain not found' })
+  getDomainFeatures(@Param('domain') domain: string) {
     const startTime = Date.now();
 
     try {
-      const features = (
-        this.enterprisePluginManager.getEnterpriseRegistry() as any
-      ).getPluginsByFeature(domain) as any[];
+      const registry = this.enterprisePluginManager.getEnterpriseRegistry();
+      const features = registry.getDomainFeatures(domain);
 
       const duration = Date.now() - startTime;
-      this.logger.log(
-        `Domain features retrieved for ${domain} in ${duration}ms`,
-      );
+      this.logger.log(`Domain features retrieved for ${domain} in ${duration}ms`);
 
       return {
         domain,
@@ -128,25 +118,24 @@ export class AppointmentPluginController {
         total: features.length,
         retrievedAt: new Date().toISOString(),
       };
-    } catch (_error) {
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to get domain features: ${errorMessage}`);
-      throw _error;
+      throw error;
     }
   }
 
-  @Post("execute")
+  @Post('execute')
   @ApiOperation({
-    summary: "Execute plugin operation",
-    description: "Execute a plugin operation for a specific domain and feature",
+    summary: 'Execute plugin operation',
+    description: 'Execute a plugin operation for a specific domain and feature',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin operation executed successfully",
+    description: 'Plugin operation executed successfully',
   })
-  @ApiResponse({ status: 400, description: "Invalid operation or data" })
-  @ApiResponse({ status: 404, description: "Plugin not found" })
+  @ApiResponse({ status: 400, description: 'Invalid operation or data' })
+  @ApiResponse({ status: 404, description: 'Plugin not found' })
   async executePluginOperation(
     @Body()
     body: {
@@ -154,7 +143,7 @@ export class AppointmentPluginController {
       feature: string;
       operation: string;
       data: unknown;
-    },
+    }
   ) {
     const startTime = Date.now();
 
@@ -165,20 +154,18 @@ export class AppointmentPluginController {
         domain,
         feature,
         operation,
-        data,
+        data
       );
 
       const duration = Date.now() - startTime;
-      this.logger.log(
-        `Plugin operation executed successfully in ${duration}ms`,
-      );
+      this.logger.log(`Plugin operation executed successfully in ${duration}ms`);
 
       // Update health metrics
       await this.pluginHealthService.updatePluginMetrics(
         `${domain}-${feature}-plugin`,
         operation,
         duration,
-        true,
+        true
       );
 
       return {
@@ -192,25 +179,21 @@ export class AppointmentPluginController {
       };
     } catch (_error) {
       const duration = Date.now() - startTime;
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
-      const _errorStack = _error instanceof Error ? _error.stack : "";
-      this.logger.error(
-        `Failed to execute plugin operation: ${errorMessage}`,
-        _errorStack,
-      );
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : '';
+      this.logger.error(`Failed to execute plugin operation: ${errorMessage}`, _errorStack);
 
       // Update health metrics for failed operation
       await this.pluginHealthService.updatePluginMetrics(
         `${body.domain}-${body.feature}-plugin`,
         body.operation,
         duration,
-        false,
+        false
       );
 
       return {
         success: false,
-        _error: errorMessage,
+        error: errorMessage,
         domain: body.domain,
         feature: body.feature,
         operation: body.operation,
@@ -220,16 +203,16 @@ export class AppointmentPluginController {
     }
   }
 
-  @Post("execute-batch")
+  @Post('execute-batch')
   @ApiOperation({
-    summary: "Execute multiple plugin operations",
-    description: "Execute multiple plugin operations in sequence",
+    summary: 'Execute multiple plugin operations',
+    description: 'Execute multiple plugin operations in sequence',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin operations executed successfully",
+    description: 'Plugin operations executed successfully',
   })
-  @ApiResponse({ status: 400, description: "Invalid operations or data" })
+  @ApiResponse({ status: 400, description: 'Invalid operations or data' })
   async executePluginOperations(
     @Body()
     body: {
@@ -239,73 +222,68 @@ export class AppointmentPluginController {
         operation: string;
         data: unknown;
       }>;
-    },
+    }
   ) {
     const startTime = Date.now();
 
     try {
       const results = await Promise.all(
-        body.operations.map((op) =>
+        body.operations.map(op =>
           this.enterprisePluginManager.executePluginOperation(
             op.domain,
             op.feature,
             op.operation,
-            op.data,
-          ),
-        ),
+            op.data
+          )
+        )
       );
 
       const duration = Date.now() - startTime;
       this.logger.log(`Batch plugin operations executed in ${duration}ms`);
 
+      const typedResults = results as PluginOperationResult[];
+
       return {
         success: true,
-        results,
+        results: typedResults,
         total: body.operations.length,
-        successful: results.filter((r) => r.success).length,
-        failed: results.filter((r) => !r.success).length,
+        successful: typedResults.filter((r: PluginOperationResult) => r.success).length,
+        failed: typedResults.filter((r: PluginOperationResult) => !r.success).length,
         executedAt: new Date().toISOString(),
         duration,
       };
-    } catch (_error) {
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
-      this.logger.error(
-        `Failed to execute batch plugin operations: ${errorMessage}`,
-      );
-      throw _error;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to execute batch plugin operations: ${errorMessage}`);
+      throw error;
     }
   }
 
-  @Get("health")
+  @Get('health')
   @ApiOperation({
-    summary: "Get plugin system health",
-    description: "Get health status of the plugin system",
+    summary: 'Get plugin system health',
+    description: 'Get health status of the plugin system',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin system health retrieved successfully",
+    description: 'Plugin system health retrieved successfully',
   })
   async getPluginSystemHealth() {
     const startTime = Date.now();
 
     try {
-      const pluginInfo = (
-        this.enterprisePluginManager.getEnterpriseRegistry() as any
-      ).getPluginInfo() as any[];
-      const domains = [...new Set(pluginInfo.map((p: any) => p.domain))];
-      const healthSummary =
-        await this.pluginHealthService.getPluginHealthSummary();
+      const registry = this.enterprisePluginManager.getEnterpriseRegistry();
+      const pluginInfo = registry.getPluginInfo();
+      const domains = [...new Set(pluginInfo.map((p) => p.domain))];
+      const healthSummary = await this.pluginHealthService.getPluginHealthSummary();
 
       const health = {
         status: healthSummary.overallStatus,
         totalPlugins: pluginInfo.length,
         domains: domains.map((domain) => ({
           domain,
-          plugins: pluginInfo.filter((p: any) => p.domain === domain).length,
-          features: (
-            this.enterprisePluginManager.getEnterpriseRegistry() as any
-          ).getPluginsByFeature(domain),
+          plugins: pluginInfo.filter((p) => p.domain === domain).length,
+          features: registry.getDomainFeatures(domain),
         })),
         healthSummary,
         uptime: process.uptime(),
@@ -318,16 +296,12 @@ export class AppointmentPluginController {
       return health;
     } catch (_error) {
       const duration = Date.now() - startTime;
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
-      const _errorStack = _error instanceof Error ? _error.stack : "";
-      this.logger.error(
-        `Failed to get plugin system health: ${errorMessage}`,
-        _errorStack,
-      );
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : '';
+      this.logger.error(`Failed to get plugin system health: ${errorMessage}`, _errorStack);
 
       return {
-        status: "unhealthy",
+        status: 'unhealthy',
         _error: errorMessage,
         timestamp: new Date().toISOString(),
         duration,
@@ -335,14 +309,14 @@ export class AppointmentPluginController {
     }
   }
 
-  @Get("health/metrics")
+  @Get('health/metrics')
   @ApiOperation({
-    summary: "Get detailed plugin health metrics",
-    description: "Get detailed health metrics for all plugins",
+    summary: 'Get detailed plugin health metrics',
+    description: 'Get detailed health metrics for all plugins',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin health metrics retrieved successfully",
+    description: 'Plugin health metrics retrieved successfully',
   })
   async getPluginHealthMetrics() {
     const startTime = Date.now();
@@ -360,34 +334,30 @@ export class AppointmentPluginController {
         duration,
       };
     } catch (_error) {
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
       this.logger.error(`Failed to get plugin health metrics: ${errorMessage}`);
       throw _error;
     }
   }
 
-  @Get("health/domain/:domain")
+  @Get('health/domain/:domain')
   @ApiOperation({
-    summary: "Get domain plugin health",
-    description: "Get health metrics for plugins in a specific domain",
+    summary: 'Get domain plugin health',
+    description: 'Get health metrics for plugins in a specific domain',
   })
   @ApiResponse({
     status: 200,
-    description: "Domain plugin health retrieved successfully",
+    description: 'Domain plugin health retrieved successfully',
   })
-  @ApiResponse({ status: 404, description: "Domain not found" })
-  async getDomainPluginHealth(@Param("domain") domain: string) {
+  @ApiResponse({ status: 404, description: 'Domain not found' })
+  async getDomainPluginHealth(@Param('domain') domain: string) {
     const startTime = Date.now();
 
     try {
-      const healthMetrics =
-        await this.pluginHealthService.getDomainPluginHealth(domain);
+      const healthMetrics = await this.pluginHealthService.getDomainPluginHealth(domain);
 
       const duration = Date.now() - startTime;
-      this.logger.log(
-        `Domain plugin health retrieved for ${domain} in ${duration}ms`,
-      );
+      this.logger.log(`Domain plugin health retrieved for ${domain} in ${duration}ms`);
 
       return {
         domain,
@@ -397,21 +367,20 @@ export class AppointmentPluginController {
         duration,
       };
     } catch (_error) {
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
       this.logger.error(`Failed to get domain plugin health: ${errorMessage}`);
       throw _error;
     }
   }
 
-  @Get("health/alerts")
+  @Get('health/alerts')
   @ApiOperation({
-    summary: "Get plugin performance alerts",
-    description: "Get performance alerts for plugins",
+    summary: 'Get plugin performance alerts',
+    description: 'Get performance alerts for plugins',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin alerts retrieved successfully",
+    description: 'Plugin alerts retrieved successfully',
   })
   async getPluginAlerts() {
     const startTime = Date.now();
@@ -425,28 +394,27 @@ export class AppointmentPluginController {
       return {
         alerts,
         total: alerts.length,
-        high: alerts.filter((a) => a.severity === "high").length,
-        medium: alerts.filter((a) => a.severity === "medium").length,
-        low: alerts.filter((a) => a.severity === "low").length,
+        high: alerts.filter(a => a.severity === 'high').length,
+        medium: alerts.filter(a => a.severity === 'medium').length,
+        low: alerts.filter(a => a.severity === 'low').length,
         retrievedAt: new Date().toISOString(),
         duration,
       };
     } catch (_error) {
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
       this.logger.error(`Failed to get plugin alerts: ${errorMessage}`);
       throw _error;
     }
   }
 
-  @Get("config")
+  @Get('config')
   @ApiOperation({
-    summary: "Get plugin configurations",
-    description: "Get all plugin configurations",
+    summary: 'Get plugin configurations',
+    description: 'Get all plugin configurations',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin configurations retrieved successfully",
+    description: 'Plugin configurations retrieved successfully',
   })
   async getPluginConfigs() {
     const startTime = Date.now();
@@ -465,28 +433,24 @@ export class AppointmentPluginController {
       };
     } catch (_error) {
       const duration = Date.now() - startTime;
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
-      const _errorStack = _error instanceof Error ? _error.stack : "";
-      this.logger.error(
-        `Failed to get plugin configurations: ${errorMessage}`,
-        _errorStack,
-      );
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : '';
+      this.logger.error(`Failed to get plugin configurations: ${errorMessage}`, _errorStack);
       throw _error;
     }
   }
 
-  @Get("config/:pluginName")
+  @Get('config/:pluginName')
   @ApiOperation({
-    summary: "Get plugin configuration",
-    description: "Get configuration for a specific plugin",
+    summary: 'Get plugin configuration',
+    description: 'Get configuration for a specific plugin',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin configuration retrieved successfully",
+    description: 'Plugin configuration retrieved successfully',
   })
-  @ApiResponse({ status: 404, description: "Plugin not found" })
-  async getPluginConfig(@Param("pluginName") pluginName: string) {
+  @ApiResponse({ status: 404, description: 'Plugin not found' })
+  async getPluginConfig(@Param('pluginName') pluginName: string) {
     const startTime = Date.now();
 
     try {
@@ -501,9 +465,7 @@ export class AppointmentPluginController {
       }
 
       const duration = Date.now() - startTime;
-      this.logger.log(
-        `Plugin configuration retrieved for ${pluginName} in ${duration}ms`,
-      );
+      this.logger.log(`Plugin configuration retrieved for ${pluginName} in ${duration}ms`);
 
       return {
         success: true,
@@ -514,43 +476,31 @@ export class AppointmentPluginController {
       };
     } catch (_error) {
       const duration = Date.now() - startTime;
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
-      const _errorStack = _error instanceof Error ? _error.stack : "";
-      this.logger.error(
-        `Failed to get plugin configuration: ${errorMessage}`,
-        _errorStack,
-      );
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : '';
+      this.logger.error(`Failed to get plugin configuration: ${errorMessage}`, _errorStack);
       throw _error;
     }
   }
 
-  @Post("config/:pluginName")
+  @Post('config/:pluginName')
   @ApiOperation({
-    summary: "Update plugin configuration",
-    description: "Update configuration for a specific plugin",
+    summary: 'Update plugin configuration',
+    description: 'Update configuration for a specific plugin',
   })
   @ApiResponse({
     status: 200,
-    description: "Plugin configuration updated successfully",
+    description: 'Plugin configuration updated successfully',
   })
-  @ApiResponse({ status: 404, description: "Plugin not found" })
-  async updatePluginConfig(
-    @Param("pluginName") pluginName: string,
-    @Body() config: unknown,
-  ) {
+  @ApiResponse({ status: 404, description: 'Plugin not found' })
+  async updatePluginConfig(@Param('pluginName') pluginName: string, @Body() config: unknown) {
     const startTime = Date.now();
 
     try {
-      const success = await this.pluginConfigService.updatePluginConfig(
-        pluginName,
-        config as any,
-      );
+      const success = await this.pluginConfigService.updatePluginConfig(pluginName, config as any);
 
       const duration = Date.now() - startTime;
-      this.logger.log(
-        `Plugin configuration updated for ${pluginName} in ${duration}ms`,
-      );
+      this.logger.log(`Plugin configuration updated for ${pluginName} in ${duration}ms`);
 
       return {
         success,
@@ -560,15 +510,10 @@ export class AppointmentPluginController {
       };
     } catch (_error) {
       const duration = Date.now() - startTime;
-      const errorMessage =
-        _error instanceof Error ? _error.message : String(_error);
-      const _errorStack = _error instanceof Error ? _error.stack : "";
-      this.logger.error(
-        `Failed to update plugin configuration: ${errorMessage}`,
-        _errorStack,
-      );
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const _errorStack = _error instanceof Error ? _error.stack : '';
+      this.logger.error(`Failed to update plugin configuration: ${errorMessage}`, _errorStack);
       throw _error;
     }
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unused-vars */

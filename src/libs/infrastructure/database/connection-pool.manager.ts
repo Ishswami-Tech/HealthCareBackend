@@ -1,55 +1,36 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "./prisma/prisma.service";
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
+import type { PrismaService } from './prisma/prisma.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
-export interface ConnectionMetrics {
-  totalConnections: number;
-  activeConnections: number;
-  idleConnections: number;
-  waitingConnections: number;
-  totalQueries: number;
-  averageQueryTime: number;
-  slowQueries: number;
-  errors: number;
-  lastHealthCheck: Date;
-  isHealthy: boolean;
-  // Enhanced metrics for 1M+ users
-  peakConnections: number;
-  connectionUtilization: number;
-  queryThroughput: number; // queries per second
-  cacheHitRate: number;
-  readReplicaConnections?: number;
-  circuitBreakerTrips: number;
-  autoScalingEvents: number;
-}
+import type {
+  ConnectionMetrics,
+  QueryOptions,
+  CircuitBreakerState,
+} from '@core/types/database.types';
 
-export interface QueryOptions {
-  timeout?: number;
-  priority?: "high" | "normal" | "low";
-  retries?: number;
-  useCache?: boolean;
-}
-
-export interface CircuitBreakerState {
-  isOpen: boolean;
-  halfOpenTime?: Date;
-  failureCount: number;
-  successCount: number;
-  lastFailure?: Date;
-}
+// Re-export for backward compatibility
+export type {
+  ConnectionMetrics,
+  QueryOptions,
+  CircuitBreakerState,
+} from '@core/types/database.types';
 
 /**
  * Enhanced connection pool manager for healthcare applications
  * Supports high-volume operations (10 lakh+ users) with enterprise patterns
+ *
+ * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
+ * All methods are private/protected. Use HealthcareDatabaseClient instead.
+ * @internal
  */
 @Injectable()
 export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(ConnectionPoolManager.name);
+  private readonly serviceName = 'ConnectionPoolManager';
   private metrics!: ConnectionMetrics;
   private circuitBreaker!: CircuitBreakerState;
   private queryQueue: Array<{
@@ -68,23 +49,34 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private configService: ConfigService,
-    private prismaService: PrismaService,
+    private databaseService: HealthcareDatabaseClient,
+    private loggingService: LoggingService
   ) {
     this.initializeMetrics();
     this.initializeCircuitBreaker();
   }
 
-  async onModuleInit() {
-    await this.initializePool();
+  onModuleInit() {
+    this.initializePool();
     this.startHealthMonitoring();
     this.startQueueProcessor();
-    this.logger.log("Enhanced connection pool manager initialized");
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Enhanced connection pool manager initialized',
+      this.serviceName
+    );
   }
 
-  async onModuleDestroy() {
+  onModuleDestroy() {
     clearInterval(this.healthCheckInterval);
-    await this.closePool();
-    this.logger.log("Connection pool manager destroyed");
+    this.closePool();
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Connection pool manager destroyed',
+      this.serviceName
+    );
   }
 
   private initializeMetrics() {
@@ -113,38 +105,51 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private initializeCircuitBreaker() {
     this.circuitBreaker = {
       isOpen: false,
+      failures: 0,
       failureCount: 0,
       successCount: 0,
     };
   }
 
   private initializePool() {
-    // Initialize connection pool configuration for Prisma
+    // Initialize connection pool configuration for Prisma - Optimized for 10M+ users
     const poolConfig = {
-      min: this.configService.get<number>("DB_POOL_MIN", 20),
-      max: this.configService.get<number>("DB_POOL_MAX", 300),
-      maxUses: this.configService.get<number>("DB_POOL_MAX_USES", 7500),
+      min: this.configService.get<number>('DB_POOL_MIN', 50), // Increased from 20
+      max: this.configService.get<number>('DB_POOL_MAX', 500), // Increased from 300 for scale
+      maxUses: this.configService.get<number>('DB_POOL_MAX_USES', 10000), // Increased from 7500
     };
 
     // Update metrics with estimated values
     this.metrics.totalConnections = poolConfig.min;
 
-    this.logger.log(
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
       `Connection pool manager initialized with min: ${poolConfig.min}, max: ${poolConfig.max}`,
+      this.serviceName
     );
   }
 
   /**
    * Execute query with advanced features (circuit breaker, retry, priority queue)
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   async executeQuery<T>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions = {},
+    options: QueryOptions = {}
   ): Promise<T> {
     // Check circuit breaker
     if (this.circuitBreaker.isOpen && !this.shouldAttemptHalfOpen()) {
-      throw new Error("Circuit breaker is open - database unavailable");
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        'Circuit breaker is open - database unavailable',
+        undefined,
+        { circuitBreakerState: this.circuitBreaker },
+        'ConnectionPoolManager'
+      );
     }
 
     const startTime = Date.now();
@@ -165,8 +170,11 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       // Retry logic
       const retries = options.retries || 0;
       if (retries > 0) {
-        this.logger.warn(
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
           `Query failed, retrying (${retries} attempts left): ${(error as Error).message}`,
+          this.serviceName
         );
         await this.delay(1000 * (4 - retries)); // Exponential backoff
         return this.executeQuery<T>(query, params, {
@@ -175,19 +183,28 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      throw error;
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.DATABASE_QUERY_FAILED,
+        `Query execution failed: ${(error as Error).message}`,
+        undefined,
+        { query, originalError: (error as Error).message },
+        this.serviceName
+      );
     }
   }
 
   private async executeQueryInternal<T>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions = {},
+    options: QueryOptions = {}
   ): Promise<T> {
-    const priority = options.priority || "normal";
+    const priority = options.priority || 'normal';
 
     // For high priority queries, execute immediately
-    if (priority === "high" || this.queryQueue.length === 0) {
+    if (priority === 'high' || this.queryQueue.length === 0) {
       return this.directExecute<T>(query, params, options);
     }
 
@@ -204,11 +221,26 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
       // Sort queue by priority
       this.queryQueue.sort((a, b) => {
-        const priorityOrder = { high: 3, normal: 2, low: 1 };
-        return (
-          priorityOrder[b.options.priority || "normal"] -
-          priorityOrder[a.options.priority || "normal"]
-        );
+        const priorityOrder: Record<'high' | 'normal' | 'low' | 'critical', number> = {
+          critical: 4,
+          high: 3,
+          normal: 2,
+          low: 1,
+        };
+        type PriorityType = 'critical' | 'high' | 'normal' | 'low';
+        const bPriorityRaw = b.options.priority || 'normal';
+        const aPriorityRaw = a.options.priority || 'normal';
+        const bPriority: PriorityType =
+          bPriorityRaw === 'critical' || bPriorityRaw === 'high' || bPriorityRaw === 'low'
+            ? bPriorityRaw
+            : 'normal';
+        const aPriority: PriorityType =
+          aPriorityRaw === 'critical' || aPriorityRaw === 'high' || aPriorityRaw === 'low'
+            ? aPriorityRaw
+            : 'normal';
+        const bValue = priorityOrder[bPriority] || 2;
+        const aValue = priorityOrder[aPriority] || 2;
+        return bValue - aValue;
       });
     });
   }
@@ -216,16 +248,61 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private async directExecute<T>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions = {},
+    _options: QueryOptions = {}
   ): Promise<T> {
     try {
       this.metrics.activeConnections++;
 
-      // Execute query using Prisma's raw query
-      const result = await this.prismaService["$queryRawUnsafe"](
-        query,
-        ...params,
-      );
+      // Execute query using Prisma's raw query through HealthcareDatabaseClient
+      // Use protected internal accessor for infrastructure components
+      // Accessing protected method - ConnectionPoolManager is infrastructure component
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+      ).getInternalPrismaClient();
+      // Convert params to the expected type for $queryRawUnsafe
+      const typedParams: Array<string | number | boolean | null> = params.map(param => {
+        if (
+          typeof param === 'string' ||
+          typeof param === 'number' ||
+          typeof param === 'boolean' ||
+          param === null
+        ) {
+          return param;
+        }
+        // For objects, use JSON.stringify to avoid '[object Object]' stringification
+        if (typeof param === 'object' && param !== null) {
+          try {
+            return JSON.stringify(param);
+          } catch {
+            return '[object Object]';
+          }
+        }
+        // For symbols, use toString() explicitly
+        if (typeof param === 'symbol') {
+          return param.toString();
+        }
+        // For bigint, convert explicitly
+        if (typeof param === 'bigint') {
+          return String(param);
+        }
+        // For all other types (undefined, function, etc.), use explicit conversion
+        // Handle undefined explicitly
+        if (param === undefined) {
+          return 'undefined';
+        }
+        // For functions, return function name
+        if (typeof param === 'function') {
+          return param.name || '[Function]';
+        }
+        // For any remaining types, convert to string (should not reach here in practice)
+        // This handles any edge cases not covered above
+        if (param === null) {
+          return 'null';
+        }
+        // Should not reach here, but handle gracefully
+        return JSON.stringify(param);
+      });
+      const result = await prismaClient.$queryRawUnsafe<T>(query, ...typedParams);
 
       return result as T;
     } finally {
@@ -234,94 +311,105 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   }
 
   private startQueueProcessor() {
-    setInterval(async () => {
-      if (this.isProcessingQueue || this.queryQueue.length === 0) {
-        return;
-      }
-
-      this.isProcessingQueue = true;
-
-      try {
-        // Enhanced for 10L+ users - increased batch size and intelligent processing
-        const availableConnections =
-          this.metrics.totalConnections - this.metrics.activeConnections;
-        const batchSize = Math.min(
-          Math.max(availableConnections * 2, 20), // Minimum 20, scale with available connections
-          this.queryQueue.length,
-          100, // Maximum 100 to prevent overwhelming
-        );
-
-        const batch = this.queryQueue.splice(0, batchSize);
-
-        // Process with controlled concurrency
-        const concurrencyLimit = Math.min(availableConnections, 50);
-        const promises: Promise<void>[] = [];
-
-        for (let i = 0; i < batch.length; i += concurrencyLimit) {
-          const chunk = batch.slice(i, i + concurrencyLimit);
-
-          const chunkPromise = Promise.all(
-            chunk.map(async (item) => {
-              try {
-                const result = await this.directExecute(
-                  item.query,
-                  item.params,
-                  item.options,
-                );
-                item.resolve(result);
-              } catch (error) {
-                item.reject(error);
-              }
-            }),
-          ).then(() => {});
-
-          promises.push(chunkPromise);
+    setInterval(() => {
+      void (async () => {
+        if (this.isProcessingQueue || this.queryQueue.length === 0) {
+          return;
         }
 
-        await Promise.all(promises);
-      } finally {
-        this.isProcessingQueue = false;
-      }
+        this.isProcessingQueue = true;
+
+        try {
+          // Enhanced for 10L+ users - increased batch size and intelligent processing
+          const availableConnections =
+            this.metrics.totalConnections - this.metrics.activeConnections;
+          const batchSize = Math.min(
+            Math.max(availableConnections * 2, 20), // Minimum 20, scale with available connections
+            this.queryQueue.length,
+            100 // Maximum 100 to prevent overwhelming
+          );
+
+          const batch = this.queryQueue.splice(0, batchSize);
+
+          // Process with controlled concurrency
+          const concurrencyLimit = Math.min(availableConnections, 50);
+          const promises: Promise<void>[] = [];
+
+          for (let i = 0; i < batch.length; i += concurrencyLimit) {
+            const chunk = batch.slice(i, i + concurrencyLimit);
+
+            const chunkPromise = Promise.all(
+              chunk.map(async item => {
+                try {
+                  const result = await this.directExecute(item.query, item.params, item.options);
+                  item.resolve(result);
+                } catch (error) {
+                  item.reject(error);
+                }
+              })
+            ).then(() => {});
+
+            promises.push(chunkPromise);
+          }
+
+          await Promise.all(promises);
+        } finally {
+          this.isProcessingQueue = false;
+        }
+      })();
     }, 50); // Process queue every 50ms for higher throughput
   }
 
   private startHealthMonitoring() {
-    this.healthCheckInterval = setInterval(async () => {
-      try {
-        const start = Date.now();
-        await this.prismaService.$queryRaw`SELECT 1`;
-        const duration = Date.now() - start;
+    this.healthCheckInterval = setInterval(() => {
+      void (async () => {
+        try {
+          const start = Date.now();
+          // Use internal accessor - ConnectionPoolManager is infrastructure component
+          const prismaClient = (
+            this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+          ).getInternalPrismaClient();
+          await prismaClient.$queryRaw`SELECT 1`;
+          const duration = Date.now() - start;
 
-        this.metrics.lastHealthCheck = new Date();
-        this.metrics.isHealthy = duration < 2000; // Relaxed for high-load scenarios
+          this.metrics.lastHealthCheck = new Date();
+          this.metrics.isHealthy = duration < 2000; // Relaxed for high-load scenarios
 
-        // Update estimated pool metrics
-        this.metrics.idleConnections = Math.max(
-          0,
-          this.metrics.totalConnections - this.metrics.activeConnections,
-        );
-        this.metrics.waitingConnections = this.queryQueue.length;
-
-        // Enhanced monitoring for 10L+ users
-        const utilizationRate =
-          this.metrics.activeConnections / this.metrics.totalConnections;
-        const queueLength = this.queryQueue.length;
-
-        // Log warnings for high utilization
-        if (utilizationRate > 0.8) {
-          this.logger.warn(
-            `High connection pool utilization: ${(utilizationRate * 100).toFixed(1)}%`,
+          // Update estimated pool metrics
+          this.metrics.idleConnections = Math.max(
+            0,
+            this.metrics.totalConnections - this.metrics.activeConnections
           );
-        }
+          this.metrics.waitingConnections = this.queryQueue.length;
 
-        if (queueLength > 100) {
-          this.logger.warn(
-            `Large query queue detected: ${queueLength} queries waiting`,
-          );
-        }
+          // Enhanced monitoring for 10L+ users
+          const utilizationRate = this.metrics.activeConnections / this.metrics.totalConnections;
+          const queueLength = this.queryQueue.length;
 
-        this.logger.debug(
-          `Health check completed in ${duration}ms - Pool stats: ${JSON.stringify(
+          // Log warnings for high utilization
+          if (utilizationRate > 0.8) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.WARN,
+              `High connection pool utilization: ${(utilizationRate * 100).toFixed(1)}%`,
+              this.serviceName
+            );
+          }
+
+          if (queueLength > 100) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.WARN,
+              `Large query queue detected: ${queueLength} queries waiting`,
+              this.serviceName
+            );
+          }
+
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.DEBUG,
+            `Health check completed in ${duration}ms`,
+            this.serviceName,
             {
               total: this.metrics.totalConnections,
               active: this.metrics.activeConnections,
@@ -329,14 +417,20 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
               waiting: this.metrics.waitingConnections,
               utilization: `${(utilizationRate * 100).toFixed(1)}%`,
               queueLength: queueLength,
-            },
-          )}`,
-        );
-      } catch (error) {
-        this.metrics.isHealthy = false;
-        this.handleCircuitBreakerFailure();
-        this.logger.error("Health check failed:", error);
-      }
+            }
+          );
+        } catch (error) {
+          this.metrics.isHealthy = false;
+          this.handleCircuitBreakerFailure();
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            `Health check failed: ${(error as Error).message}`,
+            this.serviceName,
+            { error: (error as Error).stack }
+          );
+        }
+      })();
     }, 15000); // Every 15 seconds for faster detection under high load
   }
 
@@ -345,13 +439,17 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
     // Update average query time
     this.metrics.averageQueryTime =
-      (this.metrics.averageQueryTime * (this.metrics.totalQueries - 1) +
-        queryTime) /
+      (this.metrics.averageQueryTime * (this.metrics.totalQueries - 1) + queryTime) /
       this.metrics.totalQueries;
 
     if (queryTime > this.slowQueryThreshold) {
       this.metrics.slowQueries++;
-      this.logger.warn(`Slow query detected: ${queryTime}ms`);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.WARN,
+        `Slow query detected: ${queryTime}ms`,
+        this.serviceName
+      );
     }
   }
 
@@ -362,7 +460,12 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       this.circuitBreaker.isOpen = false;
       this.circuitBreaker.failureCount = 0;
       this.circuitBreaker.successCount = 0;
-      this.logger.log("Circuit breaker closed - database connection restored");
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
+        'Circuit breaker closed - database connection restored',
+        this.serviceName
+      );
     }
   }
 
@@ -375,86 +478,130 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       !this.circuitBreaker.isOpen
     ) {
       this.circuitBreaker.isOpen = true;
-      this.circuitBreaker.halfOpenTime = new Date(
-        Date.now() + this.circuitBreakerTimeout,
-      );
-      this.logger.error(
-        "Circuit breaker opened - database connection issues detected",
+      this.circuitBreaker.halfOpenTime = new Date(Date.now() + this.circuitBreakerTimeout);
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        'Circuit breaker opened - database connection issues detected',
+        this.serviceName
       );
     }
   }
 
   private shouldAttemptHalfOpen(): boolean {
-    return !!(
-      this.circuitBreaker.halfOpenTime &&
-      new Date() >= this.circuitBreaker.halfOpenTime
-    );
+    return !!(this.circuitBreaker.halfOpenTime && new Date() >= this.circuitBreaker.halfOpenTime);
   }
 
   private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private closePool() {
     // Connection pool will be handled by Prisma disconnect
-    this.logger.log("Connection pool manager closed");
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Connection pool manager closed',
+      this.serviceName
+    );
   }
 
-  // Public methods for monitoring
+  /**
+   * Get connection metrics
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getMetrics(): ConnectionMetrics {
     return { ...this.metrics };
   }
 
+  /**
+   * Get circuit breaker state
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getCircuitBreakerState(): CircuitBreakerState {
     return { ...this.circuitBreaker };
   }
 
-  resetCircuitBreaker() {
+  /**
+   * Reset circuit breaker
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  // Public for HealthcareDatabaseClient access, but marked as internal
+  resetCircuitBreaker(): void {
     this.initializeCircuitBreaker();
-    this.logger.log("Circuit breaker reset");
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Circuit breaker reset',
+      this.serviceName
+    );
   }
 
+  /**
+   * Get queue length
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getQueueLength(): number {
     return this.queryQueue.length;
   }
 
   /**
    * Healthcare-specific query methods
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   async executeHealthcareRead<T>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions = {},
+    options: QueryOptions = {}
   ): Promise<T> {
     return this.executeQuery<T>(query, params, {
       ...options,
-      priority: options.priority || "normal",
+      priority: options.priority || 'normal',
       timeout: options.timeout || 15000,
       retries: options.retries || 2,
     });
   }
 
+  /**
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   async executeHealthcareWrite<T>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions = {},
+    options: QueryOptions = {}
   ): Promise<T> {
     return this.executeQuery<T>(query, params, {
       ...options,
-      priority: options.priority || "high",
+      priority: options.priority || 'high',
       timeout: options.timeout || 30000,
       retries: options.retries || 1,
     });
   }
 
+  /**
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   async executeCriticalQuery<T>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions = {},
+    options: QueryOptions = {}
   ): Promise<T> {
     return this.executeQuery<T>(query, params, {
       ...options,
-      priority: "high",
+      priority: 'high',
       timeout: options.timeout || 60000,
       retries: options.retries || 3,
     });
@@ -466,7 +613,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Execute batch operations with optimized concurrency for high scale
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   async executeBatch<T, U>(
     items: T[],
     operation: (item: T, index: number) => Promise<U>,
@@ -474,8 +624,8 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       concurrency?: number;
       timeout?: number;
       clinicId?: string;
-      priority?: "high" | "normal" | "low";
-    } = {},
+      priority?: 'high' | 'normal' | 'low';
+    } = {}
   ): Promise<U[]> {
     const concurrency = options.concurrency || 50; // Higher concurrency for 1M users
     const startTime = Date.now();
@@ -486,7 +636,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       for (let i = 0; i < items.length; i += concurrency) {
         const chunk = items.slice(i, i + concurrency);
         const chunkResults = await Promise.all(
-          chunk.map((item, index) => operation(item, i + index)),
+          chunk.map((item, index) => operation(item, i + index))
         );
         results.push(...chunkResults);
       }
@@ -494,53 +644,101 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       const executionTime = Date.now() - startTime;
       this.updateMetrics(executionTime);
 
-      this.logger.debug(`Batch operation completed`, {
-        itemCount: items.length,
-        concurrency,
-        executionTime,
-        clinicId: options.clinicId,
-      });
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Batch operation completed: ${items.length} items`,
+        this.serviceName,
+        {
+          itemCount: items.length,
+          concurrency,
+          executionTime,
+          clinicId: options.clinicId,
+        }
+      );
 
       return results;
     } catch (error) {
       this.metrics.errors++;
-      this.logger.error(`Batch operation failed:`, {
-        itemCount: items.length,
-        error: (error as Error).message,
-        clinicId: options.clinicId,
-      });
-      throw error;
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Batch operation failed: ${(error as Error).message}`,
+        this.serviceName,
+        {
+          itemCount: items.length,
+          error: (error as Error).stack,
+          clinicId: options.clinicId,
+        }
+      );
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.DATABASE_QUERY_FAILED,
+        `Batch operation failed: ${(error as Error).message}`,
+        undefined,
+        {
+          itemCount: items.length,
+          clinicId: options.clinicId,
+          originalError: (error as Error).message,
+        },
+        this.serviceName
+      );
     }
   }
 
   /**
    * Execute query with read replica routing for scale
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
-  async executeQueryWithReadReplica<T = any>(
+  // Public for HealthcareDatabaseClient access, but marked as internal
+  async executeQueryWithReadReplica<T = unknown>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions & { clinicId?: string; userId?: string } = {},
+    options: QueryOptions & { clinicId?: string; userId?: string } = {}
   ): Promise<T> {
-    const healthcareConfig = this.configService.get("healthcare");
-    const readReplicasEnabled =
-      healthcareConfig?.database?.connectionPool?.readReplicas?.enabled;
+    type HealthcareConfigShape = {
+      database?: {
+        connectionPool?: {
+          readReplicas?: {
+            enabled?: boolean;
+          };
+        };
+      };
+    };
+    const healthcareConfig = this.configService.get<HealthcareConfigShape | undefined>(
+      'healthcare'
+    );
+    const readReplicasEnabled = healthcareConfig?.database?.connectionPool?.readReplicas?.enabled;
 
     // Route read queries to read replicas if available and query is read-only
     if (readReplicasEnabled && this.isReadOnlyQuery(query)) {
       try {
-        this.logger.debug("Query routed to read replica", {
-          query: query.substring(0, 100),
-          clinicId: options.clinicId,
-        });
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          'Query routed to read replica',
+          this.serviceName,
+          {
+            query: query.substring(0, 100),
+            clinicId: options.clinicId,
+          }
+        );
 
         // Update read replica metrics
         if (this.metrics.readReplicaConnections !== undefined) {
           this.metrics.readReplicaConnections++;
         }
       } catch (error) {
-        this.logger.warn("Read replica failed, falling back to primary", {
-          error: (error as Error).message,
-        });
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Read replica failed, falling back to primary: ${(error as Error).message}`,
+          this.serviceName,
+          { error: (error as Error).stack }
+        );
       }
     }
 
@@ -549,7 +747,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get comprehensive metrics for monitoring dashboards
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   getDetailedMetrics(): ConnectionMetrics & {
     queryMetrics: {
       queriesPerSecond: number;
@@ -573,7 +774,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       },
       connectionHealth: {
         poolUtilization: this.metrics.connectionUtilization,
-        circuitBreakerStatus: this.circuitBreaker.isOpen ? "OPEN" : "CLOSED",
+        circuitBreakerStatus: this.circuitBreaker.isOpen ? 'OPEN' : 'CLOSED',
         healthyConnections: this.metrics.totalConnections - this.metrics.errors,
       },
     };
@@ -581,9 +782,23 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Auto-scaling logic for connection pool based on load
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
+  // Public for HealthcareDatabaseClient access, but marked as internal
   async autoScaleConnectionPool(): Promise<void> {
-    const healthcareConfig = this.configService.get("healthcare");
+    type HealthcareConfigShape = {
+      database?: {
+        performance?: {
+          autoScaling?: {
+            enabled?: boolean;
+          };
+        };
+      };
+    };
+    const healthcareConfig = this.configService.get<HealthcareConfigShape | undefined>(
+      'healthcare'
+    );
     const autoScaling = healthcareConfig?.database?.performance?.autoScaling;
 
     if (!autoScaling?.enabled) return Promise.resolve();
@@ -593,22 +808,34 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
     // Scale up if utilization is high
     if (currentUtilization > 0.8 && currentConnections < 500) {
-      this.logger.log("Auto-scaling connection pool up", {
-        currentConnections,
-        utilization: currentUtilization,
-        targetConnections: Math.min(500, currentConnections + 50),
-      });
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
+        'Auto-scaling connection pool up',
+        this.serviceName,
+        {
+          currentConnections,
+          utilization: currentUtilization,
+          targetConnections: Math.min(500, currentConnections + 50),
+        }
+      );
 
       this.metrics.autoScalingEvents++;
     }
 
     // Scale down if utilization is consistently low
     if (currentUtilization < 0.3 && currentConnections > 50) {
-      this.logger.log("Auto-scaling connection pool down", {
-        currentConnections,
-        utilization: currentUtilization,
-        targetConnections: Math.max(50, currentConnections - 25),
-      });
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
+        'Auto-scaling connection pool down',
+        this.serviceName,
+        {
+          currentConnections,
+          utilization: currentUtilization,
+          targetConnections: Math.max(50, currentConnections - 25),
+        }
+      );
 
       this.metrics.autoScalingEvents++;
     }
@@ -616,19 +843,22 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Optimize queries for clinic-specific operations
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
    */
-  async executeClinicOptimizedQuery<T = any>(
+  // Public for HealthcareDatabaseClient access, but marked as internal
+  async executeClinicOptimizedQuery<T = unknown>(
     clinicId: string,
     query: string,
     params: unknown[] = [],
-    options: QueryOptions = {},
+    options: QueryOptions = {}
   ): Promise<T> {
     // Add clinic-specific optimizations
     const optimizedQuery = this.optimizeQueryForClinic(query, clinicId);
 
     return this.executeQuery<T>(optimizedQuery, [clinicId, ...params], {
       ...options,
-      priority: "high", // Clinic operations get high priority
+      priority: 'high', // Clinic operations get high priority
     });
   }
 
@@ -638,9 +868,9 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     return readOnlyPatterns.test(query.trim());
   }
 
-  private optimizeQueryForClinic(query: string, clinicId: string): string {
+  private optimizeQueryForClinic(query: string, _clinicId: string): string {
     // Add clinic-specific query optimizations
-    if (query.includes("WHERE") && !query.includes("clinic_id")) {
+    if (query.includes('WHERE') && !query.includes('clinic_id')) {
       // Ensure clinic isolation in queries
       return query.replace(/WHERE/, `WHERE clinic_id = $1 AND`);
     }
@@ -651,7 +881,12 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
    * Graceful shutdown with connection draining
    */
   async gracefulShutdown(): Promise<void> {
-    this.logger.log("Starting graceful shutdown of connection pool");
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Starting graceful shutdown of connection pool',
+      this.serviceName
+    );
 
     // Stop accepting new queries
     clearInterval(this.healthCheckInterval);
@@ -660,18 +895,23 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     const shutdownTimeout = 30000; // 30 seconds
     const startTime = Date.now();
 
-    while (
-      this.metrics.activeConnections > 0 &&
-      Date.now() - startTime < shutdownTimeout
-    ) {
-      this.logger.log(
+    while (this.metrics.activeConnections > 0 && Date.now() - startTime < shutdownTimeout) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
         `Waiting for ${this.metrics.activeConnections} active connections to complete`,
+        this.serviceName
       );
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     // Force close remaining connections
-    await this.closePool();
-    this.logger.log("Connection pool graceful shutdown completed");
+    this.closePool();
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Connection pool graceful shutdown completed',
+      this.serviceName
+    );
   }
 }

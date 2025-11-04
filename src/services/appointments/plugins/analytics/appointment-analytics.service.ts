@@ -1,83 +1,30 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
-import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { CacheService } from "../../../../libs/infrastructure/cache/cache.service";
-import { LoggingService } from "../../../../libs/infrastructure/logging";
-import { PrismaService } from "@database/prisma/prisma.service";
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { DatabaseService } from '@infrastructure/database';
+import type {
+  AppointmentMetrics,
+  DoctorMetrics,
+  ClinicMetrics,
+  TimeSlotMetrics,
+  AnalyticsFilter,
+  AnalyticsResult,
+} from '@core/types/appointment.types';
 
-export interface AppointmentMetrics {
-  totalAppointments: number;
-  appointmentsByStatus: Record<string, number>;
-  appointmentsByType: Record<string, number>;
-  appointmentsByPriority: Record<string, number>;
-  averageDuration: number;
-  noShowRate: number;
-  completionRate: number;
-  averageWaitTime: number;
-  queueEfficiency: number;
-  patientSatisfaction: number;
-  revenue: number;
-  costPerAppointment: number;
-}
-
-export interface DoctorMetrics {
-  doctorId: string;
-  doctorName: string;
-  totalAppointments: number;
-  completedAppointments: number;
-  averageRating: number;
-  noShowRate: number;
-  averageDuration: number;
-  patientSatisfaction: number;
-  revenue: number;
-  efficiency: number;
-}
-
-export interface ClinicMetrics {
-  clinicId: string;
-  clinicName: string;
-  totalAppointments: number;
-  totalDoctors: number;
-  totalPatients: number;
-  averageWaitTime: number;
-  queueEfficiency: number;
-  patientSatisfaction: number;
-  revenue: number;
-  costPerAppointment: number;
-  utilizationRate: number;
-}
-
-export interface TimeSlotMetrics {
-  timeSlot: string;
-  totalAppointments: number;
-  completedAppointments: number;
-  noShowRate: number;
-  averageDuration: number;
-  efficiency: number;
-}
-
-export interface AnalyticsFilter {
-  clinicId?: string;
-  doctorId?: string;
-  patientId?: string;
-  startDate: Date;
-  endDate: Date;
-  appointmentType?: string;
-  status?: string;
-  priority?: string;
-}
-
-export interface AnalyticsResult {
-  success: boolean;
-  data?: unknown;
-  error?: string;
-  generatedAt: Date;
-  filters: AnalyticsFilter;
-}
+// Re-export types for backward compatibility
+export type {
+  AppointmentMetrics,
+  DoctorMetrics,
+  ClinicMetrics,
+  TimeSlotMetrics,
+  AnalyticsFilter,
+  AnalyticsResult,
+};
 
 @Injectable()
 export class AppointmentAnalyticsService {
-  private readonly logger = new Logger(AppointmentAnalyticsService.name);
   private readonly ANALYTICS_CACHE_TTL = 1800; // 30 minutes
   private readonly METRICS_CACHE_TTL = 3600; // 1 hour
 
@@ -85,7 +32,7 @@ export class AppointmentAnalyticsService {
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     private readonly configService: ConfigService,
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService
   ) {}
 
   /**
@@ -94,7 +41,7 @@ export class AppointmentAnalyticsService {
   async getAppointmentMetrics(
     clinicId: string,
     dateRange: { from: Date; to: Date },
-    filters?: Partial<AnalyticsFilter>,
+    filters?: Partial<AnalyticsFilter>
   ): Promise<AnalyticsResult> {
     const cacheKey = `appointment_metrics:${clinicId}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
 
@@ -104,92 +51,69 @@ export class AppointmentAnalyticsService {
         return cached as AnalyticsResult;
       }
 
-      // Calculate metrics from database
-      const totalAppointments = await this.prisma.appointment.count({
-        where: {
-          clinicId,
-          ...(dateRange.from && dateRange.to
-            ? {
-                date: {
-                  gte: dateRange.from,
-                  lte: dateRange.to,
-                },
-              }
-            : {}),
-        },
-      });
+      // Calculate metrics from database using executeHealthcareRead with client parameter
+      const whereClause = {
+        clinicId,
+        ...(dateRange.from && dateRange.to
+          ? {
+              date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            }
+          : {}),
+      };
 
-      const appointmentsByStatus = await this.prisma.appointment.groupBy({
-        by: ["status"],
-        where: {
-          clinicId,
-          ...(dateRange.from && dateRange.to
-            ? {
-                date: {
-                  gte: dateRange.from,
-                  lte: dateRange.to,
-                },
-              }
-            : {}),
-        },
-        _count: {
-          status: true,
-        },
-      });
+      // Use countAppointmentsSafe for counts
+      const totalAppointments = await this.databaseService.countAppointmentsSafe(
+        whereClause as never
+      );
 
-      const appointmentsByType = await this.prisma.appointment.groupBy({
-        by: ["type"],
-        where: {
-          clinicId,
-          ...(dateRange.from && dateRange.to
-            ? {
-                date: {
-                  gte: dateRange.from,
-                  lte: dateRange.to,
-                },
-              }
-            : {}),
-        },
-        _count: {
-          type: true,
-        },
-      });
-
-      const completedAppointments = await this.prisma.appointment.findMany({
-        where: {
-          clinicId,
-          status: "COMPLETED",
-          ...(dateRange.from && dateRange.to
-            ? {
-                date: {
-                  gte: dateRange.from,
-                  lte: dateRange.to,
-                },
-              }
-            : {}),
-        },
-        select: {
-          scheduledTime: true,
-          actualStartTime: true,
-          patientSatisfaction: true,
-          totalCost: true,
-          duration: true,
-        },
-      });
+      // Use executeHealthcareRead for groupBy and complex queries
+      const [appointmentsByStatus, appointmentsByType, completedAppointments] = await Promise.all([
+        this.databaseService.executeHealthcareRead(async client => {
+          return await client.appointment.groupBy({
+            by: ['status'],
+            where: whereClause,
+            _count: {
+              status: true,
+            },
+          });
+        }),
+        this.databaseService.executeHealthcareRead(async client => {
+          return await client.appointment.groupBy({
+            by: ['type'],
+            where: whereClause,
+            _count: {
+              type: true,
+            },
+          });
+        }),
+        this.databaseService.executeHealthcareRead(async client => {
+          return await client.appointment.findMany({
+            where: {
+              ...whereClause,
+              status: 'COMPLETED',
+            },
+            select: {
+              date: true,
+              startedAt: true,
+              completedAt: true,
+              duration: true,
+            },
+          });
+        }),
+      ]);
 
       const statusMap: Record<string, number> = {};
-      appointmentsByStatus.forEach(
-        (item: { status: string; _count: { status: number } }) => {
-          statusMap[item.status] = item._count.status;
-        },
-      );
+      appointmentsByStatus.forEach((item: { status: string; _count: { status: number } }) => {
+        statusMap[item.status] = item._count.status;
+      });
 
       const typeMap: Record<string, number> = {};
-      appointmentsByType.forEach(
-        (item: { type: string; _count: { type: number } }) => {
-          typeMap[item.type] = item._count.type;
-        },
-      );
+      appointmentsByType.forEach((item: { type: string; _count: { type: number } }) => {
+        typeMap[item.type] = item._count.type;
+      });
 
       const averageWaitTime =
         completedAppointments.length > 0
@@ -197,57 +121,38 @@ export class AppointmentAnalyticsService {
               (
                 sum: number,
                 apt: {
-                  scheduledTime: Date | null;
-                  actualStartTime: Date | null;
-                },
+                  date: Date;
+                  startedAt: Date | null;
+                }
               ) => {
-                if (apt.scheduledTime && apt.actualStartTime) {
+                if (apt.date && apt.startedAt) {
                   const waitTime =
-                    (new Date(apt.actualStartTime).getTime() -
-                      new Date(apt.scheduledTime).getTime()) /
+                    (new Date(apt.startedAt).getTime() - new Date(apt.date).getTime()) /
                     (1000 * 60);
                   return sum + Math.max(0, waitTime);
                 }
                 return sum;
               },
-              0,
+              0
             ) / completedAppointments.length
           : 0;
 
-      const patientSatisfaction =
-        completedAppointments.length > 0
-          ? completedAppointments.reduce(
-              (sum: number, apt: { patientSatisfaction?: number }) =>
-                sum + (apt.patientSatisfaction || 0),
-              0,
-            ) / completedAppointments.length
-          : 0;
+      const patientSatisfaction = 0; // Patient satisfaction would need to come from a separate Review/Feedback table
 
-      const noShowCount = statusMap["NO_SHOW"] || 0;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const cancelledCount = statusMap["CANCELLED"] || 0;
-      const completedCount = statusMap["COMPLETED"] || 0;
-      const noShowRate =
-        totalAppointments > 0 ? (noShowCount / totalAppointments) * 100 : 0;
-      const completionRate =
-        totalAppointments > 0 ? (completedCount / totalAppointments) * 100 : 0;
+      const noShowCount = statusMap['NO_SHOW'] || 0;
+      const cancelledCount = statusMap['CANCELLED'] || 0;
+      const completedCount = statusMap['COMPLETED'] || 0;
+      const noShowRate = totalAppointments > 0 ? (noShowCount / totalAppointments) * 100 : 0;
+      const completionRate = totalAppointments > 0 ? (completedCount / totalAppointments) * 100 : 0;
 
-      const revenue = completedAppointments.reduce(
-        (sum: number, apt: { totalCost?: number }) =>
-          sum + (apt.totalCost || 0),
-        0,
-      );
-      const costPerAppointment =
-        completedAppointments.length > 0
-          ? revenue / completedAppointments.length
-          : 0;
+      const revenue = 0; // Revenue would need to come from Payment table
+      const costPerAppointment = 0;
 
       const averageDuration =
         completedAppointments.length > 0
           ? completedAppointments.reduce(
-              (sum: number, apt: { duration?: number }) =>
-                sum + (apt.duration || 0),
-              0,
+              (sum: number, apt: { duration?: number }) => sum + (apt.duration || 0),
+              0
             ) / completedAppointments.length
           : 0;
 
@@ -287,14 +192,20 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      this.logger.error("Failed to get appointment metrics", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
-        clinicId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get appointment metrics',
+        'AppointmentAnalyticsService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+          clinicId,
+        }
+      );
 
       return {
         success: false,
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         generatedAt: new Date(),
         filters: {
           clinicId,
@@ -311,7 +222,7 @@ export class AppointmentAnalyticsService {
    */
   async getDoctorMetrics(
     doctorId: string,
-    dateRange: { from: Date; to: Date },
+    dateRange: { from: Date; to: Date }
   ): Promise<AnalyticsResult> {
     const cacheKey = `doctor_metrics:${doctorId}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
 
@@ -324,7 +235,7 @@ export class AppointmentAnalyticsService {
       // Mock doctor metrics
       const metrics: DoctorMetrics = {
         doctorId,
-        doctorName: "Dr. Smith",
+        doctorName: 'Dr. Smith',
         totalAppointments: 50,
         completedAppointments: 45,
         averageRating: 4.5,
@@ -349,14 +260,20 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      this.logger.error("Failed to get doctor metrics", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
-        doctorId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get doctor metrics',
+        'AppointmentAnalyticsService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+          doctorId,
+        }
+      );
 
       return {
         success: false,
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         generatedAt: new Date(),
         filters: {
           doctorId,
@@ -372,7 +289,7 @@ export class AppointmentAnalyticsService {
    */
   async getClinicMetrics(
     clinicId: string,
-    dateRange: { from: Date; to: Date },
+    dateRange: { from: Date; to: Date }
   ): Promise<AnalyticsResult> {
     const cacheKey = `clinic_metrics:${clinicId}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
 
@@ -385,7 +302,7 @@ export class AppointmentAnalyticsService {
       // Mock clinic metrics
       const metrics: ClinicMetrics = {
         clinicId,
-        clinicName: "Healthcare Clinic",
+        clinicName: 'Healthcare Clinic',
         totalAppointments: 200,
         totalDoctors: 5,
         totalPatients: 150,
@@ -411,14 +328,20 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      this.logger.error("Failed to get clinic metrics", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
-        clinicId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get clinic metrics',
+        'AppointmentAnalyticsService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+          clinicId,
+        }
+      );
 
       return {
         success: false,
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         generatedAt: new Date(),
         filters: {
           clinicId,
@@ -434,7 +357,7 @@ export class AppointmentAnalyticsService {
    */
   async getTimeSlotAnalytics(
     clinicId: string,
-    dateRange: { from: Date; to: Date },
+    dateRange: { from: Date; to: Date }
   ): Promise<AnalyticsResult> {
     const cacheKey = `timeslot_analytics:${clinicId}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
 
@@ -447,7 +370,7 @@ export class AppointmentAnalyticsService {
       // Mock time slot metrics
       const timeSlots: TimeSlotMetrics[] = [
         {
-          timeSlot: "09:00-10:00",
+          timeSlot: '09:00-10:00',
           totalAppointments: 20,
           completedAppointments: 18,
           noShowRate: 10,
@@ -455,7 +378,7 @@ export class AppointmentAnalyticsService {
           efficiency: 90,
         },
         {
-          timeSlot: "10:00-11:00",
+          timeSlot: '10:00-11:00',
           totalAppointments: 25,
           completedAppointments: 23,
           noShowRate: 8,
@@ -463,7 +386,7 @@ export class AppointmentAnalyticsService {
           efficiency: 92,
         },
         {
-          timeSlot: "11:00-12:00",
+          timeSlot: '11:00-12:00',
           totalAppointments: 30,
           completedAppointments: 28,
           noShowRate: 6.7,
@@ -486,14 +409,20 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      this.logger.error("Failed to get time slot analytics", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
-        clinicId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get time slot analytics',
+        'AppointmentAnalyticsService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+          clinicId,
+        }
+      );
 
       return {
         success: false,
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         generatedAt: new Date(),
         filters: {
           clinicId,
@@ -509,7 +438,7 @@ export class AppointmentAnalyticsService {
    */
   async getPatientSatisfactionAnalytics(
     clinicId: string,
-    dateRange: { from: Date; to: Date },
+    dateRange: { from: Date; to: Date }
   ): Promise<AnalyticsResult> {
     const cacheKey = `satisfaction_analytics:${clinicId}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
 
@@ -531,16 +460,16 @@ export class AppointmentAnalyticsService {
           1: 5,
         },
         feedbackCategories: {
-          "Doctor Communication": 4.5,
-          "Wait Time": 3.8,
+          'Doctor Communication': 4.5,
+          'Wait Time': 3.8,
           Facility: 4.2,
-          "Staff Friendliness": 4.4,
-          "Appointment Scheduling": 4.1,
+          'Staff Friendliness': 4.4,
+          'Appointment Scheduling': 4.1,
         },
         improvementSuggestions: [
-          "Reduce wait times",
-          "Improve parking availability",
-          "Better appointment scheduling",
+          'Reduce wait times',
+          'Improve parking availability',
+          'Better appointment scheduling',
         ],
       };
 
@@ -558,14 +487,20 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      this.logger.error("Failed to get patient satisfaction analytics", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
-        clinicId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get patient satisfaction analytics',
+        'AppointmentAnalyticsService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+          clinicId,
+        }
+      );
 
       return {
         success: false,
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         generatedAt: new Date(),
         filters: {
           clinicId,
@@ -582,26 +517,28 @@ export class AppointmentAnalyticsService {
   async generateAnalyticsReport(
     clinicId: string,
     dateRange: { from: Date; to: Date },
-    reportType: "summary" | "detailed" | "executive",
+    reportType: 'summary' | 'detailed' | 'executive'
   ): Promise<AnalyticsResult> {
     try {
-      this.logger.log(`Generating ${reportType} analytics report`, {
-        clinicId,
-        dateRange,
-      });
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Generating ${reportType} analytics report`,
+        'AppointmentAnalyticsService',
+        {
+          clinicId,
+          dateRange,
+        }
+      );
 
       // Get all analytics data
-      const [
-        appointmentMetrics,
-        clinicMetrics,
-        timeSlotAnalytics,
-        satisfactionAnalytics,
-      ] = await Promise.all([
-        this.getAppointmentMetrics(clinicId, dateRange),
-        this.getClinicMetrics(clinicId, dateRange),
-        this.getTimeSlotAnalytics(clinicId, dateRange),
-        this.getPatientSatisfactionAnalytics(clinicId, dateRange),
-      ]);
+      const [appointmentMetrics, clinicMetrics, timeSlotAnalytics, satisfactionAnalytics] =
+        await Promise.all([
+          this.getAppointmentMetrics(clinicId, dateRange),
+          this.getClinicMetrics(clinicId, dateRange),
+          this.getTimeSlotAnalytics(clinicId, dateRange),
+          this.getPatientSatisfactionAnalytics(clinicId, dateRange),
+        ]);
 
       const reportData = {
         reportType,
@@ -612,10 +549,7 @@ export class AppointmentAnalyticsService {
         clinicMetrics: clinicMetrics.data,
         timeSlotAnalytics: timeSlotAnalytics.data,
         satisfactionAnalytics: satisfactionAnalytics.data,
-        summary: this.generateReportSummary(
-          appointmentMetrics.data,
-          clinicMetrics.data,
-        ),
+        summary: this.generateReportSummary(appointmentMetrics.data, clinicMetrics.data),
       };
 
       return {
@@ -629,14 +563,20 @@ export class AppointmentAnalyticsService {
         },
       };
     } catch (_error) {
-      this.logger.error("Failed to generate analytics report", {
-        error: _error instanceof Error ? _error.message : "Unknown error",
-        clinicId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to generate analytics report',
+        'AppointmentAnalyticsService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+          clinicId,
+        }
+      );
 
       return {
         success: false,
-        error: _error instanceof Error ? _error.message : "Unknown error",
+        error: _error instanceof Error ? _error.message : 'Unknown error',
         generatedAt: new Date(),
         filters: {
           clinicId,
@@ -653,7 +593,7 @@ export class AppointmentAnalyticsService {
   private generateReportSummary(
     appointmentMetrics: unknown,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    clinicMetrics: unknown,
+    clinicMetrics: unknown
   ): unknown {
     return {
       keyInsights: [
@@ -663,14 +603,14 @@ export class AppointmentAnalyticsService {
         `Revenue: $${(appointmentMetrics as { revenue: number }).revenue}`,
       ],
       recommendations: [
-        "Focus on reducing no-show rates",
-        "Improve queue efficiency",
-        "Enhance patient satisfaction",
+        'Focus on reducing no-show rates',
+        'Improve queue efficiency',
+        'Enhance patient satisfaction',
       ],
       trends: {
-        appointmentGrowth: "+15%",
-        satisfactionTrend: "+0.3",
-        efficiencyTrend: "+5%",
+        appointmentGrowth: '+15%',
+        satisfactionTrend: '+0.3',
+        efficiencyTrend: '+5%',
       },
     };
   }

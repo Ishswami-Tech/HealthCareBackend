@@ -1,3 +1,3 @@
 // Appointment Communications Integration
-export * from "./appointment-communications.service";
-export * from "./appointment-communications.plugin";
+export * from './appointment-communications.service';
+export * from './appointment-communications.plugin';

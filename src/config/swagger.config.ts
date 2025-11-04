@@ -1,11 +1,9 @@
-import { DocumentBuilder, SwaggerCustomOptions } from "@nestjs/swagger";
-import developmentConfig from "./environment/development.config";
-import productionConfig from "./environment/production.config";
+import { DocumentBuilder, SwaggerCustomOptions } from '@nestjs/swagger';
+import developmentConfig from './environment/development.config';
+import productionConfig from './environment/production.config';
 
 const getEnvironmentConfig = () => {
-  return process.env["NODE_ENV"] === "production"
-    ? productionConfig()
-    : developmentConfig();
+  return process.env['NODE_ENV'] === 'production' ? productionConfig() : developmentConfig();
 };
 
 // Helper function to get API servers based on environment
@@ -13,27 +11,27 @@ const getApiServers = () => {
   const config = getEnvironmentConfig();
   const servers = [];
 
-  if (config.app.environment === "production") {
+  if (config.app.environment === 'production') {
     servers.push(
-      { url: config.app.baseUrl, description: "Production API Server" },
+      { url: config.app.baseUrl, description: 'Production API Server' },
       {
         url: `${config.app.baseUrl}${config.urls.bullBoard}`,
-        description: "Queue Dashboard",
-      },
+        description: 'Queue Dashboard',
+      }
     );
   } else {
     // Docker-first development configuration
     servers.push(
       // Primary Docker network URLs
-      { url: `http://localhost:8088`, description: "Development API Server" },
+      { url: `http://localhost:8088`, description: 'Development API Server' },
       {
         url: `http://localhost:8088${config.urls.bullBoard}`,
-        description: "Queue Dashboard",
+        description: 'Queue Dashboard',
       },
       // Development services with Docker network URLs
-      { url: "http://localhost:8082", description: "Redis Commander" },
-      { url: "http://localhost:5555", description: "Prisma Studio" },
-      { url: "http://localhost:5050", description: "PgAdmin" },
+      { url: 'http://localhost:8082', description: 'Redis Commander' },
+      { url: 'http://localhost:5555', description: 'Prisma Studio' },
+      { url: 'http://localhost:5050', description: 'PgAdmin' }
     );
   }
 
@@ -41,7 +39,7 @@ const getApiServers = () => {
 };
 
 export const swaggerConfig = new DocumentBuilder()
-  .setTitle("Healthcare API")
+  .setTitle('Healthcare API')
   .setDescription(
     `
 ## Modern Healthcare Management System
@@ -50,7 +48,7 @@ A comprehensive API system providing seamless integration for healthcare service
 
 ### Environment: ${getEnvironmentConfig().app.environment}
 ${
-  getEnvironmentConfig().app.environment === "production"
+  getEnvironmentConfig().app.environment === 'production'
     ? `
 ### Production URLs
 - Frontend: ${getEnvironmentConfig().urls.frontend}
@@ -86,36 +84,33 @@ ${
 - Health Check: /health
 - Queue Dashboard: ${getEnvironmentConfig().urls.bullBoard}
 ${
-  getEnvironmentConfig().app.environment !== "production"
+  getEnvironmentConfig().app.environment !== 'production'
     ? `
 ### Development Tools (Docker)
 - Redis Commander: http://localhost:8082
 - Prisma Studio: http://localhost:5555
 - PgAdmin: http://localhost:5050`
-    : ""
+    : ''
 }
-  `,
+  `
   )
-  .setVersion("1.0")
-  .addTag("root", "Root endpoints and health checks")
-  .addTag("health", "System health checks and monitoring")
-  .addTag("auth", "Authentication & User Management")
-  .addTag("user", "User profile and preferences management")
-  .addTag("appointments", "Appointment Scheduling And Management")
-  .addTag("clinic", "Healthcare facility and service management")
-  .addTag("Clinic Locations", "Geographical management of clinic locations")
-  .addTag("cache", "Redis-based caching system")
-  .addTag("Logging", "System Logging And Monitoring")
-  .addSecurityRequirements("JWT-auth")
+  .setVersion('1.0')
+  .addTag('root', 'Root endpoints and health checks')
+  .addTag('health', 'System health checks and monitoring')
+  .addTag('auth', 'Authentication & User Management')
+  .addTag('user', 'User profile and preferences management')
+  .addTag('appointments', 'Appointment Scheduling And Management')
+  .addTag('clinic', 'Healthcare facility and service management')
+  .addTag('Clinic Locations', 'Geographical management of clinic locations')
+  .addTag('cache', 'Redis-based caching system')
+  .addTag('Logging', 'System Logging And Monitoring')
+  .addSecurityRequirements('JWT-auth')
   .addBearerAuth()
-  .addApiKey(
-    { type: "apiKey", in: "header", name: "x-session-id" },
-    "session-id",
-  )
+  .addApiKey({ type: 'apiKey', in: 'header', name: 'x-session-id' }, 'session-id')
   .build();
 
 // Add servers after building the config
-getApiServers().forEach((server) => {
+getApiServers().forEach(server => {
   if (swaggerConfig.servers) {
     swaggerConfig.servers.push(server);
   }
@@ -124,12 +119,12 @@ getApiServers().forEach((server) => {
 export const swaggerCustomOptions: SwaggerCustomOptions = {
   swaggerOptions: {
     persistAuthorization: true,
-    docExpansion: "none",
+    docExpansion: 'none',
     filter: true,
     showRequestDuration: true,
     tryItOutEnabled: true,
     syntaxHighlight: {
-      theme: "monokai",
+      theme: 'monokai',
     },
     defaultModelsExpandDepth: 3,
     defaultModelExpandDepth: 3,
@@ -137,16 +132,16 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     maxDisplayedTags: 15,
     showExtensions: true,
     showCommonExtensions: true,
-    layout: "BaseLayout",
+    layout: 'BaseLayout',
     deepLinking: true,
-    tagsSorter: "alpha",
+    tagsSorter: 'alpha',
     urls: getApiServers(),
     securityDefinitions: {
-      "session-id": {
-        type: "apiKey",
-        in: "header",
-        name: "x-session-id",
-        description: "Session ID obtained from login response",
+      'session-id': {
+        type: 'apiKey',
+        in: 'header',
+        name: 'x-session-id',
+        description: 'Session ID obtained from login response',
       },
     },
   },
@@ -160,7 +155,7 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     
     .swagger-ui .info {
       margin: 15px 0;
-      background: ${getEnvironmentConfig().app.environment === "production" ? "#f8f9fa" : "#e3f2fd"};
+      background: ${getEnvironmentConfig().app.environment === 'production' ? '#f8f9fa' : '#e3f2fd'};
       padding: 15px;
       border-radius: 6px;
     }
@@ -182,7 +177,7 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
       content: '${getEnvironmentConfig().app.environment.toUpperCase()} ENVIRONMENT';
       display: inline-block;
       padding: 4px 8px;
-      background: ${getEnvironmentConfig().app.environment === "production" ? "#dc3545" : "#28a745"};
+      background: ${getEnvironmentConfig().app.environment === 'production' ? '#dc3545' : '#28a745'};
       color: white;
       border-radius: 4px;
       margin-bottom: 10px;

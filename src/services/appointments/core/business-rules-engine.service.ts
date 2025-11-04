@@ -1,34 +1,12 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { PrismaService } from "@database/prisma/prisma.service";
-import { LoggingService } from "@infrastructure/logging";
-import { BusinessRulesDatabaseService } from "./business-rules-database.service";
-
-export interface BusinessRule {
-  id: string;
-  name: string;
-  description: string;
-  priority: number;
-  isActive: boolean;
-  conditions: Record<string, unknown>;
-  actions: Record<string, unknown>;
-  clinicId?: string;
-}
-
-export interface RuleEvaluationContext {
-  appointment: unknown;
-  patient: unknown;
-  doctor: unknown;
-  clinic: unknown;
-  location?: unknown;
-  timeSlot?: unknown;
-}
-
-export interface RuleEvaluationResult {
-  passed: boolean;
-  appliedRules: string[];
-  violations: string[];
-  actions: Record<string, unknown>[];
-}
+import { Injectable, Logger } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { LoggingService } from '@infrastructure/logging';
+import { BusinessRulesDatabaseService } from './business-rules-database.service';
+import type {
+  BusinessRule,
+  RuleEvaluationContext,
+  RuleEvaluationResult,
+} from '@core/types/appointment.types';
 
 @Injectable()
 export class BusinessRulesEngine {
@@ -36,14 +14,12 @@ export class BusinessRulesEngine {
   private rulesCache = new Map<string, BusinessRule[]>();
 
   constructor(
-    private readonly prismaService: PrismaService,
+    private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
-    private readonly rulesDatabase: BusinessRulesDatabaseService,
+    private readonly rulesDatabase: BusinessRulesDatabaseService
   ) {}
 
-  async evaluateRules(
-    context: RuleEvaluationContext,
-  ): Promise<RuleEvaluationResult> {
+  async evaluateRules(context: RuleEvaluationContext): Promise<RuleEvaluationResult> {
     try {
       const rules = await this.loadRules(context);
       const result: RuleEvaluationResult = {
@@ -56,8 +32,16 @@ export class BusinessRulesEngine {
       for (const rule of rules) {
         if (await this.evaluateRule(rule, context)) {
           result.appliedRules.push(rule.name);
-          if (rule.actions) {
-            result.actions.push(rule.actions);
+          if (Array.isArray(rule.actions) && rule.actions.length > 0) {
+            // Convert RuleAction[] to Record<string, unknown>[] for result.actions
+            result.actions.push(
+              ...rule.actions.map(action => ({
+                type: action.type,
+                message: action.message,
+                severity: action.severity,
+                ...(action.parameters && { parameters: action.parameters }),
+              }))
+            );
           }
         } else {
           result.passed = false;
@@ -67,147 +51,189 @@ export class BusinessRulesEngine {
 
       return result;
     } catch (_error) {
-      this.logger.error("Error evaluating business rules:", _error);
+      this.logger.error('Error evaluating business rules:', _error);
       return {
         passed: false,
         appliedRules: [],
-        violations: ["Business rules evaluation failed"],
+        violations: ['Business rules evaluation failed'],
         actions: [],
       };
     }
   }
 
-  private async loadRules(
-    context: RuleEvaluationContext,
-  ): Promise<BusinessRule[]> {
+  private async loadRules(context: RuleEvaluationContext): Promise<BusinessRule[]> {
     try {
       // Load rules from database
       const rules = await this.rulesDatabase.getClinicRules(
-        (context.clinic as Record<string, unknown>)?.["id"] as string,
+        (context.clinic as Record<string, unknown>)?.['id'] as string
       );
 
       // Convert to BusinessRule format
-      return rules.map((rule) => ({
+      return rules.map(rule => ({
         id: rule.id,
         name: rule.name,
         description: rule.description,
         priority: rule.priority,
         isActive: rule.isActive,
-        conditions: rule.conditions,
-        actions: rule.actions,
+        category: rule.category || 'custom',
+        version: rule.version || '1.0.0',
+        tags: rule.tags || [],
+        conditions: Array.isArray(rule.conditions) ? rule.conditions : [],
+        actions: Array.isArray(rule.actions) ? rule.actions : [],
+        ...(rule.clinicId && { clinicId: rule.clinicId }),
+        createdAt: rule.createdAt || new Date(),
+        updatedAt: rule.updatedAt || new Date(),
       }));
     } catch (_error) {
-      this.logger.error("Failed to load business rules from database", {
-        clinicId: (context.clinic as Record<string, unknown>)?.["id"] as string,
+      this.logger.error('Failed to load business rules from database', {
+        clinicId: (context.clinic as Record<string, unknown>)?.['id'] as string,
         _error: _error instanceof Error ? _error.message : String(_error),
       });
 
       // Fallback to default rules
       return [
         {
-          id: "default-1",
-          name: "appointment-time-validation",
-          description: "Appointment must be during working hours",
+          id: 'default-1',
+          name: 'appointment-time-validation',
+          description: 'Appointment must be during working hours',
           priority: 1,
           isActive: true,
-          conditions: { type: "time_validation" },
-          actions: { notify: true },
+          category: 'appointment_creation',
+          version: '1.0.0',
+          tags: [],
+          conditions: [
+            {
+              type: 'custom',
+              field: 'time_validation',
+              value: true,
+              operator: 'AND',
+            },
+          ] as readonly import('@core/types').RuleCondition[],
+          actions: [
+            {
+              type: 'notify',
+              message: 'Appointment time validation required',
+              severity: 'medium',
+            },
+          ] as readonly import('@core/types').RuleAction[],
+          createdAt: new Date(),
+          updatedAt: new Date(),
         },
         {
-          id: "default-2",
-          name: "double-booking-prevention",
-          description: "Doctor cannot have overlapping appointments",
+          id: 'default-2',
+          name: 'double-booking-prevention',
+          description: 'Doctor cannot have overlapping appointments',
           priority: 2,
           isActive: true,
-          conditions: { type: "conflict_check" },
-          actions: { block: true },
+          category: 'appointment_creation',
+          version: '1.0.0',
+          tags: [],
+          conditions: [
+            {
+              type: 'custom',
+              field: 'conflict_check',
+              value: true,
+              operator: 'AND',
+            },
+          ] as readonly import('@core/types').RuleCondition[],
+          actions: [
+            {
+              type: 'block',
+              message: 'Double booking detected',
+              severity: 'high',
+            },
+          ] as readonly import('@core/types').RuleAction[],
+          createdAt: new Date(),
+          updatedAt: new Date(),
         },
       ];
     }
   }
 
-  private async evaluateRule(
-    rule: BusinessRule,
-    context: RuleEvaluationContext,
-  ): Promise<boolean> {
+  private async evaluateRule(rule: BusinessRule, context: RuleEvaluationContext): Promise<boolean> {
     try {
-      // Time validation rule
-      if (rule.conditions?.["type"] === "time_validation") {
-        const { workingHours, bufferMinutes } = rule.conditions;
+      if (!Array.isArray(rule.conditions) || rule.conditions.length === 0) {
+        return true; // No conditions means rule passes
+      }
+
+      // Check first condition for time validation
+      const firstCondition = rule.conditions[0];
+      if (firstCondition && firstCondition.field === 'time_validation') {
+        // Extract working hours from condition value or context
+        const workingHours = (firstCondition.value as Record<string, unknown>) || {};
+        const bufferMinutes = (firstCondition.value as Record<string, unknown>)?.[
+          'bufferMinutes'
+        ] as number | undefined;
         const appointmentTime = new Date(
-          (context.appointment as Record<string, unknown>)?.["date"] as string,
+          (context.appointment as Record<string, unknown>)?.['date'] as string
         );
         const hour = appointmentTime.getHours();
         const minute = appointmentTime.getMinutes();
         const appointmentMinutes = hour * 60 + minute;
 
-        const startMinutes = this.timeToMinutes(
-          (workingHours as Record<string, unknown>)["start"] as string,
-        );
-        const endMinutes = this.timeToMinutes(
-          (workingHours as Record<string, unknown>)["end"] as string,
-        );
+        const startMinutes = this.timeToMinutes(workingHours['start'] as string);
+        const endMinutes = this.timeToMinutes(workingHours['end'] as string);
         const buffer = (bufferMinutes as number) || 0;
 
         return (
-          appointmentMinutes >= startMinutes + buffer &&
-          appointmentMinutes <= endMinutes - buffer
+          appointmentMinutes >= startMinutes + buffer && appointmentMinutes <= endMinutes - buffer
         );
       }
 
       // Conflict check rule
-      if (rule.conditions?.["type"] === "conflict_check") {
-        const { doctorId, date, time } = context.appointment as Record<
-          string,
-          unknown
-        >;
+      if (firstCondition && firstCondition.field === 'conflict_check') {
+        const { doctorId, date, time } = context.appointment as Record<string, unknown>;
         if (!doctorId || !date || !time) return false;
 
-        // Check for existing appointments
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const existingAppointments =
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-          await this.prismaService.appointment.findMany({
-            where: {
-              doctorId,
-              date: new Date(date as string),
-              status: {
-                in: ["SCHEDULED", "CONFIRMED", "IN_PROGRESS"],
+        // Check for existing appointments using executeHealthcareRead with client parameter
+        const existingAppointments = await this.databaseService.executeHealthcareRead(
+          async client => {
+            return await client.appointment.findMany({
+              where: {
+                doctorId: doctorId as string,
+                date: new Date(date as string),
+                status: {
+                  in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
+                },
               },
-            },
-          });
+            });
+          }
+        );
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        return existingAppointments.length === 0;
+        return Array.isArray(existingAppointments) && existingAppointments.length === 0;
       }
 
       // Capacity check rule
-      if (rule.conditions?.["type"] === "capacity_check") {
-        const { locationId, date, time } = context.appointment as Record<
-          string,
-          unknown
-        >;
+      if (firstCondition && firstCondition.field === 'capacity_check') {
+        const { locationId, date, time } = context.appointment as Record<string, unknown>;
         if (!locationId || !date || !time) return false;
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        const location = await this.prismaService["clinicLocation"].findUnique({
-          where: { id: locationId },
+        // Get location using executeHealthcareRead with client parameter
+        const location = await this.databaseService.executeHealthcareRead(async client => {
+          return await (
+            client as unknown as {
+              clinicLocation: {
+                findUnique: <T>(
+                  args: T
+                ) => Promise<{ id: string; capacity?: number | null } | null>;
+              };
+            }
+          ).clinicLocation.findUnique({
+            where: { id: locationId as string },
+          } as never);
         });
 
         if (!location) return false;
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-        const currentBookings = await this.prismaService.appointment.count({
-          where: {
-            locationId,
-            date: new Date(date as string),
-            status: {
-              in: ["SCHEDULED", "CONFIRMED", "IN_PROGRESS"],
-            },
+        // Count appointments using DatabaseService safe method
+        const currentBookings = await this.databaseService.countAppointmentsSafe({
+          locationId: locationId as string,
+          date: new Date(date as string),
+          status: {
+            in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
           },
-        });
+        } as never);
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         return currentBookings < (location.capacity || 1);
       }
 
@@ -222,17 +248,20 @@ export class BusinessRulesEngine {
   }
 
   private timeToMinutes(timeString: string): number {
-    const [hours, minutes] = timeString.split(":").map(Number);
+    const [hours, minutes] = timeString.split(':').map(Number);
     return (hours ?? 0) * 60 + (minutes ?? 0);
   }
 
-  async addRule(rule: Omit<BusinessRule, "id">): Promise<BusinessRule> {
+  async addRule(rule: Omit<BusinessRule, 'id' | 'createdAt' | 'updatedAt'>): Promise<BusinessRule> {
     try {
       const newRule = await this.rulesDatabase.createRule({
         name: rule.name,
         description: rule.description,
         priority: rule.priority,
         isActive: rule.isActive,
+        category: rule.category,
+        version: rule.version,
+        tags: rule.tags,
         conditions: rule.conditions,
         actions: rule.actions,
         ...(rule.clinicId && { clinicId: rule.clinicId }),
@@ -245,9 +274,14 @@ export class BusinessRulesEngine {
         description: newRule.description,
         priority: newRule.priority,
         isActive: newRule.isActive,
+        category: newRule.category,
+        version: newRule.version,
+        tags: newRule.tags,
         conditions: newRule.conditions,
         actions: newRule.actions,
         ...(newRule.clinicId && { clinicId: newRule.clinicId }),
+        createdAt: newRule.createdAt,
+        updatedAt: newRule.updatedAt,
       };
     } catch (_error) {
       this.logger.error(`Failed to add business rule`, {
@@ -258,16 +292,16 @@ export class BusinessRulesEngine {
     }
   }
 
-  async updateRule(
-    id: string,
-    updates: Partial<BusinessRule>,
-  ): Promise<BusinessRule | null> {
+  async updateRule(id: string, updates: Partial<BusinessRule>): Promise<BusinessRule | null> {
     try {
       const updatedRule = await this.rulesDatabase.updateRule(id, {
         ...(updates.name && { name: updates.name }),
         ...(updates.description && { description: updates.description }),
         ...(updates.priority !== undefined && { priority: updates.priority }),
         ...(updates.isActive !== undefined && { isActive: updates.isActive }),
+        ...(updates.category && { category: updates.category }),
+        ...(updates.version && { version: updates.version }),
+        ...(updates.tags && { tags: updates.tags }),
         ...(updates.conditions && { conditions: updates.conditions }),
         ...(updates.actions && { actions: updates.actions }),
         ...(updates.clinicId && { clinicId: updates.clinicId }),
@@ -284,9 +318,14 @@ export class BusinessRulesEngine {
         description: updatedRule.description,
         priority: updatedRule.priority,
         isActive: updatedRule.isActive,
+        category: updatedRule.category,
+        version: updatedRule.version,
+        tags: updatedRule.tags,
         conditions: updatedRule.conditions,
         actions: updatedRule.actions,
         ...(updatedRule.clinicId && { clinicId: updatedRule.clinicId }),
+        createdAt: updatedRule.createdAt,
+        updatedAt: updatedRule.updatedAt,
       };
     } catch (_error) {
       this.logger.error(`Failed to update business rule`, {
@@ -317,40 +356,25 @@ export class BusinessRulesEngine {
 
   async validateAppointmentCreation(
     createDto: unknown,
-    context: unknown,
+    context: unknown
   ): Promise<RuleEvaluationResult> {
     try {
       const ruleContext: RuleEvaluationContext = {
         appointment: createDto,
-        patient: (context as Record<string, unknown>)["patient"] as Record<
-          string,
-          unknown
-        >,
-        doctor: (context as Record<string, unknown>)["doctor"] as Record<
-          string,
-          unknown
-        >,
-        clinic: (context as Record<string, unknown>)["clinic"] as Record<
-          string,
-          unknown
-        >,
-        location: (context as Record<string, unknown>)["location"] as Record<
-          string,
-          unknown
-        >,
-        timeSlot: (context as Record<string, unknown>)["timeSlot"] as Record<
-          string,
-          unknown
-        >,
+        patient: (context as Record<string, unknown>)['patient'] as Record<string, unknown>,
+        doctor: (context as Record<string, unknown>)['doctor'] as Record<string, unknown>,
+        clinic: (context as Record<string, unknown>)['clinic'] as Record<string, unknown>,
+        location: (context as Record<string, unknown>)['location'] as Record<string, unknown>,
+        timeSlot: (context as Record<string, unknown>)['timeSlot'] as Record<string, unknown>,
       };
 
       return this.evaluateRules(ruleContext);
     } catch (_error) {
-      this.logger.error("Error validating appointment creation:", _error);
+      this.logger.error('Error validating appointment creation:', _error);
       return {
         passed: false,
         appliedRules: [],
-        violations: ["Appointment creation validation failed"],
+        violations: ['Appointment creation validation failed'],
         actions: [],
       };
     }

@@ -1,6 +1,6 @@
-import { Module } from "@nestjs/common";
-import { EventEmitterModule } from "@nestjs/event-emitter";
-import { QueueMonitoringService } from "./queue-monitoring.service";
+import { Module } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { QueueMonitoringService } from './queue-monitoring.service';
 
 /**
  * Queue Monitoring Module

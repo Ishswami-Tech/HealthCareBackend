@@ -1,38 +1,38 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { BaseAppointmentPlugin } from "../base/base-plugin.service";
-import { AppointmentEligibilityService } from "./appointment-eligibility.service";
+import { Injectable } from '@nestjs/common';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentEligibilityService } from './appointment-eligibility.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 @Injectable()
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
 export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
-  protected readonly logger = new Logger(ClinicEligibilityPlugin.name);
-
   constructor(
     private readonly eligibilityService: AppointmentEligibilityService,
+    private readonly loggingService: LoggingService
   ) {
     super();
   }
 
   get name(): string {
-    return "clinic-eligibility";
+    return 'clinic-eligibility';
   }
 
   get version(): string {
-    return "1.0.0";
+    return '1.0.0';
   }
 
   get features(): string[] {
-    return ["eligibility", "criteria", "validation"];
+    return ['eligibility', 'criteria', 'validation'];
   }
 
   getSupportedOperations(): string[] {
     return [
-      "checkEligibility",
-      "getEligibilityCriteria",
-      "createEligibilityCriteria",
-      "getEligibilityHistory",
-      "updateEligibilityCriteria",
-      "deleteEligibilityCriteria",
+      'checkEligibility',
+      'getEligibilityCriteria',
+      'createEligibilityCriteria',
+      'getEligibilityHistory',
+      'updateEligibilityCriteria',
+      'deleteEligibilityCriteria',
     ];
   }
 
@@ -40,54 +40,62 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
     const pluginData = data as any;
     const { operation, ...params } = data as any;
 
-    this.logger.log(`Processing eligibility operation: ${operation}`, {
-      operation,
-      patientId: params.patientId,
-      clinicId: params.clinicId,
-    });
+    void this.loggingService.log(
+      LogType.BUSINESS,
+      LogLevel.INFO,
+      `Processing eligibility operation: ${operation}`,
+      'ClinicEligibilityPlugin',
+      {
+        operation,
+        patientId: params.patientId,
+        clinicId: params.clinicId,
+      }
+    );
 
     try {
       switch (operation) {
-        case "checkEligibility":
+        case 'checkEligibility':
           return await this.eligibilityService.checkEligibility(
             params.patientId,
             params.appointmentType,
             params.clinicId,
-            params.requestedDate,
+            params.requestedDate
           );
 
-        case "getEligibilityCriteria":
-          return await this.eligibilityService.getEligibilityCriteria(
-            params.clinicId,
-          );
+        case 'getEligibilityCriteria':
+          return await this.eligibilityService.getEligibilityCriteria(params.clinicId);
 
-        case "createEligibilityCriteria":
-          return await this.eligibilityService.createEligibilityCriteria(
-            params.criteriaData,
-          );
+        case 'createEligibilityCriteria':
+          return await this.eligibilityService.createEligibilityCriteria(params.criteriaData);
 
-        case "getEligibilityHistory":
+        case 'getEligibilityHistory':
           return await this.eligibilityService.getEligibilityHistory(
             params.patientId,
-            params.clinicId,
+            params.clinicId
           );
 
-        case "updateEligibilityCriteria":
+        case 'updateEligibilityCriteria':
           // TODO: Implement updateEligibilityCriteria method
-          throw new Error("updateEligibilityCriteria method not implemented");
+          throw new Error('updateEligibilityCriteria method not implemented');
 
-        case "deleteEligibilityCriteria":
+        case 'deleteEligibilityCriteria':
           // TODO: Implement deleteEligibilityCriteria method
-          throw new Error("deleteEligibilityCriteria method not implemented");
+          throw new Error('deleteEligibilityCriteria method not implemented');
 
         default:
           throw new Error(`Unsupported operation: ${operation}`);
       }
     } catch (_error) {
-      this.logger.error(`Eligibility operation failed: ${operation}`, {
-        operation,
-        _error: _error instanceof Error ? _error.message : String(_error),
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Eligibility operation failed: ${operation}`,
+        'ClinicEligibilityPlugin',
+        {
+          operation,
+          _error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
       throw _error;
     }
   }
@@ -98,7 +106,7 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
 
     // Validate required parameters based on operation
     switch (operation) {
-      case "checkEligibility":
+      case 'checkEligibility':
         return !!(
           params.patientId &&
           params.appointmentType &&
@@ -106,23 +114,19 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
           params.requestedDate
         );
 
-      case "getEligibilityCriteria":
+      case 'getEligibilityCriteria':
         return !!params.clinicId;
 
-      case "createEligibilityCriteria":
-        return !!(
-          params.criteriaData &&
-          params.criteriaData.name &&
-          params.criteriaData.clinicId
-        );
+      case 'createEligibilityCriteria':
+        return !!(params.criteriaData && params.criteriaData.name && params.criteriaData.clinicId);
 
-      case "getEligibilityHistory":
+      case 'getEligibilityHistory':
         return !!(params.patientId && params.clinicId);
 
-      case "updateEligibilityCriteria":
+      case 'updateEligibilityCriteria':
         return !!(params.criteriaId && params.updateData);
 
-      case "deleteEligibilityCriteria":
+      case 'deleteEligibilityCriteria':
         return !!params.criteriaId;
 
       default:
@@ -132,18 +136,18 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
 
   getRequiredParameters(operation: string): string[] {
     switch (operation) {
-      case "checkEligibility":
-        return ["patientId", "appointmentType", "clinicId", "requestedDate"];
-      case "getEligibilityCriteria":
-        return ["clinicId"];
-      case "createEligibilityCriteria":
-        return ["criteriaData"];
-      case "getEligibilityHistory":
-        return ["patientId", "clinicId"];
-      case "updateEligibilityCriteria":
-        return ["criteriaId", "updateData"];
-      case "deleteEligibilityCriteria":
-        return ["criteriaId"];
+      case 'checkEligibility':
+        return ['patientId', 'appointmentType', 'clinicId', 'requestedDate'];
+      case 'getEligibilityCriteria':
+        return ['clinicId'];
+      case 'createEligibilityCriteria':
+        return ['criteriaData'];
+      case 'getEligibilityHistory':
+        return ['patientId', 'clinicId'];
+      case 'updateEligibilityCriteria':
+        return ['criteriaId', 'updateData'];
+      case 'deleteEligibilityCriteria':
+        return ['criteriaId'];
       default:
         return [];
     }
@@ -153,10 +157,9 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
     return {
       plugin: this.name,
       version: this.version,
-      status: "healthy",
+      status: 'healthy',
       operations: this.getSupportedOperations().length,
       lastCheck: new Date().toISOString(),
     };
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */

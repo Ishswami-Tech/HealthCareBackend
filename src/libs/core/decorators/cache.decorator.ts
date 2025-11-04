@@ -7,12 +7,12 @@
  * @module CacheDecorators
  */
 
-import { SetMetadata } from "@nestjs/common";
+import { SetMetadata } from '@nestjs/common';
 
 /**
  * Cache metadata key
  */
-export const CACHE_KEY = "cache" as const;
+export const CACHE_KEY = 'cache' as const;
 
 /**
  * Cache options interface
@@ -93,7 +93,7 @@ export const ShortCache = (ttl: number = 60): MethodDecorator =>
   SetMetadata(CACHE_KEY, {
     enabled: true,
     ttl,
-    tags: ["short-cache"],
+    tags: ['short-cache'],
   });
 
 /**
@@ -121,7 +121,7 @@ export const LongCache = (ttl: number = 3600): MethodDecorator =>
   SetMetadata(CACHE_KEY, {
     enabled: true,
     ttl,
-    tags: ["long-cache"],
+    tags: ['long-cache'],
   });
 
 /**
@@ -151,9 +151,9 @@ export const UserCache = (ttl: number = 300): MethodDecorator =>
     ttl,
     keyGenerator: (req: unknown) => {
       const request = req as { user?: { id?: string } };
-      return `user:${request.user?.id || "anonymous"}`;
+      return `user:${request.user?.id || 'anonymous'}`;
     },
-    tags: ["user-cache"],
+    tags: ['user-cache'],
   });
 
 /**

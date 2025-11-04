@@ -1,20 +1,20 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { PrismaService } from "../database/prisma/prisma.service";
-import { RedisService } from "../cache/redis/redis.service";
-import { LogType, LogLevel } from "./types/logging.types";
+// External imports
+import { Injectable } from '@nestjs/common';
 
-// Export types for external use
-export { LogType, LogLevel };
-import { AsyncLocalStorage } from "async_hooks";
+// Internal imports - Infrastructure
+import { DatabaseService } from '@infrastructure/database';
+import { RedisService } from '@infrastructure/cache/redis/redis.service';
 
-export interface LogContext {
-  correlationId?: string;
-  traceId?: string;
-  userId?: string;
-  operation?: string;
-  clinicId?: string;
-  domain?: "clinic" | "healthcare" | "worker";
-}
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { HttpStatus } from '@nestjs/common';
+
+// Internal imports - Types
+import { LogType, LogLevel } from '@core/types';
+
+import { AsyncLocalStorage } from 'async_hooks';
+import type { LogContext } from '@core/types/logging.types';
 
 /**
  * ===================================================================
@@ -88,7 +88,6 @@ export interface LogContext {
  */
 @Injectable()
 export class LoggingService {
-  private logger!: Logger;
   private contextStorage = new AsyncLocalStorage<LogContext>();
   private metricsBuffer: unknown[] = [];
   private performanceMetrics = new Map<string, number>();
@@ -98,11 +97,10 @@ export class LoggingService {
   private metricsFlushInterval!: NodeJS.Timeout;
 
   constructor(
-    private readonly prismaService: PrismaService,
-    private readonly redisService: RedisService,
+    private readonly databaseService?: DatabaseService,
+    private readonly redisService?: RedisService
   ) {
-    this.serviceName = process.env["SERVICE_NAME"] || "healthcare";
-    this.initLogger();
+    this.serviceName = process.env['SERVICE_NAME'] || 'healthcare';
     this.initMetricsBuffering();
   }
 
@@ -129,54 +127,19 @@ export class LoggingService {
 
       // Store metrics in cache for real-time access with longer TTL for 1M users
       await this.redisService?.set(
-        "system_metrics",
+        'system_metrics',
         JSON.stringify({
           timestamp: new Date().toISOString(),
           metrics: JSON.stringify(metrics),
           count: metrics.length,
         }),
-        600,
+        600
       ); // 10 minutes TTL for high-scale operations
 
-      // Log buffer flush for monitoring
-      if (metrics.length > 1000) {
-        this.logger?.log(
-          `High-volume metrics flush: ${metrics.length} entries`,
-        );
-      }
-    } catch (error) {
-      // Silent fail - metrics are non-critical but log error for monitoring
-      this.logger?.error("Metrics buffer flush failed:", error);
-    }
-  }
-
-  private initLogger() {
-    try {
-      if (!this.logger) {
-        this.logger = new Logger(LoggingService.name);
-      }
-    } catch (error) {
-      console.error("Failed to initialize logger:", error);
-      // Enterprise fallback logger
-      this.logger = {
-        log: (message: string) =>
-          console.log(`[INFO] ${new Date().toISOString()} ${message}`),
-        error: (message: string, trace?: string) =>
-          console.error(
-            `[ERROR] ${new Date().toISOString()} ${message}`,
-            trace,
-          ),
-        warn: (message: string) =>
-          console.warn(`[WARN] ${new Date().toISOString()} ${message}`),
-        debug: (message: string) =>
-          console.debug(`[DEBUG] ${new Date().toISOString()} ${message}`),
-      } as Logger;
-    }
-  }
-
-  private ensureLogger() {
-    if (!this.logger) {
-      this.initLogger();
+      // Metrics flushed successfully - no logging needed to avoid circular dependencies
+    } catch (_error) {
+      // Silent fail - metrics are non-critical for LoggingService itself
+      // Logging failures here would cause circular dependencies
     }
   }
 
@@ -185,10 +148,8 @@ export class LoggingService {
     level: LogLevel,
     message: string,
     context: string,
-    metadata: Record<string, unknown> = {},
-  ) {
-    this.ensureLogger();
-
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
     const timestamp = new Date();
     // Enterprise-grade unique ID generation for 1M+ users
     const id = `${timestamp.getTime()}-${this.serviceName}-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
@@ -202,10 +163,10 @@ export class LoggingService {
       metadata: {
         ...(metadata || {}),
         timestamp: timestamp.toISOString(),
-        environment: process.env["NODE_ENV"] || "development",
+        environment: process.env['NODE_ENV'] || 'development',
         service: this.serviceName,
-        nodeId: process.env["NODE_ID"] || "unknown",
-        version: process.env["APP_VERSION"] || "1.0.0",
+        nodeId: process.env['NODE_ID'] || 'unknown',
+        version: process.env['APP_VERSION'] || '1.0.0',
         correlationId: this.getContext()?.correlationId,
         traceId: this.getContext()?.traceId,
         userId: this.getContext()?.userId,
@@ -215,22 +176,16 @@ export class LoggingService {
     };
 
     try {
-      // Smart console logging for production performance
-      if (
-        process.env["NODE_ENV"] !== "production" ||
-        level === LogLevel.ERROR ||
-        level === LogLevel.WARN
-      ) {
+      // Development-only colored console output for debugging
+      // In production, all logging goes through Redis/database only
+      if (process.env['NODE_ENV'] === 'development') {
         const levelColor = this.getLevelColor(level);
-        const contextColor = "\x1b[36m"; // Cyan
-        const resetColor = "\x1b[0m";
+        const contextColor = '\x1b[36m'; // Cyan
+        const resetColor = '\x1b[0m';
 
         const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`;
+        // eslint-disable-next-line no-console
         console.log(coloredMessage);
-
-        if (Object.keys(metadata).length > 0) {
-          this.logger?.debug?.("Metadata:", metadata);
-        }
       }
 
       // Intelligent database logging with noise filtering
@@ -239,86 +194,76 @@ export class LoggingService {
       if (!isNoisyLog) {
         try {
           // Enhanced database logging with better error handling
-          if (this.prismaService) {
+          if (this.databaseService) {
             // Use a system user or skip user-dependent operations
             try {
-              const systemUser = await this.prismaService.user.findFirst({
-                where: { email: "system@healthcare.local" },
+              const systemUser = await this.databaseService.getPrismaClient().user.findFirst({
+                where: { email: 'system@healthcare.local' },
               });
 
               if (systemUser) {
-                await this.prismaService.auditLog.create({
+                await this.databaseService.getPrismaClient().auditLog.create({
                   data: {
                     userId: systemUser.id,
-                    action: type,
+                    action: type as string,
                     description: context,
-                    ipAddress: metadata["ipAddress"] || null,
-                    device: metadata["userAgent"] || null,
-                    clinicId: metadata["clinicId"] || null,
+                    ipAddress: (metadata['ipAddress'] as string | null) || null,
+                    device: (metadata['userAgent'] as string | null) || null,
+                    clinicId: (metadata['clinicId'] as string | null) || null,
                   },
                 });
               }
-            } catch (auditError) {
-              // For 1M users, we need resilient logging
-              if (process.env["NODE_ENV"] === "development") {
-                console.debug(
-                  "Audit log creation failed (development mode):",
-                  (auditError as Error).message,
-                );
-              }
+            } catch (_auditError) {
+              // Silent fail for audit log creation - resilient logging for high scale
+              // Audit log failures are non-critical and shouldn't break logging
             }
           }
-        } catch (dbError) {
-          // Enhanced error handling for high-scale operations
-          if (process.env["NODE_ENV"] === "production") {
-            console.error("Database logging failed:", dbError);
-          }
+        } catch (_dbError) {
+          // Silent fail for database logging - resilient for high scale
+          // Database logging failures shouldn't break the logging service
         }
       }
 
       // High-performance Redis logging
       try {
         await Promise.all([
-          this.redisService?.rPush("logs", JSON.stringify(logEntry)),
-          this.redisService?.lTrim("logs", -5000, -1), // Keep last 5000 logs for 1M users
+          this.redisService?.rPush('logs', JSON.stringify(logEntry)),
+          this.redisService?.lTrim('logs', -5000, -1), // Keep last 5000 logs for 1M users
         ]);
-      } catch (redisError) {
-        console.error("Redis logging failed:", redisError);
+      } catch (_redisError) {
+        // Silent fail for Redis logging - resilient for high scale
+        // Redis logging failures shouldn't break the logging service
       }
 
       // Add to metrics buffer for monitoring
       this.addToMetricsBuffer(logEntry);
-    } catch (error) {
-      // Enterprise fallback logging
-      console.error("Enterprise logging failed:", error);
-      console.log(`FALLBACK LOG: [${level}] [${context}] ${message}`);
+    } catch (_error) {
+      // Silent fail - if logging itself fails, we don't want to cause more errors
+      // This prevents infinite error loops in the logging service
+      // In production, external monitoring systems should detect logging failures
     }
   }
 
-  private isNoisyLog(
-    message: string,
-    context: string,
-    level: LogLevel,
-  ): boolean {
+  private isNoisyLog(message: string, context: string, level: LogLevel): boolean {
     const noisyPatterns = [
-      "health check",
-      "GET /health",
-      "GET /api/health",
-      "heartbeat",
-      "ping",
-      "HealthCheck",
-      "Socket",
-      "Bootstrap",
-      "websocket",
-      "keepalive",
+      'health check',
+      'GET /health',
+      'GET /api/health',
+      'heartbeat',
+      'ping',
+      'HealthCheck',
+      'Socket',
+      'Bootstrap',
+      'websocket',
+      'keepalive',
     ];
 
     return (
       level === LogLevel.DEBUG ||
       noisyPatterns.some(
-        (pattern) =>
+        pattern =>
           message.toLowerCase().includes(pattern.toLowerCase()) ||
-          context.toLowerCase().includes(pattern.toLowerCase()),
+          context.toLowerCase().includes(pattern.toLowerCase())
       )
     );
   }
@@ -328,16 +273,15 @@ export class LoggingService {
       this.metricsBuffer = [];
     }
     const logEntryData = logEntry as Record<string, unknown>;
-    const metadata =
-      (logEntryData["metadata"] as Record<string, unknown>) || {};
+    const metadata = (logEntryData['metadata'] as Record<string, unknown>) || {};
     this.metricsBuffer.push({
       timestamp: Date.now(),
-      level: logEntryData["level"],
-      type: logEntryData["type"],
-      context: logEntryData["context"],
-      userId: metadata["userId"],
-      clinicId: metadata["clinicId"],
-      responseTime: metadata["responseTime"],
+      level: logEntryData['level'],
+      type: logEntryData['type'],
+      context: logEntryData['context'],
+      userId: metadata['userId'],
+      clinicId: metadata['clinicId'],
+      responseTime: metadata['responseTime'],
     });
 
     // Emergency flush if buffer is getting too large
@@ -349,15 +293,15 @@ export class LoggingService {
   private getLevelColor(level: LogLevel): string {
     switch (level) {
       case LogLevel.ERROR:
-        return "\x1b[31m"; // Red
+        return '\x1b[31m'; // Red
       case LogLevel.WARN:
-        return "\x1b[33m"; // Yellow
+        return '\x1b[33m'; // Yellow
       case LogLevel.INFO:
-        return "\x1b[32m"; // Green
+        return '\x1b[32m'; // Green
       case LogLevel.DEBUG:
-        return "\x1b[35m"; // Magenta
+        return '\x1b[35m'; // Magenta
       default:
-        return "\x1b[0m"; // Reset
+        return '\x1b[0m'; // Reset
     }
   }
 
@@ -365,10 +309,8 @@ export class LoggingService {
     type?: LogType,
     startTime?: Date,
     endTime?: Date,
-    level?: LogLevel,
+    level?: LogLevel
   ): Promise<unknown[]> {
-    this.ensureLogger();
-
     try {
       // Enhanced time range handling for 1M users
       const now = new Date();
@@ -378,7 +320,7 @@ export class LoggingService {
       const finalEndTime = endTime || now;
 
       // Optimized cache key with better distribution
-      const cacheKey = `logs:v2:${type || "all"}:${level || "all"}:${finalStartTime.getTime()}:${finalEndTime.getTime()}`;
+      const cacheKey = `logs:v2:${type || 'all'}:${level || 'all'}:${finalStartTime.getTime()}:${finalEndTime.getTime()}`;
 
       // Enhanced caching with compression for large datasets
       const cachedLogs = await this.redisService?.get(cacheKey);
@@ -395,16 +337,15 @@ export class LoggingService {
       };
 
       if (type) {
-        (whereClause as Record<string, unknown>)["action"] = type;
+        (whereClause as Record<string, unknown>)['action'] = type;
       }
 
       // Enhanced database query with better indexing
-      if (!this.prismaService) {
+      if (!this.databaseService) {
         // Redis-only fallback for high performance
-        const redisLogs =
-          (await this.redisService?.lRange("logs", 0, -1)) || [];
+        const redisLogs = (await this.redisService?.lRange('logs', 0, -1)) || [];
         const parsedLogs = redisLogs
-          .map((log) => JSON.parse(log) as unknown)
+          .map(log => JSON.parse(log) as unknown)
           .filter((log: unknown) => {
             const logData = log as { timestamp: string };
             const logDate = new Date(logData.timestamp);
@@ -417,10 +358,10 @@ export class LoggingService {
 
       // Temporarily bypass database query due to schema migration issues
       try {
-        const dbLogs = await this.prismaService.auditLog.findMany({
-          where: whereClause,
+        const dbLogs = (await this.databaseService.getPrismaClient().auditLog.findMany({
+          where: whereClause as any,
           orderBy: {
-            timestamp: "desc",
+            timestamp: 'desc',
           },
           take: 1000, // Increased for 1M users
           select: {
@@ -433,22 +374,31 @@ export class LoggingService {
             device: true,
             clinicId: true,
           },
-        });
+        })) as unknown as Array<{
+          id: string;
+          action: string;
+          description: string | null;
+          timestamp: Date;
+          userId: string;
+          ipAddress: string | null;
+          device: string | null;
+          clinicId: string | null;
+        }>;
 
-        const result = (dbLogs as unknown[]).map((log: unknown) => {
-          const logData = log as Record<string, unknown>;
+        const result = dbLogs.map(log => {
           return {
-            id: logData["id"],
-            type: logData["action"],
-            level: "INFO", // Default level
-            message: `${String(logData["action"])} on ${String(logData["description"])}`,
-            context: logData["description"],
-            metadata: {},
-
-            timestamp: (logData["timestamp"] as Date).toISOString(),
-            userId: logData["userId"],
-            ipAddress: logData["ipAddress"],
-            userAgent: logData["device"],
+            id: log.id,
+            type: log.action as LogType,
+            level: LogLevel.INFO,
+            message: `${log.action} on ${log.description || ''}`,
+            context: log.description || '',
+            metadata: {
+              userId: log.userId,
+              ipAddress: log.ipAddress || undefined,
+              device: log.device || undefined,
+              clinicId: log.clinicId || undefined,
+            },
+            timestamp: log.timestamp,
           };
         });
 
@@ -457,17 +407,13 @@ export class LoggingService {
 
         return result;
       } catch (_error) {
-        this.logger.error(
-          "Database query failed, falling back to Redis",
-          (_error as Error).message,
-        );
+        // Database query failed, falling back to Redis - silent fail
 
         // Fallback to Redis-only logs
         try {
-          const redisLogs =
-            (await this.redisService?.lRange("logs", 0, -1)) || [];
+          const redisLogs = (await this.redisService?.lRange('logs', 0, -1)) || [];
           const parsedLogs = redisLogs
-            .map((log) => JSON.parse(log) as unknown)
+            .map(log => JSON.parse(log) as unknown)
             .filter((log: unknown) => {
               const logData = log as { timestamp: string };
               const logDate = new Date(logData.timestamp);
@@ -477,39 +423,38 @@ export class LoggingService {
 
           return parsedLogs;
         } catch (redisError) {
-          this.logger.error(
-            "Redis fallback also failed",
-            (redisError as Error).message,
-          );
+          // Redis fallback also failed - return empty array
           return [];
         }
       }
     } catch (error) {
-      console.error("Failed to retrieve logs:", error);
+      // Silent fail - return empty array on error
       return [];
     }
   }
 
-  async clearLogs() {
-    this.ensureLogger();
-
+  async clearLogs(): Promise<{ success: boolean; message: string }> {
     try {
-      await this.redisService?.del("logs");
-      return { success: true, message: "Logs cleared successfully" };
+      await this.redisService?.del('logs');
+      return { success: true, message: 'Logs cleared successfully' };
     } catch (error) {
-      console.error("Error clearing logs:", error);
-      throw new Error("Failed to clear logs");
+      throw new HealthcareError(
+        ErrorCode.LOGGING_CLEAR_FAILED,
+        'Failed to clear logs',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'LoggingService.clearLogs'
+      );
     }
   }
 
   async getEvents(type?: string): Promise<unknown[]> {
-    this.ensureLogger();
-
     try {
       // Enhanced event retrieval for 1M users
-      const redisEvents =
-        (await this.redisService?.lRange("events", 0, -1)) || [];
-      let events = redisEvents.map((event) => JSON.parse(event) as unknown);
+      const redisEvents = (await this.redisService?.lRange('events', 0, -1)) || [];
+      let events = redisEvents.map(event => JSON.parse(event) as unknown);
 
       // Apply filters
       if (type) {
@@ -524,27 +469,29 @@ export class LoggingService {
         .sort((a: unknown, b: unknown) => {
           const aData = a as { timestamp: string };
           const bData = b as { timestamp: string };
-          return (
-            new Date(bData.timestamp).getTime() -
-            new Date(aData.timestamp).getTime()
-          );
+          return new Date(bData.timestamp).getTime() - new Date(aData.timestamp).getTime();
         })
         .slice(0, 2000); // Increased limit for 1M users
-    } catch (error) {
-      console.error("Failed to retrieve events:", error);
+    } catch (_error) {
+      // Silent fail - return empty array on error
       return [];
     }
   }
 
-  async clearEvents() {
-    this.ensureLogger();
-
+  async clearEvents(): Promise<{ success: boolean; message: string }> {
     try {
-      await this.redisService?.del("events");
-      return { success: true, message: "Events cleared successfully" };
+      await this.redisService?.del('events');
+      return { success: true, message: 'Events cleared successfully' };
     } catch (error) {
-      console.error("Error clearing events:", error);
-      throw new Error("Failed to clear events");
+      throw new HealthcareError(
+        ErrorCode.LOGGING_CLEAR_FAILED,
+        'Failed to clear events',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'LoggingService.clearEvents'
+      );
     }
   }
 
@@ -555,10 +502,7 @@ export class LoggingService {
   /**
    * Set logging context for distributed tracing
    */
-  async runWithContext<T>(
-    context: LogContext,
-    fn: () => Promise<T>,
-  ): Promise<T> {
+  async runWithContext<T>(context: LogContext, fn: () => Promise<T>): Promise<T> {
     return this.contextStorage.run(context, fn);
   }
 
@@ -577,7 +521,7 @@ export class LoggingService {
     level: LogLevel,
     message: string,
     context: string,
-    metadata: Record<string, unknown> = {},
+    metadata: Record<string, unknown> = {}
   ) {
     const currentContext = this.getContext();
     const enhancedMetadata = {
@@ -597,7 +541,7 @@ export class LoggingService {
     level: LogLevel,
     message: string,
     context: string,
-    metadata: Record<string, unknown> = {},
+    metadata: Record<string, unknown> = {}
   ) {
     // Set the clinic context for multi-tenant logging
     const clinicContext = `clinic_${clinicId}_${context}`;
@@ -606,18 +550,14 @@ export class LoggingService {
       ...(metadata || {}),
       clinicId,
       serviceName: this.serviceName,
-      tenantType: "healthcare",
+      tenantType: 'healthcare',
     });
   }
 
   /**
    * Log performance metrics with automatic thresholds
    */
-  logPerformance(
-    operation: string,
-    duration: number,
-    metadata: Record<string, unknown> = {},
-  ) {
+  logPerformance(operation: string, duration: number, metadata: Record<string, unknown> = {}) {
     this.performanceMetrics.set(operation, duration);
 
     const performanceData = {
@@ -638,16 +578,16 @@ export class LoggingService {
         LogType.PERFORMANCE,
         LogLevel.ERROR,
         `CRITICAL performance issue: ${operation} took ${duration}ms`,
-        "Performance",
-        performanceData,
+        'Performance',
+        performanceData
       );
     } else if (duration > slowThreshold) {
       void this.logWithContext(
         LogType.PERFORMANCE,
         LogLevel.WARN,
         `Slow operation detected: ${operation} took ${duration}ms`,
-        "Performance",
-        performanceData,
+        'Performance',
+        performanceData
       );
     }
   }
@@ -660,13 +600,13 @@ export class LoggingService {
       LogType.SECURITY,
       LogLevel.WARN,
       `Security event: ${event}`,
-      "Security",
+      'Security',
       {
         securityEvent: event,
         ...details,
-        severity: "high",
+        severity: 'high',
         requiresAlert: true,
-      },
+      }
     );
   }
 
@@ -678,11 +618,11 @@ export class LoggingService {
       LogType.AUDIT,
       LogLevel.INFO,
       `Business event: ${event}`,
-      "Business",
+      'Business',
       {
         businessEvent: event,
         ...details,
-      },
+      }
     );
   }
 
@@ -698,17 +638,17 @@ export class LoggingService {
    */
   async getSystemMetrics() {
     try {
-      const cachedMetrics = await this.redisService?.get("system_metrics");
+      const cachedMetrics = await this.redisService?.get('system_metrics');
       if (!cachedMetrics) return [];
 
       const metricsData =
-        typeof cachedMetrics === "string"
+        typeof cachedMetrics === 'string'
           ? (JSON.parse(cachedMetrics) as unknown)
           : (cachedMetrics as unknown);
       const metrics = (metricsData as { metrics?: string })?.metrics;
       return metrics ? (JSON.parse(metrics) as unknown) : [];
     } catch (error) {
-      this.logger?.error("Failed to get system metrics:", error);
+      // Silent fail for system metrics retrieval
       return [];
     }
   }
@@ -734,7 +674,7 @@ export class LoggingService {
     userId: string,
     userRole: string,
     patientId: string,
-    action: "VIEW" | "CREATE" | "UPDATE" | "DELETE" | "EXPORT",
+    action: 'VIEW' | 'CREATE' | 'UPDATE' | 'DELETE' | 'EXPORT',
     details: {
       resource: string;
       resourceId?: string;
@@ -744,9 +684,9 @@ export class LoggingService {
       sessionId?: string;
       dataFields?: string[];
       purpose?: string;
-      outcome: "SUCCESS" | "FAILURE" | "DENIED";
+      outcome: 'SUCCESS' | 'FAILURE' | 'DENIED';
       reason?: string;
-    },
+    }
   ): Promise<void> {
     try {
       const auditEntry = {
@@ -755,42 +695,38 @@ export class LoggingService {
         patientId,
         action,
         timestamp: new Date(),
-        ipAddress: details.ipAddress || "unknown",
-        userAgent: details.userAgent || "unknown",
-        sessionId: details.sessionId || "unknown",
+        ipAddress: details.ipAddress || 'unknown',
+        userAgent: details.userAgent || 'unknown',
+        sessionId: details.sessionId || 'unknown',
         resource: details.resource,
         resourceId: details.resourceId,
         clinicId: details.clinicId,
         dataFields: details.dataFields || [],
-        purpose: details.purpose || "treatment",
+        purpose: details.purpose || 'treatment',
         outcome: details.outcome,
         reason: details.reason,
         correlationId: this.generateCorrelationId(),
         traceId: this.generateTraceId(),
         retentionRequired: true,
-        complianceType: "HIPAA",
+        complianceType: 'HIPAA',
       };
 
       // Log to standard logging system
       await this.log(
         LogType.PHI_ACCESS,
-        details.outcome === "FAILURE" || details.outcome === "DENIED"
+        details.outcome === 'FAILURE' || details.outcome === 'DENIED'
           ? LogLevel.ERROR
           : LogLevel.INFO,
         `PHI Access: ${action} ${details.outcome} for patient ${patientId}`,
-        "PHIAuditService",
-        auditEntry,
+        'PHIAuditService',
+        auditEntry
       );
 
       // Store in dedicated PHI audit cache for compliance reporting
       const auditKey = `phi_audit:${userId}:${patientId}:${Date.now()}`;
-      await this.redisService?.set(
-        auditKey,
-        JSON.stringify(auditEntry),
-        86400 * 7,
-      ); // 7 days
+      await this.redisService?.set(auditKey, JSON.stringify(auditEntry), 86400 * 7); // 7 days
     } catch (error) {
-      this.logger?.error("Error logging PHI access:", error);
+      // Silent fail for PHI access logging - critical operation shouldn't break on logging failure
     }
   }
 
@@ -801,31 +737,27 @@ export class LoggingService {
     clinicId: string,
     operation: string,
     userId: string,
-    details: Record<string, unknown>,
+    details: Record<string, unknown>
   ) {
     await this.logWithClinic(
       clinicId,
       LogType.BUSINESS,
       LogLevel.INFO,
       `Clinic operation: ${operation}`,
-      "ClinicOperations",
+      'ClinicOperations',
       {
         operation,
         userId,
         ...details,
         multiTenant: true,
-      },
+      }
     );
   }
 
   /**
    * Log high-volume user activity for 1M+ users
    */
-  logUserActivity(
-    userId: string,
-    action: string,
-    metadata: Record<string, unknown> = {},
-  ): void {
+  logUserActivity(userId: string, action: string, metadata: Record<string, unknown> = {}): void {
     // Use async context to avoid blocking
     setImmediate(() => {
       void (async () => {
@@ -834,17 +766,16 @@ export class LoggingService {
             LogType.USER_ACTIVITY,
             LogLevel.DEBUG,
             `User activity: ${action}`,
-            "UserActivity",
+            'UserActivity',
             {
               userId,
               action,
               ...(metadata || {}),
               highVolume: true,
-            },
+            }
           );
         } catch (_error) {
-          // Silent fail for high-volume operations
-          console.debug("User activity logging failed:", _error);
+          // Silent fail for high-volume operations to avoid breaking the system
         }
       })();
     });
@@ -860,30 +791,25 @@ export class LoggingService {
       message: string;
       context: string;
       metadata?: Record<string, unknown>;
-    }>,
+    }>
   ) {
     const batchId = this.generateCorrelationId();
 
     try {
       const batchPromises = events.map((event, index) =>
         this.log(event.type, event.level, event.message, event.context, {
-          ...(((event as { metadata?: unknown }).metadata as Record<
-            string,
-            unknown
-          >) || {}),
+          ...(((event as { metadata?: unknown }).metadata as Record<string, unknown>) || {}),
           batchId,
           batchIndex: index,
           batchSize: events.length,
-        }),
+        })
       );
 
       await Promise.allSettled(batchPromises);
 
-      this.logger?.debug(
-        `Batch logged ${events.length} events with ID: ${batchId}`,
-      );
-    } catch (error) {
-      this.logger?.error("Batch logging failed:", error);
+      // Batch logging completed successfully
+    } catch (_error) {
+      // Silent fail for batch logging to avoid breaking the system
     }
   }
 
@@ -895,7 +821,7 @@ export class LoggingService {
     type?: LogType,
     startTime?: Date,
     endTime?: Date,
-    level?: LogLevel,
+    level?: LogLevel
   ): Promise<unknown[]> {
     const logs = await this.getLogs(type, startTime, endTime, level);
 
@@ -907,7 +833,7 @@ export class LoggingService {
       };
       return (
         logData.context?.includes(`clinic_${clinicId}_`) ||
-        logData.metadata?.["clinicId"] === clinicId
+        logData.metadata?.['clinicId'] === clinicId
       );
     });
   }
@@ -915,22 +841,19 @@ export class LoggingService {
   /**
    * Emergency logging for critical system events
    */
-  async logEmergency(message: string, details: Record<string, unknown>) {
+  async logEmergency(message: string, details: Record<string, unknown>): Promise<void> {
     // Emergency logs bypass normal processing for immediate visibility
-    console.error(`🚨 EMERGENCY: ${message}`, details);
+    // In development, output to console for immediate visibility
+    if (process.env['NODE_ENV'] === 'development') {
+      console.error(`🚨 EMERGENCY: ${message}`, details);
+    }
 
-    await this.log(
-      LogType.EMERGENCY,
-      LogLevel.ERROR,
-      message,
-      "EmergencyAlert",
-      {
-        ...details,
-        priority: "CRITICAL",
-        requiresImmedateAttention: true,
-        timestamp: new Date().toISOString(),
-      },
-    );
+    await this.log(LogType.EMERGENCY, LogLevel.ERROR, message, 'EmergencyAlert', {
+      ...details,
+      priority: 'CRITICAL',
+      requiresImmedateAttention: true,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   /**
@@ -945,9 +868,9 @@ export class LoggingService {
       // Final flush of any remaining metrics
       await this.flushMetricsBuffer();
 
-      this.logger?.log("Logging service cleaned up successfully");
-    } catch (error) {
-      this.logger?.error("Error during logging service cleanup:", error);
+      // Cleanup completed successfully
+    } catch (_error) {
+      // Silent fail during cleanup to prevent errors in shutdown process
     }
   }
 }

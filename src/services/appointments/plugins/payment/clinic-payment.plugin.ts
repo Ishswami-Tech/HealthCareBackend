@@ -1,17 +1,16 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call */
-import { Injectable } from "@nestjs/common";
-import { BaseAppointmentPlugin } from "../base/base-plugin.service";
-import { PaymentService } from "./payment.service";
+import { Injectable } from '@nestjs/common';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { PaymentService } from './payment.service';
 
 @Injectable()
 export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
-  readonly name = "clinic-payment-plugin";
-  readonly version = "1.0.0";
+  readonly name = 'clinic-payment-plugin';
+  readonly version = '1.0.0';
   readonly features = [
-    "payment-processing",
-    "insurance-billing",
-    "refund-management",
-    "subscription-billing",
+    'payment-processing',
+    'insurance-billing',
+    'refund-management',
+    'subscription-billing',
   ];
 
   constructor(private readonly paymentService: PaymentService) {
@@ -20,46 +19,38 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as any;
-    this.logPluginAction("Processing clinic payment operation", {
+    this.logPluginAction('Processing clinic payment operation', {
       operation: pluginData.operation,
     });
 
     // Delegate to existing payment service - no functionality change
     switch (pluginData.operation) {
-      case "processPayment":
+      case 'processPayment':
         return await this.paymentService.processPayment(pluginData.paymentId);
 
-      case "refundPayment":
+      case 'refundPayment':
         return await this.paymentService.refundPayment(pluginData.refundData);
 
-      case "getPaymentStatus":
+      case 'getPaymentStatus':
         return await this.paymentService.getPaymentStatus(pluginData.paymentId);
 
-      case "processSubscriptionPayment":
-        return await this.paymentService.processSubscriptionPayment(
-          pluginData.subscriptionId,
-        );
+      case 'processSubscriptionPayment':
+        return await this.paymentService.processSubscriptionPayment(pluginData.subscriptionId);
 
-      case "cancelSubscription":
-        return await this.paymentService.cancelSubscription(
-          pluginData.subscriptionId,
-        );
+      case 'cancelSubscription':
+        return await this.paymentService.cancelSubscription(pluginData.subscriptionId);
 
-      case "processInsuranceClaim":
-        return await this.paymentService.processInsuranceClaim(
-          pluginData.claimData,
-        );
+      case 'processInsuranceClaim':
+        return await this.paymentService.processInsuranceClaim(pluginData.claimData);
 
-      case "generateReceipt":
+      case 'generateReceipt':
         return await this.paymentService.generateReceipt(pluginData.paymentId);
 
-      case "getPaymentAnalytics":
-        return await this.paymentService.getPaymentAnalytics(
-          pluginData.analyticsParams,
-        );
+      case 'getPaymentAnalytics':
+        return await this.paymentService.getPaymentAnalytics(pluginData.analyticsParams);
 
       default:
-        this.logPluginError("Unknown payment operation", {
+        this.logPluginError('Unknown payment operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown payment operation: ${pluginData.operation}`);
@@ -70,29 +61,27 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
     const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
-      processPayment: ["paymentId"],
-      refundPayment: ["refundData"],
-      getPaymentStatus: ["paymentId"],
-      processSubscriptionPayment: ["subscriptionId"],
-      cancelSubscription: ["subscriptionId"],
-      processInsuranceClaim: ["claimData"],
-      generateReceipt: ["paymentId"],
-      getPaymentAnalytics: ["analyticsParams"],
+      processPayment: ['paymentId'],
+      refundPayment: ['refundData'],
+      getPaymentStatus: ['paymentId'],
+      processSubscriptionPayment: ['subscriptionId'],
+      cancelSubscription: ['subscriptionId'],
+      processInsuranceClaim: ['claimData'],
+      generateReceipt: ['paymentId'],
+      getPaymentAnalytics: ['analyticsParams'],
     };
 
     const operation = pluginData.operation;
     const fields = (requiredFields as any)[operation];
 
     if (!fields) {
-      this.logPluginError("Invalid operation", { operation });
+      this.logPluginError('Invalid operation', { operation });
       return Promise.resolve(false);
     }
 
-    const isValid = fields.every(
-      (field: unknown) => pluginData[field as string] !== undefined,
-    );
+    const isValid = fields.every((field: unknown) => pluginData[field as string] !== undefined);
     if (!isValid) {
-      this.logPluginError("Missing required fields", {
+      this.logPluginError('Missing required fields', {
         operation,
         requiredFields: fields,
       });
@@ -101,4 +90,3 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
     return Promise.resolve(isValid);
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call */

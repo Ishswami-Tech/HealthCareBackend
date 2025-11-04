@@ -23,34 +23,28 @@
  */
 
 // Main guards
-export { JwtAuthGuard } from "./jwt-auth.guard";
-export { RolesGuard } from "./roles.guard";
-export { ClinicGuard } from "./clinic.guard";
+export { JwtAuthGuard } from './jwt-auth.guard';
+export { RolesGuard } from './roles.guard';
+export { ClinicGuard } from './clinic.guard';
 
 // Module
-export { GuardsModule } from "./guards.module";
+export { GuardsModule } from './guards.module';
 
-// Type definitions from JWT Auth Guard
-export type {
-  User,
-  JwtRequestHeaders,
-  FastifyRequestWithUser,
-  JwtPayload,
-  SessionData,
-  LockoutStatus,
-} from "./jwt-auth.guard";
-
-// Type definitions from Clinic Guard
+// All types are now in @core/types/guard.types.ts and @core/types/session.types.ts
 export type {
   AuthenticatedUser,
+  JwtGuardUser as User,
   ClinicRequestHeaders,
+  JwtRequestHeaders,
   ClinicQueryParams,
   ClinicRouteParams,
   ClinicRequestBody,
   ClinicRequestContext,
   ClinicRequest,
   ClinicValidationResult,
-} from "./clinic.guard";
-
-// Type definitions from Roles Guard
-export type { RequestWithUser } from "./roles.guard";
+  FastifyRequestWithUser,
+  JwtPayload,
+  RequestWithUser,
+  RequestWithAuth,
+} from '@core/types/guard.types';
+export type { RedisSessionData as SessionData, LockoutStatus } from '@core/types/session.types';

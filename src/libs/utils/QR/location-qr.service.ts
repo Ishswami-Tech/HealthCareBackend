@@ -1,5 +1,8 @@
-import { Injectable } from "@nestjs/common";
-import { BadRequestException } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 /**
  * Interface for location QR data structure
@@ -57,14 +60,14 @@ export class LocationQrService {
    * // Returns: '{"locationId":"location-123","type":"LOCATION_CHECK_IN","timestamp":"2024-01-01T00:00:00.000Z"}'
    * ```
    *
-   * @throws {BadRequestException} When QR code generation fails
+   * @throws {HealthcareError} When QR code generation fails
    */
   generateLocationQR(locationId: string): Promise<string> {
     try {
       // Create QR data with location information
       const qrData: LocationQRData = {
         locationId,
-        type: "LOCATION_CHECK_IN",
+        type: 'LOCATION_CHECK_IN',
         timestamp: new Date().toISOString(),
       };
 
@@ -72,10 +75,12 @@ export class LocationQrService {
       // Note: This would integrate with QrService in a real implementation
       return Promise.resolve(JSON.stringify(qrData));
     } catch (_error) {
-      const _message =
-        _error instanceof Error ? _error.message : String(_error);
-      throw new BadRequestException(
-        `Failed to generate location QR: ${_message}`,
+      throw new HealthcareError(
+        ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
+        `Failed to generate location QR`,
+        undefined,
+        { locationId, error: _error instanceof Error ? _error.message : String(_error) },
+        'LocationQrService.generateLocationQR'
       );
     }
   }
@@ -96,33 +101,49 @@ export class LocationQrService {
    *   '{"locationId":"location-123","type":"LOCATION_CHECK_IN","timestamp":"2024-01-01T00:00:00.000Z"}',
    *   'location-123'
    * );
-   * // Returns: true if valid, throws BadRequestException if invalid
+   * // Returns: true if valid, throws HealthcareError if invalid
    * ```
    *
-   * @throws {BadRequestException} When QR code is invalid or doesn't match location
+   * @throws {HealthcareError} When QR code is invalid or doesn't match location
    */
-  verifyLocationQR(
-    qrData: string,
-    appointmentLocationId: string,
-  ): Promise<boolean> {
+  verifyLocationQR(qrData: string, appointmentLocationId: string): Promise<boolean> {
     try {
       const data = JSON.parse(qrData) as LocationQRData;
 
       // Validate QR data format
-      if (data.type !== "LOCATION_CHECK_IN") {
-        throw new BadRequestException("Invalid QR code type");
+      if (data.type !== 'LOCATION_CHECK_IN') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Invalid QR code type',
+          undefined,
+          { qrData, expectedType: 'LOCATION_CHECK_IN', actualType: data.type },
+          'LocationQrService.verifyLocationQR'
+        );
       }
 
       // Verify if the QR code is for the correct location
       if (data.locationId !== appointmentLocationId) {
-        throw new BadRequestException("QR code is not valid for this location");
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'QR code is not valid for this location',
+          undefined,
+          { qrLocationId: data.locationId, appointmentLocationId },
+          'LocationQrService.verifyLocationQR'
+        );
       }
 
       return Promise.resolve(true);
     } catch (_error) {
-      const _message =
-        _error instanceof Error ? _error.message : String(_error);
-      throw new BadRequestException(`Invalid QR code: ${_message}`);
+      if (_error instanceof HealthcareError) {
+        throw _error;
+      }
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_INVALID_FORMAT,
+        'Invalid QR code',
+        undefined,
+        { error: _error instanceof Error ? _error.message : String(_error) },
+        'LocationQrService.verifyLocationQR'
+      );
     }
   }
 }

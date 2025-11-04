@@ -1,13 +1,12 @@
-import { Injectable } from "@nestjs/common";
-import { BaseAppointmentPlugin } from "../base/base-plugin.service";
-import { AppointmentLocationService } from "./appointment-location.service";
+import { Injectable } from '@nestjs/common';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentLocationService } from './appointment-location.service';
 
 @Injectable()
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
 export class ClinicLocationPlugin extends BaseAppointmentPlugin {
-  readonly name = "clinic-location-plugin";
-  readonly version = "1.0.0";
-  readonly features = ["location-management", "qr-codes", "multi-location"];
+  readonly name = 'clinic-location-plugin';
+  readonly version = '1.0.0';
+  readonly features = ['location-management', 'qr-codes', 'multi-location'];
 
   constructor(private readonly locationService: AppointmentLocationService) {
     super();
@@ -15,44 +14,32 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as any;
-    this.logPluginAction("Processing clinic location operation", {
+    this.logPluginAction('Processing clinic location operation', {
       operation: pluginData.operation,
     });
 
     // Delegate to existing location service - no functionality change
     switch (pluginData.operation) {
-      case "getAllLocations":
-        return await this.locationService.getAllLocations("clinic");
+      case 'getAllLocations':
+        return await this.locationService.getAllLocations('clinic');
 
-      case "getLocationById":
-        return await this.locationService.getLocationById(
-          pluginData.locationId,
-          "clinic",
-        );
+      case 'getLocationById':
+        return await this.locationService.getLocationById(pluginData.locationId, 'clinic');
 
-      case "getDoctorsByLocation":
-        return await this.locationService.getDoctorsByLocation(
-          pluginData.locationId,
-          "clinic",
-        );
+      case 'getDoctorsByLocation':
+        return await this.locationService.getDoctorsByLocation(pluginData.locationId, 'clinic');
 
-      case "getLocationStats":
-        return await this.locationService.getLocationStats(
-          pluginData.locationId,
-          "clinic",
-        );
+      case 'getLocationStats':
+        return await this.locationService.getLocationStats(pluginData.locationId, 'clinic');
 
-      case "invalidateLocationsCache":
-        return await this.locationService.invalidateLocationsCache("clinic");
+      case 'invalidateLocationsCache':
+        return await this.locationService.invalidateLocationsCache('clinic');
 
-      case "invalidateDoctorsCache":
-        return await this.locationService.invalidateDoctorsCache(
-          pluginData.locationId,
-          "clinic",
-        );
+      case 'invalidateDoctorsCache':
+        return await this.locationService.invalidateDoctorsCache(pluginData.locationId, 'clinic');
 
       default:
-        this.logPluginError("Unknown location operation", {
+        this.logPluginError('Unknown location operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown location operation: ${pluginData.operation}`);
@@ -63,10 +50,10 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
     const pluginData = data as any;
     // Validate that required fields are present for each operation
     const requiredFields = {
-      getLocationById: ["locationId"],
-      getDoctorsByLocation: ["locationId"],
-      getLocationStats: ["locationId"],
-      invalidateDoctorsCache: ["locationId"],
+      getLocationById: ['locationId'],
+      getDoctorsByLocation: ['locationId'],
+      getLocationStats: ['locationId'],
+      invalidateDoctorsCache: ['locationId'],
     };
 
     const operation = pluginData.operation;
@@ -77,11 +64,9 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
       return true;
     }
 
-    const isValid = fields.every(
-      (field: unknown) => pluginData[field as string] !== undefined,
-    );
+    const isValid = fields.every((field: unknown) => pluginData[field as string] !== undefined);
     if (!isValid) {
-      this.logPluginError("Missing required fields", {
+      this.logPluginError('Missing required fields', {
         operation,
         requiredFields: fields,
       });
@@ -90,4 +75,3 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
     return isValid;
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */

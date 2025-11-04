@@ -1,4 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import type {
   BusinessRule,
   RuleCondition,
@@ -6,7 +8,7 @@ import type {
   RuleContext,
   RuleResult,
   RuleStats,
-} from "./types/business-rules.types";
+} from '@core/types';
 
 /**
  * Business rules engine service
@@ -16,7 +18,6 @@ import type {
  */
 @Injectable()
 export class BusinessRulesEngine {
-  private readonly logger = new Logger(BusinessRulesEngine.name);
   private readonly rules = new Map<string, BusinessRule>();
   private readonly evaluationStats: RuleStats = {
     totalRules: 0,
@@ -26,6 +27,8 @@ export class BusinessRulesEngine {
     averageExecutionTime: 0,
   };
 
+  constructor(private readonly loggingService: LoggingService) {}
+
   /**
    * Registers a business rule
    * @param rule - Business rule to register
@@ -34,17 +37,26 @@ export class BusinessRulesEngine {
   registerRule(rule: BusinessRule): boolean {
     try {
       this.rules.set(rule.id, rule);
-      this.logger.log(`Business rule registered: ${rule.name}`, {
-        ruleId: rule.id,
-        category: rule.category,
-        priority: rule.priority,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Business rule registered: ${rule.name}`,
+        'BusinessRulesEngine',
+        {
+          ruleId: rule.id,
+          category: rule.category,
+          priority: rule.priority,
+        }
+      );
       return true;
     } catch (error) {
-      this.logger.error("Failed to register business rule", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        ruleId: rule.id,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to register business rule',
+        'BusinessRulesEngine',
+        { error: (error as Error)?.message, ruleId: rule.id }
+      );
       return false;
     }
   }
@@ -59,17 +71,24 @@ export class BusinessRulesEngine {
       const rule = this.rules.get(ruleId);
       if (rule) {
         this.rules.delete(ruleId);
-        this.logger.log(`Business rule unregistered: ${rule.name}`, {
-          ruleId,
-        });
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Business rule unregistered: ${rule.name}`,
+          'BusinessRulesEngine',
+          { ruleId }
+        );
         return true;
       }
       return false;
     } catch (error) {
-      this.logger.error("Failed to unregister business rule", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        ruleId,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to unregister business rule',
+        'BusinessRulesEngine',
+        { error: (error as Error)?.message, ruleId }
+      );
       return false;
     }
   }
@@ -89,7 +108,7 @@ export class BusinessRulesEngine {
    */
   getRulesByCategory(category: string): readonly BusinessRule[] {
     return Array.from(this.rules.values()).filter(
-      (rule) => rule.category === category && rule.isActive,
+      rule => rule.category === category && rule.isActive
     );
   }
 
@@ -108,22 +127,26 @@ export class BusinessRulesEngine {
     let valid = true;
 
     try {
-      this.logger.log("Evaluating business rules", {
-        userId: context.userId,
-        appointmentId: context.appointmentId,
-        clinicId: context.clinicId,
-        category,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Evaluating business rules',
+        'BusinessRulesEngine',
+        {
+          userId: context.userId,
+          appointmentId: context.appointmentId,
+          clinicId: context.clinicId,
+          category,
+        }
+      );
 
       // Get rules to evaluate
       const rulesToEvaluate = category
         ? this.getRulesByCategory(category)
-        : Array.from(this.rules.values()).filter((rule) => rule.isActive);
+        : Array.from(this.rules.values()).filter(rule => rule.isActive);
 
       // Sort rules by priority (higher priority first)
-      const sortedRules = [...rulesToEvaluate].sort(
-        (a, b) => b.priority - a.priority,
-      );
+      const sortedRules = [...rulesToEvaluate].sort((a, b) => b.priority - a.priority);
 
       // Evaluate each rule
       for (const rule of sortedRules) {
@@ -140,12 +163,7 @@ export class BusinessRulesEngine {
       }
 
       const executionTime = Date.now() - startTime;
-      this.updateStats(
-        evaluatedRules.length,
-        valid,
-        warnings.length > 0,
-        executionTime,
-      );
+      this.updateStats(evaluatedRules.length, valid, warnings.length > 0, executionTime);
 
       return {
         valid,
@@ -160,16 +178,18 @@ export class BusinessRulesEngine {
       };
     } catch (error) {
       const executionTime = Date.now() - startTime;
-      this.logger.error("Rule evaluation failed", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        userId: context.userId,
-        executionTime,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Rule evaluation failed',
+        'BusinessRulesEngine',
+        { error: (error as Error)?.message, userId: context.userId, executionTime }
+      );
 
       return {
         valid: false,
-        violations: [error instanceof Error ? error.message : "Unknown error"],
-        warnings: ["Rule evaluation encountered an error"],
+        violations: [error instanceof Error ? error.message : 'Unknown error'],
+        warnings: ['Rule evaluation encountered an error'],
         actions: [],
         metadata: {
           evaluatedRules,
@@ -187,10 +207,7 @@ export class BusinessRulesEngine {
    * @returns Rule evaluation result
    * @private
    */
-  private evaluateSingleRule(
-    rule: BusinessRule,
-    context: RuleContext,
-  ): RuleResult {
+  private evaluateSingleRule(rule: BusinessRule, context: RuleContext): RuleResult {
     try {
       // Evaluate conditions
       const conditionsMet = this.evaluateConditions(rule.conditions, context);
@@ -211,27 +228,33 @@ export class BusinessRulesEngine {
 
       for (const action of rule.actions) {
         switch (action.type) {
-          case "block":
+          case 'block':
             violations.push(action.message);
             break;
-          case "warn":
+          case 'warn':
             warnings.push(action.message);
             break;
-          case "allow":
+          case 'allow':
             // Allow action - no violations
             break;
-          case "log":
-            this.logger.log(`Business rule action: ${action.message}`, {
-              ruleId: rule.id,
-              ruleName: rule.name,
-              actionType: action.type,
-            });
+          case 'log':
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.INFO,
+              `Business rule action: ${action.message}`,
+              'BusinessRulesEngine',
+              {
+                ruleId: rule.id,
+                ruleName: rule.name,
+                actionType: action.type,
+              }
+            );
             break;
-          case "notify":
+          case 'notify':
             // Add notification action
             actions.push(action);
             break;
-          case "require_approval":
+          case 'require_approval':
             violations.push(action.message);
             actions.push(action);
             break;
@@ -247,11 +270,13 @@ export class BusinessRulesEngine {
         actions,
       };
     } catch (error) {
-      this.logger.error("Failed to evaluate single rule", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        ruleId: rule.id,
-        ruleName: rule.name,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to evaluate single rule',
+        'BusinessRulesEngine',
+        { error: (error as Error)?.message, ruleId: rule.id, ruleName: rule.name }
+      );
 
       return {
         valid: false,
@@ -269,27 +294,24 @@ export class BusinessRulesEngine {
    * @returns True if all conditions are met
    * @private
    */
-  private evaluateConditions(
-    conditions: readonly RuleCondition[],
-    context: RuleContext,
-  ): boolean {
+  private evaluateConditions(conditions: readonly RuleCondition[], context: RuleContext): boolean {
     if (conditions.length === 0) {
       return true;
     }
 
     let result = true;
-    let currentOperator: "AND" | "OR" = "AND";
+    let currentOperator: 'AND' | 'OR' = 'AND';
 
     for (const condition of conditions) {
       const conditionResult = this.evaluateCondition(condition, context);
 
-      if (currentOperator === "AND") {
+      if (currentOperator === 'AND') {
         result = result && conditionResult;
       } else {
         result = result || conditionResult;
       }
 
-      currentOperator = condition.operator || "AND";
+      currentOperator = condition.operator || 'AND';
     }
 
     return result;
@@ -302,63 +324,63 @@ export class BusinessRulesEngine {
    * @returns True if condition is met
    * @private
    */
-  private evaluateCondition(
-    condition: RuleCondition,
-    context: RuleContext,
-  ): boolean {
+  private evaluateCondition(condition: RuleCondition, context: RuleContext): boolean {
     try {
       const fieldValue = this.getFieldValue(condition.field, context);
 
       switch (condition.type) {
-        case "equals":
+        case 'equals':
           return fieldValue === condition.value;
-        case "not_equals":
+        case 'not_equals':
           return fieldValue !== condition.value;
-        case "greater_than":
+        case 'greater_than':
           return (
-            typeof fieldValue === "number" &&
-            typeof condition.value === "number" &&
+            typeof fieldValue === 'number' &&
+            typeof condition.value === 'number' &&
             fieldValue > condition.value
           );
-        case "less_than":
+        case 'less_than':
           return (
-            typeof fieldValue === "number" &&
-            typeof condition.value === "number" &&
+            typeof fieldValue === 'number' &&
+            typeof condition.value === 'number' &&
             fieldValue < condition.value
           );
-        case "contains":
+        case 'contains':
           return (
-            typeof fieldValue === "string" &&
-            typeof condition.value === "string" &&
+            typeof fieldValue === 'string' &&
+            typeof condition.value === 'string' &&
             fieldValue.includes(condition.value)
           );
-        case "not_contains":
+        case 'not_contains':
           return (
-            typeof fieldValue === "string" &&
-            typeof condition.value === "string" &&
+            typeof fieldValue === 'string' &&
+            typeof condition.value === 'string' &&
             !fieldValue.includes(condition.value)
           );
-        case "is_empty":
-          return (
-            fieldValue === null || fieldValue === undefined || fieldValue === ""
-          );
-        case "is_not_empty":
-          return (
-            fieldValue !== null && fieldValue !== undefined && fieldValue !== ""
-          );
-        case "custom":
+        case 'is_empty':
+          return fieldValue === null || fieldValue === undefined || fieldValue === '';
+        case 'is_not_empty':
+          return fieldValue !== null && fieldValue !== undefined && fieldValue !== '';
+        case 'custom':
           // Custom condition evaluation would go here
           return true;
         default:
-          this.logger.warn(`Unknown condition type: ${condition.type}`);
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Unknown condition type: ${condition.type}`,
+            'BusinessRulesEngine'
+          );
           return false;
       }
     } catch (error) {
-      this.logger.error("Failed to evaluate condition", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        conditionType: condition.type,
-        field: condition.field,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to evaluate condition',
+        'BusinessRulesEngine',
+        { error: (error as Error)?.message, conditionType: condition.type, field: condition.field }
+      );
       return false;
     }
   }
@@ -371,11 +393,11 @@ export class BusinessRulesEngine {
    * @private
    */
   private getFieldValue(fieldPath: string, context: RuleContext): unknown {
-    const parts = fieldPath.split(".");
+    const parts = fieldPath.split('.');
     let current: unknown = context;
 
     for (const part of parts) {
-      if (current && typeof current === "object" && part in current) {
+      if (current && typeof current === 'object' && part in current) {
         current = (current as Record<string, unknown>)[part];
       } else {
         return undefined;
@@ -397,7 +419,7 @@ export class BusinessRulesEngine {
     totalRules: number,
     valid: boolean,
     hasWarnings: boolean,
-    executionTime: number,
+    executionTime: number
   ): void {
     this.evaluationStats.totalRules += totalRules;
 
@@ -414,8 +436,7 @@ export class BusinessRulesEngine {
     // Update average execution time
     const totalEvaluations = this.evaluationStats.totalRules;
     this.evaluationStats.averageExecutionTime =
-      (this.evaluationStats.averageExecutionTime *
-        (totalEvaluations - totalRules) +
+      (this.evaluationStats.averageExecutionTime * (totalEvaluations - totalRules) +
         executionTime) /
       totalEvaluations;
   }
@@ -426,7 +447,7 @@ export class BusinessRulesEngine {
    * @returns Rule evaluation result
    */
   validateCreationRules(context: RuleContext): RuleResult {
-    return this.evaluateRules(context, "appointment_creation");
+    return this.evaluateRules(context, 'appointment_creation');
   }
 
   /**
@@ -435,7 +456,7 @@ export class BusinessRulesEngine {
    * @returns Rule evaluation result
    */
   validateUpdateRules(context: RuleContext): RuleResult {
-    return this.evaluateRules(context, "appointment_update");
+    return this.evaluateRules(context, 'appointment_update');
   }
 
   /**
@@ -444,7 +465,7 @@ export class BusinessRulesEngine {
    * @returns Rule evaluation result
    */
   validateCancellationRules(context: RuleContext): RuleResult {
-    return this.evaluateRules(context, "appointment_cancellation");
+    return this.evaluateRules(context, 'appointment_cancellation');
   }
 
   /**
@@ -453,7 +474,7 @@ export class BusinessRulesEngine {
    * @returns Rule evaluation result
    */
   validateAccessRules(context: RuleContext): RuleResult {
-    return this.evaluateRules(context, "user_access");
+    return this.evaluateRules(context, 'user_access');
   }
 
   /**
@@ -462,7 +483,7 @@ export class BusinessRulesEngine {
    * @returns Rule evaluation result
    */
   validateDataIntegrityRules(context: RuleContext): RuleResult {
-    return this.evaluateRules(context, "data_integrity");
+    return this.evaluateRules(context, 'data_integrity');
   }
 
   /**

@@ -118,11 +118,16 @@
 │  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐   │
 │  │   PostgreSQL DB    │  │   Redis Cache      │  │   Bull Queue       │   │
 │  │                    │  │                    │  │                    │   │
-│  │ • Prisma ORM       │  │ • Session Store    │  │ • Email Jobs       │   │
-│  │ • Multi-tenant     │  │ • Cache Store      │  │ • Notification     │   │
-│  │ • Transactions     │  │ • Pub/Sub          │  │   Jobs             │   │
-│  │ • Migrations       │  │ • Distributed Lock │  │ • Retry Logic      │   │
-│  │ • Indexes          │  │ • Rate Limiting    │  │ • Priority Queue   │   │
+│  │ • DatabaseService  │  │ • Session Store    │  │ • Email Jobs       │   │
+│  │   (Single Entry)   │  │ • Cache Store      │  │ • Notification     │   │
+│  │ • Connection Pool  │  │ • Pub/Sub          │  │   Jobs             │   │
+│  │   (50-500 conns)   │  │ • Distributed Lock │  │ • Retry Logic      │   │
+│  │ • Query Cache      │  │ • Rate Limiting    │  │ • Priority Queue   │   │
+│  │   (100K+ entries)  │  │                    │  │                    │   │
+│  │ • Query Optimizer  │  │                    │  │                    │   │
+│  │ • Read Replicas    │  │                    │  │                    │   │
+│  │ • Multi-tenant     │  │                    │  │                    │   │
+│  │ • HIPAA Audit Logs │  │                    │  │                    │   │
 │  └────────────────────┘  └────────────────────┘  └────────────────────┘   │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -228,13 +233,13 @@ Payment Request → Validate Subscription/Appointment → Create Payment Record
 
 | Service | Depends On | Exports To | Events Emitted | Events Consumed |
 |---------|-----------|-----------|----------------|-----------------|
-| **Billing** | Prisma, Cache, Logging, Events | Appointments | `billing.plan.created`, `billing.subscription.created`, `billing.payment.created`, `billing.appointment.booked` | `appointment.cancelled` |
-| **EHR** | Prisma, Cache, Logging, Events | Appointments, Users | `ehr.medical_history.created`, `ehr.lab_report.created`, `ehr.vital.created` | `appointment.completed` |
-| **Appointments** | Prisma, Cache, Logging, Events, Billing, EHR | Users, Clinic, Billing | `appointment.created`, `appointment.cancelled`, `appointment.completed` | `billing.subscription.created` |
-| **Users** | Prisma, Cache, Logging, Auth | All Services | `user.created`, `user.updated`, `user.deleted` | - |
-| **Clinic** | Prisma, Cache, Logging | All Services | `clinic.created`, `clinic.updated` | - |
+| **Billing** | DatabaseService, Cache, Logging, Events | Appointments | `billing.plan.created`, `billing.subscription.created`, `billing.payment.created`, `billing.appointment.booked` | `appointment.cancelled` |
+| **EHR** | DatabaseService, Cache, Logging, Events | Appointments, Users | `ehr.medical_history.created`, `ehr.lab_report.created`, `ehr.vital.created` | `appointment.completed` |
+| **Appointments** | DatabaseService, Cache, Logging, Events, Billing, EHR | Users, Clinic, Billing | `appointment.created`, `appointment.cancelled`, `appointment.completed` | `billing.subscription.created` |
+| **Users** | DatabaseService, Cache, Logging, Auth | All Services | `user.created`, `user.updated`, `user.deleted` | - |
+| **Clinic** | DatabaseService, Cache, Logging | All Services | `clinic.created`, `clinic.updated` | - |
 | **Notification** | Push, Email, SMS, Queue | All Services | `notification.sent`, `notification.failed` | `*.created`, `*.updated` (wildcard) |
-| **Auth** | JWT, Prisma, Cache | All Services | `auth.login`, `auth.logout`, `auth.token.refreshed` | - |
+| **Auth** | JWT, DatabaseService, Cache | All Services | `auth.login`, `auth.logout`, `auth.token.refreshed` | - |
 
 ### Shared Infrastructure Usage
 
@@ -243,9 +248,15 @@ Payment Request → Validate Subscription/Appointment → Create Payment Record
 │                    SHARED INFRASTRUCTURE                          │
 ├───────────────────────────────────────────────────────────────────┤
 │                                                                   │
-│  PrismaService (Database ORM)                                     │
+│  DatabaseService (Single Unified Database Service)                │
+│  - Connection Pooling (50-500 connections)                        │
+│  - Query Caching (100K+ entries)                                  │
+│  - Query Optimization                                             │
+│  - Metrics & Monitoring                                           │
+│  - HIPAA Audit Logging                                            │
+│  - Multi-Tenant Clinic Isolation                                 │
 │  ├─ Used by: All Business Services                               │
-│  ├─ Connection Pool: 10-50 connections                           │
+│  ├─ Connection Pool: 50-500 connections (auto-scaling)           │
 │  └─ Transaction Support: ACID compliance                         │
 │                                                                   │
 │  CacheService (Redis Abstraction)                                │
@@ -533,17 +544,20 @@ const [subscriptions, payments, invoices] = await Promise.all([
 ]);
 
 // Select Only Required Fields
-const payments = await prisma.payment.findMany({
+const payments = await databaseService.executeHealthcareRead(async (client) => {
+  return await client.payment.findMany({
   select: { amount: true, createdAt: true },
   where: { clinicId }
 });
 
 // Use Cursor-Based Pagination for Large Datasets
-const appointments = await prisma.appointment.findMany({
-  take: 50,
-  skip: 1,
-  cursor: { id: lastAppointmentId },
-  orderBy: { scheduledAt: 'desc' }
+const appointments = await databaseService.executeHealthcareRead(async (client) => {
+  return await client.appointment.findMany({
+    take: 50,
+    skip: 1,
+    cursor: { id: lastAppointmentId },
+    orderBy: { scheduledAt: 'desc' }
+  });
 });
 ```
 
@@ -598,7 +612,7 @@ Request → Generate Correlation ID → Pass to all services → Include in all 
 ## ✅ Integration Verification Checklist
 
 ### ✓ Core Infrastructure
-- [x] **PrismaService**: Used by all services for database access
+- [x] **DatabaseService**: Single unified database service used by all services (includes connection pooling, caching, query optimization, metrics, HIPAA audit logging, clinic isolation)
 - [x] **CacheService**: Integrated in Billing & EHR with tag-based invalidation
 - [x] **LoggingService**: All services log operations with context
 - [x] **EventService**: Event emission and handling across services
@@ -734,7 +748,7 @@ await billingService.updatePayment(payment.id, {
 ### Horizontal Scaling
 - **Stateless Services**: All services are stateless, can scale independently
 - **Load Balancing**: Distribute requests across multiple instances
-- **Database Connection Pooling**: Prisma manages connection pool (10-50 connections)
+- **Database Connection Pooling**: DatabaseService manages connection pool (50-500 connections, auto-scaling)
 - **Redis Cluster**: Cache layer can scale with Redis cluster
 
 ### Performance Targets (1M+ Users)

@@ -11,6 +11,6 @@
  * ```
  */
 
-export { CircuitBreakerService } from "./circuit-breaker.service";
-export { ResilienceModule } from "./resilience.module";
-export type { CircuitBreakerOptions } from "./circuit-breaker.service";
+export { CircuitBreakerService } from './circuit-breaker.service';
+export { ResilienceModule } from './resilience.module';
+export type { CircuitBreakerOptions } from './circuit-breaker.service';

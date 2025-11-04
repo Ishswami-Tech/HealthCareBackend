@@ -1,6 +1,8 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { LoggingService } from '@infrastructure/logging';
+import { LogLevel, LogType } from '@core/types';
 
 export interface SESEmailOptions {
   to: string | string[];
@@ -37,13 +39,15 @@ export interface SESEmailResult {
 
 @Injectable()
 export class SESEmailService implements OnModuleInit {
-  private readonly logger = new Logger(SESEmailService.name);
   private sesClient: SESClient | null = null;
   private isInitialized = false;
-  private fromEmail: string = "";
-  private fromName: string = "";
+  private fromEmail: string = '';
+  private fromName: string = '';
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly loggingService: LoggingService
+  ) {}
 
   onModuleInit(): void {
     this.initializeAWSSES();
@@ -51,21 +55,19 @@ export class SESEmailService implements OnModuleInit {
 
   private initializeAWSSES(): void {
     try {
-      const awsRegion = this.configService.get<string>("AWS_REGION");
-      const awsAccessKeyId =
-        this.configService.get<string>("AWS_ACCESS_KEY_ID");
-      const awsSecretAccessKey = this.configService.get<string>(
-        "AWS_SECRET_ACCESS_KEY",
-      );
+      const awsRegion = this.configService.get<string>('AWS_REGION');
+      const awsAccessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
+      const awsSecretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
       this.fromEmail =
-        this.configService.get<string>("AWS_SES_FROM_EMAIL") ||
-        "noreply@healthcare.com";
-      this.fromName =
-        this.configService.get<string>("AWS_SES_FROM_NAME") || "Healthcare App";
+        this.configService.get<string>('AWS_SES_FROM_EMAIL') || 'noreply@healthcare.com';
+      this.fromName = this.configService.get<string>('AWS_SES_FROM_NAME') || 'Healthcare App';
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
-        this.logger.warn(
-          "AWS credentials not provided, SES email service will be disabled",
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'AWS credentials not provided, SES email service will be disabled',
+          'SESEmailService'
         );
         this.isInitialized = false;
         return;
@@ -80,22 +82,36 @@ export class SESEmailService implements OnModuleInit {
       });
 
       this.isInitialized = true;
-      this.logger.log("AWS SES email service initialized successfully");
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'AWS SES email service initialized successfully',
+        'SESEmailService'
+      );
     } catch (error) {
-      this.logger.error("Failed to initialize AWS SES:", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to initialize AWS SES',
+        'SESEmailService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       this.isInitialized = false;
     }
   }
 
   async sendEmail(options: SESEmailOptions): Promise<SESEmailResult> {
     if (!this.isInitialized || !this.sesClient) {
-      this.logger.warn(
-        "SES email service is not initialized, skipping email send",
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.WARN,
+        'SES email service is not initialized, skipping email send',
+        'SESEmailService'
       );
-      return { success: false, error: "Service not initialized" };
+      return { success: false, error: 'Service not initialized' };
     }
 
     try {
@@ -111,20 +127,20 @@ export class SESEmailService implements OnModuleInit {
         Message: {
           Subject: {
             Data: options.subject,
-            Charset: "UTF-8",
+            Charset: 'UTF-8',
           },
           Body:
             options.isHtml !== false
               ? {
                   Html: {
                     Data: options.body,
-                    Charset: "UTF-8",
+                    Charset: 'UTF-8',
                   },
                 }
               : {
                   Text: {
                     Data: options.body,
-                    Charset: "UTF-8",
+                    Charset: 'UTF-8',
                   },
                 },
         },
@@ -133,34 +149,46 @@ export class SESEmailService implements OnModuleInit {
 
       const response = await this.sesClient.send(command);
 
-      this.logger.log("SES email sent successfully", {
-        messageId: response.MessageId,
-        to: toAddresses.join(", "),
-        subject: options.subject,
-      });
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.INFO,
+        'SES email sent successfully',
+        'SESEmailService',
+        {
+          messageId: response.MessageId,
+          to: toAddresses.join(', '),
+          subject: options.subject,
+        }
+      );
 
       return {
         success: true,
         ...(response.MessageId && { messageId: response.MessageId }),
       };
     } catch (error) {
-      this.logger.error("Failed to send SES email", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
-        to: options.to,
-        subject: options.subject,
-      });
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.ERROR,
+        'Failed to send SES email',
+        'SESEmailService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+          to: options.to,
+          subject: options.subject,
+        }
+      );
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
   async sendAppointmentReminder(
     to: string,
-    appointmentData: AppointmentReminderData,
+    appointmentData: AppointmentReminderData
   ): Promise<SESEmailResult> {
     const subject = `Appointment Reminder - ${appointmentData.date} at ${appointmentData.time}`;
     const htmlBody = this.generateAppointmentReminderTemplate(appointmentData);
@@ -175,7 +203,7 @@ export class SESEmailService implements OnModuleInit {
 
   async sendPrescriptionReady(
     to: string,
-    prescriptionData: PrescriptionReadyData,
+    prescriptionData: PrescriptionReadyData
   ): Promise<SESEmailResult> {
     const subject = `Prescription Ready - ${prescriptionData.prescriptionId}`;
     const htmlBody = this.generatePrescriptionReadyTemplate(prescriptionData);
@@ -189,14 +217,19 @@ export class SESEmailService implements OnModuleInit {
   }
 
   async sendBulkEmails(
-    emails: Array<{ to: string; subject: string; body: string }>,
+    emails: Array<{ to: string; subject: string; body: string }>
   ): Promise<{ successCount: number; failureCount: number; errors: string[] }> {
     if (!this.isInitialized || !this.sesClient) {
-      this.logger.warn("SES email service is not initialized");
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.WARN,
+        'SES email service is not initialized',
+        'SESEmailService'
+      );
       return {
         successCount: 0,
         failureCount: emails.length,
-        errors: ["Service not initialized"],
+        errors: ['Service not initialized'],
       };
     }
 
@@ -208,7 +241,7 @@ export class SESEmailService implements OnModuleInit {
     const batchSize = 10;
     for (let i = 0; i < emails.length; i += batchSize) {
       const batch = emails.slice(i, i + batchSize);
-      const batchPromises = batch.map(async (email) => {
+      const batchPromises = batch.map(async email => {
         const result = await this.sendEmail({
           to: email.to,
           subject: email.subject,
@@ -230,22 +263,26 @@ export class SESEmailService implements OnModuleInit {
 
       // Small delay between batches to respect rate limits
       if (i + batchSize < emails.length) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
 
-    this.logger.log("Bulk email send completed", {
-      successCount,
-      failureCount,
-      totalEmails: emails.length,
-    });
+    void this.loggingService.log(
+      LogType.EMAIL,
+      LogLevel.INFO,
+      'Bulk email send completed',
+      'SESEmailService',
+      {
+        successCount,
+        failureCount,
+        totalEmails: emails.length,
+      }
+    );
 
     return { successCount, failureCount, errors };
   }
 
-  private generateAppointmentReminderTemplate(
-    data: AppointmentReminderData,
-  ): string {
+  private generateAppointmentReminderTemplate(data: AppointmentReminderData): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
         <div style="text-align: center; margin-bottom: 30px;">
@@ -263,7 +300,7 @@ export class SESEmailService implements OnModuleInit {
           <div style="margin-bottom: 10px;"><strong style="color: #2c3e50;">Date:</strong> <span style="color: #555;">${data.date}</span></div>
           <div style="margin-bottom: 10px;"><strong style="color: #2c3e50;">Time:</strong> <span style="color: #555;">${data.time}</span></div>
           <div style="margin-bottom: 10px;"><strong style="color: #2c3e50;">Location:</strong> <span style="color: #555;">${data.location}</span></div>
-          ${data.appointmentId ? `<div><strong style="color: #2c3e50;">Appointment ID:</strong> <span style="color: #555;">${data.appointmentId}</span></div>` : ""}
+          ${data.appointmentId ? `<div><strong style="color: #2c3e50;">Appointment ID:</strong> <span style="color: #555;">${data.appointmentId}</span></div>` : ''}
         </div>
 
         <div style="background-color: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #2196F3;">
@@ -288,9 +325,7 @@ export class SESEmailService implements OnModuleInit {
     `;
   }
 
-  private generatePrescriptionReadyTemplate(
-    data: PrescriptionReadyData,
-  ): string {
+  private generatePrescriptionReadyTemplate(data: PrescriptionReadyData): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
         <div style="text-align: center; margin-bottom: 30px;">
@@ -309,14 +344,14 @@ export class SESEmailService implements OnModuleInit {
 
           <div style="margin-bottom: 10px;"><strong style="color: #2c3e50;">Medications:</strong></div>
           <ul style="margin: 5px 0 0 20px; padding: 0; color: #555;">
-            ${data.medications.map((medication) => `<li style="margin-bottom: 5px;">${medication}</li>`).join("")}
+            ${data.medications.map(medication => `<li style="margin-bottom: 5px;">${medication}</li>`).join('')}
           </ul>
         </div>
 
         <div style="background-color: #e8f5e9; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4CAF50;">
           <p style="margin: 0; font-size: 14px; color: #2e7d32;">
             <strong>Pickup Requirements:</strong> Please bring a valid photo ID when collecting your prescription.
-            ${data.pickupInstructions ? ` ${data.pickupInstructions}` : ""}
+            ${data.pickupInstructions ? ` ${data.pickupInstructions}` : ''}
           </p>
         </div>
 

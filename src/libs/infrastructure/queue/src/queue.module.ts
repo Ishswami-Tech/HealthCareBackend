@@ -1,14 +1,18 @@
-import { Module, DynamicModule, forwardRef } from "@nestjs/common";
-import { BullModule, getQueueToken } from "@nestjs/bullmq";
-import { ConfigModule, ConfigService } from "@nestjs/config";
-import { QueueService } from "./queue.service";
-import { QueueProcessor } from "./queue.processor";
-import { SharedWorkerService } from "./shared-worker.service";
-import { createBullBoard } from "@bull-board/api";
-import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
-import { FastifyAdapter } from "@bull-board/fastify";
-import { QueueStatusGateway } from "./sockets/queue-status.gateway";
-import { QueueMonitoringModule } from "./monitoring/queue-monitoring.module";
+import { Module, DynamicModule, forwardRef } from '@nestjs/common';
+import { BullModule, getQueueToken } from '@nestjs/bullmq';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { QueueService } from './queue.service';
+import { QueueProcessor } from './queue.processor';
+import { SharedWorkerService } from './shared-worker.service';
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { FastifyAdapter } from '@bull-board/fastify';
+import { QueueStatusGateway } from './sockets/queue-status.gateway';
+import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import {
   APPOINTMENT_QUEUE,
   EMAIL_QUEUE,
@@ -29,15 +33,15 @@ import {
   REMINDER_QUEUE,
   FOLLOW_UP_QUEUE,
   RECURRING_APPOINTMENT_QUEUE,
-} from "./queue.constants";
-import { Queue, Worker, Job } from "bullmq";
-import { DatabaseModule, DatabaseService } from "../../database";
+} from './queue.constants';
+import { Queue, Worker, Job } from 'bullmq';
+import { DatabaseModule, DatabaseService } from '@infrastructure/database';
 
 @Module({})
 export class QueueModule {
   static forRoot(): DynamicModule {
     // Filter queues based on service type to prevent conflicts
-    const serviceName = process.env["SERVICE_NAME"] || "clinic";
+    const serviceName = process.env['SERVICE_NAME'] || 'clinic';
 
     // Define service-specific queues with domain prefixes
     const clinicQueues = [
@@ -66,42 +70,34 @@ export class QueueModule {
     let queueNames: string[];
     let redisConfig: unknown;
 
-    if (serviceName === "clinic") {
+    if (serviceName === 'clinic') {
       queueNames = clinicQueues;
       // Fashion-specific Redis configuration
       redisConfig = {
-        host: process.env["REDIS_HOST"] || "localhost",
-        port: parseInt(process.env["REDIS_PORT"] || "6379"),
-        password: process.env["REDIS_PASSWORD"],
-        db: parseInt(process.env["REDIS_DB"] || "2"), // Database for queue operations
+        host: process.env['REDIS_HOST'] || 'localhost',
+        port: parseInt(process.env['REDIS_PORT'] || '6379'),
+        password: process.env['REDIS_PASSWORD'],
+        db: parseInt(process.env['REDIS_DB'] || '2'), // Database for queue operations
       };
-    } else if (serviceName === "worker") {
+    } else if (serviceName === 'worker') {
       // Worker processes ALL queues from both services
       queueNames = [...clinicQueues, ...clinicQueues];
       // Worker uses default Redis configuration
       redisConfig = {
-        host: process.env["REDIS_HOST"] || "localhost",
-        port: parseInt(process.env["REDIS_PORT"] || "6379"),
-        password: process.env["REDIS_PASSWORD"],
-        db: parseInt(process.env["REDIS_DB"] || "1"),
+        host: process.env['REDIS_HOST'] || 'localhost',
+        port: parseInt(process.env['REDIS_PORT'] || '6379'),
+        password: process.env['REDIS_PASSWORD'],
+        db: parseInt(process.env['REDIS_DB'] || '1'),
       };
     } else {
       // Default to clinic queues (including 'clinic' service)
       queueNames = clinicQueues;
       // Clinic-specific Redis configuration
       redisConfig = {
-        host:
-          process.env["CLINIC_REDIS_HOST"] ||
-          process.env["REDIS_HOST"] ||
-          "localhost",
-        port: parseInt(
-          process.env["CLINIC_REDIS_PORT"] ||
-            process.env["REDIS_PORT"] ||
-            "6379",
-        ),
-        password:
-          process.env["CLINIC_REDIS_PASSWORD"] || process.env["REDIS_PASSWORD"],
-        db: parseInt(process.env["CLINIC_REDIS_DB"] || "1"), // Separate DB for clinic
+        host: process.env['CLINIC_REDIS_HOST'] || process.env['REDIS_HOST'] || 'localhost',
+        port: parseInt(process.env['CLINIC_REDIS_PORT'] || process.env['REDIS_PORT'] || '6379'),
+        password: process.env['CLINIC_REDIS_PASSWORD'] || process.env['REDIS_PASSWORD'],
+        db: parseInt(process.env['CLINIC_REDIS_DB'] || '1'), // Separate DB for clinic
       };
     }
 
@@ -133,7 +129,7 @@ export class QueueModule {
               maxConnections: 200,
               minConnections: 50,
               // Load balancing
-              loadBalancing: "round-robin",
+              loadBalancing: 'round-robin',
               // Failover support
               failover: true,
               // Performance optimization
@@ -144,7 +140,7 @@ export class QueueModule {
               removeOnFail: 500, // Keep more failed jobs for debugging
               attempts: 5, // More retries for reliability
               backoff: {
-                type: "exponential",
+                type: 'exponential',
                 delay: 2000,
               },
               // Enterprise job options for 1M users
@@ -166,67 +162,60 @@ export class QueueModule {
               removeOnFail: 500, // Keep more failed jobs for debugging
               attempts: 5, // More retries for reliability
               backoff: {
-                type: "exponential",
+                type: 'exponential',
                 delay: 2000,
               },
               priority: 0, // Default priority
               lifo: false, // FIFO for better fairness
             },
-          }),
+          })
         ),
       ],
       providers: [
         QueueService,
         QueueProcessor,
-        ...(serviceName === "worker" ? [SharedWorkerService] : []),
-        ...(serviceName !== "worker" ? [QueueStatusGateway] : []),
+        ...(serviceName === 'worker' ? [SharedWorkerService] : []),
+        ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
         {
-          provide: "BullBoard",
+          provide: 'BullBoard',
           useFactory: (...queues: Queue[]) => {
             const serverAdapter = new FastifyAdapter();
 
             // Domain-aware Bull Board - only show queues for current domain
-            const domainQueues = queues.filter((queue) => {
+            const domainQueues = queues.filter(queue => {
               const queueName = queue.name;
-              if (serviceName === "clinic") {
-                return queueName.includes("clinic");
-              } else if (serviceName === "worker") {
+              if (serviceName === 'clinic') {
+                return queueName.includes('clinic');
+              } else if (serviceName === 'worker') {
                 return true; // Worker sees all queues
               }
               return true; // Worker sees all queues
             });
 
             createBullBoard({
-              queues: domainQueues.map((queue) => new BullMQAdapter(queue)),
+              queues: domainQueues.map(queue => new BullMQAdapter(queue)),
               serverAdapter,
               // Enhanced Bull Board configuration
               options: {
                 uiBasePath:
-                  serviceName === "clinic"
-                    ? "/clinic-queue-dashboard"
-                    : "/clinic-queue-dashboard",
+                  serviceName === 'clinic' ? '/clinic-queue-dashboard' : '/clinic-queue-dashboard',
               },
             });
             return serverAdapter;
           },
-          inject: queueNames.map((queueName) => getQueueToken(queueName)),
+          inject: queueNames.map(queueName => getQueueToken(queueName)),
         },
         // Enhanced worker configuration for 1M users
-        ...(serviceName === "worker"
+        ...(serviceName === 'worker'
           ? [
               {
-                provide: "BULLMQ_WORKERS",
-                useFactory: (
-                  queueProcessor: QueueProcessor,
-                  _prisma: DatabaseService,
-                ) => {
+                provide: 'BULLMQ_WORKERS',
+                useFactory: (queueProcessor: QueueProcessor, _prisma: DatabaseService) => {
                   const workers = [];
 
                   // Create workers for each queue with enhanced concurrency
                   for (const queueName of queueNames) {
-                    const concurrency = queueName.includes("appointment")
-                      ? 200
-                      : 100; // Higher concurrency for appointment queues
+                    const concurrency = queueName.includes('appointment') ? 200 : 100; // Higher concurrency for appointment queues
 
                     workers.push(
                       new Worker(
@@ -234,30 +223,31 @@ export class QueueModule {
                         async (job: Job<any, any, string>) => {
                           try {
                             switch (job.name) {
-                              case "create":
+                              case 'create':
                                 return queueProcessor.processCreateJob(job);
-                              case "update":
+                              case 'update':
                                 return queueProcessor.processUpdateJob(job);
-                              case "confirm":
+                              case 'confirm':
                                 return queueProcessor.processConfirmJob(job);
-                              case "complete":
+                              case 'complete':
                                 return queueProcessor.processCompleteJob(job);
-                              case "notify":
+                              case 'notify':
                                 return queueProcessor.processNotifyJob(job);
-                              case "process":
+                              case 'process':
                                 // Generic job processing - delegate to appropriate method based on job data
                                 return queueProcessor.processCreateJob(job);
                               default:
-                                throw new Error(
+                                throw new HealthcareError(
+                                  ErrorCode.QUEUE_OPERATION_FAILED,
                                   `Unknown job type: ${job.name}`,
+                                  undefined,
+                                  { jobType: job.name },
+                                  'QueueModule'
                                 );
                             }
                           } catch (_error) {
-                            // Enhanced _error handling for 1M users
-                            console.error(
-                              `Worker error for job ${job.id} in queue ${queueName}:`,
-                              _error,
-                            );
+                            // Enhanced error handling for 1M users
+                            // Error will be handled by the worker's error handler
                             throw _error;
                           }
                         },
@@ -284,8 +274,8 @@ export class QueueModule {
                             max: 1000, // Max jobs per time window
                             duration: 60000, // 1 minute window
                           },
-                        },
-                      ),
+                        }
+                      )
                     );
                   }
 
@@ -297,27 +287,19 @@ export class QueueModule {
           : []),
         // Always provide BULLMQ_QUEUES for QueueService - with error handling
         {
-          provide: "BULLMQ_QUEUES",
+          provide: 'BULLMQ_QUEUES',
           useFactory: (...queues: unknown[]) => {
-            console.log(
-              `🔄 BULLMQ_QUEUES factory called with ${queues.length} queues for ${serviceName} service`,
-            );
             // Filter out any undefined queues and ensure we have valid Queue instances
-            const validQueues = queues.filter(
-              (queue) => queue && typeof queue === "object",
-            );
-            console.log(
-              `✅ BULLMQ_QUEUES providing ${validQueues.length} valid queues`,
-            );
+            const validQueues = queues.filter(queue => queue && typeof queue === 'object');
             return validQueues;
           },
-          inject: queueNames.map((queueName) => getQueueToken(queueName)),
+          inject: queueNames.map(queueName => getQueueToken(queueName)),
         },
         // Always provide BULLMQ_WORKERS (empty array if not worker service)
-        ...(serviceName !== "worker"
+        ...(serviceName !== 'worker'
           ? [
               {
-                provide: "BULLMQ_WORKERS",
+                provide: 'BULLMQ_WORKERS',
                 useValue: [],
               },
             ]
@@ -326,8 +308,8 @@ export class QueueModule {
       exports: [
         QueueService,
         BullModule,
-        ...(serviceName === "worker" ? [SharedWorkerService] : []),
-        ...(serviceName !== "worker" ? [QueueStatusGateway] : []),
+        ...(serviceName === 'worker' ? [SharedWorkerService] : []),
+        ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
       ],
     };
   }

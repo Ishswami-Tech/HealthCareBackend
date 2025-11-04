@@ -1,149 +1,293 @@
-import { Injectable, Logger } from "@nestjs/common";
-import {
+/**
+ * Enterprise Plugin Registry Implementation
+ *
+ * Centralized plugin registry for managing plugin registration, discovery, and lifecycle
+ * across all healthcare platform services.
+ *
+ * @module PluginRegistry
+ * @description Generic plugin registry implementation following enterprise patterns
+ */
+
+// External imports
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+
+// Internal imports - Core
+import { PluginError, PluginValidationError } from './plugin.interface';
+import type {
   BasePlugin,
   PluginRegistry,
   PluginContext,
   PluginHealth,
-  PluginError,
-} from "./plugin.interface";
+  PluginInfo,
+  EnterprisePluginRegistry as IEnterprisePluginRegistry,
+} from '@core/types';
+import { LogType, LogLevel } from '@core/types';
 
 /**
- * Enterprise Plugin Registry Implementation
+ * Enterprise Plugin Registry
  *
- * Manages plugin registration, discovery, and lifecycle across all services.
- * Provides centralized plugin management with health monitoring and error handling.
+ * Provides centralized plugin registration, discovery, and lifecycle management.
+ * Supports multi-service plugin architecture with health monitoring and event-driven updates.
  *
  * @class EnterprisePluginRegistry
  * @implements {PluginRegistry}
- * @description Advanced plugin registry with enterprise-grade features
- * @example
- * ```typescript
- * @Injectable()
- * export class MyService {
- *   constructor(private readonly pluginRegistry: EnterprisePluginRegistry) {}
- *
- *   async registerMyPlugin() {
- *     const plugin = new MyPlugin();
- *     await this.pluginRegistry.register(plugin);
- *     console.log('Plugin registered successfully');
- *   }
- *
- *   async getValidationPlugins() {
- *     return this.pluginRegistry.getPluginsByFeature('validation');
- *   }
- * }
- * ```
+ * @implements {IEnterprisePluginRegistry}
+ * @description Generic plugin registry for all services
  */
 @Injectable()
-export class EnterprisePluginRegistry implements PluginRegistry {
-  private readonly logger = new Logger(EnterprisePluginRegistry.name);
-  /** Map of plugin names to plugin instances */
-  private plugins = new Map<string, BasePlugin>();
-  /** Map of features to arrays of plugins that provide those features */
-  private pluginsByFeature = new Map<string, BasePlugin[]>();
-  /** Map of plugin names to their health status */
-  private pluginHealth = new Map<string, PluginHealth>();
+export class EnterprisePluginRegistry implements PluginRegistry, IEnterprisePluginRegistry, OnModuleInit, OnModuleDestroy {
+  private readonly plugins = new Map<string, BasePlugin>();
+  private readonly pluginInfo = new Map<string, PluginInfo>();
+  private readonly featureIndex = new Map<string, Set<string>>(); // feature -> Set<pluginName>
+  private readonly domainIndex = new Map<string, Set<string>>(); // domain -> Set<pluginName>
+
+  constructor(
+    private readonly loggingService: LoggingService,
+    private readonly eventEmitter: EventEmitter2
+  ) {}
+
+  /**
+   * Initialize registry on module init
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Enterprise Plugin Registry initialized',
+        'EnterprisePluginRegistry',
+        { pluginCount: this.plugins.size }
+      );
+    } catch (error) {
+      // Logging failure should not prevent initialization
+      console.error('Failed to log registry initialization:', error);
+    }
+  }
+
+  /**
+   * Cleanup on module destroy
+   */
+  async onModuleDestroy(): Promise<void> {
+    try {
+      // Destroy all plugins gracefully
+      const destroyPromises = Array.from(this.plugins.values()).map(plugin => {
+        return plugin.destroy().catch((error) => {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            `Failed to destroy plugin: ${plugin.name}`,
+            'EnterprisePluginRegistry',
+            { pluginName: plugin.name, error: errorMessage }
+          );
+        });
+      });
+
+      await Promise.allSettled(destroyPromises);
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Enterprise Plugin Registry destroyed',
+        'EnterprisePluginRegistry',
+        { pluginCount: this.plugins.size }
+      );
+
+      this.plugins.clear();
+      this.pluginInfo.clear();
+      this.featureIndex.clear();
+      this.domainIndex.clear();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to destroy plugin registry:', errorMessage);
+    }
+  }
 
   /**
    * Register a plugin in the registry
    *
-   * @param {BasePlugin} plugin - The plugin to register
-   * @returns {Promise<void>} Promise that resolves when registration is complete
-   * @throws {PluginError} When registration fails (e.g., duplicate name, validation failure)
-   *
-   * @example
-   * ```typescript
-   * const plugin = new MyPlugin();
-   * await registry.register(plugin);
-   * console.log('Plugin registered successfully');
-   * ```
+   * @param plugin - Plugin instance to register
+   * @throws {PluginValidationError} - When plugin validation fails
+   * @throws {PluginError} - When plugin registration fails
    */
-  register(plugin: BasePlugin): Promise<void> {
+  async register(plugin: BasePlugin): Promise<void> {
+    const startTime = Date.now();
+
     try {
       // Validate plugin
-      this.validatePlugin(plugin);
+      if (!plugin.name || !plugin.version || !plugin.features) {
+        throw new PluginValidationError(
+          plugin.name || 'unknown',
+          'register',
+          ['Plugin must have name, version, and features']
+        );
+      }
 
-      // Check for conflicts
+      // Check if plugin already exists
       if (this.plugins.has(plugin.name)) {
-        throw new PluginError(
-          `Plugin with name '${plugin.name}' is already registered`,
-          plugin.name,
-          "register",
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Plugin ${plugin.name} is already registered, replacing...`,
+          'EnterprisePluginRegistry',
+          { pluginName: plugin.name }
         );
       }
 
       // Register plugin
       this.plugins.set(plugin.name, plugin);
-      this.updateIndexes(plugin);
 
-      // Initialize health status
-      this.pluginHealth.set(plugin.name, {
-        isHealthy: true,
-        lastCheck: new Date(),
-        errors: [],
+      // Index by features
+      for (const feature of plugin.features) {
+        if (!this.featureIndex.has(feature)) {
+          this.featureIndex.set(feature, new Set());
+        }
+        this.featureIndex.get(feature)?.add(plugin.name);
+      }
+
+      // Emit registration event
+      this.eventEmitter.emit('plugin.registered', {
+        type: 'plugin.registered',
+        pluginName: plugin.name,
+        timestamp: new Date(),
+        data: { version: plugin.version, features: plugin.features },
       });
 
-      this.logger.log(` Registered plugin: ${plugin.name} v${plugin.version}`);
+      const duration = Date.now() - startTime;
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Plugin ${plugin.name} registered successfully`,
+        'EnterprisePluginRegistry',
+        {
+          pluginName: plugin.name,
+          version: plugin.version,
+          features: plugin.features,
+          duration,
+        }
+      );
     } catch (error) {
-      this.logger.error(` Failed to register plugin ${plugin.name}:`, error);
-      throw error;
-    }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const duration = Date.now() - startTime;
 
-    return Promise.resolve();
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to register plugin: ${plugin.name}`,
+        'EnterprisePluginRegistry',
+        {
+          pluginName: plugin.name,
+          error: errorMessage,
+          duration,
+        }
+      );
+
+      if (error instanceof PluginError) {
+        throw error;
+      }
+
+      throw new PluginError(
+        `Failed to register plugin: ${errorMessage}`,
+        plugin.name,
+        'register',
+        error instanceof Error ? error : new Error(errorMessage)
+      );
+    }
   }
 
   /**
    * Unregister a plugin from the registry
    *
-   * @param {string} pluginName - The name of the plugin to unregister
-   * @returns {Promise<void>} Promise that resolves when unregistration is complete
-   * @throws {PluginError} When plugin is not found
-   *
-   * @example
-   * ```typescript
-   * await registry.unregister('my-plugin');
-   * console.log('Plugin unregistered successfully');
-   * ```
+   * @param pluginName - Name of the plugin to unregister
    */
   async unregister(pluginName: string): Promise<void> {
+    const startTime = Date.now();
+
     try {
       const plugin = this.plugins.get(pluginName);
       if (!plugin) {
-        throw new PluginError(
-          `Plugin '${pluginName}' not found`,
-          pluginName,
-          "unregister",
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Plugin ${pluginName} not found for unregistration`,
+          'EnterprisePluginRegistry',
+          { pluginName }
         );
+        return;
       }
 
-      // Cleanup plugin resources
+      // Destroy plugin before unregistering
       await plugin.destroy();
 
-      // Remove from registry
+      // Remove from maps
       this.plugins.delete(pluginName);
-      this.pluginHealth.delete(pluginName);
-      this.removeFromIndexes(plugin);
+      this.pluginInfo.delete(pluginName);
 
-      this.logger.log(` Unregistered plugin: ${pluginName}`);
+      // Remove from feature index
+      for (const [feature, pluginSet] of this.featureIndex.entries()) {
+        pluginSet.delete(pluginName);
+        if (pluginSet.size === 0) {
+          this.featureIndex.delete(feature);
+        }
+      }
+
+      // Remove from domain index
+      for (const [domain, pluginSet] of this.domainIndex.entries()) {
+        pluginSet.delete(pluginName);
+        if (pluginSet.size === 0) {
+          this.domainIndex.delete(domain);
+        }
+      }
+
+      // Emit unregistration event
+      this.eventEmitter.emit('plugin.unregistered', {
+        type: 'plugin.unregistered',
+        pluginName,
+        timestamp: new Date(),
+      });
+
+      const duration = Date.now() - startTime;
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Plugin ${pluginName} unregistered successfully`,
+        'EnterprisePluginRegistry',
+        { pluginName, duration }
+      );
     } catch (error) {
-      this.logger.error(` Failed to unregister plugin ${pluginName}:`, error);
-      throw error;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const duration = Date.now() - startTime;
+
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to unregister plugin: ${pluginName}`,
+        'EnterprisePluginRegistry',
+        {
+          pluginName,
+          error: errorMessage,
+          duration,
+        }
+      );
+
+      throw new PluginError(
+        `Failed to unregister plugin: ${errorMessage}`,
+        pluginName,
+        'unregister',
+        error instanceof Error ? error : new Error(errorMessage)
+      );
     }
   }
 
   /**
    * Get plugin by name
    *
-   * @param {string} name - The name of the plugin to retrieve
-   * @returns {BasePlugin | undefined} The plugin if found, undefined otherwise
-   *
-   * @example
-   * ```typescript
-   * const plugin = registry.getPlugin('my-plugin');
-   * if (plugin) {
-   *   await plugin.process(data);
-   * }
-   * ```
+   * @param name - Plugin name
+   * @returns Plugin instance or undefined if not found
    */
   getPlugin(name: string): BasePlugin | undefined {
     return this.plugins.get(name);
@@ -152,289 +296,103 @@ export class EnterprisePluginRegistry implements PluginRegistry {
   /**
    * Get plugins by feature
    *
-   * @param {string} feature - The feature to search for
-   * @returns {BasePlugin[]} Array of plugins that provide the specified feature
-   *
-   * @example
-   * ```typescript
-   * const validationPlugins = registry.getPluginsByFeature('validation');
-   * for (const plugin of validationPlugins) {
-   *   await plugin.validate(data);
-   * }
-   * ```
+   * @param feature - Feature name
+   * @returns Array of plugins that provide the feature
    */
   getPluginsByFeature(feature: string): BasePlugin[] {
-    return this.pluginsByFeature.get(feature) || [];
+    const pluginNames = this.featureIndex.get(feature);
+    if (!pluginNames || pluginNames.size === 0) {
+      return [];
+    }
+
+    const plugins: BasePlugin[] = [];
+    for (const pluginName of pluginNames) {
+      const plugin = this.plugins.get(pluginName);
+      if (plugin) {
+        plugins.push(plugin);
+      }
+    }
+
+    return plugins;
   }
 
   /**
    * Get all registered plugins
    *
-   * @returns {BasePlugin[]} Array of all registered plugins
-   *
-   * @example
-   * ```typescript
-   * const allPlugins = registry.getAllPlugins();
-   * console.log(`Total plugins: ${allPlugins.length}`);
-   * ```
+   * @returns Array of all registered plugins
    */
   getAllPlugins(): BasePlugin[] {
     return Array.from(this.plugins.values());
   }
 
   /**
-   * Get plugin health status
+   * Register plugin info (for enterprise plugin manager compatibility)
    *
-   * @param {string} [pluginName] - Optional specific plugin name, if not provided returns all plugins
-   * @returns {PluginHealth | Record<string, PluginHealth>} Health information for the plugin(s)
-   *
-   * @example
-   * ```typescript
-   * // Get health for specific plugin
-   * const health = registry.getPluginHealth('my-plugin');
-   * console.log('Plugin healthy:', health.isHealthy);
-   *
-   * // Get health for all plugins
-   * const allHealth = registry.getPluginHealth();
-   * for (const [name, health] of Object.entries(allHealth)) {
-   *   console.log(`${name}: ${health.isHealthy ? 'healthy' : 'unhealthy'}`);
-   * }
-   * ```
+   * @param info - Plugin information
    */
-  getPluginHealth(
-    pluginName?: string,
-  ): PluginHealth | Record<string, PluginHealth> {
-    if (pluginName) {
-      return (
-        this.pluginHealth.get(pluginName) || {
-          isHealthy: false,
-          lastCheck: new Date(),
-          errors: ["Plugin not found"],
-        }
-      );
-    }
+  registerPluginInfo(info: PluginInfo): void {
+    this.pluginInfo.set(info.name, info);
 
-    // Return health for all plugins
-    const allHealth: Record<string, PluginHealth> = {};
-    for (const [name, health] of Array.from(this.pluginHealth.entries())) {
-      allHealth[name] = health;
+    // Index by domain
+    if (!this.domainIndex.has(info.domain)) {
+      this.domainIndex.set(info.domain, new Set());
     }
-    return allHealth;
+    this.domainIndex.get(info.domain)?.add(info.name);
   }
 
   /**
-   * Check health of all plugins
+   * Get plugin info (EnterprisePluginRegistry interface)
    *
-   * @returns {Promise<void>} Promise that resolves when health check is complete
-   *
-   * @example
-   * ```typescript
-   * await registry.checkAllPluginHealth();
-   * console.log('Health check completed for all plugins');
-   * ```
+   * @returns Array of plugin information
    */
-  async checkAllPluginHealth(): Promise<void> {
-    this.logger.log(" Checking health of all plugins...");
+  getPluginInfo(): PluginInfo[] {
+    return Array.from(this.pluginInfo.values());
+  }
 
-    for (const [name, plugin] of Array.from(this.plugins.entries())) {
-      try {
-        const health = await plugin.getHealth();
-        this.pluginHealth.set(name, {
-          ...health,
-          lastCheck: new Date(),
-        });
+  /**
+   * Get domain features (EnterprisePluginRegistry interface)
+   *
+   * @param domain - Domain name
+   * @returns Array of feature names for the domain
+   */
+  getDomainFeatures(domain: string): string[] {
+    const pluginNames = this.domainIndex.get(domain);
+    if (!pluginNames || pluginNames.size === 0) {
+      return [];
+    }
 
-        if (!health.isHealthy) {
-          this.logger.warn(` Plugin ${name} is unhealthy:`, health.errors);
-        }
-      } catch (_error) {
-        this.logger.error(
-          ` Failed to check health for plugin ${name}:`,
-          _error,
-        );
-        this.pluginHealth.set(name, {
-          isHealthy: false,
-          lastCheck: new Date(),
-          errors: [_error instanceof Error ? _error.message : String(_error)],
-        });
+    const features = new Set<string>();
+    for (const pluginName of pluginNames) {
+      const info = this.pluginInfo.get(pluginName);
+      if (info) {
+        features.add(info.feature);
       }
     }
+
+    return Array.from(features);
   }
 
   /**
-   * Get plugin statistics
+   * Check if plugin exists (EnterprisePluginRegistry interface)
    *
-   * @returns {{totalPlugins: number; pluginsByFeature: Record<string, number>; healthyPlugins: number; unhealthyPlugins: number}} Plugin statistics
-   *
-   * @example
-   * ```typescript
-   * const stats = registry.getPluginStats();
-   * console.log(`Total plugins: ${stats.totalPlugins}`);
-   * console.log(`Healthy: ${stats.healthyPlugins}, Unhealthy: ${stats.unhealthyPlugins}`);
-   * console.log('Plugins by feature:', stats.pluginsByFeature);
-   * ```
+   * @param domain - Domain name
+   * @param feature - Feature name
+   * @returns True if plugin exists
    */
-  getPluginStats(): {
-    totalPlugins: number;
-    pluginsByFeature: Record<string, number>;
-    healthyPlugins: number;
-    unhealthyPlugins: number;
-  } {
-    const totalPlugins = this.plugins.size;
-    const healthyPlugins = Array.from(this.pluginHealth.values()).filter(
-      (health) => health.isHealthy,
-    ).length;
-    const unhealthyPlugins = totalPlugins - healthyPlugins;
-
-    const pluginsByFeature: Record<string, number> = {};
-    for (const [feature, plugins] of Array.from(
-      this.pluginsByFeature.entries(),
-    )) {
-      pluginsByFeature[feature] = plugins.length;
+  hasPlugin(domain: string, feature: string): boolean {
+    const pluginNames = this.domainIndex.get(domain);
+    if (!pluginNames || pluginNames.size === 0) {
+      return false;
     }
 
-    return {
-      totalPlugins,
-      pluginsByFeature,
-      healthyPlugins,
-      unhealthyPlugins,
-    };
-  }
-
-  /**
-   * Initialize all plugins with context
-   *
-   * @param {PluginContext} context - Execution context for plugin initialization
-   * @returns {Promise<void>} Promise that resolves when all plugins are initialized
-   * @throws {PluginError} When plugin initialization fails
-   *
-   * @example
-   * ```typescript
-   * await registry.initializeAllPlugins({
-   *   clinicId: 'clinic-123',
-   *   userId: 'user-456',
-   *   metadata: { requestId: 'req-001' }
-   * });
-   * console.log('All plugins initialized');
-   * ```
-   */
-  async initializeAllPlugins(context: PluginContext): Promise<void> {
-    this.logger.log(` Initializing ${this.plugins.size} plugins...`);
-
-    const initPromises = Array.from(this.plugins.values()).map(
-      async (plugin) => {
-        try {
-          await plugin.initialize(context);
-          this.logger.log(` Initialized plugin: ${plugin.name}`);
-        } catch (error) {
-          this.logger.error(
-            ` Failed to initialize plugin ${plugin.name}:`,
-            error,
-          );
-          throw error;
-        }
-      },
-    );
-
-    await Promise.all(initPromises);
-    this.logger.log(" All plugins initialized successfully");
-  }
-
-  /**
-   * Shutdown all plugins gracefully
-   *
-   * @returns {Promise<void>} Promise that resolves when all plugins are shutdown
-   *
-   * @example
-   * ```typescript
-   * await registry.shutdownAllPlugins();
-   * console.log('All plugins shutdown');
-   * ```
-   */
-  async shutdownAllPlugins(): Promise<void> {
-    this.logger.log(` Shutting down ${this.plugins.size} plugins...`);
-
-    const shutdownPromises = Array.from(this.plugins.values()).map(
-      async (plugin) => {
-        try {
-          await plugin.destroy();
-          this.logger.log(` Shutdown plugin: ${plugin.name}`);
-        } catch (error) {
-          this.logger.error(
-            ` Failed to shutdown plugin ${plugin.name}:`,
-            error,
-          );
-        }
-      },
-    );
-
-    await Promise.all(shutdownPromises);
-    this.logger.log(" All plugins shutdown complete");
-  }
-
-  /**
-   * Validate plugin before registration
-   *
-   * @param {BasePlugin} plugin - The plugin to validate
-   * @throws {PluginError} When plugin validation fails
-   *
-   * @private
-   */
-  private validatePlugin(plugin: BasePlugin): void {
-    if (!plugin.name || !plugin.version) {
-      throw new PluginError(
-        "Plugin must have name and version",
-        plugin.name || "unknown",
-        "validate",
-      );
-    }
-
-    if (!plugin.initialize || !plugin.process || !plugin.validate) {
-      throw new PluginError(
-        "Plugin must implement required methods: initialize, process, validate",
-        plugin.name,
-        "validate",
-      );
-    }
-  }
-
-  /**
-   * Update plugin indexes for feature-based lookup
-   *
-   * @param {BasePlugin} plugin - The plugin to index
-   *
-   * @private
-   */
-  private updateIndexes(plugin: BasePlugin): void {
-    // Feature index
-    for (const feature of plugin.features) {
-      if (!this.pluginsByFeature.has(feature)) {
-        this.pluginsByFeature.set(feature, []);
-      }
-      this.pluginsByFeature.get(feature)!.push(plugin);
-    }
-  }
-
-  /**
-   * Remove plugin from indexes
-   *
-   * @param {BasePlugin} plugin - The plugin to remove from indexes
-   *
-   * @private
-   */
-  private removeFromIndexes(plugin: BasePlugin): void {
-    // Remove from feature indexes
-    for (const feature of plugin.features) {
-      const featurePlugins = this.pluginsByFeature.get(feature);
-      if (featurePlugins) {
-        const index = featurePlugins.findIndex((p) => p.name === plugin.name);
-        if (index !== -1) {
-          featurePlugins.splice(index, 1);
-        }
-        if (featurePlugins.length === 0) {
-          this.pluginsByFeature.delete(feature);
-        }
+    for (const pluginName of pluginNames) {
+      const info = this.pluginInfo.get(pluginName);
+      if (info && info.feature === feature) {
+        return true;
       }
     }
+
+    return false;
   }
 }
+

@@ -11,5 +11,5 @@
  * @module Communication
  */
 
-export * from "./socket";
-export * from "./messaging";
+export * from '@communication/socket';
+export * from '@communication/messaging';

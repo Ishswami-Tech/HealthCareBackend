@@ -1,32 +1,35 @@
-import {
-  Injectable,
-  OnModuleInit,
-  Logger,
-  OnModuleDestroy,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import Redis from "ioredis";
+// External imports
+import { Injectable, OnModuleInit, OnModuleDestroy, HttpStatus } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
+
+// Internal imports - Infrastructure
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+
+// Internal imports - Core
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private client!: Redis;
-  private readonly logger = new Logger(RedisService.name);
   private readonly maxRetries = 5;
   private readonly retryDelay = 5000; // 5 seconds
   private readonly SECURITY_EVENT_RETENTION = 30 * 24 * 60 * 60; // 30 days
-  private readonly STATS_KEY = "cache:stats";
+  private readonly STATS_KEY = 'cache:stats';
   private readonly isDevelopment!: boolean;
 
   // Production scaling configurations
   private readonly PRODUCTION_CONFIG = {
-    maxMemoryPolicy: "allkeys-lru",
-    maxConnections: parseInt(process.env["REDIS_MAX_CONNECTIONS"] || "100", 10),
+    maxMemoryPolicy: 'allkeys-lru',
+    maxConnections: parseInt(process.env['REDIS_MAX_CONNECTIONS'] || '100', 10),
     connectionTimeout: 5000,
     commandTimeout: 3000,
     retryOnFailover: true,
     enableAutoPipelining: true,
     maxRetriesPerRequest: 3,
-    keyPrefix: process.env["REDIS_KEY_PREFIX"] || "healthcare:",
+    keyPrefix: process.env['REDIS_KEY_PREFIX'] || 'healthcare:',
   };
 
   // Cache strategies for different data types
@@ -38,7 +41,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   };
 
   // Rate limiting configuration interface
-  private readonly defaultRateLimits = {
+  private readonly defaultRateLimits: Record<string, { limit: number; window: number }> = {
     api: { limit: 100, window: 60 }, // 100 requests per minute
     auth: { limit: 5, window: 60 }, // 5 login attempts per minute
     heavy: { limit: 10, window: 300 }, // 10 heavy operations per 5 minutes
@@ -52,8 +55,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     PATIENT_APPOINTMENTS: (patientId: string, clinicId: string) =>
       `patient:${patientId}:clinic:${clinicId}:appointments`,
     DOCTOR_PROFILE: (doctorId: string) => `doctor:${doctorId}:profile`,
-    DOCTOR_SCHEDULE: (doctorId: string, date: string) =>
-      `doctor:${doctorId}:schedule:${date}`,
+    DOCTOR_SCHEDULE: (doctorId: string, date: string) => `doctor:${doctorId}:schedule:${date}`,
     DOCTOR_APPOINTMENTS: (doctorId: string, clinicId: string) =>
       `doctor:${doctorId}:clinic:${clinicId}:appointments`,
     CLINIC_INFO: (clinicId: string) => `clinic:${clinicId}:info`,
@@ -63,14 +65,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       `medical:${patientId}:clinic:${clinicId}:history`,
     PRESCRIPTIONS: (patientId: string, clinicId: string) =>
       `prescriptions:${patientId}:clinic:${clinicId}`,
-    APPOINTMENT_DETAILS: (appointmentId: string) =>
-      `appointment:${appointmentId}:details`,
+    APPOINTMENT_DETAILS: (appointmentId: string) => `appointment:${appointmentId}:details`,
     USER_PERMISSIONS: (userId: string, clinicId: string) =>
       `user:${userId}:clinic:${clinicId}:permissions`,
-    EMERGENCY_CONTACTS: (patientId: string) =>
-      `patient:${patientId}:emergency_contacts`,
-    VITAL_SIGNS: (patientId: string, date: string) =>
-      `patient:${patientId}:vitals:${date}`,
+    EMERGENCY_CONTACTS: (patientId: string) => `patient:${patientId}:emergency_contacts`,
+    VITAL_SIGNS: (patientId: string, date: string) => `patient:${patientId}:vitals:${date}`,
     LAB_RESULTS: (patientId: string, clinicId: string) =>
       `lab:${patientId}:clinic:${clinicId}:results`,
   };
@@ -84,50 +83,67 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     APPOINTMENT: (appointmentId: string) => `appointment:${appointmentId}`,
     MEDICAL_RECORD: (recordId: string) => `medical_record:${recordId}`,
     PRESCRIPTION: (prescriptionId: string) => `prescription:${prescriptionId}`,
-    EMERGENCY_DATA: "emergency_data",
-    CRITICAL_PATIENT_DATA: "critical_patient_data",
-    PHI_DATA: "phi_data", // Protected Health Information
+    EMERGENCY_DATA: 'emergency_data',
+    CRITICAL_PATIENT_DATA: 'critical_patient_data',
+    PHI_DATA: 'phi_data', // Protected Health Information
   };
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly loggingService: LoggingService
+  ) {
     // Check multiple environment variables to determine development mode
     this.isDevelopment = this.isDevEnvironment();
-    this.logger.log(
-      `Running in ${this.isDevelopment ? "development" : "production"} mode`,
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `Running in ${this.isDevelopment ? 'development' : 'production'} mode`,
+      'RedisService',
+      { environment: this.isDevelopment ? 'development' : 'production' }
     );
     this.initializeClient();
   }
 
   private isDevEnvironment(): boolean {
-    const nodeEnv = this.configService.get<string>("NODE_ENV")?.toLowerCase();
-    const appEnv = this.configService.get<string>("APP_ENV")?.toLowerCase();
-    const isDev = this.configService.get<boolean | string>("IS_DEV");
-    const devMode = process.env["DEV_MODE"] === "true";
+    const nodeEnv = this.configService.get<string>('NODE_ENV')?.toLowerCase();
+    const appEnv = this.configService.get<string>('APP_ENV')?.toLowerCase();
+    const isDev = this.configService.get<boolean | string>('IS_DEV');
+    const devMode = process.env['DEV_MODE'] === 'true';
     return (
       devMode ||
-      nodeEnv !== "production" ||
-      appEnv === "development" ||
-      appEnv === "dev" ||
-      isDev === "true" ||
+      nodeEnv !== 'production' ||
+      appEnv === 'development' ||
+      appEnv === 'dev' ||
+      isDev === 'true' ||
       isDev === true
     );
   }
 
-  private initializeClient() {
+  private initializeClient(): void {
     try {
-      const redisHost = this.configService.get("redis.host") || "redis";
-      const redisPort = this.configService.get("redis.port") || 6379;
+      const redisHost = this.configService.get('redis.host') || 'redis';
+      const redisPort = this.configService.get('redis.port') || 6379;
 
-      this.logger.log(`Initializing Redis client at ${redisHost}:${redisPort}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Initializing Redis client',
+        'RedisService',
+        { host: redisHost, port: redisPort }
+      );
 
       this.client = new Redis({
         host: redisHost,
         port: redisPort,
         keyPrefix: this.PRODUCTION_CONFIG.keyPrefix,
-        retryStrategy: (times) => {
+        retryStrategy: times => {
           if (times > this.maxRetries) {
-            this.logger.error(
-              `Max reconnection attempts (${this.maxRetries}) reached`,
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'Max reconnection attempts reached',
+              'RedisService',
+              { maxRetries: this.maxRetries }
             );
             return null; // stop retrying
           }
@@ -145,46 +161,109 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         keepAlive: 30000,
         family: 4, // IPv4
         // Connection pool settings for high concurrency
-        ...(process.env["NODE_ENV"] === "production" && {
+        ...(process.env['NODE_ENV'] === 'production' && {
           enableOfflineQueue: false, // Fail fast in production
         }),
       });
 
-      this.client.on("error", (err) => {
-        this.logger.error("Redis Client Error", err);
+      this.client.on('error', err => {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'Redis Client Error',
+          'RedisService',
+          {
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          }
+        );
         // Check if it's a read-only error and attempt to fix it
-        if (err.message && err.message.includes("READONLY")) {
-          this.logger.warn("Redis in read-only mode, attempting to fix...");
-          this.resetReadOnlyMode().catch((resetError) => {
-            this.logger.error("Failed to reset read-only mode:", resetError);
+        if (err.message && err.message.includes('READONLY')) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Redis in read-only mode, attempting to fix',
+            'RedisService',
+            {}
+          );
+          this.resetReadOnlyMode().catch(resetError => {
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'Failed to reset read-only mode',
+              'RedisService',
+              {
+                error: resetError instanceof Error ? resetError.message : String(resetError),
+                stack: resetError instanceof Error ? resetError.stack : undefined,
+              }
+            );
           });
         }
       });
 
-      this.client.on("connect", () => {
-        this.logger.log("Successfully connected to Redis");
+      this.client.on('connect', () => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Successfully connected to Redis',
+          'RedisService',
+          {}
+        );
         // Check read-only status on connect
-        this.checkAndResetReadOnlyMode().catch((err) => {
-          this.logger.error(
-            "Failed to check read-only status on connect:",
-            err,
+        this.checkAndResetReadOnlyMode().catch(err => {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'Failed to check read-only status on connect',
+            'RedisService',
+            {
+              error: err instanceof Error ? err.message : String(err),
+              stack: err instanceof Error ? err.stack : undefined,
+            }
           );
         });
       });
 
-      this.client.on("ready", () => {
-        this.logger.log("Redis client is ready");
+      this.client.on('ready', () => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Redis client is ready',
+          'RedisService',
+          {}
+        );
       });
 
-      this.client.on("reconnecting", () => {
-        this.logger.warn("Reconnecting to Redis...");
+      this.client.on('reconnecting', () => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Reconnecting to Redis',
+          'RedisService',
+          {}
+        );
       });
 
-      this.client.on("end", () => {
-        this.logger.warn("Redis connection ended");
+      this.client.on('end', () => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Redis connection ended',
+          'RedisService',
+          {}
+        );
       });
     } catch (_error) {
-      this.logger.error("Failed to initialize Redis client:", _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to initialize Redis client',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       throw _error;
     }
   }
@@ -198,9 +277,24 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // Check and reset read-only mode if needed
       await this.checkAndResetReadOnlyMode();
 
-      this.logger.log("Redis connection initialized");
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Redis connection initialized',
+        'RedisService',
+        {}
+      );
     } catch (_error) {
-      this.logger.error("Failed to initialize Redis connection:", _error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to initialize Redis connection',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       throw _error; // Fail fast if Redis is not available
     }
   }
@@ -217,32 +311,48 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   // Auto-scaling cache management
   async optimizeMemoryUsage(): Promise<void> {
-    if (process.env["NODE_ENV"] === "production") {
-      await this.client.config(
-        "SET",
-        "maxmemory-policy",
-        this.PRODUCTION_CONFIG.maxMemoryPolicy,
+    if (process.env['NODE_ENV'] === 'production') {
+      await this.client.config('SET', 'maxmemory-policy', this.PRODUCTION_CONFIG.maxMemoryPolicy);
+      await this.client.config('SET', 'maxmemory', '2gb'); // Adjust based on available memory
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Applied production memory optimizations',
+        'RedisService',
+        {}
       );
-      await this.client.config("SET", "maxmemory", "2gb"); // Adjust based on available memory
-      this.logger.log("Applied production memory optimizations");
     }
   }
 
   // Check if Redis is in read-only mode and reset if needed
   async checkAndResetReadOnlyMode(): Promise<boolean> {
     try {
-      const info = await this.client.info("replication");
-      const isReadOnly =
-        info.includes("role:slave") || info.includes("slave_read_only:1");
+      const info = await this.client.info('replication');
+      const isReadOnly = info.includes('role:slave') || info.includes('slave_read_only:1');
 
       if (isReadOnly) {
-        this.logger.warn("Redis is in read-only mode, attempting to reset...");
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Redis is in read-only mode, attempting to reset',
+          'RedisService',
+          {}
+        );
         return await this.resetReadOnlyMode();
       }
 
       return true;
     } catch (_error) {
-      this.logger.error("Failed to check Redis read-only status:", _error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to check Redis read-only status',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return false;
     }
   }
@@ -251,14 +361,29 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async resetReadOnlyMode(): Promise<boolean> {
     try {
       // Try to disable read-only mode
-      await this.client.config("SET", "slave-read-only", "no");
+      await this.client.config('SET', 'slave-read-only', 'no');
       // Disconnect from master if we're a replica
-      await this.client.call("REPLICAOF", "NO", "ONE");
+      await this.client.call('REPLICAOF', 'NO', 'ONE');
 
-      this.logger.log("Successfully reset Redis read-only mode");
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Successfully reset Redis read-only mode',
+        'RedisService',
+        {}
+      );
       return true;
     } catch (_error) {
-      this.logger.error("Failed to reset Redis read-only mode:", _error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to reset Redis read-only mode',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return false;
     }
   }
@@ -271,27 +396,34 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return await operation();
       } catch (_error) {
         lastError = _error;
-        this.logger.warn(
-          `Redis operation failed, attempt ${i + 1}/${this.maxRetries}`,
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Redis operation failed, retrying',
+          'RedisService',
+          { attempt: i + 1, maxRetries: this.maxRetries }
         );
 
         // Check if it's a read-only error and try to fix it
-        if (
-          (_error as Error).message &&
-          (_error as Error).message.includes("READONLY")
-        ) {
+        if ((_error as Error).message && (_error as Error).message.includes('READONLY')) {
           try {
             await this.resetReadOnlyMode();
           } catch (resetError) {
             // Just log the error, we'll retry the operation anyway
-            this.logger.error(
-              "Failed to reset read-only mode during retry:",
-              resetError,
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'Failed to reset read-only mode during retry',
+              'RedisService',
+              {
+                error: resetError instanceof Error ? resetError.message : String(resetError),
+                stack: resetError instanceof Error ? resetError.stack : undefined,
+              }
             );
           }
         }
 
-        await new Promise((resolve) => setTimeout(resolve, this.retryDelay));
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
       }
     }
     throw lastError;
@@ -301,8 +433,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async set<T>(key: string, value: T, ttl?: number): Promise<void>;
   async set<T>(key: string, value: T | string, ttl?: number): Promise<void> {
     try {
-      const serializedValue =
-        typeof value === "string" ? value : JSON.stringify(value);
+      const serializedValue = typeof value === 'string' ? value : JSON.stringify(value);
 
       await this.retryOperation(async () => {
         if (ttl) {
@@ -312,7 +443,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       });
     } catch (_error) {
-      this.logger.error(`Failed to set key ${key}:`, (_error as Error).stack);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to set key',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       throw _error;
     }
   }
@@ -332,7 +473,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return result as T;
       }
     } catch (_error) {
-      this.logger.error(`Failed to get key ${key}:`, (_error as Error).stack);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get key',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return null;
     }
   }
@@ -359,9 +510,18 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async healthCheck(): Promise<boolean> {
     try {
       const pingResult = await this.ping();
-      return pingResult === "PONG";
+      return pingResult === 'PONG';
     } catch (_error) {
-      this.logger.error("Redis health check failed:", _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Redis health check failed',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return false;
     }
   }
@@ -371,18 +531,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const [info, dbSize, memoryInfo] = await Promise.all([
         this.client.info(),
         this.client.dbsize(),
-        this.client.info("memory"),
+        this.client.info('memory'),
       ]);
 
-      const connectedClients = parseInt(
-        info.match(/connected_clients:(\d+)/)?.[1] || "0",
-      );
-      const usedMemory = parseInt(
-        memoryInfo.match(/used_memory:(\d+)/)?.[1] || "0",
-      );
+      const connectedClients = parseInt(info.match(/connected_clients:(\d+)/)?.[1] || '0');
+      const usedMemory = parseInt(memoryInfo.match(/used_memory:(\d+)/)?.[1] || '0');
 
       return {
-        status: "ok",
+        status: 'ok',
         info: {
           dbSize,
           memoryInfo: {
@@ -393,7 +549,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         },
       };
     } catch (_error) {
-      this.logger.error("Failed to get Redis debug info:", _error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get Redis debug info',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       throw _error;
     }
   }
@@ -454,13 +619,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(() => this.client.publish(channel, message));
   }
 
-  async subscribe(
-    channel: string,
-    callback: (message: string) => void,
-  ): Promise<void> {
+  async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
     const subscriber = this.client.duplicate();
     await subscriber.subscribe(channel);
-    subscriber.on("message", (ch, message) => {
+    subscriber.on('message', (ch, message) => {
       if (ch === channel) {
         callback(message);
       }
@@ -477,11 +639,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Security event tracking
-  async trackSecurityEvent(
-    identifier: string,
-    eventType: string,
-    details: unknown,
-  ): Promise<void> {
+  async trackSecurityEvent(identifier: string, eventType: string, details: unknown): Promise<void> {
     const event = {
       timestamp: new Date(),
       eventType,
@@ -502,19 +660,23 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       await this.client.expire(eventKey, this.SECURITY_EVENT_RETENTION);
     });
 
-    this.logger.debug(`Security event tracked: ${eventType} for ${identifier}`);
+    void this.loggingService.log(
+      LogType.SECURITY,
+      LogLevel.DEBUG,
+      'Security event tracked',
+      'RedisService',
+      { eventType, identifier }
+    );
   }
 
   async getSecurityEvents(
     identifier: string,
-    limit: number = 100,
-  ): Promise<any[]> {
+    limit: number = 100
+  ): Promise<Array<Record<string, unknown>>> {
     const eventKey = `security:events:${identifier}`;
-    const events = await this.retryOperation(() =>
-      this.client.lrange(eventKey, -limit, -1),
-    );
+    const events = await this.retryOperation(() => this.client.lrange(eventKey, -limit, -1));
 
-    return events.map((event) => JSON.parse(event) as Record<string, unknown>);
+    return events.map((event: string) => JSON.parse(event) as Record<string, unknown>);
   }
 
   async clearSecurityEvents(identifier: string): Promise<void> {
@@ -523,28 +685,30 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Cache statistics methods
-  async incrementCacheStats(type: "hits" | "misses"): Promise<void> {
-    await this.retryOperation(() =>
-      this.client.hincrby(this.STATS_KEY, type, 1),
-    );
+  async incrementCacheStats(type: 'hits' | 'misses'): Promise<void> {
+    await this.retryOperation(() => this.client.hincrby(this.STATS_KEY, type, 1));
   }
 
   async getCacheStats(): Promise<{ hits: number; misses: number }> {
-    const stats = await this.retryOperation(() =>
-      this.client.hgetall(this.STATS_KEY),
-    );
+    const stats = await this.retryOperation(() => this.client.hgetall(this.STATS_KEY));
     return {
-      hits: parseInt(stats?.["hits"] || "0"),
-      misses: parseInt(stats?.["misses"] || "0"),
+      hits: parseInt(stats?.['hits'] || '0'),
+      misses: parseInt(stats?.['misses'] || '0'),
     };
   }
 
   async clearAllCache(): Promise<number> {
-    this.logger.warn("Clearing all cache");
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.WARN,
+      'Clearing all cache',
+      'RedisService',
+      {}
+    );
 
     try {
       // Get all keys
-      const keys = await this.keys("*");
+      const keys = await this.keys('*');
 
       if (keys.length === 0) {
         return 0;
@@ -552,10 +716,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       // Filter out system keys
       const keysToDelete = keys.filter(
-        (key) =>
-          !key.startsWith("cache:stats") &&
-          !key.startsWith("security:events") &&
-          !key.startsWith("system:"),
+        key =>
+          !key.startsWith('cache:stats') &&
+          !key.startsWith('security:events') &&
+          !key.startsWith('system:')
       );
 
       if (keysToDelete.length === 0) {
@@ -569,17 +733,30 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       for (let i = 0; i < keysToDelete.length; i += BATCH_SIZE) {
         const batch = keysToDelete.slice(i, i + BATCH_SIZE);
         if (batch.length > 0) {
-          const count = await this.retryOperation(() =>
-            this.client.del(...batch),
-          );
+          const count = await this.retryOperation(() => this.client.del(...batch));
           deletedCount += count;
         }
       }
 
-      this.logger.debug(`Cleared ${deletedCount} keys from cache`);
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Cleared keys from cache',
+        'RedisService',
+        { deletedCount }
+      );
       return deletedCount;
     } catch (_error) {
-      this.logger.error("Error clearing all cache:", _error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error clearing all cache',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       throw _error;
     }
   }
@@ -588,30 +765,34 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.retryOperation(() => this.client.del(this.STATS_KEY));
   }
 
-  async getCacheMetrics(): Promise<Record<string, unknown>> {
+  async getCacheMetrics(): Promise<import('@core/types').CacheMetrics> {
     const [stats, info, dbSize] = await Promise.all([
       this.getCacheStats(),
-      this.client.info("memory"),
+      this.client.info('memory'),
       this.client.dbsize(),
     ]);
 
-    const usedMemory = parseInt(info.match(/used_memory:(\d+)/)?.[1] || "0");
-    const peakMemory = parseInt(
-      info.match(/used_memory_peak:(\d+)/)?.[1] || "0",
-    );
+    const usedMemory = parseInt(info.match(/used_memory:(\d+)/)?.[1] || '0');
+    const peakMemory = parseInt(info.match(/used_memory_peak:(\d+)/)?.[1] || '0');
     const fragmentationRatio = parseFloat(
-      info.match(/mem_fragmentation_ratio:(\d+\.\d+)/)?.[1] || "0",
+      info.match(/mem_fragmentation_ratio:(\d+\.\d+)/)?.[1] || '0'
     );
 
+    const hitRate =
+      stats.hits + stats.misses > 0 ? (stats.hits / (stats.hits + stats.misses)) * 100 : 0;
+
     return {
-      stats,
+      keys: dbSize,
+      hitRate,
       memory: {
         used: usedMemory,
         peak: peakMemory,
-        fragmentationRatio,
+        fragmentation: fragmentationRatio,
       },
-      keys: dbSize,
-      hitRatio: stats.hits / (stats.hits + stats.misses) || 0,
+      operations: {
+        hits: stats.hits,
+        misses: stats.misses,
+      },
     };
   }
 
@@ -624,7 +805,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       burst?: number; // Allow burst requests
       cost?: number; // Request cost (default: 1)
       bypassDev?: boolean; // Override development mode bypass
-    } = {},
+    } = {}
   ): Promise<boolean> {
     // Check development mode bypass
     if (this.isDevelopment && !options.bypassDev) {
@@ -632,13 +813,23 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Get default limits if not specified
-    const type = key.split(":")[0] || "api";
-    const defaultLimit =
-      (this.defaultRateLimits as Record<string, unknown>)[type] ||
-      this.defaultRateLimits.api;
-    const limitConfig = defaultLimit as Record<string, unknown>;
-    limit = limit || (limitConfig["limit"] as number);
-    windowSeconds = windowSeconds || (limitConfig["window"] as number);
+    const type = key.split(':')[0] || 'api';
+    const defaultLimit = this.defaultRateLimits[type] || this.defaultRateLimits['api'];
+    if (defaultLimit) {
+      limit = limit || defaultLimit.limit;
+      windowSeconds = windowSeconds || defaultLimit.window;
+    }
+
+    // Ensure we have valid values
+    if (!limit || !windowSeconds) {
+      throw new HealthcareError(
+        ErrorCode.CACHE_CONFIGURATION_ERROR,
+        'Rate limit configuration missing',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        { key, type },
+        'RedisService.isRateLimited'
+      );
+    }
 
     try {
       const multi = this.client.multi();
@@ -660,14 +851,29 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       multi.expire(key, windowSeconds);
 
       const results = await multi.exec();
-      const current = results
-        ? parseInt((results[2] as unknown[])?.[1] as string)
-        : 0;
+      const current =
+        results &&
+        Array.isArray(results) &&
+        results[2] &&
+        Array.isArray(results[2]) &&
+        results[2][1]
+          ? parseInt(String(results[2][1]), 10)
+          : 0;
 
       // Check against burst limit if specified, otherwise normal limit
       return current * cost > (options.burst ? burstLimit : limit);
     } catch (_error) {
-      this.logger.error(`Rate limiting _error for key ${key}:`, _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Rate limiting error',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return false; // Fail open in case of errors
     }
   }
@@ -675,7 +881,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async getRateLimit(
     key: string,
     limit?: number,
-    windowSeconds?: number,
+    windowSeconds?: number
   ): Promise<{
     remaining: number;
     reset: number;
@@ -693,13 +899,23 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Get default limits if not specified
-    const type = key.split(":")[0] || "api";
-    const defaultLimit =
-      (this.defaultRateLimits as Record<string, unknown>)[type] ||
-      this.defaultRateLimits.api;
-    const limitConfig = defaultLimit as Record<string, unknown>;
-    limit = limit || (limitConfig["limit"] as number);
-    windowSeconds = windowSeconds || (limitConfig["window"] as number);
+    const type = key.split(':')[0] || 'api';
+    const defaultLimit = this.defaultRateLimits[type] || this.defaultRateLimits['api'];
+    if (defaultLimit) {
+      limit = limit || defaultLimit.limit;
+      windowSeconds = windowSeconds || defaultLimit.window;
+    }
+
+    // Ensure we have valid values
+    if (!limit || !windowSeconds) {
+      throw new HealthcareError(
+        ErrorCode.CACHE_CONFIGURATION_ERROR,
+        'Rate limit configuration missing',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        { key, type },
+        'RedisService.isRateLimited'
+      );
+    }
 
     try {
       const now = Date.now();
@@ -708,19 +924,26 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // Clean up old entries first
       await this.client.zremrangebyscore(key, 0, now - windowMs);
 
-      const [count, ttl] = await Promise.all([
-        this.client.zcard(key),
-        this.client.ttl(key),
-      ]);
+      const [count, ttl] = await Promise.all([this.client.zcard(key), this.client.ttl(key)]);
 
       return {
         remaining: Math.max(0, limit - count),
         reset: Math.max(0, ttl),
         total: limit,
         used: count,
-      };
+      } as { remaining: number; reset: number; total: number; used: number };
     } catch (_error) {
-      this.logger.error(`Error getting rate limit for key ${key}:`, _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error getting rate limit',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return {
         remaining: 0,
         reset: 0,
@@ -733,29 +956,63 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async clearRateLimit(key: string): Promise<void> {
     try {
       await this.client.del(key);
-      this.logger.debug(`Rate limit cleared for key: ${key}`);
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Rate limit cleared',
+        'RedisService',
+        { key }
+      );
     } catch (_error) {
-      this.logger.error(`Error clearing rate limit for key ${key}:`, _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error clearing rate limit',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
     }
   }
 
   // Method to update rate limit configuration
-  updateRateLimits(
-    type: string,
-    config: { limit: number; window: number },
-  ): Promise<void> {
-    (this.defaultRateLimits as Record<string, unknown>)[type] = config;
-    this.logger.log(
-      `Updated rate limits for ${type}: ${JSON.stringify(config)}`,
+  updateRateLimits(type: string, config: { limit: number; window: number }): Promise<void> {
+    this.defaultRateLimits[type] = config;
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Updated rate limits',
+      'RedisService',
+      { type, config: JSON.stringify(config) }
     );
     return Promise.resolve();
   }
 
   // Method to get current rate limit configuration
-  getRateLimitConfig(type?: string): unknown {
-    return type
-      ? (this.defaultRateLimits as Record<string, unknown>)[type]
-      : this.defaultRateLimits;
+  getRateLimitConfig(
+    type?: string
+  ): { limit: number; window: number } | Record<string, { limit: number; window: number }> {
+    if (type) {
+      const config = this.defaultRateLimits[type];
+      if (config) {
+        return config;
+      }
+      const defaultConfig = this.defaultRateLimits['api'];
+      if (!defaultConfig) {
+        throw new HealthcareError(
+          ErrorCode.CACHE_CONFIGURATION_ERROR,
+          'Default rate limit configuration missing',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          { type },
+          'RedisService.getRateLimitConfig'
+        );
+      }
+      return defaultConfig;
+    }
+    return this.defaultRateLimits;
   }
 
   // Development mode helper
@@ -764,14 +1021,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Sorted Set operations for rate limiting
-  async zremrangebyscore(
-    key: string,
-    min: number,
-    max: number,
-  ): Promise<number> {
-    return this.retryOperation(() =>
-      this.client.zremrangebyscore(key, min, max),
-    );
+  async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
+    return this.retryOperation(() => this.client.zremrangebyscore(key, min, max));
   }
 
   async zadd(key: string, score: number, member: string): Promise<number> {
@@ -786,36 +1037,34 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(() => this.client.zrevrange(key, start, stop));
   }
 
-  async zrangebyscore(
-    key: string,
-    min: string | number,
-    max: string | number,
-  ): Promise<string[]> {
+  async zrangebyscore(key: string, min: string | number, max: string | number): Promise<string[]> {
     return this.retryOperation(() => this.client.zrangebyscore(key, min, max));
   }
 
-  async multi(commands: unknown[]): Promise<unknown> {
+  async multi(
+    commands: Array<{ command: string; args: unknown[] }>
+  ): Promise<Array<[Error | null, unknown]>> {
     return this.retryOperation(async () => {
       const pipeline = this.client.pipeline();
-      commands.forEach((cmd) => {
-        const command = cmd as Record<string, unknown>;
-        (pipeline as Record<string, any>)[command["command"] as string](
-          ...(command["args"] as unknown[]),
-        );
+      commands.forEach(cmd => {
+        // Type assertion needed for dynamic Redis command calls
+
+        const pipelineAsAny = pipeline as unknown as Record<
+          string,
+          (...args: unknown[]) => unknown
+        >;
+        const method = pipelineAsAny[cmd.command];
+        if (method && typeof method === 'function') {
+          method.apply(pipeline, cmd.args);
+        }
       });
-      return pipeline.exec();
+      return pipeline.exec() as Promise<Array<[Error | null, unknown]>>;
     });
   }
 
   // Hash operations for metrics
-  async hincrby(
-    key: string,
-    field: string,
-    increment: number,
-  ): Promise<number> {
-    return this.retryOperation(() =>
-      this.client.hincrby(key, field, increment),
-    );
+  async hincrby(key: string, field: string, increment: number): Promise<number> {
+    return this.retryOperation(() => this.client.hincrby(key, field, increment));
   }
 
   async incr(key: string): Promise<number> {
@@ -832,9 +1081,18 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const pingResult = await this.ping();
       const pingTime = Date.now() - startTime;
 
-      return [pingResult === "PONG", pingTime];
+      return [pingResult === 'PONG', pingTime];
     } catch (_error) {
-      this.logger.error("Redis health check failed:", _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Redis health check failed',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return [false, 0];
     }
   }
@@ -847,7 +1105,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    * @returns Number of keys cleared
    */
   async clearCache(pattern?: string): Promise<number> {
-    this.logger.log(`Clearing cache with pattern: ${pattern || "ALL"}`);
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.INFO,
+      'Clearing cache with pattern',
+      'RedisService',
+      { pattern: pattern || 'ALL' }
+    );
 
     try {
       // If no pattern is provided, clear all non-system keys
@@ -869,21 +1133,30 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       for (let i = 0; i < keys.length; i += BATCH_SIZE) {
         const batch = keys.slice(i, i + BATCH_SIZE);
         if (batch.length > 0) {
-          const count = await this.retryOperation(() =>
-            this.client.del(...batch),
-          );
+          const count = await this.retryOperation(() => this.client.del(...batch));
           deletedCount += count;
         }
       }
 
-      this.logger.debug(
-        `Cleared ${deletedCount} keys matching pattern: ${pattern}`,
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Cleared keys matching pattern',
+        'RedisService',
+        { deletedCount, pattern }
       );
       return deletedCount;
     } catch (_error) {
-      this.logger.error(
-        `Error clearing cache with pattern ${pattern}:`,
-        _error,
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error clearing cache with pattern',
+        'RedisService',
+        {
+          pattern,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       throw _error;
     }
@@ -906,23 +1179,23 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       staleTime?: number; // When data becomes stale
       forceRefresh?: boolean; // Force refresh regardless of cache
       compress?: boolean; // Compress large data
-      priority?: "critical" | "high" | "normal" | "low"; // Operation priority
+      priority?: 'critical' | 'high' | 'normal' | 'low'; // Operation priority
       enableSwr?: boolean; // Enable SWR (defaults to true)
       tags?: string[]; // Cache tags for grouped invalidation
       containsPHI?: boolean; // Contains Protected Health Information
-      complianceLevel?: "standard" | "sensitive" | "restricted"; // Compliance level
+      complianceLevel?: 'standard' | 'sensitive' | 'restricted'; // Compliance level
       emergencyData?: boolean; // Emergency data flag
       patientSpecific?: boolean; // Patient-specific data
       doctorSpecific?: boolean; // Doctor-specific data
       clinicSpecific?: boolean; // Clinic-specific data
-    } = {},
+    } = {}
   ): Promise<T> {
     const {
       ttl = 3600,
       staleTime = Math.floor(ttl / 2),
       forceRefresh = false,
       compress = false,
-      priority = "high",
+      priority = 'high',
       enableSwr = true,
       tags = [],
     } = options;
@@ -941,32 +1214,34 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Use pipelining to reduce round-trips to Redis
-      const [isRevalidating, cachedData, remainingTtlRaw] =
-        await this.retryOperation(async () => {
-          const pipeline = this.client.pipeline();
-          pipeline.get(revalidationKey);
-          pipeline.get(key);
-          pipeline.ttl(key);
-          const results = await pipeline.exec();
-          return results?.map((result) => result[1]) || [];
-        });
+      const [isRevalidating, cachedData, remainingTtlRaw] = await this.retryOperation(async () => {
+        const pipeline = this.client.pipeline();
+        pipeline.get(revalidationKey);
+        pipeline.get(key);
+        pipeline.ttl(key);
+        const results = await pipeline.exec();
+        return results?.map(result => result[1]) || [];
+      });
 
       // Convert TTL to number
-      const remainingTtl =
-        typeof remainingTtlRaw === "number" ? remainingTtlRaw : 0;
+      const remainingTtl = typeof remainingTtlRaw === 'number' ? remainingTtlRaw : 0;
 
       // Cache miss or forced refresh
       if (!cachedData || forceRefresh) {
-        await this.incrementCacheStats("misses");
+        await this.incrementCacheStats('misses');
 
         // Skip locking for low priority operations under high load
-        if (priority === "low" && (await this.isHighLoad())) {
-          this.logger.debug(
-            `Skipping lock acquisition for low priority operation: ${key}`,
+        if (priority === 'low' && (await this.isHighLoad())) {
+          void this.loggingService.log(
+            LogType.CACHE,
+            LogLevel.DEBUG,
+            'Skipping lock acquisition for low priority operation',
+            'RedisService',
+            { key }
           );
         } else {
           // Set revalidation flag with a short expiry
-          await this.set(revalidationKey, "true", 30);
+          await this.set(revalidationKey, 'true', 30);
         }
 
         try {
@@ -994,7 +1269,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Record cache hit
-      await this.incrementCacheStats("hits");
+      await this.incrementCacheStats('hits');
 
       // Check if we're in the stale period
       const isStale = remainingTtl <= staleTime;
@@ -1002,30 +1277,35 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // If stale and not already revalidating, trigger background refresh
       if (isStale && !isRevalidating) {
         // Skip background revalidation for low priority during high load
-        if (priority === "low" && (await this.isHighLoad())) {
-          this.logger.debug(
-            `Skipping background revalidation for low priority cache: ${key}`,
+        if (priority === 'low' && (await this.isHighLoad())) {
+          void this.loggingService.log(
+            LogType.CACHE,
+            LogLevel.DEBUG,
+            'Skipping background revalidation for low priority cache',
+            'RedisService',
+            { key }
           );
         } else {
           // Use set with NX option to prevent race conditions
           const lockAcquired = await this.retryOperation(() =>
-            this.client.set(revalidationKey, "true", "EX", 30, "NX"),
+            this.client.set(revalidationKey, 'true', 'EX', 30, 'NX')
           );
 
           if (lockAcquired) {
             // Background revalidation with optimized lock
-            this.backgroundRevalidate(
-              key,
-              fetchFn,
-              ttl,
-              revalidationKey,
-              compress,
-              tags,
-            ).catch((err) =>
-              this.logger.error(
-                `Background revalidation failed for ${key}:`,
-                err,
-              ),
+            this.backgroundRevalidate(key, fetchFn, ttl, revalidationKey, compress, tags).catch(
+              err =>
+                void this.loggingService.log(
+                  LogType.ERROR,
+                  LogLevel.ERROR,
+                  'Background revalidation failed',
+                  'RedisService',
+                  {
+                    key,
+                    error: err instanceof Error ? err.message : String(err),
+                    stack: err instanceof Error ? err.stack : undefined,
+                  }
+                )
             );
           }
         }
@@ -1036,13 +1316,27 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         ? await this.getDecompressed<T>(cachedData as string)
         : JSON.parse(cachedData as string);
     } catch (_error) {
-      this.logger.error(`Cache _error for ${key}:`, _error);
+      void this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Cache error', 'RedisService', {
+        key,
+        error: _error instanceof Error ? _error.message : String(_error),
+        stack: _error instanceof Error ? _error.stack : undefined,
+      });
 
       // If anything fails, fall back to direct fetch
       try {
         return await fetchFn();
       } catch (fetchError) {
-        this.logger.error(`Fallback fetch also failed for ${key}:`, fetchError);
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'Fallback fetch also failed',
+          'RedisService',
+          {
+            key,
+            error: fetchError instanceof Error ? fetchError.message : String(fetchError),
+            stack: fetchError instanceof Error ? fetchError.stack : undefined,
+          }
+        );
         throw fetchError;
       }
     }
@@ -1057,10 +1351,26 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async invalidateCache(key: string): Promise<boolean> {
     try {
       await this.del(key);
-      this.logger.debug(`Invalidated cache for key: ${key}`);
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Invalidated cache for key',
+        'RedisService',
+        { key }
+      );
       return true;
     } catch (_error) {
-      this.logger.error(`Failed to invalidate cache for key: ${key}`, _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to invalidate cache for key',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return false;
     }
   }
@@ -1085,21 +1395,30 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       for (let i = 0; i < keys.length; i += BATCH_SIZE) {
         const batch = keys.slice(i, i + BATCH_SIZE);
         if (batch.length > 0) {
-          const count = await this.retryOperation(() =>
-            this.client.del(...batch),
-          );
+          const count = await this.retryOperation(() => this.client.del(...batch));
           invalidatedCount += count;
         }
       }
 
-      this.logger.debug(
-        `Invalidated ${invalidatedCount} keys matching pattern: ${pattern}`,
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Invalidated keys matching pattern',
+        'RedisService',
+        { invalidatedCount, pattern }
       );
       return invalidatedCount;
     } catch (_error) {
-      this.logger.error(
-        `Failed to invalidate cache by pattern: ${pattern}`,
-        _error,
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to invalidate cache by pattern',
+        'RedisService',
+        {
+          pattern,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
       return 0;
     }
@@ -1128,9 +1447,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       for (let i = 0; i < keys.length; i += BATCH_SIZE) {
         const batch = keys.slice(i, i + BATCH_SIZE);
         if (batch.length > 0) {
-          const count = await this.retryOperation(() =>
-            this.client.del(...batch),
-          );
+          const count = await this.retryOperation(() => this.client.del(...batch));
           invalidatedCount += count;
         }
       }
@@ -1138,12 +1455,26 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // Clean up the tag itself
       await this.del(tagKey);
 
-      this.logger.debug(
-        `Invalidated ${invalidatedCount} keys with tag: ${tag}`,
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Invalidated keys with tag',
+        'RedisService',
+        { invalidatedCount, tag }
       );
       return invalidatedCount;
     } catch (_error) {
-      this.logger.error(`Failed to invalidate cache by tag: ${tag}`, _error);
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to invalidate cache by tag',
+        'RedisService',
+        {
+          tag,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return 0;
     }
   }
@@ -1173,9 +1504,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch (_error) {
-      this.logger.error(
-        `Failed to add key ${key} to tags: ${tags.join(", ")}`,
-        _error,
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to add key to tags',
+        'RedisService',
+        {
+          key,
+          tags: tags.join(', '),
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
       );
     }
   }
@@ -1189,14 +1528,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     cacheTtl: number,
     revalidationKey: string,
     compression: boolean = false,
-    tags: string[] = [],
+    tags: string[] = []
   ): Promise<void> {
     try {
       // Check system load before proceeding
       if (await this.isHighLoad()) {
         // Under high load, extend the TTL of the existing cache to reduce pressure
         await this.client.expire(key, cacheTtl);
-        this.logger.debug(`Extended TTL for ${key} due to high system load`);
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.DEBUG,
+          'Extended TTL due to high system load',
+          'RedisService',
+          { key }
+        );
         return;
       }
 
@@ -1223,9 +1568,25 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      this.logger.debug(`Background revalidation completed for: ${key}`);
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        'Background revalidation completed',
+        'RedisService',
+        { key }
+      );
     } catch (_error) {
-      this.logger.error(`Background revalidation failed for ${key}:`, _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Background revalidation failed',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
 
       // On error, keep the current cache valid longer to prevent stampedes
       await this.client.expire(key, cacheTtl);
@@ -1246,10 +1607,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       forceRefresh?: boolean;
       useSwr?: boolean;
       compression?: boolean;
-      priority?: "high" | "low";
-    } = {},
+      priority?: 'high' | 'low';
+    } = {}
   ): Promise<T> {
-    this.logger.warn("cacheWithSWR is deprecated, please use cache() instead");
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      'cacheWithSWR is deprecated, please use cache() instead',
+      'RedisService',
+      {}
+    );
     return this.cache(key, fetchFn, {
       ...(options.cacheTtl !== undefined && { ttl: options.cacheTtl }),
       ...(options.staleWhileRevalidateTtl !== undefined && {
@@ -1272,19 +1639,28 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    */
   private async isHighLoad(): Promise<boolean> {
     try {
-      const info = await this.client.info("stats");
+      const info = await this.client.info('stats');
 
       // Extract operations per second
       const opsPerSecMatch = info.match(/instantaneous_ops_per_sec:(\d+)/);
       if (opsPerSecMatch) {
-        const opsPerSec = parseInt(opsPerSecMatch[1] || "0", 10);
+        const opsPerSec = parseInt(opsPerSecMatch[1] || '0', 10);
         // Consider high load if more than 1000 ops/sec
         return opsPerSec > 1000;
       }
 
       return false;
     } catch (_error) {
-      this.logger.error("Error checking Redis load:", _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error checking Redis load',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       return false;
     }
   }
@@ -1293,11 +1669,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    * Store compressed data in Redis to save memory.
    * Used for large cache entries.
    */
-  private async setCompressed<T>(
-    key: string,
-    value: T,
-    ttl?: number,
-  ): Promise<void> {
+  private async setCompressed<T>(key: string, value: T, ttl?: number): Promise<void> {
     const stringValue = JSON.stringify(value);
 
     // Only compress if data is large enough to benefit
@@ -1308,13 +1680,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     try {
       // This would use a compression library in a real implementation
       // For now we'll just use a placeholder
-      const compressed = Buffer.from(`compressed:${stringValue}`).toString(
-        "base64",
-      );
+      const compressed = Buffer.from(`compressed:${stringValue}`).toString('base64');
 
       await this.set(key, compressed, ttl);
     } catch (_error) {
-      this.logger.error(`Error compressing data for key ${key}:`, _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error compressing data',
+        'RedisService',
+        {
+          key,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       // Fall back to uncompressed storage
       await this.set(key, stringValue, ttl);
     }
@@ -1324,19 +1704,28 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    * Retrieve and decompress data from Redis.
    */
   private getDecompressed<T>(data: string): T {
-    if (!data.startsWith("compressed:")) {
+    if (!data.startsWith('compressed:')) {
       return JSON.parse(data);
     }
 
     try {
       // This would decompress using the same library in a real implementation
       // For now we'll just use a placeholder
-      const decompressed = Buffer.from(data, "base64").toString();
-      const jsonString = decompressed.substring("compressed:".length);
+      const decompressed = Buffer.from(data, 'base64').toString();
+      const jsonString = decompressed.substring('compressed:'.length);
 
       return JSON.parse(jsonString);
     } catch (_error) {
-      this.logger.error(`Error decompressing data:`, _error);
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error decompressing data',
+        'RedisService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
       // Attempt to parse as if it wasn't compressed
       return JSON.parse(data);
     }
@@ -1357,7 +1746,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     key: string,
     fetchFn: () => Promise<T>,
     cacheTtl: number,
-    forceRefresh: boolean,
+    forceRefresh: boolean
   ): Promise<T> {
     // If force refresh, skip cache check
     if (forceRefresh) {
@@ -1365,17 +1754,28 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       if (data !== undefined && data !== null) {
         try {
           const serializedData = JSON.stringify(data);
-          if (serializedData !== "[object Object]") {
+          if (serializedData !== '[object Object]') {
             await this.set(key, serializedData, cacheTtl);
           } else {
-            this.logger.warn(
-              `Skipping cache storage for key ${key}: data could not be serialized properly`,
+            void this.loggingService.log(
+              LogType.CACHE,
+              LogLevel.WARN,
+              'Skipping cache storage: data could not be serialized properly',
+              'RedisService',
+              { key }
             );
           }
         } catch (_error) {
-          this.logger.warn(
-            `Failed to serialize data for caching key ${key}:`,
-            _error,
+          void this.loggingService.log(
+            LogType.CACHE,
+            LogLevel.WARN,
+            'Failed to serialize data for caching',
+            'RedisService',
+            {
+              key,
+              error: _error instanceof Error ? _error.message : String(_error),
+              stack: _error instanceof Error ? _error.stack : undefined,
+            }
           );
         }
       }
@@ -1385,11 +1785,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     // Check cache first
     const cachedData = await this.get(key);
     if (cachedData) {
-      await this.incrementCacheStats("hits");
+      await this.incrementCacheStats('hits');
       try {
         return JSON.parse(cachedData);
       } catch (_error) {
-        this.logger.warn(`Failed to parse cached data for key ${key}:`, _error);
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Failed to parse cached data',
+          'RedisService',
+          {
+            key,
+            error: _error instanceof Error ? _error.message : String(_error),
+            stack: _error instanceof Error ? _error.stack : undefined,
+          }
+        );
         // Remove corrupted cache entry
         await this.del(key);
         // Fall through to fetch fresh data
@@ -1397,24 +1807,35 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Cache miss
-    await this.incrementCacheStats("misses");
+    await this.incrementCacheStats('misses');
     const data = await fetchFn();
 
     // Store in cache
     if (data !== undefined && data !== null) {
       try {
         const serializedData = JSON.stringify(data);
-        if (serializedData !== "[object Object]") {
+        if (serializedData !== '[object Object]') {
           await this.set(key, serializedData, cacheTtl);
         } else {
-          this.logger.warn(
-            `Skipping cache storage for key ${key}: data could not be serialized properly`,
+          void this.loggingService.log(
+            LogType.CACHE,
+            LogLevel.WARN,
+            'Skipping cache storage: data could not be serialized properly',
+            'RedisService',
+            { key }
           );
         }
       } catch (_error) {
-        this.logger.warn(
-          `Failed to serialize data for caching key ${key}:`,
-          _error,
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Failed to serialize data for caching',
+          'RedisService',
+          {
+            key,
+            error: _error instanceof Error ? _error.message : String(_error),
+            stack: _error instanceof Error ? _error.stack : undefined,
+          }
         );
       }
     }

@@ -1,10 +1,30 @@
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { WhatsAppService } from "./whatsapp.service";
-import { WhatsAppConfig } from "./whatsapp.config";
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { LoggingModule } from '@infrastructure/logging';
+import { DatabaseModule } from '@infrastructure/database';
+import { WhatsAppService } from '@communication/messaging/whatsapp/whatsapp.service';
+import { WhatsAppConfig } from '@communication/messaging/whatsapp/whatsapp.config';
 
+/**
+ * WhatsApp Business API Module
+ *
+ * Provides WhatsApp messaging services with:
+ * - WhatsApp Business API integration
+ * - Template message support (OTP, appointment reminders, prescriptions)
+ * - Document sending (prescriptions, invoices)
+ * - HIPAA-compliant logging
+ *
+ * Architecture:
+ * - WhatsAppService: Primary service for WhatsApp messaging
+ * - WhatsAppConfig: Configuration service for WhatsApp API credentials
+ * - DatabaseModule: Optional integration for message delivery logging
+ */
 @Module({
-  imports: [ConfigModule],
+  imports: [
+    ConfigModule,
+    LoggingModule,
+    DatabaseModule, // Optional: For message delivery logging/audit trails
+  ],
   providers: [WhatsAppService, WhatsAppConfig],
   exports: [WhatsAppService, WhatsAppConfig],
 })

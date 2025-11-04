@@ -1,81 +1,20 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { DatabaseService } from "../../infrastructure/database";
-import { RedisService } from "../../infrastructure/cache/redis/redis.service";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { LoggingService } from '@infrastructure/logging';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { LogType, LogLevel } from '@core/types';
+import type { RoleRecord, RoleEntity, RolePermission } from '@core/types/rbac.types';
+import type { RbacRoleEntity } from '@infrastructure/database';
+import type { CreateRoleDto, UpdateRoleDto } from '@dtos/role.dto';
 
 /**
- * Represents a role in the RBAC system
- * @interface Role
- * @description Defines the structure of a role with associated permissions
- * @example
- * ```typescript
- * const role: Role = {
- *   id: "role-123",
- *   name: "DOCTOR",
- *   displayName: "Doctor",
- *   description: "Medical practitioner access",
- *   domain: "healthcare",
- *   clinicId: "clinic-456",
- *   isSystemRole: true,
- *   isActive: true,
- *   createdAt: new Date(),
- *   updatedAt: new Date(),
- *   permissions: []
- * };
- * ```
+ * Re-export types for backward compatibility
+ * @deprecated Use types from @core/types instead
  */
-export interface Role {
-  readonly id: string;
-  readonly name: string;
-  readonly displayName: string;
-  readonly description?: string;
-  readonly domain: string;
-  readonly clinicId?: string;
-  readonly isSystemRole: boolean;
-  readonly isActive: boolean;
-  readonly createdAt: Date;
-  readonly updatedAt: Date;
-  readonly permissions?: Permission[];
-}
-
-/**
- * Represents a permission associated with a role
- * @interface Permission
- * @description Defines the structure of a permission within a role context
- */
-export interface Permission {
-  readonly id: string;
-  readonly name: string;
-  readonly resource: string;
-  readonly action: string;
-  readonly description?: string;
-  readonly isActive: boolean;
-}
-
-/**
- * Data transfer object for creating a new role
- * @interface CreateRoleDto
- * @description Required fields for creating a role
- */
-export interface CreateRoleDto {
-  readonly name: string;
-  readonly displayName: string;
-  readonly description?: string;
-  readonly domain: string;
-  readonly clinicId?: string;
-  readonly permissions?: string[];
-}
-
-/**
- * Data transfer object for updating an existing role
- * @interface UpdateRoleDto
- * @description Optional fields for updating a role
- */
-export interface UpdateRoleDto {
-  readonly displayName?: string;
-  readonly description?: string;
-  readonly isActive?: boolean;
-  readonly permissions?: string[];
-}
+export type { RoleRecord };
+export type { RolePermission as Permission };
 
 /**
  * Service for managing roles in the RBAC system
@@ -85,74 +24,103 @@ export interface UpdateRoleDto {
  */
 @Injectable()
 export class RoleService {
-  private readonly logger = new Logger(RoleService.name);
   private readonly CACHE_TTL = 3600; // 1 hour
-  private readonly CACHE_PREFIX = "roles:";
+  private readonly CACHE_PREFIX = 'roles:';
 
   /**
    * Creates an instance of RoleService
    * @constructor
-   * @param prisma - Prisma database service
+   * @param databaseService - Database service
    * @param redis - Redis caching service
+   * @param loggingService - Logging service
    */
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly redis: RedisService,
+    private readonly loggingService: LoggingService
   ) {}
+
+  /**
+   * Type-safe helper to convert Prisma RbacRoleEntity to domain RoleEntity
+   */
+  private toRoleEntity(prismaRole: RbacRoleEntity): RoleEntity {
+    // Explicitly map Prisma entity to domain entity with proper type assertion
+    const role = prismaRole as unknown as {
+      id: string;
+      name: string;
+      displayName: string;
+      description: string | null;
+      domain: string;
+      clinicId: string | null;
+      isSystemRole: boolean;
+      isActive: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    const entity: RoleEntity = {
+      id: String(role.id),
+      name: String(role.name),
+      displayName: String(role.displayName),
+      description:
+        role.description !== null && role.description !== undefined
+          ? String(role.description)
+          : null,
+      domain: String(role.domain),
+      clinicId:
+        role.clinicId !== null && role.clinicId !== undefined ? String(role.clinicId) : null,
+      isSystemRole: Boolean(role.isSystemRole),
+      isActive: Boolean(role.isActive),
+      createdAt: role.createdAt instanceof Date ? role.createdAt : new Date(role.createdAt),
+      updatedAt: role.updatedAt instanceof Date ? role.updatedAt : new Date(role.updatedAt),
+    };
+    return entity;
+  }
 
   /**
    * Create a new role
    */
-  async createRole(createRoleDto: CreateRoleDto): Promise<Role> {
+  async createRole(createRoleDto: CreateRoleDto): Promise<RoleRecord> {
     try {
       // Check if role with same name exists in the same domain/clinic
-      const existingRole = (await this.databaseService
-        .getPrismaClient()
-        .findRoleByNameSafe(
-          createRoleDto.name,
-          createRoleDto.domain,
-          createRoleDto.clinicId,
-        )) as {
-        id: string;
-        name: string;
-        displayName: string;
-        description: string | null;
-        domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-      } | null;
+      const existingRolePrisma = await this.databaseService.findRoleByNameSafe(
+        createRoleDto.name,
+        createRoleDto.domain,
+        createRoleDto.clinicId
+      );
 
-      if (existingRole) {
-        throw new Error(
+      if (existingRolePrisma) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_DUPLICATE_ENTRY,
           `Role '${createRoleDto.name}' already exists in this domain`,
+          undefined,
+          { roleName: createRoleDto.name, domain: createRoleDto.domain },
+          'RoleService.createRole'
         );
       }
 
-      const role = (await this.databaseService
-        .getPrismaClient()
-        .createRoleSafe({
-          name: createRoleDto.name,
-          displayName: createRoleDto.displayName,
-          description: createRoleDto.description,
-          domain: createRoleDto.domain,
-          clinicId: createRoleDto.clinicId,
-          isSystemRole: false,
-          isActive: true,
-        })) as {
-        id: string;
+      const createData: {
         name: string;
         displayName: string;
-        description: string | null;
+        description?: string | null;
         domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
+        clinicId?: string | null;
+        isSystemRole?: boolean;
+        isActive?: boolean;
+      } = {
+        name: createRoleDto.name,
+        displayName: createRoleDto.displayName,
+        domain: createRoleDto.domain,
+        isSystemRole: false,
+        isActive: true,
       };
+      if (createRoleDto.description !== undefined) {
+        createData.description = createRoleDto.description ?? null;
+      }
+      if (createRoleDto.clinicId !== undefined) {
+        createData.clinicId = createRoleDto.clinicId ?? null;
+      }
+      const rolePrisma = await this.databaseService.createRoleSafe(createData);
+      const role = this.toRoleEntity(rolePrisma);
 
       // Assign permissions if provided
       if (createRoleDto.permissions && createRoleDto.permissions.length > 0) {
@@ -162,13 +130,19 @@ export class RoleService {
       // Clear cache
       await this.clearRoleCache();
 
-      this.logger.log(`Role created: ${role.name} (${role.id})`);
+      void this.loggingService.log(LogType.AUDIT, LogLevel.INFO, 'Role created', 'RoleService', {
+        roleId: role.id,
+        name: role.name,
+      });
 
       return this.mapToRole(role);
     } catch (_error) {
-      this.logger.error(
-        `Failed to create role: ${createRoleDto.name}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to create role',
+        'RoleService',
+        { name: createRoleDto.name, _error }
       );
       throw _error;
     }
@@ -177,34 +151,22 @@ export class RoleService {
   /**
    * Get role by ID
    */
-  async getRoleById(roleId: string): Promise<Role | null> {
+  async getRoleById(roleId: string): Promise<RoleRecord | null> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}id:${roleId}`;
-      const cached = await this.redis.get<Role>(cacheKey);
+      const cached = await this.redis.get<RoleRecord>(cacheKey);
 
       if (cached) {
         return cached;
       }
 
-      const role = (await this.databaseService
-        .getPrismaClient()
-        .findRoleByIdSafe(roleId)) as {
-        id: string;
-        name: string;
-        displayName: string;
-        description: string | null;
-        domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-      } | null;
+      const rolePrisma = await this.databaseService.findRoleByIdSafe(roleId);
 
-      if (!role) {
+      if (!rolePrisma) {
         return null;
       }
 
+      const role = this.toRoleEntity(rolePrisma);
       const mappedRole = this.mapToRole(role);
 
       // Cache the result
@@ -212,9 +174,12 @@ export class RoleService {
 
       return mappedRole;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get role by ID: ${roleId}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get role by ID',
+        'RoleService',
+        { roleId, _error }
       );
       return null;
     }
@@ -226,35 +191,23 @@ export class RoleService {
   async getRoleByName(
     name: string,
     domain?: string,
-    clinicId?: string,
-  ): Promise<Role | null> {
+    clinicId?: string
+  ): Promise<RoleRecord | null> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}name:${name}:${domain || "null"}:${clinicId || "null"}`;
-      const cached = await this.redis.get<Role>(cacheKey);
+      const cacheKey = `${this.CACHE_PREFIX}name:${name}:${domain || 'null'}:${clinicId || 'null'}`;
+      const cached = await this.redis.get<RoleRecord>(cacheKey);
 
       if (cached) {
         return cached;
       }
 
-      const role = (await this.databaseService
-        .getPrismaClient()
-        .findRoleByNameSafe(name, domain, clinicId)) as {
-        id: string;
-        name: string;
-        displayName: string;
-        description: string | null;
-        domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-      } | null;
+      const rolePrisma = await this.databaseService.findRoleByNameSafe(name, domain, clinicId);
 
-      if (!role) {
+      if (!rolePrisma) {
         return null;
       }
 
+      const role = this.toRoleEntity(rolePrisma);
       const mappedRole = this.mapToRole(role);
 
       // Cache the result
@@ -262,9 +215,12 @@ export class RoleService {
 
       return mappedRole;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get role by name: ${name}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get role by name',
+        'RoleService',
+        { name, domain, clinicId, _error }
       );
       return null;
     }
@@ -273,42 +229,33 @@ export class RoleService {
   /**
    * Get all roles
    */
-  async getRoles(domain?: string, clinicId?: string): Promise<Role[]> {
+  async getRoles(domain?: string, clinicId?: string): Promise<RoleRecord[]> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}list:${domain || "null"}:${clinicId || "null"}`;
-      const cached = await this.redis.get<Role[]>(cacheKey);
+      const cacheKey = `${this.CACHE_PREFIX}list:${domain || 'null'}:${clinicId || 'null'}`;
+      const cached = await this.redis.get<RoleRecord[]>(cacheKey);
 
       if (cached) {
         return cached;
       }
 
-      const roles = (await this.databaseService
-        .getPrismaClient()
-        .findRolesByDomainSafe(domain, clinicId)) as Array<{
-        id: string;
-        name: string;
-        displayName: string;
-        description: string | null;
-        domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-      }>;
+      const rolesPrisma = await this.databaseService.findRolesByDomainSafe(domain, clinicId);
 
-      const mappedRoles: Role[] = Array.isArray(roles)
-        ? roles.map((role) => this.mapToRole(role))
-        : [];
+      const mappedRoles: RoleRecord[] = rolesPrisma.map(rolePrisma => {
+        const role = this.toRoleEntity(rolePrisma);
+        return this.mapToRole(role);
+      });
 
       // Cache the result
       await this.redis.set(cacheKey, mappedRoles, this.CACHE_TTL);
 
       return mappedRoles;
     } catch (_error) {
-      this.logger.error(
-        "Failed to get roles",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get roles',
+        'RoleService',
+        { domain, clinicId, _error }
       );
       return [];
     }
@@ -317,54 +264,45 @@ export class RoleService {
   /**
    * Update role
    */
-  async updateRole(
-    roleId: string,
-    updateRoleDto: UpdateRoleDto,
-  ): Promise<Role> {
+  async updateRole(roleId: string, updateRoleDto: UpdateRoleDto): Promise<RoleRecord> {
     try {
-      const existingRole = (await this.databaseService
-        .getPrismaClient()
-        .findRoleByIdSafe(roleId)) as {
-        id: string;
-        name: string;
-        displayName: string;
-        description: string | null;
-        domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-      } | null;
+      const existingRolePrisma = await this.databaseService.findRoleByIdSafe(roleId);
 
-      if (!existingRole) {
+      if (!existingRolePrisma) {
         throw new NotFoundException(`Role with ID ${roleId} not found`);
       }
 
-      if (existingRole && (existingRole as unknown as Role).isSystemRole) {
-        throw new Error("Cannot modify system roles");
+      const existingRole = this.toRoleEntity(existingRolePrisma);
+      if (existingRole.isSystemRole) {
+        throw new HealthcareError(
+          ErrorCode.OPERATION_NOT_ALLOWED,
+          'Cannot modify system roles',
+          undefined,
+          { roleId },
+          'RoleService.updateRole'
+        );
       }
 
       // Update role
-      const role = (await this.databaseService
-        .getPrismaClient()
-        .updateRoleSafe(roleId, {
-          displayName: updateRoleDto.displayName,
-          description: updateRoleDto.description,
-          isActive: updateRoleDto.isActive,
-          updatedAt: new Date(),
-        })) as {
-        id: string;
-        name: string;
-        displayName: string;
-        description: string | null;
-        domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
+      const updateData: {
+        displayName?: string;
+        description?: string | null;
+        isActive?: boolean;
         updatedAt: Date;
+      } = {
+        updatedAt: new Date(),
       };
+      if (updateRoleDto.displayName !== undefined) {
+        updateData.displayName = updateRoleDto.displayName;
+      }
+      if (updateRoleDto.description !== undefined) {
+        updateData.description = updateRoleDto.description ?? null;
+      }
+      if (updateRoleDto.isActive !== undefined) {
+        updateData.isActive = updateRoleDto.isActive;
+      }
+      const rolePrisma = await this.databaseService.updateRoleSafe(roleId, updateData);
+      const role = this.toRoleEntity(rolePrisma);
 
       // Update permissions if provided
       if (updateRoleDto.permissions) {
@@ -374,15 +312,19 @@ export class RoleService {
       // Clear cache
       await this.clearRoleCache();
 
-      this.logger.log(
-        `Role updated: ${(role as unknown as Role).name} (${(role as unknown as Role).id})`,
-      );
+      void this.loggingService.log(LogType.AUDIT, LogLevel.INFO, 'Role updated', 'RoleService', {
+        roleId: role.id,
+        name: role.name,
+      });
 
       return this.mapToRole(role);
     } catch (_error) {
-      this.logger.error(
-        `Failed to update role: ${roleId}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to update role',
+        'RoleService',
+        { roleId, _error }
       );
       throw _error;
     }
@@ -393,40 +335,38 @@ export class RoleService {
    */
   async deleteRole(roleId: string): Promise<void> {
     try {
-      const role = (await this.databaseService
-        .getPrismaClient()
-        .findRoleByIdSafe(roleId)) as {
-        id: string;
-        name: string;
-        displayName: string;
-        description: string | null;
-        domain: string;
-        clinicId: string | null;
-        isSystemRole: boolean;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-      } | null;
+      const rolePrisma = await this.databaseService.findRoleByIdSafe(roleId);
 
-      if (!role) {
+      if (!rolePrisma) {
         throw new NotFoundException(`Role with ID ${roleId} not found`);
       }
 
-      if (role && (role as unknown as Role).isSystemRole) {
-        throw new Error("Cannot delete system roles");
+      const roleEntity = this.toRoleEntity(rolePrisma);
+      if (roleEntity.isSystemRole) {
+        throw new HealthcareError(
+          ErrorCode.OPERATION_NOT_ALLOWED,
+          'Cannot delete system roles',
+          undefined,
+          { roleId },
+          'RoleService.deleteRole'
+        );
       }
 
       // Check if role is assigned to any users
-      const userRoles = (await this.databaseService
-        .getPrismaClient()
-        .countUserRolesSafe(roleId)) as number;
+      const userRoles = await this.databaseService.countUserRolesSafe(roleId);
 
       if (userRoles > 0) {
-        throw new Error("Cannot delete role that is assigned to users");
+        throw new HealthcareError(
+          ErrorCode.OPERATION_NOT_ALLOWED,
+          'Cannot delete role that is assigned to users',
+          undefined,
+          { roleId },
+          'RoleService.deleteRole'
+        );
       }
 
       // Soft delete role
-      await this.databaseService.getPrismaClient().updateRoleSafe(roleId, {
+      await this.databaseService.updateRoleSafe(roleId, {
         isActive: false,
         updatedAt: new Date(),
       });
@@ -434,13 +374,17 @@ export class RoleService {
       // Clear cache
       await this.clearRoleCache();
 
-      this.logger.log(
-        `Role deleted: ${(role as unknown as Role).name} (${(role as unknown as Role).id})`,
-      );
+      void this.loggingService.log(LogType.AUDIT, LogLevel.INFO, 'Role deleted', 'RoleService', {
+        roleId: roleEntity.id,
+        name: roleEntity.name,
+      });
     } catch (_error) {
-      this.logger.error(
-        `Failed to delete role: ${roleId}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to delete role',
+        'RoleService',
+        { roleId, _error }
       );
       throw _error;
     }
@@ -449,36 +393,38 @@ export class RoleService {
   /**
    * Assign permissions to role
    */
-  async assignPermissionsToRole(
-    roleId: string,
-    permissionIds: string[],
-  ): Promise<void> {
+  async assignPermissionsToRole(roleId: string, permissionIds: string[]): Promise<void> {
     try {
       // Remove existing permissions
-      await this.databaseService
-        .getPrismaClient()
-        .deleteRolePermissionsSafe(roleId);
+      await this.databaseService.deleteRolePermissionsSafe(roleId);
 
       // Add new permissions
       if (permissionIds.length > 0) {
-        await this.databaseService.getPrismaClient().createRolePermissionsSafe(
-          permissionIds.map((permissionId) => ({
+        await this.databaseService.createRolePermissionsSafe(
+          permissionIds.map(permissionId => ({
             roleId,
             permissionId,
-          })),
+          }))
         );
       }
 
       // Clear cache
       await this.clearRoleCache();
 
-      this.logger.log(
-        `Permissions assigned to role ${roleId}: ${permissionIds.length} permissions`,
+      void this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        'Permissions assigned to role',
+        'RoleService',
+        { roleId, count: permissionIds.length }
       );
     } catch (_error) {
-      this.logger.error(
-        `Failed to assign permissions to role: ${roleId}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to assign permissions to role',
+        'RoleService',
+        { roleId, _error }
       );
       throw _error;
     }
@@ -487,25 +433,27 @@ export class RoleService {
   /**
    * Remove permissions from role
    */
-  async removePermissionsFromRole(
-    roleId: string,
-    permissionIds: string[],
-  ): Promise<void> {
+  async removePermissionsFromRole(roleId: string, permissionIds: string[]): Promise<void> {
     try {
-      await this.databaseService
-        .getPrismaClient()
-        .removeRolePermissionsSafe(roleId, permissionIds);
+      await this.databaseService.removeRolePermissionsSafe(roleId, permissionIds);
 
       // Clear cache
       await this.clearRoleCache();
 
-      this.logger.log(
-        `Permissions removed from role ${roleId}: ${permissionIds.length} permissions`,
+      void this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        'Permissions removed from role',
+        'RoleService',
+        { roleId, count: permissionIds.length }
       );
     } catch (_error) {
-      this.logger.error(
-        `Failed to remove permissions from role: ${roleId}`,
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to remove permissions from role',
+        'RoleService',
+        { roleId, _error }
       );
       throw _error;
     }
@@ -514,24 +462,24 @@ export class RoleService {
   /**
    * Update role permissions (replace all)
    */
-  async updateRolePermissions(
-    roleId: string,
-    permissionIds: string[],
-  ): Promise<void> {
+  async updateRolePermissions(roleId: string, permissionIds: string[]): Promise<void> {
     await this.assignPermissionsToRole(roleId, permissionIds);
   }
 
   /**
    * Get system roles
    */
-  async getSystemRoles(): Promise<Role[]> {
+  async getSystemRoles(): Promise<RoleRecord[]> {
     try {
       const roles = await this.getRoles();
-      return roles.filter((role) => role.isSystemRole);
+      return roles.filter((role: RoleRecord) => role.isSystemRole);
     } catch (_error) {
-      this.logger.error(
-        "Failed to get system roles",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get system roles',
+        'RoleService',
+        { _error }
       );
       return [];
     }
@@ -544,107 +492,100 @@ export class RoleService {
     try {
       const systemRoles = [
         {
-          name: "SUPER_ADMIN",
-          displayName: "Super Administrator",
-          description: "Full system access",
-          domain: "healthcare",
+          name: 'SUPER_ADMIN',
+          displayName: 'Super Administrator',
+          description: 'Full system access',
+          domain: 'healthcare',
         },
         {
-          name: "CLINIC_ADMIN",
-          displayName: "Clinic Administrator",
-          description: "Full clinic management access",
-          domain: "healthcare",
+          name: 'CLINIC_ADMIN',
+          displayName: 'Clinic Administrator',
+          description: 'Full clinic management access',
+          domain: 'healthcare',
         },
         {
-          name: "DOCTOR",
-          displayName: "Doctor",
-          description: "Medical practitioner access",
-          domain: "healthcare",
+          name: 'DOCTOR',
+          displayName: 'Doctor',
+          description: 'Medical practitioner access',
+          domain: 'healthcare',
         },
         {
-          name: "NURSE",
-          displayName: "Nurse",
-          description: "Nursing staff access",
-          domain: "healthcare",
+          name: 'NURSE',
+          displayName: 'Nurse',
+          description: 'Nursing staff access',
+          domain: 'healthcare',
         },
         {
-          name: "RECEPTIONIST",
-          displayName: "Receptionist",
-          description: "Front desk staff access",
-          domain: "healthcare",
+          name: 'RECEPTIONIST',
+          displayName: 'Receptionist',
+          description: 'Front desk staff access',
+          domain: 'healthcare',
         },
         {
-          name: "PATIENT",
-          displayName: "Patient",
-          description: "Patient access to own records",
-          domain: "healthcare",
+          name: 'PATIENT',
+          displayName: 'Patient',
+          description: 'Patient access to own records',
+          domain: 'healthcare',
         },
       ];
 
       for (const roleData of systemRoles) {
-        const existingRole = await this.getRoleByName(
-          roleData.name,
-          roleData.domain,
-        );
+        const existingRole = await this.getRoleByName(roleData.name, roleData.domain);
 
         if (!existingRole) {
-          await this.databaseService.getPrismaClient().createSystemRoleSafe({
+          await this.databaseService.createSystemRoleSafe({
             ...roleData,
             isSystemRole: true,
             isActive: true,
           });
 
-          this.logger.log(`System role created: ${roleData.name}`);
+          void this.loggingService.log(
+            LogType.AUDIT,
+            LogLevel.INFO,
+            'System role created',
+            'RoleService',
+            { name: roleData.name }
+          );
         }
       }
 
       await this.clearRoleCache();
     } catch (_error) {
-      this.logger.error(
-        "Failed to initialize system roles",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to initialize system roles',
+        'RoleService',
+        { _error }
       );
       throw _error;
     }
   }
 
   /**
-   * Map database role to Role interface
+   * Map database role entity to RoleRecord
    */
-  private mapToRole(role: unknown): Role {
-    const roleData = role as Record<string, unknown>;
-    return {
-      id: roleData["id"] as string,
-      name: roleData["name"] as string,
-      displayName: roleData["displayName"] as string,
-      ...(roleData["description"]
-        ? { description: roleData["description"] as string }
-        : {}),
-      domain: roleData["domain"] as string,
-      ...(roleData["clinicId"]
-        ? { clinicId: roleData["clinicId"] as string }
-        : {}),
-      isSystemRole: roleData["isSystemRole"] as boolean,
-      isActive: roleData["isActive"] as boolean,
-      createdAt: roleData["createdAt"] as Date,
-      updatedAt: roleData["updatedAt"] as Date,
-      permissions: (roleData["permissions"] as unknown[])?.map(
-        (rp: unknown) => {
-          const rpData = rp as Record<string, unknown>;
-          const permission = rpData["permission"] as Record<string, unknown>;
-          return {
-            id: permission["id"] as string,
-            name: permission["name"] as string,
-            resource: permission["resource"] as string,
-            action: permission["action"] as string,
-            ...(permission["description"]
-              ? { description: permission["description"] as string }
-              : {}),
-            isActive: permission["isActive"] as boolean,
-          };
-        },
-      ),
+  private mapToRole(role: RoleEntity): RoleRecord {
+    // Note: permissions are not included in RoleEntity from database queries by default
+    // This is handled separately if permissions need to be included
+    const mappedPermissions: RolePermission[] | undefined = undefined;
+
+    // Build result object with all required properties
+    const result: RoleRecord = {
+      id: role.id,
+      name: role.name,
+      displayName: role.displayName,
+      domain: role.domain,
+      isSystemRole: role.isSystemRole,
+      isActive: role.isActive,
+      createdAt: role.createdAt,
+      updatedAt: role.updatedAt,
+      ...(role.description !== null && { description: role.description }),
+      ...(role.clinicId !== null && { clinicId: role.clinicId }),
+      ...(mappedPermissions !== undefined && { permissions: mappedPermissions }),
     };
+
+    return result;
   }
 
   /**
@@ -657,9 +598,12 @@ export class RoleService {
         await this.redis.del(...keys);
       }
     } catch (_error) {
-      this.logger.error(
-        "Failed to clear role cache",
-        _error instanceof Error ? _error.stack : "No stack trace available",
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to clear role cache',
+        'RoleService',
+        { _error }
       );
     }
   }

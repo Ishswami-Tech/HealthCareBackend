@@ -1,67 +1,22 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { CacheService } from "../../../../libs/infrastructure/cache/cache.service";
-import { LoggingService } from "../../../../libs/infrastructure/logging";
-import { AppointmentNotificationService } from "../notifications/appointment-notification.service";
-import { PrismaService } from "@database/prisma/prisma.service";
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { CacheService } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { AppointmentNotificationService } from '../notifications/appointment-notification.service';
+import { DatabaseService } from '@infrastructure/database';
+import type {
+  FollowUpPlan,
+  FollowUpTemplate,
+  FollowUpResult,
+  FollowUpReminder,
+} from '@core/types/appointment.types';
 
-export interface FollowUpPlan {
-  id: string;
-  appointmentId: string;
-  patientId: string;
-  doctorId: string;
-  clinicId: string;
-  followUpType: "routine" | "urgent" | "specialist" | "therapy" | "surgery";
-  scheduledFor: Date;
-  status: "scheduled" | "completed" | "cancelled" | "overdue";
-  priority: "low" | "normal" | "high" | "urgent";
-  instructions: string;
-  medications?: string[];
-  tests?: string[];
-  restrictions?: string[];
-  notes?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface FollowUpTemplate {
-  id: string;
-  name: string;
-  followUpType: string;
-  daysAfter: number;
-  instructions: string;
-  isActive: boolean;
-  clinicId?: string;
-  conditions?: {
-    appointmentType?: string[];
-    diagnosis?: string[];
-    ageRange?: { min: number; max: number };
-  };
-}
-
-export interface FollowUpResult {
-  success: boolean;
-  followUpId: string;
-  scheduledFor: Date;
-  message?: string;
-  error?: string;
-}
-
-export interface FollowUpReminder {
-  id: string;
-  followUpId: string;
-  patientId: string;
-  reminderType: "appointment" | "medication" | "test" | "instruction";
-  scheduledFor: Date;
-  status: "scheduled" | "sent" | "failed";
-  message: string;
-  channels: string[];
-}
+// Re-export types for backward compatibility
+export type { FollowUpPlan, FollowUpTemplate, FollowUpResult, FollowUpReminder };
 
 @Injectable()
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 export class AppointmentFollowUpService {
-  private readonly logger = new Logger(AppointmentFollowUpService.name);
   private readonly FOLLOWUP_CACHE_TTL = 3600; // 1 hour
   private readonly TEMPLATE_CACHE_TTL = 7200; // 2 hours
 
@@ -70,7 +25,7 @@ export class AppointmentFollowUpService {
     private readonly loggingService: LoggingService,
     private readonly notificationService: AppointmentNotificationService,
     private readonly configService: ConfigService,
-    private readonly prisma: PrismaService,
+    private readonly databaseService: DatabaseService
   ) {}
 
   /**
@@ -84,21 +39,27 @@ export class AppointmentFollowUpService {
     followUpType: string,
     daysAfter: number,
     instructions: string,
-    priority: string = "normal",
+    priority: string = 'normal',
     medications?: string[],
     tests?: string[],
     restrictions?: string[],
-    notes?: string,
+    notes?: string
   ): Promise<FollowUpResult> {
     const followUpId = `followup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const scheduledFor = new Date(Date.now() + daysAfter * 24 * 60 * 60 * 1000);
 
-    this.logger.log(`Creating follow-up plan ${followUpId}`, {
-      appointmentId,
-      followUpType,
-      daysAfter,
-      scheduledFor,
-    });
+    await this.loggingService.log(
+      LogType.BUSINESS,
+      LogLevel.INFO,
+      `Creating follow-up plan ${followUpId}`,
+      'AppointmentFollowUpService',
+      {
+        appointmentId,
+        followUpType,
+        daysAfter,
+        scheduledFor,
+      }
+    );
 
     try {
       const followUpPlan: FollowUpPlan = {
@@ -109,24 +70,20 @@ export class AppointmentFollowUpService {
         clinicId,
         followUpType: followUpType as any,
         scheduledFor,
-        status: "scheduled",
+        status: 'scheduled',
         priority: priority as any,
         instructions,
         medications: medications || [],
         tests: tests || [],
         restrictions: restrictions || [],
-        notes: notes || "",
+        notes: notes || '',
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
       // Store follow-up plan in cache
       const cacheKey = `followup:${followUpId}`;
-      await this.cacheService.set(
-        cacheKey,
-        followUpPlan,
-        this.FOLLOWUP_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, followUpPlan, this.FOLLOWUP_CACHE_TTL);
 
       // Schedule follow-up reminders
       await this.scheduleFollowUpReminders(followUpPlan);
@@ -141,16 +98,22 @@ export class AppointmentFollowUpService {
         message: `Follow-up plan created for ${scheduledFor.toISOString()}`,
       };
     } catch (_error) {
-      this.logger.error(`Failed to create follow-up plan ${followUpId}`, {
-        error: _error instanceof Error ? _error.message : "Unknown _error",
-        appointmentId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to create follow-up plan ${followUpId}`,
+        'AppointmentFollowUpService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          appointmentId,
+        }
+      );
 
       return {
         success: false,
         followUpId,
         scheduledFor,
-        error: _error instanceof Error ? _error.message : "Unknown _error",
+        error: _error instanceof Error ? _error.message : 'Unknown _error',
       };
     }
   }
@@ -161,9 +124,9 @@ export class AppointmentFollowUpService {
   async getPatientFollowUps(
     patientId: string,
     clinicId: string,
-    status?: string,
+    status?: string
   ): Promise<FollowUpPlan[]> {
-    const cacheKey = `patient_followups:${patientId}:${clinicId}:${status || "all"}`;
+    const cacheKey = `patient_followups:${patientId}:${clinicId}:${status || 'all'}`;
 
     try {
       const cached = await this.cacheService.get(cacheKey);
@@ -171,33 +134,41 @@ export class AppointmentFollowUpService {
         return cached as any;
       }
 
-      // Get follow-up plans from database
-      const followUps = await this.prisma["followUpPlan"].findMany({
-        where: {
-          patientId,
-          clinicId,
-        },
-        include: {
-          appointment: {
-            select: {
-              id: true,
-              date: true,
-              doctor: {
-                select: {
-                  id: true,
-                  user: {
-                    select: {
-                      name: true,
+      // Get follow-up plans from database using executeHealthcareRead
+      const followUps = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            followUpPlan: {
+              findMany: <T>(args: T) => Promise<unknown[]>;
+            };
+          }
+        ).followUpPlan.findMany({
+          where: {
+            patientId,
+            clinicId,
+          },
+          include: {
+            appointment: {
+              select: {
+                id: true,
+                date: true,
+                doctor: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        name: true,
+                      },
                     },
                   },
                 },
               },
             },
           },
-        },
-        orderBy: {
-          scheduledFor: "asc",
-        },
+          orderBy: {
+            scheduledFor: 'asc',
+          },
+        });
       });
 
       const followUpList: FollowUpPlan[] = followUps.map((followUp: any) => ({
@@ -219,17 +190,19 @@ export class AppointmentFollowUpService {
         updatedAt: followUp.updatedAt,
       }));
 
-      await this.cacheService.set(
-        cacheKey,
-        followUpList,
-        this.FOLLOWUP_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, followUpList, this.FOLLOWUP_CACHE_TTL);
       return followUpList;
     } catch (_error) {
-      this.logger.error("Failed to get patient follow-ups", {
-        error: _error instanceof Error ? _error.message : "Unknown _error",
-        patientId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get patient follow-ups',
+        'AppointmentFollowUpService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          patientId,
+        }
+      );
       return [];
     }
   }
@@ -239,15 +212,20 @@ export class AppointmentFollowUpService {
    */
   async updateFollowUpStatus(
     followUpId: string,
-    status: "scheduled" | "completed" | "cancelled" | "overdue",
-    notes?: string,
+    status: 'scheduled' | 'completed' | 'cancelled' | 'overdue',
+    notes?: string
   ): Promise<boolean> {
     try {
       const cacheKey = `followup:${followUpId}`;
       const followUp = await this.cacheService.get(cacheKey);
 
       if (!followUp) {
-        this.logger.warn(`Follow-up ${followUpId} not found`);
+        await this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.WARN,
+          `Follow-up ${followUpId} not found`,
+          'AppointmentFollowUpService'
+        );
         return false;
       }
 
@@ -258,18 +236,25 @@ export class AppointmentFollowUpService {
         updatedAt: new Date(),
       };
 
-      await this.cacheService.set(
-        cacheKey,
-        updatedFollowUp,
-        this.FOLLOWUP_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, updatedFollowUp, this.FOLLOWUP_CACHE_TTL);
 
-      this.logger.log(`Follow-up ${followUpId} status updated to ${status}`);
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Follow-up ${followUpId} status updated to ${status}`,
+        'AppointmentFollowUpService'
+      );
       return true;
     } catch (_error) {
-      this.logger.error(`Failed to update follow-up status ${followUpId}`, {
-        error: _error instanceof Error ? _error.message : "Unknown _error",
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update follow-up status ${followUpId}`,
+        'AppointmentFollowUpService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown _error',
+        }
+      );
       return false;
     }
   }
@@ -289,37 +274,36 @@ export class AppointmentFollowUpService {
       // Mock follow-up templates
       const templates: FollowUpTemplate[] = [
         {
-          id: "template_1",
-          name: "Routine Follow-up",
-          followUpType: "routine",
+          id: 'template_1',
+          name: 'Routine Follow-up',
+          followUpType: 'routine',
           daysAfter: 7,
-          instructions: "Schedule follow-up appointment to monitor progress",
+          instructions: 'Schedule follow-up appointment to monitor progress',
           isActive: true,
           conditions: {
-            appointmentType: ["GENERAL_CONSULTATION", "FOLLOW_UP"],
+            appointmentType: ['GENERAL_CONSULTATION', 'FOLLOW_UP'],
           },
         },
         {
-          id: "template_2",
-          name: "Post-Surgery Follow-up",
-          followUpType: "surgery",
+          id: 'template_2',
+          name: 'Post-Surgery Follow-up',
+          followUpType: 'surgery',
           daysAfter: 14,
-          instructions: "Post-surgery follow-up to check healing and recovery",
+          instructions: 'Post-surgery follow-up to check healing and recovery',
           isActive: true,
           conditions: {
-            appointmentType: ["SURGERY"],
+            appointmentType: ['SURGERY'],
           },
         },
         {
-          id: "template_3",
-          name: "Therapy Follow-up",
-          followUpType: "therapy",
+          id: 'template_3',
+          name: 'Therapy Follow-up',
+          followUpType: 'therapy',
           daysAfter: 3,
-          instructions:
-            "Follow-up on therapy progress and adjust treatment plan",
+          instructions: 'Follow-up on therapy progress and adjust treatment plan',
           isActive: true,
           conditions: {
-            appointmentType: ["THERAPY"],
+            appointmentType: ['THERAPY'],
           },
         },
       ];
@@ -327,10 +311,16 @@ export class AppointmentFollowUpService {
       await this.cacheService.set(cacheKey, templates, this.TEMPLATE_CACHE_TTL);
       return templates;
     } catch (_error) {
-      this.logger.error("Failed to get follow-up templates", {
-        error: _error instanceof Error ? _error.message : "Unknown _error",
-        clinicId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get follow-up templates',
+        'AppointmentFollowUpService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          clinicId,
+        }
+      );
       return [];
     }
   }
@@ -338,9 +328,7 @@ export class AppointmentFollowUpService {
   /**
    * Create follow-up template
    */
-  async createFollowUpTemplate(
-    template: Omit<FollowUpTemplate, "id">,
-  ): Promise<FollowUpTemplate> {
+  async createFollowUpTemplate(template: Omit<FollowUpTemplate, 'id'>): Promise<FollowUpTemplate> {
     const templateId = `template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const newTemplate: FollowUpTemplate = {
       id: templateId,
@@ -348,28 +336,34 @@ export class AppointmentFollowUpService {
     };
 
     try {
-      const cacheKey = `followup_templates:${template.clinicId || "default"}`;
-      const existingTemplates = await this.getFollowUpTemplates(
-        template.clinicId || "default",
-      );
+      const cacheKey = `followup_templates:${template.clinicId || 'default'}`;
+      const existingTemplates = await this.getFollowUpTemplates(template.clinicId || 'default');
       const updatedTemplates = [...existingTemplates, newTemplate];
 
-      await this.cacheService.set(
-        cacheKey,
-        updatedTemplates,
-        this.TEMPLATE_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, updatedTemplates, this.TEMPLATE_CACHE_TTL);
 
-      this.logger.log(`Created follow-up template ${templateId}`, {
-        name: template.name,
-        followUpType: template.followUpType,
-      });
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Created follow-up template ${templateId}`,
+        'AppointmentFollowUpService',
+        {
+          name: template.name,
+          followUpType: template.followUpType,
+        }
+      );
       return newTemplate;
     } catch (_error) {
-      this.logger.error(`Failed to create follow-up template`, {
-        error: _error instanceof Error ? _error.message : "Unknown _error",
-        templateName: template.name,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to create follow-up template`,
+        'AppointmentFollowUpService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          templateName: template.name,
+        }
+      );
       throw _error;
     }
   }
@@ -389,32 +383,34 @@ export class AppointmentFollowUpService {
       // Mock overdue follow-ups
       const overdueFollowUps: FollowUpPlan[] = [
         {
-          id: "followup_overdue_1",
-          appointmentId: "appointment_1",
-          patientId: "patient_1",
-          doctorId: "doctor_1",
+          id: 'followup_overdue_1',
+          appointmentId: 'appointment_1',
+          patientId: 'patient_1',
+          doctorId: 'doctor_1',
           clinicId,
-          followUpType: "routine",
+          followUpType: 'routine',
           scheduledFor: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-          status: "overdue",
-          priority: "high",
-          instructions: "Overdue follow-up appointment",
+          status: 'overdue',
+          priority: 'high',
+          instructions: 'Overdue follow-up appointment',
           createdAt: new Date(),
           updatedAt: new Date(),
         },
       ];
 
-      await this.cacheService.set(
-        cacheKey,
-        overdueFollowUps,
-        this.FOLLOWUP_CACHE_TTL,
-      );
+      await this.cacheService.set(cacheKey, overdueFollowUps, this.FOLLOWUP_CACHE_TTL);
       return overdueFollowUps;
     } catch (_error) {
-      this.logger.error("Failed to get overdue follow-ups", {
-        error: _error instanceof Error ? _error.message : "Unknown _error",
-        clinicId,
-      });
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to get overdue follow-ups',
+        'AppointmentFollowUpService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          clinicId,
+        }
+      );
       return [];
     }
   }
@@ -422,17 +418,19 @@ export class AppointmentFollowUpService {
   /**
    * Schedule follow-up reminders
    */
-  private async scheduleFollowUpReminders(
-    followUp: FollowUpPlan,
-  ): Promise<void> {
-    this.logger.log(`Scheduling reminders for follow-up ${followUp.id}`, {
-      scheduledFor: followUp.scheduledFor,
-    });
+  private async scheduleFollowUpReminders(followUp: FollowUpPlan): Promise<void> {
+    await this.loggingService.log(
+      LogType.BUSINESS,
+      LogLevel.INFO,
+      `Scheduling reminders for follow-up ${followUp.id}`,
+      'AppointmentFollowUpService',
+      {
+        scheduledFor: followUp.scheduledFor,
+      }
+    );
 
     // Schedule reminder 1 day before
-    const reminderDate = new Date(
-      followUp.scheduledFor.getTime() - 24 * 60 * 60 * 1000,
-    );
+    const reminderDate = new Date(followUp.scheduledFor.getTime() - 24 * 60 * 60 * 1000);
 
     if (reminderDate > new Date()) {
       await this.notificationService.scheduleNotification(
@@ -441,27 +439,26 @@ export class AppointmentFollowUpService {
           patientId: followUp.patientId,
           doctorId: followUp.doctorId,
           clinicId: followUp.clinicId,
-          type: "follow_up",
+          type: 'follow_up',
           priority: followUp.priority,
-          channels: ["email", "whatsapp", "push"] as (
-            | "socket"
-            | "push"
-            | "email"
-            | "sms"
-            | "whatsapp"
+          channels: ['email', 'whatsapp', 'push'] as (
+            | 'socket'
+            | 'push'
+            | 'email'
+            | 'sms'
+            | 'whatsapp'
           )[],
           templateData: {
-            patientName: "Patient", // This should be fetched from user data
-            doctorName: "Doctor", // This should be fetched from user data
-            appointmentDate:
-              followUp.scheduledFor.toISOString().split("T")[0] || "",
-            appointmentTime: "10:00", // This should be fetched from appointment data
-            location: "Clinic", // This should be fetched from clinic data
-            clinicName: "Healthcare Clinic", // This should be fetched from clinic data
+            patientName: 'Patient', // This should be fetched from user data
+            doctorName: 'Doctor', // This should be fetched from user data
+            appointmentDate: followUp.scheduledFor.toISOString().split('T')[0] || '',
+            appointmentTime: '10:00', // This should be fetched from appointment data
+            location: 'Clinic', // This should be fetched from clinic data
+            clinicName: 'Healthcare Clinic', // This should be fetched from clinic data
             notes: followUp.instructions,
           },
         },
-        reminderDate,
+        reminderDate
       );
     }
   }
@@ -469,47 +466,51 @@ export class AppointmentFollowUpService {
   /**
    * Send follow-up notification
    */
-  private async sendFollowUpNotification(
-    followUp: FollowUpPlan,
-  ): Promise<void> {
-    this.logger.log(`Sending follow-up notification for ${followUp.id}`);
+  private async sendFollowUpNotification(followUp: FollowUpPlan): Promise<void> {
+    await this.loggingService.log(
+      LogType.BUSINESS,
+      LogLevel.INFO,
+      `Sending follow-up notification for ${followUp.id}`,
+      'AppointmentFollowUpService'
+    );
 
     try {
       const notificationData = {
-        appointmentId: followUp.appointmentId || "",
+        appointmentId: followUp.appointmentId || '',
         patientId: followUp.patientId,
         doctorId: followUp.doctorId,
         clinicId: followUp.clinicId,
-        type: "follow_up" as const,
+        type: 'follow_up' as const,
         priority: followUp.priority,
-        channels: ["email", "whatsapp", "push"] as (
-          | "socket"
-          | "push"
-          | "email"
-          | "sms"
-          | "whatsapp"
+        channels: ['email', 'whatsapp', 'push'] as (
+          | 'socket'
+          | 'push'
+          | 'email'
+          | 'sms'
+          | 'whatsapp'
         )[],
         templateData: {
-          patientName: "Patient", // This should be fetched from user data
-          doctorName: "Doctor", // This should be fetched from user data
-          appointmentDate:
-            followUp.scheduledFor.toISOString().split("T")[0] || "",
-          appointmentTime: "10:00", // This should be fetched from appointment data
-          location: "Clinic", // This should be fetched from clinic data
-          clinicName: "Healthcare Clinic", // This should be fetched from clinic data
+          patientName: 'Patient', // This should be fetched from user data
+          doctorName: 'Doctor', // This should be fetched from user data
+          appointmentDate: followUp.scheduledFor.toISOString().split('T')[0] || '',
+          appointmentTime: '10:00', // This should be fetched from appointment data
+          location: 'Clinic', // This should be fetched from clinic data
+          clinicName: 'Healthcare Clinic', // This should be fetched from clinic data
           notes: followUp.instructions,
         },
       };
 
       await this.notificationService.sendNotification(notificationData);
     } catch (_error) {
-      this.logger.error(
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to send follow-up notification for ${followUp.id}`,
+        'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : "Unknown _error",
-        },
+          error: _error instanceof Error ? _error.message : 'Unknown _error',
+        }
       );
     }
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */

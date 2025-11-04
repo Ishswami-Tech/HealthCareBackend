@@ -1,7 +1,10 @@
-import { Module } from "@nestjs/common";
-import { RateLimitService } from "./rate-limit.service";
-import { RedisModule } from "../../infrastructure/cache/redis/redis.module";
-import { LoggingModule } from "../../infrastructure/logging/logging.module";
+import { Module } from '@nestjs/common';
+
+// Internal imports - Infrastructure
+import { RedisModule } from '@infrastructure/cache/redis/redis.module';
+import { LoggingModule } from '@infrastructure/logging';
+
+import { RateLimitService } from './rate-limit.service';
 
 /**
  * Rate Limiting Module for Healthcare Applications
