@@ -26,7 +26,7 @@ import {
   AppointmentFilterDto,
   AppointmentStatus,
   AppointmentPriority,
-} from '../appointment.dto';
+} from '@services/appointments/appointment.dto';
 import { PaymentStatus, PaymentMethod, Language } from '@core/types';
 import type {
   AppointmentContext,

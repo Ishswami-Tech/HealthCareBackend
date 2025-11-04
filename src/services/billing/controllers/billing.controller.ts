@@ -15,8 +15,8 @@ import {
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import * as fs from 'fs';
-import { BillingService } from '../billing.service';
-import { InvoicePDFService } from '../invoice-pdf.service';
+import { BillingService } from '@services/billing/billing.service';
+import { InvoicePDFService } from '@services/billing/invoice-pdf.service';
 import {
   CreateBillingPlanDto,
   UpdateBillingPlanDto,
@@ -26,7 +26,7 @@ import {
   UpdatePaymentDto,
   CreateInvoiceDto,
   UpdateInvoiceDto,
-} from '../dto/billing.dto';
+} from '@services/billing/dto/billing.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { Roles } from '@core/decorators/roles.decorator';
