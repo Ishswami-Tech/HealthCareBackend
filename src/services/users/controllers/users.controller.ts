@@ -19,7 +19,7 @@ import {
   ApiBody,
   ApiSecurity,
 } from '@nestjs/swagger';
-import { UsersService } from '../users.service';
+import { UsersService } from '@services/users/users.service';
 import { UpdateUserDto, UserResponseDto, UpdateUserRoleDto } from '@dtos/user.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Roles } from '@core/decorators/roles.decorator';

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '../base/base-plugin.service';
-import { AppointmentFollowUpService } from './appointment-followup.service';
+import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
+import { AppointmentFollowUpService } from '@services/appointments/plugins/followup/appointment-followup.service';
 import type { FollowUpTemplate } from '@core/types/appointment.types';
 
 interface FollowUpPluginData {

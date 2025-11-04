@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '../base/base-plugin.service';
-import { AppointmentWaitlistService } from './appointment-waitlist.service';
+import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
+import { AppointmentWaitlistService } from '@services/appointments/plugins/waitlist/appointment-waitlist.service';
 
 @Injectable()
 export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {

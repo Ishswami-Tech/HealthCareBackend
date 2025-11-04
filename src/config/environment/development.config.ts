@@ -1,5 +1,5 @@
-import type { Config } from '../config.types';
-import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
+import type { Config } from '@config/config.types';
+import { ENV_VARS, DEFAULT_CONFIG } from '@config/constants';
 
 /**
  * Parses integer from environment variable with validation

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { AppointmentNotificationService } from '../notifications/appointment-notification.service';
+import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
 import { DatabaseService } from '@infrastructure/database';
 import type { ReminderSchedule, ReminderRule, ReminderResult } from '@core/types/appointment.types';
 

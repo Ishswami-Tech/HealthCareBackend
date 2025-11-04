@@ -40,7 +40,8 @@
       "@cache/*": ["src/libs/infrastructure/cache/*"],
       "@events/*": ["src/libs/infrastructure/events/*"],
       "@queue/*": ["src/libs/infrastructure/queue/*"],
-      "@security/*": ["src/libs/security/*"]
+      "@security/*": ["src/libs/security/*"],
+      "@config/*": ["src/config/*"]
     }
   }
 }

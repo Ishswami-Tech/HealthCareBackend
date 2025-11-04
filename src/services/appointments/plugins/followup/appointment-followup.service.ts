@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { AppointmentNotificationService } from '../notifications/appointment-notification.service';
+import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
 import { DatabaseService } from '@infrastructure/database';
 import type {
   FollowUpPlan,

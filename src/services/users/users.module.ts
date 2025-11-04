@@ -7,7 +7,7 @@ import { GuardsModule } from '@core/guards/guards.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { RbacModule } from '@core/rbac/rbac.module';
-import { AuthModule } from '../auth/auth.module';
+import { AuthModule } from '@services/auth/auth.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
 

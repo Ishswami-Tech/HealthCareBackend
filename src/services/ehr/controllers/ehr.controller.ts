@@ -11,7 +11,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { EHRService } from '../ehr.service';
+import { EHRService } from '@services/ehr/ehr.service';
 import {
   CreateMedicalHistoryDto,
   UpdateMedicalHistoryDto,
@@ -29,7 +29,7 @@ import {
   UpdateMedicationDto,
   CreateImmunizationDto,
   UpdateImmunizationDto,
-} from '../dto/ehr.dto';
+} from '@services/ehr/dto/ehr.dto';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,

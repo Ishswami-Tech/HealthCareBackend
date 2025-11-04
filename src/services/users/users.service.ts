@@ -10,7 +10,7 @@ import { Role } from '@core/types/enums.types';
 import type { User } from '@core/types/database.types';
 import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto } from '@dtos/user.dto';
-import { AuthService } from '../auth/auth.service';
+import { AuthService } from '@services/auth/auth.service';
 import { HealthcareErrorsService } from '@core/errors';
 
 type UserWithRelations = User & {

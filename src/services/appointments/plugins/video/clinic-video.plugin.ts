@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '../base/base-plugin.service';
-import { VideoService } from './video.service';
-import { JitsiVideoService } from './jitsi-video.service';
-import { VideoConsultationTracker } from './video-consultation-tracker.service';
+import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
+import { VideoService } from '@services/appointments/plugins/video/video.service';
+import { JitsiVideoService } from '@services/appointments/plugins/video/jitsi-video.service';
+import { VideoConsultationTracker } from '@services/appointments/plugins/video/video-consultation-tracker.service';
 
 /**
  * Interface for video plugin data validation
