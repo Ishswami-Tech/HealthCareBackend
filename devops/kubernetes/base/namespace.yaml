@@ -1,3 +1,11 @@
+# NOTE: This file is kept for reference but NOT used by kustomization.
+# The namespace is defined via the 'namespace:' field in kustomization.yaml
+# This file can be used for manual namespace creation if needed:
+#   kubectl apply -f namespace.yaml
+#
+# To use this file in kustomization, uncomment it in base/kustomization.yaml
+# and remove the 'namespace:' field from kustomization.yaml
+
 apiVersion: v1
 kind: Namespace
 metadata:

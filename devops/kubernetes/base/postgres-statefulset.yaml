@@ -63,15 +63,6 @@ spec:
               optional: true
         - name: WALG_S3_FORCE_PATH_STYLE
           value: "true"
-        args:
-        - "-c"
-        - "config_file=/etc/postgresql/postgresql.conf"
-        - "-c"
-        - "hba_file=/etc/postgresql/pg_hba.conf"
-        ports:
-        - containerPort: 5432
-          name: postgres
-        env:
         - name: POSTGRES_DB
           value: userdb
         - name: POSTGRES_USER
@@ -86,6 +77,14 @@ spec:
               key: postgres-password
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
+        args:
+        - "-c"
+        - "config_file=/etc/postgresql/postgresql.conf"
+        - "-c"
+        - "hba_file=/etc/postgresql/pg_hba.conf"
+        ports:
+        - containerPort: 5432
+          name: postgres
         resources:
           requests:
             memory: "2Gi"
@@ -192,7 +191,6 @@ spec:
       resources:
         requests:
           storage: 20Gi
----
 ---
 apiVersion: v1
 kind: Service
