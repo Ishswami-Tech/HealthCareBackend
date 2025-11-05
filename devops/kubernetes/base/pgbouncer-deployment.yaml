@@ -21,7 +21,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: pgbouncer
-        image: edoburu/pgbouncer:1.22.1
+        image: bitnami/pgbouncer:1.22.0
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 6432
@@ -50,7 +50,14 @@ spec:
           set -e
           # Render pgbouncer.ini from template using secrets
           sed "s/{{AUTH_USER}}/${DB_USER}/g" /config-tpl/pgbouncer.ini > /etc/pgbouncer/pgbouncer.ini
-          exec /usr/local/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+          # Try multiple possible pgbouncer binary paths
+          if [ -x /usr/local/bin/pgbouncer ]; then
+            exec /usr/local/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+          elif [ -x /usr/bin/pgbouncer ]; then
+            exec /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+          else
+            exec pgbouncer /etc/pgbouncer/pgbouncer.ini
+          fi
         resources:
           requests:
             cpu: "100m"
@@ -67,3 +74,19 @@ spec:
           items:
           - key: pgbouncer.ini
             path: pgbouncer.ini
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: healthcare-backend
+  labels:
+    app: pgbouncer
+spec:
+  type: ClusterIP
+  selector:
+    app: pgbouncer
+  ports:
+  - port: 6432
+    targetPort: 6432
+    name: pgbouncer

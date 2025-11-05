@@ -405,7 +405,7 @@ export class ClinicService {
           distinct: ['patientId'],
         });
 
-        const patientIds = appointments.map(a => a.patientId);
+        const patientIds = appointments.map((a: { patientId: string }) => a.patientId);
 
         if (patientIds.length === 0) {
           return [];

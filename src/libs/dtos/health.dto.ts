@@ -96,6 +96,62 @@ export class HealthCheckResponseDto {
 }
 
 /**
+ * Data Transfer Object for system metrics
+ * @class SystemMetricsDto
+ * @description Contains performance and usage metrics for the system
+ * @example
+ * ```typescript
+ * const metrics = new SystemMetricsDto();
+ * metrics.uptime = 24;
+ * metrics.memoryUsage = 512;
+ * metrics.cpuUsage = 2.5;
+ * ```
+ */
+export class SystemMetricsDto {
+  @ApiProperty({
+    example: 24,
+    description: 'System uptime in hours',
+  })
+  @IsNumber({}, { message: 'Uptime must be a number' })
+  uptime!: number;
+
+  @ApiProperty({
+    example: 512,
+    description: 'Memory usage in MB',
+  })
+  @IsNumber({}, { message: 'Memory usage must be a number' })
+  memoryUsage!: number;
+
+  @ApiProperty({
+    example: 2.5,
+    description: 'CPU usage percentage',
+  })
+  @IsNumber({}, { message: 'CPU usage must be a number' })
+  cpuUsage!: number;
+
+  @ApiProperty({
+    example: 1000,
+    description: 'Total requests processed',
+  })
+  @IsNumber({}, { message: 'Total requests must be a number' })
+  totalRequests!: number;
+
+  @ApiProperty({
+    example: 50,
+    description: 'Active connections',
+  })
+  @IsNumber({}, { message: 'Active connections must be a number' })
+  activeConnections!: number;
+
+  @ApiProperty({
+    example: 99.9,
+    description: 'System availability percentage',
+  })
+  @IsNumber({}, { message: 'Availability must be a number' })
+  availability!: number;
+}
+
+/**
  * Data Transfer Object for detailed health check responses
  * @class DetailedHealthCheckResponseDto
  * @description Extends basic health check with detailed service status and metrics
@@ -118,8 +174,7 @@ export class DetailedHealthCheckResponseDto extends HealthCheckResponseDto {
 
   @ApiProperty({
     description: 'System metrics and performance data',
-    type: 'object',
-    additionalProperties: true,
+    type: SystemMetricsDto,
   })
   @IsObject({ message: 'Metrics must be an object' })
   metrics!: SystemMetricsDto;
@@ -175,62 +230,6 @@ export class ServiceHealthDto {
   @IsOptional()
   @IsNumber({}, { message: 'Response time must be a number' })
   responseTime?: number;
-}
-
-/**
- * Data Transfer Object for system metrics
- * @class SystemMetricsDto
- * @description Contains performance and usage metrics for the system
- * @example
- * ```typescript
- * const metrics = new SystemMetricsDto();
- * metrics.uptime = 24;
- * metrics.memoryUsage = 512;
- * metrics.cpuUsage = 2.5;
- * ```
- */
-export class SystemMetricsDto {
-  @ApiProperty({
-    example: 24,
-    description: 'System uptime in hours',
-  })
-  @IsNumber({}, { message: 'Uptime must be a number' })
-  uptime!: number;
-
-  @ApiProperty({
-    example: 512,
-    description: 'Memory usage in MB',
-  })
-  @IsNumber({}, { message: 'Memory usage must be a number' })
-  memoryUsage!: number;
-
-  @ApiProperty({
-    example: 2.5,
-    description: 'CPU usage percentage',
-  })
-  @IsNumber({}, { message: 'CPU usage must be a number' })
-  cpuUsage!: number;
-
-  @ApiProperty({
-    example: 1000,
-    description: 'Total requests processed',
-  })
-  @IsNumber({}, { message: 'Total requests must be a number' })
-  totalRequests!: number;
-
-  @ApiProperty({
-    example: 50,
-    description: 'Active connections',
-  })
-  @IsNumber({}, { message: 'Active connections must be a number' })
-  activeConnections!: number;
-
-  @ApiProperty({
-    example: 99.9,
-    description: 'System availability percentage',
-  })
-  @IsNumber({}, { message: 'Availability must be a number' })
-  availability!: number;
 }
 
 /**

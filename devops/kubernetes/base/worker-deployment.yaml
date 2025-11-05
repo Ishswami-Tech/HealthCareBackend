@@ -78,32 +78,38 @@ spec:
             secretKeyRef:
               name: healthcare-secrets
               key: aws-region
+              optional: true
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: aws-access-key-id
+              optional: true
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: aws-secret-access-key
-        # Firebase for notifications
+              optional: true
+        # Firebase for notifications (optional)
         - name: FIREBASE_PROJECT_ID
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: firebase-project-id
+              optional: true
         - name: FIREBASE_PRIVATE_KEY
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: firebase-private-key
+              optional: true
         - name: FIREBASE_CLIENT_EMAIL
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: firebase-client-email
+              optional: true
         resources:
           requests:
             memory: "1Gi"
