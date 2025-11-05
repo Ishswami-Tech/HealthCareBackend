@@ -22,7 +22,7 @@ import type {
   Nurse,
   Counselor,
 } from './database.types';
-import type { User as PrismaUser } from '@prisma/client';
+// Note: PrismaUser type is not needed - UserBase interface below provides all needed fields
 
 // Explicit base User interface to avoid Prisma's 'any' in union types
 // This interface explicitly defines all User fields without using Prisma types
@@ -167,7 +167,7 @@ export interface UserResponse {
 /**
  * User with password field for authentication operations
  */
-export interface UserWithPassword extends PrismaUser {
+export interface UserWithPassword extends UserBase {
   /** User's hashed password */
   password: string;
 }

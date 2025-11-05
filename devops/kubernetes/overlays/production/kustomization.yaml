@@ -18,9 +18,14 @@ commonLabels:
   tier: production
 
 # Production image tags
+# Update 'your-registry' to your actual Docker registry (e.g., ghcr.io/username, docker.io/username, or your private registry)
 images:
   - name: your-registry/healthcare-api
-    newTag: v1.0.0  # Use specific version tags in production
+    newName: your-registry/healthcare-api  # Change to your registry
+    newTag: latest  # Use specific version tags in production (e.g., v1.0.0)
+  - name: your-registry/healthcare-worker
+    newName: your-registry/healthcare-api  # Worker uses same image
+    newTag: latest
 
 # Production-specific patches
 patches:

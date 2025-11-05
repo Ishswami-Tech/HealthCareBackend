@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-slim as builder
+FROM node:20-slim AS builder
 
 LABEL stage=builder
 LABEL app.component=backend
@@ -28,7 +28,7 @@ RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
     cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/
 
 # Production stage
-FROM node:20-slim as production
+FROM node:20-slim AS production
 
 LABEL app.component=backend
 LABEL app.stage=production

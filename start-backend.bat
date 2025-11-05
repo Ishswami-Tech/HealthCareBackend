@@ -14,7 +14,7 @@ echo ✅ Docker is running
 
 REM Stop any existing containers
 echo 🛑 Stopping existing containers...
-docker-compose down
+docker-compose -f devops/docker/docker-compose.dev.yml down
 
 REM Build and start all services
 echo 🚀 Starting Healthcare Backend services...
@@ -23,11 +23,11 @@ echo Services starting:
 echo   - PostgreSQL Database (port 5432)
 echo   - Redis Cache (port 6379) 
 echo   - Healthcare API (port 8088)
-echo   - pgAdmin (port 8080) [Development]
-echo   - Redis Commander (port 8081) [Development]
+echo   - pgAdmin (port 5050) [Development]
+echo   - Redis Commander (port 8082) [Development]
 echo.
 
-docker-compose up --build -d
+docker-compose -f devops/docker/docker-compose.dev.yml up --build -d
 
 REM Wait for services to be healthy
 echo ⏳ Waiting for services to be healthy...
@@ -35,7 +35,7 @@ timeout /t 10 /nobreak >nul
 
 REM Check health status
 echo 🔍 Checking service health...
-docker-compose ps
+docker-compose -f devops/docker/docker-compose.dev.yml ps
 
 echo.
 echo 🏥 Healthcare Backend Status:
@@ -69,9 +69,9 @@ echo   3. Start your frontend: npm run dev (in frontend directory)
 echo   4. Your frontend will connect to: http://localhost:8088
 echo.
 
-echo 🔄 To view logs: docker-compose logs -f
-echo 🛑 To stop:     docker-compose down
-echo 📊 To monitor:  docker-compose ps
+echo 🔄 To view logs: docker-compose -f devops/docker/docker-compose.dev.yml logs -f
+echo 🛑 To stop:     docker-compose -f devops/docker/docker-compose.dev.yml down
+echo 📊 To monitor:  docker-compose -f devops/docker/docker-compose.dev.yml ps
 
 echo.
 echo ✅ Backend startup initiated! Check the status above.

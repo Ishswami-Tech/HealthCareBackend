@@ -25,7 +25,7 @@ import {
 import type { AuthTokens, TokenPayload, UserProfile } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 import type { UserWhereInput, UserCreateInput, UserUpdateInput } from '@core/types/input.types';
-import type { UserWithPassword } from '@core/types/user.types';
+import type { UserWithPassword, UserWithRelations } from '@core/types/user.types';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -304,11 +304,10 @@ export class AuthService {
   async login(loginDto: LoginDto): Promise<AuthResponse> {
     try {
       // Find user with caching
-      const user = await this.cacheService.cache(
+      const userResult = await this.cacheService.cache(
         `user:login:${loginDto.email}`,
-        async (): Promise<UserWithPassword | null> => {
-          const result = await this.databaseService.findUserByEmailSafe(loginDto.email);
-          return result as UserWithPassword | null;
+        async (): Promise<UserWithRelations | null> => {
+          return await this.databaseService.findUserByEmailSafe(loginDto.email);
         },
         {
           ttl: 300, // 5 minutes for login attempts
@@ -317,6 +316,11 @@ export class AuthService {
           enableSwr: false, // No SWR for login data
         }
       );
+      if (!userResult) {
+        throw this.errors.invalidCredentials('AuthService.login');
+      }
+      // Type assertion: UserWithRelations should have password for auth operations
+      const user = userResult as UserWithRelations & { password: string };
 
       if (!user) {
         throw this.errors.invalidCredentials('AuthService.login');
@@ -845,7 +849,7 @@ export class AuthService {
    * Generate JWT tokens with enhanced security features
    */
   private async generateTokens(
-    user: UserProfile | UserWithPassword,
+    user: UserProfile | UserWithPassword | UserWithRelations,
     sessionId: string,
     deviceFingerprint?: string,
     userAgent?: string,

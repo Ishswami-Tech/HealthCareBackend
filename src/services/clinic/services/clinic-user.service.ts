@@ -157,24 +157,35 @@ export class ClinicUserService {
       });
 
       // Transform to ClinicUserResponseDto format
-      return clinicUsers.map(cu => ({
-        id: cu.id,
-        userId: cu.userId,
-        clinicId: cu.clinicId || '',
-        role: typeof cu.role === 'string' ? cu.role : cu.role.name,
-        isActive: cu.isActive,
-        createdAt: cu.createdAt,
-        updatedAt: cu.updatedAt,
-        user: cu.user
-          ? {
-              id: cu.user.id,
-              name: cu.user.name,
-              email: cu.user.email,
-              phone: cu.user.phone || undefined,
-              isActive: true,
-            }
-          : undefined,
-      })) as ClinicUserResponseDto[];
+      return clinicUsers.map(
+        (cu: {
+          id: string;
+          userId: string;
+          clinicId: string | null;
+          role: { name: string } | string;
+          isActive: boolean;
+          createdAt: Date;
+          updatedAt: Date;
+          user?: { id: string; name: string; email: string; phone: string | null } | null;
+        }) => ({
+          id: cu.id,
+          userId: cu.userId,
+          clinicId: cu.clinicId || '',
+          role: typeof cu.role === 'string' ? cu.role : cu.role.name,
+          isActive: cu.isActive,
+          createdAt: cu.createdAt,
+          updatedAt: cu.updatedAt,
+          user: cu.user
+            ? {
+                id: cu.user.id,
+                name: cu.user.name,
+                email: cu.user.email,
+                phone: cu.user.phone || undefined,
+                isActive: true,
+              }
+            : undefined,
+        })
+      ) as ClinicUserResponseDto[];
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -247,24 +258,35 @@ export class ClinicUserService {
       });
 
       // Transform to ClinicUserResponseDto format
-      return clinicUsers.map(cu => ({
-        id: cu.id,
-        userId: cu.userId,
-        clinicId: cu.clinicId || '',
-        role: typeof cu.role === 'string' ? cu.role : cu.role.name,
-        isActive: cu.isActive,
-        createdAt: cu.createdAt,
-        updatedAt: cu.updatedAt,
-        user: cu.user
-          ? {
-              id: cu.user.id,
-              name: cu.user.name,
-              email: cu.user.email,
-              phone: cu.user.phone || undefined,
-              isActive: true,
-            }
-          : undefined,
-      })) as ClinicUserResponseDto[];
+      return clinicUsers.map(
+        (cu: {
+          id: string;
+          userId: string;
+          clinicId: string | null;
+          role: { name: string } | string;
+          isActive: boolean;
+          createdAt: Date;
+          updatedAt: Date;
+          user?: { id: string; name: string; email: string; phone: string | null } | null;
+        }) => ({
+          id: cu.id,
+          userId: cu.userId,
+          clinicId: cu.clinicId || '',
+          role: typeof cu.role === 'string' ? cu.role : cu.role.name,
+          isActive: cu.isActive,
+          createdAt: cu.createdAt,
+          updatedAt: cu.updatedAt,
+          user: cu.user
+            ? {
+                id: cu.user.id,
+                name: cu.user.name,
+                email: cu.user.email,
+                phone: cu.user.phone || undefined,
+                isActive: true,
+              }
+            : undefined,
+        })
+      ) as ClinicUserResponseDto[];
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,

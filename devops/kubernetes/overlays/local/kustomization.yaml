@@ -2,10 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 # Base configuration
-bases:
+resources:
   - ../../base
 
-namespace: healthcare-backend
+# namespace is inherited from base, no need to set it again
+# namespace: healthcare-backend
 
 # Local development labels
 commonLabels:
@@ -152,3 +153,68 @@ patches:
       - op: replace
         path: /data/ENABLE_DEBUG
         value: "true"
+      - op: replace
+        path: /data/CORS_ORIGIN
+        value: "http://localhost:3000,http://localhost:8088,http://healthcare.local"
+      - op: replace
+        path: /data/FRONTEND_URL
+        value: "http://localhost:3000"
+      - op: replace
+        path: /data/API_URL
+        value: "http://localhost:8088"
+
+  # Reduce worker replicas for local
+  - target:
+      kind: Deployment
+      name: healthcare-worker
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  # Reduced worker resources for local
+  - target:
+      kind: Deployment
+      name: healthcare-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "250m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+
+  # Worker image pull policy for local
+  - target:
+      kind: Deployment
+      name: healthcare-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: "IfNotPresent"
+
+  # Migration job image pull policy for local
+  - target:
+      kind: Job
+      name: healthcare-db-migration
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: "IfNotPresent"
+
+# Disable production ingress for local (use port-forward or local ingress instead)
+# Uncomment the following to exclude the production ingress:
+# patchesStrategicMerge:
+#   - |-
+#     apiVersion: networking.k8s.io/v1
+#     kind: Ingress
+#     metadata:
+#       name: healthcare-ingress
+#       namespace: healthcare-backend
+#     $patch: delete

@@ -2059,14 +2059,18 @@ export class EHRService {
             },
           },
           insights: {
-            commonConditions: commonConditions.map(c => ({
+            commonConditions: commonConditions.map(
+              (c: { condition: string | null; _count: { condition: number } }) => ({
               condition: c.condition || '',
               count: c._count?.condition || 0,
-            })),
-            commonAllergies: commonAllergies.map(a => ({
+              })
+            ),
+            commonAllergies: commonAllergies.map(
+              (a: { allergen: string | null; _count: { allergen: number } }) => ({
               allergen: a.allergen || '',
               count: a._count?.allergen || 0,
-            })),
+              })
+            ),
           },
         };
       },

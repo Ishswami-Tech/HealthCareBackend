@@ -1,10 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# namespace field automatically sets namespace on all resources
+# Note: namespace.yaml is commented out to avoid conflicts with namespace: field
 namespace: healthcare-backend
 
 resources:
-  - namespace.yaml
+  # - namespace.yaml  # Commented out - using namespace: field above instead
   - rbac.yaml
   - network-policies.yaml
   - limitrange.yaml
@@ -20,9 +22,12 @@ resources:
   - pdb.yaml
   - pgbouncer-configmap.yaml
   - pgbouncer-deployment.yaml
-  - pgbouncer-service.yaml
+  # pgbouncer-service.yaml merged into pgbouncer-deployment.yaml
+  # Note: vpa.yaml is not included in base - it's only used in production/staging overlays
+  # to allow different VPA configurations per environment
 
-# Common labels applied to all resources
+# Common labels applied to all resources  
+# Note: commonLabels is deprecated but still works
 commonLabels:
   app.kubernetes.io/part-of: healthcare-backend
   app.kubernetes.io/managed-by: kustomize
@@ -37,21 +42,22 @@ images:
     newTag: latest
 
 # Patches for resource adjustments
-patches:
-  # API replicas
-  - target:
-      kind: Deployment
-      name: healthcare-api
-    patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 5
-
-  # Worker replicas
-  - target:
-      kind: Deployment
-      name: healthcare-worker
-    patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 3
+# Note: Patches are applied via overlays, not in base
+# patches:
+#   # API replicas
+#   - target:
+#       kind: Deployment
+#       name: healthcare-api
+#     patch: |-
+#       - op: replace
+#         path: /spec/replicas
+#         value: 5
+#
+#   # Worker replicas
+#   - target:
+#       kind: Deployment
+#       name: healthcare-worker
+#     patch: |-
+#       - op: replace
+#         path: /spec/replicas
+#         value: 3
