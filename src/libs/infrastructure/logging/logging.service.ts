@@ -1,5 +1,5 @@
 // External imports
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 
 // Internal imports - Infrastructure
 import { DatabaseService } from '@infrastructure/database';
@@ -98,7 +98,10 @@ export class LoggingService {
   private metricsFlushInterval!: NodeJS.Timeout;
 
   constructor(
+    @Optional()
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService?: DatabaseService,
+    @Optional()
     private readonly redisService?: RedisService
   ) {
     this.serviceName = process.env['SERVICE_NAME'] || 'healthcare';

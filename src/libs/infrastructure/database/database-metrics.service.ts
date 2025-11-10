@@ -1,5 +1,5 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 import type { PrismaService } from './prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -89,8 +89,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => HealthcareDatabaseClient))
     private readonly databaseService: HealthcareDatabaseClient,
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => ConnectionPoolManager))
     private readonly connectionPoolManager: ConnectionPoolManager,
     private readonly queryOptimizer: HealthcareQueryOptimizerService,
     private readonly clinicIsolationService: ClinicIsolationService

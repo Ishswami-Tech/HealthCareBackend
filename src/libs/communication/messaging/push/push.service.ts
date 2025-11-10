@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import * as admin from 'firebase-admin';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -67,9 +67,9 @@ export class PushNotificationService implements OnModuleInit {
    */
   private initializeFirebase(): void {
     try {
-      const projectId = this.configService.get<string>('FIREBASE_PROJECT_ID');
-      const privateKey = this.configService.get<string>('FIREBASE_PRIVATE_KEY');
-      const clientEmail = this.configService.get<string>('FIREBASE_CLIENT_EMAIL');
+      const projectId = this.configService?.get<string>('FIREBASE_PROJECT_ID') || process.env['FIREBASE_PROJECT_ID'];
+      const privateKey = this.configService?.get<string>('FIREBASE_PRIVATE_KEY') || process.env['FIREBASE_PRIVATE_KEY'];
+      const clientEmail = this.configService?.get<string>('FIREBASE_CLIENT_EMAIL') || process.env['FIREBASE_CLIENT_EMAIL'];
 
       if (!projectId || !privateKey || !clientEmail) {
         void this.loggingService.log(

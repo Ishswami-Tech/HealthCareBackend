@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
@@ -41,6 +41,7 @@ export class ClinicGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => ClinicIsolationService))
     private readonly clinicIsolationService: ClinicIsolationService
   ) {}
 

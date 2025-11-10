@@ -74,3 +74,17 @@ src/libs/infrastructure/database/prisma/*.db
 node_modules/.prisma
 
 .claude
+
+# Binary files and executables
+*.tar.gz
+buildkit-*.tar.gz
+nerdctl-*.tar.gz
+containerd-rootless*.sh
+kubectl
+wsl
+bin/
+
+# Temporary test scripts (keep only essential ones)
+# test-startup.sh
+# test-local-start.sh
+# quick-test.sh

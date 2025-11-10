@@ -1,5 +1,5 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailService } from '@communication/messaging/email/email.service';
 import { EmailTemplate } from '@core/types/common.types';
@@ -23,28 +23,37 @@ export class SocialAuthService {
    * Initialize social auth providers
    */
   private initializeProviders(): void {
+    // Helper to safely get config values with fallback
+    const getConfig = (key: string, defaultValue = ''): string => {
+      try {
+        return this.configService.get<string>(key, defaultValue);
+      } catch {
+        return process.env[key] || defaultValue;
+      }
+    };
+
     // Google
     this.providers.set('google', {
       name: 'google',
-      clientId: this.configService.get('GOOGLE_CLIENT_ID') || '',
-      clientSecret: this.configService.get('GOOGLE_CLIENT_SECRET') || '',
-      redirectUri: this.configService.get('GOOGLE_REDIRECT_URI') || '',
+      clientId: getConfig('GOOGLE_CLIENT_ID'),
+      clientSecret: getConfig('GOOGLE_CLIENT_SECRET'),
+      redirectUri: getConfig('GOOGLE_REDIRECT_URI'),
     });
 
     // Facebook
     this.providers.set('facebook', {
       name: 'facebook',
-      clientId: this.configService.get('FACEBOOK_APP_ID') || '',
-      clientSecret: this.configService.get('FACEBOOK_APP_SECRET') || '',
-      redirectUri: this.configService.get('FACEBOOK_REDIRECT_URI') || '',
+      clientId: getConfig('FACEBOOK_APP_ID'),
+      clientSecret: getConfig('FACEBOOK_APP_SECRET'),
+      redirectUri: getConfig('FACEBOOK_REDIRECT_URI'),
     });
 
     // Apple
     this.providers.set('apple', {
       name: 'apple',
-      clientId: this.configService.get('APPLE_CLIENT_ID') || '',
-      clientSecret: this.configService.get('APPLE_CLIENT_SECRET') || '',
-      redirectUri: this.configService.get('APPLE_REDIRECT_URI') || '',
+      clientId: getConfig('APPLE_CLIENT_ID'),
+      clientSecret: getConfig('APPLE_CLIENT_SECRET'),
+      redirectUri: getConfig('APPLE_REDIRECT_URI'),
     });
   }
 

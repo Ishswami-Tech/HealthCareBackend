@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import axios from 'axios';
 import { WhatsAppConfig } from '@communication/messaging/whatsapp/whatsapp.config';
 import { LoggingService } from '@infrastructure/logging';

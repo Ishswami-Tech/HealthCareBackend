@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullModule } from '@nestjs/bull';
+import { ConfigModule, ConfigService } from '@config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { BullModule } from '@nestjs/bull';
 
 // Infrastructure Services
 import { LoggingModule } from '@infrastructure/logging';
@@ -13,8 +13,6 @@ import { QueueModule } from '@infrastructure/queue';
 import { AuthModule } from '@services/auth/auth.module';
 import { JwtModule } from '@nestjs/jwt';
 import { GuardsModule } from '@core/guards/guards.module';
-// import { CommunicationModule } from '../../libs/communication';
-
 // Core Services
 import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
@@ -76,10 +74,7 @@ import { BusinessRulesDatabaseService } from './core/business-rules-database.ser
 import { QrService } from '@utils/QR';
 
 // Communication Modules
-import { EmailModule } from '@communication/messaging/email/email.module';
-import { WhatsAppModule } from '@communication/messaging/whatsapp/whatsapp.module';
-import { PushModule } from '@communication/messaging/push/push.module';
-import { SocketModule } from '@communication/socket/socket.module';
+import { CommunicationModule } from '@communication/communication.module';
 
 /**
  * Enhanced Appointments Module
@@ -115,19 +110,20 @@ import { SocketModule } from '@communication/socket/socket.module';
     JwtModule.register({}),
     // RateLimitModule,
     GuardsModule,
-    // Communication Modules
-    EmailModule,
-    WhatsAppModule,
-    PushModule,
-    SocketModule,
+    // Communication Modules - Unified module
+    CommunicationModule,
+    // Note: QueueModule.forRoot() registers standard queues (appointment-queue, notification-queue, etc.) using BullMQ
+    // But appointment services use clinic-specific queue names (clinic-appointment, clinic-notification, etc.) with Bull
+    // These clinic-specific queues need Bull (not BullMQ) to be initialized first
+    // TODO: Migrate appointment services to use BullMQ and standard queue constants from @infrastructure/queue
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         redis: {
           host: configService.get<string>('REDIS_HOST') || 'localhost',
           port: configService.get<number>('REDIS_PORT') || 6379,
-          ...(configService.get<string>('REDIS_PASSWORD') && {
-            password: configService.get<string>('REDIS_PASSWORD') as string,
+          ...(configService.get<string>('REDIS_PASSWORD')?.trim() && {
+            password: configService.get<string>('REDIS_PASSWORD')?.trim() as string,
           }),
           db: configService.get<number>('REDIS_DB') || 0,
         },

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { HttpStatus } from '@nestjs/common';
 import { ErrorCode } from './error-codes.enum';
 import { HealthcareError, ErrorMetadata } from './healthcare-error.class';
@@ -28,7 +28,10 @@ import { LogType, LogLevel } from '@core/types';
  */
 @Injectable()
 export class HealthcareErrorsService {
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService
+  ) {}
 
   // Authentication & Authorization Errors
 

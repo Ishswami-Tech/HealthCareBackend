@@ -1,5 +1,5 @@
 import { Injectable, Optional } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import {
@@ -80,35 +80,49 @@ export class HealthService {
   }
 
   async checkHealth(): Promise<HealthCheckResponse> {
-    const startTime = performance.now();
+    try {
+      const startTime = performance.now();
 
-    // Check all services in parallel with timeout protection
-    const [dbHealth, redisHealth, queueHealth, loggerHealth, socketHealth, emailHealth] =
-      await Promise.allSettled([
-        this.checkDatabaseHealth(),
-        this.checkRedisHealth(),
-        this.checkQueueHealth(),
-        Promise.resolve(this.checkLoggerHealth()),
-        this.checkSocketHealth(),
-        Promise.resolve(this.checkEmailHealth()),
-      ]).then(results =>
-        results.map(result =>
-          result.status === 'fulfilled'
-            ? result.value
-            : {
-                status: 'unhealthy' as const,
-                error:
-                  result.reason instanceof Error ? result.reason.message : 'Service check failed',
-                responseTime: 0,
-                lastChecked: new Date().toISOString(),
-              }
-        )
-      );
+      // Safely get environment - handle case where config is undefined
+      let environment = 'development';
+      try {
+        // Defensive: handle case where this.config is undefined or null
+        if (this.config && typeof this.config.get === 'function') {
+          environment = this.config.get('NODE_ENV') || process.env['NODE_ENV'] || 'development';
+        } else {
+          environment = process.env['NODE_ENV'] || 'development';
+        }
+      } catch (_error) {
+        environment = process.env['NODE_ENV'] || 'development';
+      }
 
-    const result: HealthCheckResponse = {
+      // Check all services in parallel with timeout protection
+      const [dbHealth, redisHealth, queueHealth, loggerHealth, socketHealth, emailHealth] =
+        await Promise.allSettled([
+          this.checkDatabaseHealth(),
+          this.checkRedisHealth(),
+          this.checkQueueHealth(),
+          Promise.resolve(this.checkLoggerHealth()),
+          this.checkSocketHealth(),
+          Promise.resolve(this.checkEmailHealth()),
+        ]).then(results =>
+          results.map(result =>
+            result.status === 'fulfilled'
+              ? result.value
+              : {
+                  status: 'unhealthy' as const,
+                  error:
+                    result.reason instanceof Error ? result.reason.message : 'Service check failed',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                }
+          )
+        );
+
+      const result: HealthCheckResponse = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
-      environment: this.config.get('NODE_ENV', 'development'),
+      environment,
       version: process.env['npm_package_version'] || '0.0.1',
       systemMetrics: this.getSystemMetrics(),
       services: {
@@ -132,7 +146,12 @@ export class HealthService {
           status: redisHealth?.status || 'unhealthy',
           responseTime: redisHealth?.responseTime || 0,
           lastChecked: redisHealth?.lastChecked || new Date().toISOString(),
-          metrics: await this.getRedisMetrics(),
+          metrics: await this.getRedisMetrics().catch(() => ({
+            connectedClients: 0,
+            usedMemory: 0,
+            totalKeys: 0,
+            lastSave: new Date().toISOString(),
+          })),
         },
         queues: queueHealth || {
           status: 'unhealthy',
@@ -166,14 +185,117 @@ export class HealthService {
       result.status = 'degraded';
     }
 
-    return result;
+      return result;
+    } catch (error) {
+      // Comprehensive error handling - return degraded status if anything fails
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Health check failed: ${errorMessage}`,
+        'HealthService',
+        {
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
+
+      // Return degraded health response
+      return {
+        status: 'degraded',
+        timestamp: new Date().toISOString(),
+        environment: process.env['NODE_ENV'] || 'development',
+        version: process.env['npm_package_version'] || '0.0.1',
+        systemMetrics: {
+          uptime: process.uptime(),
+          memoryUsage: {
+            heapTotal: 0,
+            heapUsed: 0,
+            rss: 0,
+            external: 0,
+            systemTotal: 0,
+            systemFree: 0,
+            systemUsed: 0,
+          },
+          cpuUsage: {
+            user: 0,
+            system: 0,
+            cpuCount: 0,
+            cpuModel: 'unknown',
+            cpuSpeed: 0,
+          },
+        },
+        services: {
+          api: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            error: errorMessage,
+          },
+          database: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            metrics: {
+              queryResponseTime: 0,
+              activeConnections: 0,
+              maxConnections: 0,
+              connectionUtilization: 0,
+            },
+          },
+          redis: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            metrics: {
+              connectedClients: 0,
+              usedMemory: 0,
+              totalKeys: 0,
+              lastSave: new Date().toISOString(),
+            },
+          },
+          queues: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          logger: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          socket: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          email: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+        },
+      };
+    }
   }
 
   async checkDetailedHealth(): Promise<DetailedHealthCheckResponse> {
     const baseHealth = await this.checkHealth();
     const memoryUsage = process.memoryUsage();
     const cpuUsage = process.cpuUsage();
-    const isDevMode = this.config.get('NODE_ENV') === 'development';
+    
+    // Safely get environment - handle case where config is undefined
+    let isDevMode = false;
+    try {
+      // Defensive: handle case where this.config is undefined or null
+      let env = process.env['NODE_ENV'] || 'development';
+      if (this.config && typeof this.config.get === 'function') {
+        env = this.config.get('NODE_ENV') || env;
+      }
+      isDevMode = env === 'development';
+    } catch (_error) {
+      isDevMode = (process.env['NODE_ENV'] || 'development') === 'development';
+    }
 
     const result: DetailedHealthCheckResponse = {
       ...baseHealth,
@@ -259,9 +381,20 @@ export class HealthService {
     }
 
     try {
+      // Safely check database health - handle case where databaseService might not be fully initialized
+      if (!this.databaseService || typeof this.databaseService.executeHealthcareRead !== 'function') {
+        this.databaseStatus = 'unhealthy';
+        this.lastDatabaseCheck = now;
+        return {
+          status: 'unhealthy',
+          details: 'Database service is not available',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      }
       // Use executeHealthcareRead for database health check (raw query)
       await this.databaseService.executeHealthcareRead(async client => {
-        return await client.$queryRaw`SELECT 1`;
+        return await client['$queryRaw']('SELECT 1') as unknown as Promise<{ count: number }>;
       });
 
       this.databaseStatus = 'healthy';
@@ -296,6 +429,15 @@ export class HealthService {
   private async checkRedisHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
+      // Safely check Redis health - handle case where cacheService might not be fully initialized
+      if (!this.cacheService || typeof this.cacheService.ping !== 'function') {
+        return {
+          status: 'unhealthy',
+          details: 'Cache service is not available',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      }
       await this.cacheService.ping();
 
       return {
@@ -329,7 +471,16 @@ export class HealthService {
     lastSave: string;
   }> {
     try {
-      const info = await this.cacheService.getCacheDebug();
+      // Safely get cache debug info - may fail if cache service has issues
+      const info = await this.cacheService?.getCacheDebug?.();
+      if (!info) {
+        return {
+          connectedClients: 0,
+          usedMemory: 0,
+          totalKeys: 0,
+          lastSave: new Date().toISOString(),
+        };
+      }
       type CacheDebugInfo = Record<string, unknown> & {
         info?: {
           memoryInfo?: { usedMemory?: number };
@@ -344,13 +495,8 @@ export class HealthService {
         lastSave: new Date().toISOString(),
       };
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.CACHE,
-        LogLevel.ERROR,
-        `Failed to get Redis metrics: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
-        'HealthService',
-        { error: _error instanceof Error ? _error.stack : String(_error) }
-      );
+      // Silently return default metrics if cache debug fails
+      // This prevents health check from failing due to cache service issues
       return {
         connectedClients: 0,
         usedMemory: 0,
@@ -363,6 +509,7 @@ export class HealthService {
   private async checkQueueHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
+      // Defensive check - ensure queue service is available
       if (!this.queueService) {
         return {
           status: 'unhealthy',
@@ -372,44 +519,123 @@ export class HealthService {
         };
       }
 
-      // Get queue stats using the queue service
-      type LocationQueueStats = {
-        locationId: string;
-        domain: string;
-        stats: {
-          totalWaiting: number;
-          averageWaitTime: number;
-          efficiency: number;
-          utilization: number;
-          completedCount: number;
+      // Check if the method exists
+      if (typeof this.queueService.getLocationQueueStats !== 'function') {
+        return {
+          status: 'unhealthy',
+          details: 'Queue service method not available',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
         };
-      };
-      const stats = (await this.queueService.getLocationQueueStats(
-        'system',
-        'clinic'
-      )) as LocationQueueStats;
-      const isHealthy =
-        stats?.stats?.totalWaiting !== undefined && stats?.stats?.completedCount !== undefined;
+      }
 
-      return {
-        status: isHealthy ? 'healthy' : 'unhealthy',
-        details: isHealthy
-          ? `Queue service is running. Completed jobs: ${stats.stats.completedCount}, Waiting jobs: ${stats.stats.totalWaiting}`
-          : 'Queue service is not responding',
-        responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
-      };
+      // Get queue stats using the queue service - wrap in try-catch to handle internal config errors
+      // Use Promise.resolve with comprehensive error handling
+      try {
+        // Wrap in Promise.resolve to catch any synchronous errors
+        const statsPromise = Promise.resolve(
+          this.queueService.getLocationQueueStats('system', 'clinic')
+        );
+        
+        // Add timeout to prevent hanging
+        const timeoutPromise = new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), 5000); // 5 second timeout
+        });
+        
+        const stats = await Promise.race([statsPromise, timeoutPromise]).catch((error) => {
+          // Log the error with full details
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorStack = error instanceof Error ? error.stack : undefined;
+          
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.ERROR,
+            `Queue health check promise rejected: ${errorMessage}`,
+            'HealthService',
+            { 
+              error: errorMessage,
+              stack: errorStack,
+              type: error?.constructor?.name || typeof error
+            }
+          );
+          return null;
+        });
+        
+        if (!stats) {
+          return {
+            status: 'unhealthy',
+            details: 'Queue service check failed: Unable to retrieve queue stats (timeout or error)',
+            responseTime: Math.round(performance.now() - startTime),
+            lastChecked: new Date().toISOString(),
+          };
+        }
+
+        type LocationQueueStats = {
+          locationId: string;
+          domain: string;
+          stats: {
+            totalWaiting: number;
+            averageWaitTime: number;
+            efficiency: number;
+            utilization: number;
+            completedCount: number;
+          };
+        };
+        const queueStats = stats as LocationQueueStats;
+        const isHealthy =
+          queueStats?.stats?.totalWaiting !== undefined && queueStats?.stats?.completedCount !== undefined;
+
+        return {
+          status: isHealthy ? 'healthy' : 'unhealthy',
+          details: isHealthy
+            ? `Queue service is running. Completed jobs: ${queueStats.stats.completedCount}, Waiting jobs: ${queueStats.stats.totalWaiting}`
+            : 'Queue service is not responding',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      } catch (innerError) {
+        // Handle errors from queue service (e.g., configService undefined)
+        // Log the error with full details but don't throw - return unhealthy status instead
+        const errorMessage = innerError instanceof Error ? innerError.message : 'Unknown error';
+        const errorStack = innerError instanceof Error ? innerError.stack : undefined;
+        
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
+          `Queue health check failed: ${errorMessage}`,
+          'HealthService',
+          { 
+            error: errorMessage,
+            stack: errorStack,
+            type: innerError?.constructor?.name || typeof innerError
+          }
+        );
+        return {
+          status: 'unhealthy',
+          details: `Queue service check failed: ${errorMessage}`,
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      }
     } catch (_error) {
+      // Outer catch for any unexpected errors
+      const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
+      const errorStack = _error instanceof Error ? _error.stack : undefined;
+      
       void this.loggingService.log(
-        LogType.QUEUE,
+        LogType.SYSTEM,
         LogLevel.ERROR,
-        `Queue health check failed: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
+        `Queue health check outer catch: ${errorMessage}`,
         'HealthService',
-        { error: _error instanceof Error ? _error.stack : String(_error) }
+        { 
+          error: errorMessage,
+          stack: errorStack
+        }
       );
+      
       return {
         status: 'unhealthy',
-        error: _error instanceof Error ? _error.message : 'Unknown error',
+        error: errorMessage,
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
       };
@@ -500,24 +726,38 @@ export class HealthService {
   private checkEmailHealth(): ServiceHealth {
     const startTime = performance.now();
     try {
-      const isHealthy = this.emailService.isHealthy();
+      // Safely check email health - handle case where emailService might not be fully initialized
+      if (!this.emailService || typeof this.emailService.isHealthy !== 'function') {
+        return {
+          status: 'unhealthy',
+          details: 'Email service is not available',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      }
 
-      return {
-        status: isHealthy ? 'healthy' : 'unhealthy',
-        details: isHealthy
-          ? 'Email service is configured and connected'
-          : 'Email service is not properly initialized',
-        responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
-      };
+      try {
+        const isHealthy = this.emailService.isHealthy();
+
+        return {
+          status: isHealthy ? 'healthy' : 'unhealthy',
+          details: isHealthy
+            ? 'Email service is configured and connected'
+            : 'Email service is not properly initialized',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      } catch (innerError) {
+        // Handle errors from email service (e.g., configService undefined)
+        return {
+          status: 'unhealthy',
+          details: `Email service check failed: ${innerError instanceof Error ? innerError.message : 'Unknown error'}`,
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
+      }
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.EMAIL,
-        LogLevel.ERROR,
-        `Email health check failed: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
-        'HealthService',
-        { error: _error instanceof Error ? _error.stack : String(_error) }
-      );
+      // Outer catch for any unexpected errors
       return {
         status: 'unhealthy',
         error: _error instanceof Error ? _error.message : 'Unknown error',

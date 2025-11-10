@@ -1,6 +1,6 @@
 // External imports
-import { Injectable, OnModuleInit, OnModuleDestroy, HttpStatus } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, OnModuleInit, OnModuleDestroy, HttpStatus, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config';
 import Redis from 'ioredis';
 
 // Internal imports - Infrastructure
@@ -90,6 +90,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     // Check multiple environment variables to determine development mode
@@ -105,9 +106,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   private isDevEnvironment(): boolean {
-    const nodeEnv = this.configService.get<string>('NODE_ENV')?.toLowerCase();
-    const appEnv = this.configService.get<string>('APP_ENV')?.toLowerCase();
-    const isDev = this.configService.get<boolean | string>('IS_DEV');
+    const nodeEnv = this.configService?.get<string>('NODE_ENV')?.toLowerCase() || process.env['NODE_ENV']?.toLowerCase();
+    const appEnv = this.configService?.get<string>('APP_ENV')?.toLowerCase() || process.env['APP_ENV']?.toLowerCase();
+    const isDev = this.configService?.get<boolean | string>('IS_DEV') || process.env['IS_DEV'];
     const devMode = process.env['DEV_MODE'] === 'true';
     return (
       devMode ||
@@ -121,20 +122,24 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   private initializeClient(): void {
     try {
-      const redisHost = this.configService.get<string>('redis.host') || 'redis';
-      const redisPort = this.configService.get<number>('redis.port') || 6379;
+      const redisHost = this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
+      const redisPort = this.configService?.get<number>('redis.port') || parseInt(process.env['REDIS_PORT'] || '6379', 10);
+      const redisPassword = this.configService?.get<string>('REDIS_PASSWORD') || this.configService?.get<string>('redis.password') || process.env['REDIS_PASSWORD'];
+      // Only include password if it's actually set and not empty (Redis might not require auth if protected mode is disabled)
+      const hasPassword = redisPassword && redisPassword.trim().length > 0;
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Initializing Redis client',
         'RedisService',
-        { host: redisHost, port: redisPort }
+        { host: redisHost, port: redisPort, hasPassword }
       );
 
       this.client = new Redis({
         host: redisHost,
         port: redisPort,
+        ...(hasPassword && { password: redisPassword }),
         keyPrefix: this.PRODUCTION_CONFIG.keyPrefix,
         retryStrategy: times => {
           if (times > this.maxRetries) {

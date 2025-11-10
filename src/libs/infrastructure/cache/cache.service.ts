@@ -1,6 +1,6 @@
 // External imports
-import { Injectable, OnModuleInit, OnModuleDestroy, HttpStatus } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, OnModuleInit, OnModuleDestroy, HttpStatus, Optional } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // Internal imports - Infrastructure
@@ -150,46 +150,65 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     private readonly eventEmitter: EventEmitter2,
     private readonly loggingService: LoggingService
   ) {
+    // Helper function to safely get config values with fallback to process.env
+    // ConfigService is global, but we add try-catch for robustness
+    const getConfig = <T>(key: string, defaultValue: T): T => {
+      try {
+        return this.configService?.get<T>(key, defaultValue);
+      } catch {
+        // Fallback to process.env if ConfigService.get fails
+        const envValue = process.env[key];
+        if (envValue !== undefined) {
+          // Try to parse as the same type as defaultValue
+          if (typeof defaultValue === 'number') {
+            return (parseInt(envValue, 10) || defaultValue) as T;
+          }
+          if (typeof defaultValue === 'boolean') {
+            return (envValue === 'true' || envValue === '1') as T;
+          }
+          return envValue as T;
+        }
+        return defaultValue;
+      }
+    };
+
     this.config = {
       // Basic cache configurations
-      patientRecordsTTL: this.configService.get('CACHE_PATIENT_RECORDS_TTL', 3600), // 1 hour
-      appointmentsTTL: this.configService.get('CACHE_APPOINTMENTS_TTL', 1800), // 30 minutes
-      doctorProfilesTTL: this.configService.get('CACHE_DOCTOR_PROFILES_TTL', 7200), // 2 hours
-      clinicDataTTL: this.configService.get('CACHE_CLINIC_DATA_TTL', 14400), // 4 hours
-      medicalHistoryTTL: this.configService.get('CACHE_MEDICAL_HISTORY_TTL', 7200), // 2 hours
-      prescriptionsTTL: this.configService.get('CACHE_PRESCRIPTIONS_TTL', 1800), // 30 minutes
-      emergencyDataTTL: this.configService.get('CACHE_EMERGENCY_DATA_TTL', 300), // 5 minutes
-      enableCompression: this.configService.get('CACHE_ENABLE_COMPRESSION', true),
-      enableMetrics: this.configService.get('CACHE_ENABLE_METRICS', true),
-      defaultTTL: this.configService.get('CACHE_DEFAULT_TTL', 3600), // 1 hour
-      maxCacheSize: this.configService.get('CACHE_MAX_SIZE_MB', 1024), // 1GB
-      enableBatchOperations: this.configService.get('CACHE_ENABLE_BATCH', true),
-      compressionThreshold: this.configService.get('CACHE_COMPRESSION_THRESHOLD', 1024), // 1KB
+      patientRecordsTTL: getConfig('CACHE_PATIENT_RECORDS_TTL', 3600), // 1 hour
+      appointmentsTTL: getConfig('CACHE_APPOINTMENTS_TTL', 1800), // 30 minutes
+      doctorProfilesTTL: getConfig('CACHE_DOCTOR_PROFILES_TTL', 7200), // 2 hours
+      clinicDataTTL: getConfig('CACHE_CLINIC_DATA_TTL', 14400), // 4 hours
+      medicalHistoryTTL: getConfig('CACHE_MEDICAL_HISTORY_TTL', 7200), // 2 hours
+      prescriptionsTTL: getConfig('CACHE_PRESCRIPTIONS_TTL', 1800), // 30 minutes
+      emergencyDataTTL: getConfig('CACHE_EMERGENCY_DATA_TTL', 300), // 5 minutes
+      enableCompression: getConfig('CACHE_ENABLE_COMPRESSION', true),
+      enableMetrics: getConfig('CACHE_ENABLE_METRICS', true),
+      defaultTTL: getConfig('CACHE_DEFAULT_TTL', 3600), // 1 hour
+      maxCacheSize: getConfig('CACHE_MAX_SIZE_MB', 1024), // 1GB
+      enableBatchOperations: getConfig('CACHE_ENABLE_BATCH', true),
+      compressionThreshold: getConfig('CACHE_COMPRESSION_THRESHOLD', 1024), // 1KB
 
       // Enterprise-grade configurations for 10M+ users
-      connectionPoolSize: this.configService.get('CACHE_CONNECTION_POOL_SIZE', 100),
-      maxConnections: this.configService.get('CACHE_MAX_CONNECTIONS', 1000),
-      connectionTimeout: this.configService.get('CACHE_CONNECTION_TIMEOUT', 5000),
-      commandTimeout: this.configService.get('CACHE_COMMAND_TIMEOUT', 3000),
-      retryAttempts: this.configService.get('CACHE_RETRY_ATTEMPTS', 3),
-      retryDelay: this.configService.get('CACHE_RETRY_DELAY', 1000),
-      circuitBreakerThreshold: this.configService.get('CACHE_CIRCUIT_BREAKER_THRESHOLD', 10),
-      circuitBreakerTimeout: this.configService.get('CACHE_CIRCUIT_BREAKER_TIMEOUT', 30000),
-      adaptiveCachingEnabled: this.configService.get('CACHE_ADAPTIVE_ENABLED', true),
-      loadBalancingEnabled: this.configService.get('CACHE_LOAD_BALANCING_ENABLED', true),
-      shardingEnabled: this.configService.get('CACHE_SHARDING_ENABLED', true),
-      replicationEnabled: this.configService.get('CACHE_REPLICATION_ENABLED', true),
-      memoryOptimizationEnabled: this.configService.get('CACHE_MEMORY_OPTIMIZATION_ENABLED', true),
-      performanceMonitoringEnabled: this.configService.get(
-        'CACHE_PERFORMANCE_MONITORING_ENABLED',
-        true
-      ),
-      autoScalingEnabled: this.configService.get('CACHE_AUTO_SCALING_ENABLED', true),
-      cacheWarmingEnabled: this.configService.get('CACHE_WARMING_ENABLED', true),
-      predictiveCachingEnabled: this.configService.get('CACHE_PREDICTIVE_ENABLED', true),
-      compressionLevel: this.configService.get('CACHE_COMPRESSION_LEVEL', 6),
-      encryptionEnabled: this.configService.get('CACHE_ENCRYPTION_ENABLED', true),
-      auditLoggingEnabled: this.configService.get('CACHE_AUDIT_LOGGING_ENABLED', true),
+      connectionPoolSize: getConfig('CACHE_CONNECTION_POOL_SIZE', 100),
+      maxConnections: getConfig('CACHE_MAX_CONNECTIONS', 1000),
+      connectionTimeout: getConfig('CACHE_CONNECTION_TIMEOUT', 5000),
+      commandTimeout: getConfig('CACHE_COMMAND_TIMEOUT', 3000),
+      retryAttempts: getConfig('CACHE_RETRY_ATTEMPTS', 3),
+      retryDelay: getConfig('CACHE_RETRY_DELAY', 1000),
+      circuitBreakerThreshold: getConfig('CACHE_CIRCUIT_BREAKER_THRESHOLD', 10),
+      circuitBreakerTimeout: getConfig('CACHE_CIRCUIT_BREAKER_TIMEOUT', 30000),
+      adaptiveCachingEnabled: getConfig('CACHE_ADAPTIVE_ENABLED', true),
+      loadBalancingEnabled: getConfig('CACHE_LOAD_BALANCING_ENABLED', true),
+      shardingEnabled: getConfig('CACHE_SHARDING_ENABLED', true),
+      replicationEnabled: getConfig('CACHE_REPLICATION_ENABLED', true),
+      memoryOptimizationEnabled: getConfig('CACHE_MEMORY_OPTIMIZATION_ENABLED', true),
+      performanceMonitoringEnabled: getConfig('CACHE_PERFORMANCE_MONITORING_ENABLED', true),
+      autoScalingEnabled: getConfig('CACHE_AUTO_SCALING_ENABLED', true),
+      cacheWarmingEnabled: getConfig('CACHE_WARMING_ENABLED', true),
+      predictiveCachingEnabled: getConfig('CACHE_PREDICTIVE_ENABLED', true),
+      compressionLevel: getConfig('CACHE_COMPRESSION_LEVEL', 6),
+      encryptionEnabled: getConfig('CACHE_ENCRYPTION_ENABLED', true),
+      auditLoggingEnabled: getConfig('CACHE_AUDIT_LOGGING_ENABLED', true),
     };
   }
 
@@ -296,7 +315,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     );
 
     // Initialize shards based on configuration
-    const shardConfigs = this.configService.get<Array<Record<string, unknown>>>('CACHE_SHARDS', []);
+    const shardConfigs = this.configService?.get<Array<Record<string, unknown>>>('CACHE_SHARDS', []) || [];
     this.cacheShards = shardConfigs.map((config: Record<string, unknown>, index: number) => {
       const shardConfig = config;
       return {

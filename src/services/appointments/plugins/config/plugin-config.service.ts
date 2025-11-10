@@ -1,5 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache';
 
 export interface PluginConfig {
@@ -50,91 +50,113 @@ export class PluginConfigService {
       }
 
       // Generate configurations from environment
+      // Helper function to safely get config values with fallback
+      // ConfigService is global, but we add try-catch for robustness
+      const getConfig = <T>(key: string, defaultValue: T): T => {
+        try {
+          return this.configService.get<T>(key, defaultValue);
+        } catch {
+          // Fallback to process.env if ConfigService.get fails
+          const envValue = process.env[key];
+          if (envValue !== undefined) {
+            // Try to parse as the same type as defaultValue
+            if (typeof defaultValue === 'number') {
+              return (parseInt(envValue, 10) || defaultValue) as T;
+            }
+            if (typeof defaultValue === 'boolean') {
+              return (envValue === 'true' || envValue === '1') as T;
+            }
+            return envValue as T;
+          }
+          return defaultValue;
+        }
+      };
+
       const configs: PluginConfigMap = {
         'clinic-queue-plugin': {
-          enabled: this.configService.get('CLINIC_QUEUE_PLUGIN_ENABLED', true),
-          priority: this.configService.get('CLINIC_QUEUE_PLUGIN_PRIORITY', 1),
+          enabled: getConfig('CLINIC_QUEUE_PLUGIN_ENABLED', true),
+          priority: getConfig('CLINIC_QUEUE_PLUGIN_PRIORITY', 1),
           settings: {
-            maxQueueSize: this.configService.get('CLINIC_MAX_QUEUE_SIZE', 50),
-            defaultWaitTime: this.configService.get('CLINIC_DEFAULT_WAIT_TIME', 15),
-            emergencyPriority: this.configService.get('CLINIC_EMERGENCY_PRIORITY', 10),
-            autoConfirmation: this.configService.get('CLINIC_AUTO_CONFIRMATION', true),
+            maxQueueSize: getConfig('CLINIC_MAX_QUEUE_SIZE', 50),
+            defaultWaitTime: getConfig('CLINIC_DEFAULT_WAIT_TIME', 15),
+            emergencyPriority: getConfig('CLINIC_EMERGENCY_PRIORITY', 10),
+            autoConfirmation: getConfig('CLINIC_AUTO_CONFIRMATION', true),
           },
           features: ['queue-management', 'priority-queues', 'emergency-handling'],
           domain: 'healthcare',
         },
         // Fashion queue plugin removed - healthcare application only
         'clinic-location-plugin': {
-          enabled: this.configService.get('CLINIC_LOCATION_PLUGIN_ENABLED', true),
-          priority: this.configService.get('CLINIC_LOCATION_PLUGIN_PRIORITY', 1),
+          enabled: getConfig('CLINIC_LOCATION_PLUGIN_ENABLED', true),
+          priority: getConfig('CLINIC_LOCATION_PLUGIN_PRIORITY', 1),
           settings: {
-            cacheEnabled: this.configService.get('CLINIC_LOCATION_CACHE_ENABLED', true),
-            cacheTTL: this.configService.get('CLINIC_LOCATION_CACHE_TTL', 3600),
-            qrEnabled: this.configService.get('CLINIC_QR_ENABLED', true),
-            qrExpiration: this.configService.get('CLINIC_QR_EXPIRATION', 300),
+            cacheEnabled: getConfig('CLINIC_LOCATION_CACHE_ENABLED', true),
+            cacheTTL: getConfig('CLINIC_LOCATION_CACHE_TTL', 3600),
+            qrEnabled: getConfig('CLINIC_QR_ENABLED', true),
+            qrExpiration: getConfig('CLINIC_QR_EXPIRATION', 300),
           },
           features: ['location-management', 'qr-codes', 'multi-location'],
           domain: 'healthcare',
         },
         // Fashion location plugin removed - healthcare application only
         'clinic-confirmation-plugin': {
-          enabled: this.configService.get('CLINIC_CONFIRMATION_PLUGIN_ENABLED', true),
-          priority: this.configService.get('CLINIC_CONFIRMATION_PLUGIN_PRIORITY', 1),
+          enabled: getConfig('CLINIC_CONFIRMATION_PLUGIN_ENABLED', true),
+          priority: getConfig('CLINIC_CONFIRMATION_PLUGIN_PRIORITY', 1),
           settings: {
-            qrEnabled: this.configService.get('CLINIC_CONFIRMATION_QR_ENABLED', true),
-            qrExpiration: this.configService.get('CLINIC_CONFIRMATION_QR_EXPIRATION', 300),
-            autoCheckIn: this.configService.get('CLINIC_AUTO_CHECKIN', false),
-            checkInWindow: this.configService.get('CLINIC_CHECKIN_WINDOW', 15),
+            qrEnabled: getConfig('CLINIC_CONFIRMATION_QR_ENABLED', true),
+            qrExpiration: getConfig('CLINIC_CONFIRMATION_QR_EXPIRATION', 300),
+            autoCheckIn: getConfig('CLINIC_AUTO_CHECKIN', false),
+            checkInWindow: getConfig('CLINIC_CHECKIN_WINDOW', 15),
           },
           features: ['qr-generation', 'check-in', 'confirmation', 'completion'],
           domain: 'healthcare',
         },
         // Fashion confirmation plugin removed - healthcare application only
         'clinic-checkin-plugin': {
-          enabled: this.configService.get('CLINIC_CHECKIN_PLUGIN_ENABLED', true),
-          priority: this.configService.get('CLINIC_CHECKIN_PLUGIN_PRIORITY', 1),
+          enabled: getConfig('CLINIC_CHECKIN_PLUGIN_ENABLED', true),
+          priority: getConfig('CLINIC_CHECKIN_PLUGIN_PRIORITY', 1),
           settings: {
-            biometricEnabled: this.configService.get('CLINIC_BIOMETRIC_ENABLED', false),
-            autoQueue: this.configService.get('CLINIC_AUTO_QUEUE', true),
-            priorityCheckIn: this.configService.get('CLINIC_PRIORITY_CHECKIN', true),
+            biometricEnabled: getConfig('CLINIC_BIOMETRIC_ENABLED', false),
+            autoQueue: getConfig('CLINIC_AUTO_QUEUE', true),
+            priorityCheckIn: getConfig('CLINIC_PRIORITY_CHECKIN', true),
           },
           features: ['check-in', 'queue-management', 'consultation-start'],
           domain: 'healthcare',
         },
         // Fashion checkin plugin removed - healthcare application only
         'clinic-socket-plugin': {
-          enabled: this.configService.get('CLINIC_SOCKET_PLUGIN_ENABLED', true),
-          priority: this.configService.get('CLINIC_SOCKET_PLUGIN_PRIORITY', 1),
+          enabled: getConfig('CLINIC_SOCKET_PLUGIN_ENABLED', true),
+          priority: getConfig('CLINIC_SOCKET_PLUGIN_PRIORITY', 1),
           settings: {
-            realTimeUpdates: this.configService.get('CLINIC_REALTIME_UPDATES', true),
-            queueNotifications: this.configService.get('CLINIC_QUEUE_NOTIFICATIONS', true),
-            emergencyAlerts: this.configService.get('CLINIC_EMERGENCY_ALERTS', true),
+            realTimeUpdates: getConfig('CLINIC_REALTIME_UPDATES', true),
+            queueNotifications: getConfig('CLINIC_QUEUE_NOTIFICATIONS', true),
+            emergencyAlerts: getConfig('CLINIC_EMERGENCY_ALERTS', true),
           },
           features: ['real-time-updates', 'queue-notifications', 'appointment-status'],
           domain: 'healthcare',
         },
         // Fashion socket plugin removed - healthcare application only
         'clinic-payment-plugin': {
-          enabled: this.configService.get('CLINIC_PAYMENT_PLUGIN_ENABLED', true),
-          priority: this.configService.get('CLINIC_PAYMENT_PLUGIN_PRIORITY', 1),
+          enabled: getConfig('CLINIC_PAYMENT_PLUGIN_ENABLED', true),
+          priority: getConfig('CLINIC_PAYMENT_PLUGIN_PRIORITY', 1),
           settings: {
-            insuranceEnabled: this.configService.get('CLINIC_INSURANCE_ENABLED', true),
-            copayEnabled: this.configService.get('CLINIC_COPAY_ENABLED', true),
-            refundEnabled: this.configService.get('CLINIC_REFUND_ENABLED', true),
-            autoBilling: this.configService.get('CLINIC_AUTO_BILLING', false),
+            insuranceEnabled: getConfig('CLINIC_INSURANCE_ENABLED', true),
+            copayEnabled: getConfig('CLINIC_COPAY_ENABLED', true),
+            refundEnabled: getConfig('CLINIC_REFUND_ENABLED', true),
+            autoBilling: getConfig('CLINIC_AUTO_BILLING', false),
           },
           features: ['payment-processing', 'insurance-claims', 'refunds', 'billing'],
           domain: 'healthcare',
         },
         // Fashion payment plugin removed - healthcare application only
         'clinic-video-plugin': {
-          enabled: this.configService.get('CLINIC_VIDEO_PLUGIN_ENABLED', true),
-          priority: this.configService.get('CLINIC_VIDEO_PLUGIN_PRIORITY', 1),
+          enabled: getConfig('CLINIC_VIDEO_PLUGIN_ENABLED', true),
+          priority: getConfig('CLINIC_VIDEO_PLUGIN_PRIORITY', 1),
           settings: {
-            recordingEnabled: this.configService.get('CLINIC_VIDEO_RECORDING', true),
-            screenSharing: this.configService.get('CLINIC_SCREEN_SHARING', true),
-            medicalImageSharing: this.configService.get('CLINIC_MEDICAL_IMAGE_SHARING', true),
-            emergencyMode: this.configService.get('CLINIC_EMERGENCY_MODE', true),
+            recordingEnabled: getConfig('CLINIC_VIDEO_RECORDING', true),
+            screenSharing: getConfig('CLINIC_SCREEN_SHARING', true),
+            medicalImageSharing: getConfig('CLINIC_MEDICAL_IMAGE_SHARING', true),
+            emergencyMode: getConfig('CLINIC_EMERGENCY_MODE', true),
           },
           features: ['video-calls', 'screen-sharing', 'recording', 'medical-images'],
           domain: 'healthcare',

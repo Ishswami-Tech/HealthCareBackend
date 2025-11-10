@@ -1,8 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LoggingModule } from '@infrastructure/logging';
+import { ConfigModule, ConfigService } from '@config';
 import { SocketService } from '@communication/socket/socket.service';
 import { AppGateway } from '@communication/socket/app.gateway';
 import { EventSocketBroadcaster } from '@communication/socket/event-socket.broadcaster';
@@ -16,7 +16,7 @@ import { SocketAuthMiddleware } from '@communication/socket/socket-auth.middlewa
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'default-secret-key',
+        secret: configService?.get<string>('JWT_SECRET') || process.env['JWT_SECRET'] || 'default-secret-key',
         signOptions: { expiresIn: '7d' },
       }),
       inject: [ConfigService],

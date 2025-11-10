@@ -41,7 +41,7 @@ interface IConfig {}
 ```typescript
 // 1. External imports (Node.js, npm packages)
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 
 // 2. Internal imports (using path aliases)
 import { PrismaService } from '@infrastructure/database';

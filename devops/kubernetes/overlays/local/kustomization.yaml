@@ -13,14 +13,14 @@ commonLabels:
   environment: local
   tier: development
 
-# Local development - use local images (no registry)
+# Local development - use latest images (no registry)
 images:
   - name: your-registry/healthcare-api
     newName: healthcare-api
-    newTag: local
+    newTag: latest
   - name: your-registry/healthcare-worker
     newName: healthcare-api
-    newTag: local
+    newTag: latest
 
 
 # Local-specific patches

@@ -1,5 +1,24 @@
 # Kubernetes Deployment Guide
 
+## 🎯 Quick Start
+
+### Option 1: Docker Desktop (Recommended)
+```powershell
+# Enable Kubernetes in Docker Desktop settings
+npm run k8s:local:deploy
+```
+
+### Option 2: Containerd/k3s on WSL2
+```bash
+# Setup: ./devops/kubernetes/scripts/setup-containerd-wsl2.sh
+# Build: ./devops/kubernetes/scripts/build-containerd.sh
+# Deploy: ./devops/kubernetes/scripts/deploy-containerd.sh
+```
+
+**See:** [`WSL2_STEP_BY_STEP.md`](./WSL2_STEP_BY_STEP.md) for detailed WSL2/k3s instructions.
+
+---
+
 ## Production Deployment
 
 ### Step 1: Update Image Registry
@@ -33,12 +52,19 @@ curl https://api.ishswami.in/health
 
 ---
 
-## Local Deployment (Docker Desktop)
+## Local Deployment (Docker Desktop) ⭐ **RECOMMENDED**
+
+**Why Docker Desktop?**
+- ✅ Better tooling and IDE integration
+- ✅ Easier debugging with GUI tools
+- ✅ Seamless WSL2 integration
+- ✅ Works with your existing scripts
 
 ### Step 1: Enable Kubernetes & Containerd
 
 Docker Desktop → Settings → Kubernetes → Enable
 - Containerd is the default runtime (automatically enabled)
+- Ensure WSL2 integration is enabled in Docker Desktop settings
 
 ### Step 2: Deploy
 
@@ -109,3 +135,26 @@ npm run k8s:local:teardown
 **Image not found:**
 - Build manually: `docker build -f devops/docker/Dockerfile -t healthcare-api:local .`
 - Or let the script build it (may take longer)
+
+---
+
+## Local Deployment with Containerd/k3s on WSL2
+
+**Setup:**
+```bash
+./devops/kubernetes/scripts/setup-containerd-wsl2.sh
+```
+
+**Build & Deploy:**
+```bash
+./devops/kubernetes/scripts/build-containerd.sh
+./devops/kubernetes/scripts/deploy-containerd.sh
+# Or use deploy-direct.sh if kustomize fails
+```
+
+**Access:**
+```bash
+kubectl port-forward -n healthcare-backend svc/healthcare-api 8088:8088
+```
+
+**See:** [`WSL2_STEP_BY_STEP.md`](./WSL2_STEP_BY_STEP.md) for detailed instructions and troubleshooting.

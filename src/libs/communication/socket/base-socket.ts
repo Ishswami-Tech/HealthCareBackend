@@ -9,7 +9,7 @@ import {
   ConnectedSocket,
   WsResponse,
 } from '@nestjs/websockets';
-import { Injectable, Inject, Optional } from '@nestjs/common';
+import { Injectable, Inject, Optional, OnModuleInit } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { SocketService, type SocketEventData } from '@communication/socket/socket.service';
 import {
@@ -49,16 +49,16 @@ interface RoomErrorData {
 
 type RoomEventData = RoomSuccessData | RoomErrorData;
 
-@Injectable()
-@WebSocketGateway({
-  cors: {
-    origin: '*',
-  },
-  transports: ['websocket', 'polling'],
-  pingInterval: 25000,
-  pingTimeout: 60000,
-})
-export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
+/**
+ * BaseSocket - Base class for WebSocket gateways
+ * 
+ * This is a concrete base class that provides common WebSocket functionality.
+ * Concrete implementations like AppGateway should extend this and add @WebSocketGateway() decorator.
+ * 
+ * Note: BaseSocket should NOT have @Injectable() decorator as it's not a provider itself.
+ * Only concrete implementations like AppGateway should be @Injectable().
+ */
+export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, OnModuleInit {
   @WebSocketServer()
   protected server!: Server;
 
@@ -71,21 +71,56 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
   private readonly clientMetadata: Map<string, AuthenticatedUser> = new Map();
   private initializationAttempts = 0;
   private readonly MAX_INITIALIZATION_ATTEMPTS = 3;
+  private isInitialized = false;
 
   constructor(
-    @Inject('SOCKET_SERVICE')
-    @Optional()
-    protected readonly socketService: SocketService,
+    protected readonly socketService: SocketService | undefined,
     protected readonly providedServiceName: string,
-    @Inject('SOCKET_AUTH_MIDDLEWARE')
-    @Optional()
     protected readonly authMiddleware: SocketAuthMiddleware | undefined,
-    private readonly loggingService: LoggingService
+    protected readonly loggingService: LoggingService
   ) {
     this.serviceName = providedServiceName || 'BaseSocket';
   }
 
+  // OnModuleInit ensures LoggingService is available before WebSocket initialization
+  onModuleInit() {
+    // Verify LoggingService is available
+    if (!this.loggingService) {
+      throw new HealthcareError(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'LoggingService is not available - dependency injection failed',
+        undefined,
+        {},
+        'BaseSocket.onModuleInit'
+      );
+    }
+    this.isInitialized = true;
+  }
+
   async afterInit(server: Server): Promise<void> {
+    // Ensure module initialization completed before proceeding
+    // With forwardRef, LoggingService might not be available immediately
+    if (!this.isInitialized || !this.loggingService) {
+      // Wait a bit for onModuleInit to complete
+      // This handles the case where WebSocket initialization happens before OnModuleInit
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // If still not initialized after delay, log warning but continue
+      if (!this.isInitialized || !this.loggingService) {
+        console.warn('[BaseSocket] LoggingService not available, initializing without logging');
+        // Continue initialization without logging
+        this.server = server;
+        if (this.socketService) {
+          try {
+            await this.initializeSocketService();
+          } catch (err) {
+            console.error('[BaseSocket] Socket service initialization failed:', err);
+          }
+        }
+        return;
+      }
+    }
+
     try {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -173,19 +208,22 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         this.serviceName,
         { stack: errorStack }
       );
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        'Continuing with limited functionality due to initialization failure',
-        this.serviceName
-      );
+      throw error; // Re-throw to fail fast
     }
   }
 
   private async initializeSocketService(): Promise<void> {
     while (this.initializationAttempts < this.MAX_INITIALIZATION_ATTEMPTS) {
       try {
-        this.socketService.setServer(this.server);
+        if (!this.socketService) {
+          throw new Error('SocketService is undefined');
+        }
+        if (!this.server) {
+          throw new Error('WebSocket server is undefined');
+        }
+        // TypeScript guard: socketService is guaranteed to be defined here
+        const socketService = this.socketService;
+        socketService.setServer(this.server);
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
