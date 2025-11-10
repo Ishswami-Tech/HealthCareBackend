@@ -1,6 +1,6 @@
 import { registerAs } from '@nestjs/config';
 import { ENV_VARS, DEFAULT_CONFIG } from './constants';
-import type { RedisConfig } from './config.types';
+import type { RedisConfig } from '@core/types';
 
 /**
  * Validates Redis configuration

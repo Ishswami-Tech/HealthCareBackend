@@ -1,7 +1,7 @@
 // External imports
 import { Module, Global } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule } from '@config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
 // Internal imports - Infrastructure

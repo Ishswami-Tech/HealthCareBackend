@@ -29,8 +29,8 @@ spec:
         fsGroup: 1000
       containers:
       - name: api
-        image: your-registry/healthcare-api:latest
-        imagePullPolicy: Always
+        image: healthcare-api:latest
+        imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -43,29 +43,27 @@ spec:
           name: http
           protocol: TCP
         env:
-        - name: NODE_ENV
-          value: "production"
         - name: PORT
           value: "8088"
+        - name: BIND_ADDRESS
+          value: "0.0.0.0"
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: database-url
-        - name: REDIS_HOST
-          value: "redis"
-        - name: REDIS_PORT
-          value: "6379"
-        - name: REDIS_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: healthcare-secrets
-              key: redis-password
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: healthcare-secrets
               key: jwt-secret
+        - name: REDIS_HOST
+          value: "10.43.199.102"
+        - name: REDIS_PORT
+          value: "6379"
+        envFrom:
+        - configMapRef:
+            name: healthcare-api-config
         resources:
           requests:
             memory: "1Gi"
@@ -75,31 +73,31 @@ spec:
             cpu: "2000m"
         livenessProbe:
           httpGet:
-            path: /health
+            path: /health/api
+            port: 8088
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /health/api
             port: 8088
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
           successThreshold: 1
           failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8088
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 3
-          successThreshold: 1
-          failureThreshold: 3
         startupProbe:
           httpGet:
-            path: /health
+            path: /health/api
             port: 8088
-          initialDelaySeconds: 0
+          initialDelaySeconds: 120
           periodSeconds: 10
-          timeoutSeconds: 3
+          timeoutSeconds: 5
           successThreshold: 1
-          failureThreshold: 30
+          failureThreshold: 50
         volumeMounts:
         - name: logs
           mountPath: /app/logs
@@ -116,12 +114,13 @@ metadata:
   labels:
     app: healthcare-api
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app: healthcare-api
   ports:
   - port: 8088
     targetPort: 8088
+    nodePort: 30088
     protocol: TCP
     name: http
   sessionAffinity: None

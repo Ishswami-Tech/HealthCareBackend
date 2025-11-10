@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import {
   EmailTemplate,
   EmailOptions,
@@ -67,11 +67,30 @@ export class EmailService implements OnModuleInit {
    * Determines provider and sets up appropriate client
    */
   async onModuleInit(): Promise<void> {
-    this.provider = (this.configService.get<string>('EMAIL_PROVIDER') || 'smtp') as 'smtp' | 'api';
-    if (this.provider === 'smtp') {
-      await this.initSMTP();
-    } else {
-      this.initAPI();
+    try {
+      // Safely get provider with fallback to process.env
+      let provider: string;
+      try {
+        provider = this.configService?.get<string>('EMAIL_PROVIDER') || process.env['EMAIL_PROVIDER'] || 'smtp';
+      } catch {
+        provider = process.env['EMAIL_PROVIDER'] || 'smtp';
+      }
+      this.provider = provider as 'smtp' | 'api';
+      
+      if (this.provider === 'smtp') {
+        await this.initSMTP();
+      } else {
+        this.initAPI();
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to initialize email service: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'EmailService',
+        { stack: error instanceof Error ? error.stack : undefined }
+      );
+      this.isInitialized = false;
     }
   }
 
@@ -81,7 +100,22 @@ export class EmailService implements OnModuleInit {
    */
   private async initSMTP(): Promise<void> {
     try {
-      const emailConfig = this.configService.get<EmailConfig>('email');
+      // Safely get email config with fallback to process.env
+      let emailConfig: EmailConfig | undefined;
+      try {
+        emailConfig = this.configService?.get<EmailConfig>('email');
+      } catch {
+        // Fallback to process.env if ConfigService fails
+        emailConfig = {
+          host: process.env['EMAIL_HOST'] || '',
+          port: parseInt(process.env['EMAIL_PORT'] || '587', 10),
+          secure: process.env['EMAIL_SECURE'] === 'true',
+          user: process.env['EMAIL_USER'] || '',
+          password: process.env['EMAIL_PASSWORD'] || '',
+          from: process.env['EMAIL_FROM'] || 'noreply@healthcare.com',
+        } as EmailConfig;
+      }
+      
       if (!emailConfig || !emailConfig.user || !emailConfig.password) {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -131,7 +165,14 @@ export class EmailService implements OnModuleInit {
    */
   private initAPI(): void {
     try {
-      const token = this.configService.get<string>('MAILTRAP_API_TOKEN');
+      // Safely get token with fallback to process.env
+      let token: string | undefined;
+      try {
+        token = this.configService?.get<string>('MAILTRAP_API_TOKEN');
+      } catch {
+        token = process.env['MAILTRAP_API_TOKEN'];
+      }
+      
       if (!token) {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -192,7 +233,21 @@ export class EmailService implements OnModuleInit {
    */
   private async sendViaSMTP(options: EmailOptions): Promise<boolean> {
     try {
-      const emailConfig = this.configService.get<EmailConfig>('email');
+      // Safely get email config with fallback to process.env
+      let emailConfig: EmailConfig | undefined;
+      try {
+        emailConfig = this.configService?.get<EmailConfig>('email');
+      } catch {
+        // Fallback to process.env if ConfigService fails
+        emailConfig = {
+          host: process.env['EMAIL_HOST'] || '',
+          port: parseInt(process.env['EMAIL_PORT'] || '587', 10),
+          secure: process.env['EMAIL_SECURE'] === 'true',
+          user: process.env['EMAIL_USER'] || '',
+          password: process.env['EMAIL_PASSWORD'] || '',
+          from: process.env['EMAIL_FROM'] || 'noreply@healthcare.com',
+        } as EmailConfig;
+      }
       const mailOptions = {
         from: emailConfig?.from || 'noreply@healthcare.com',
         to: options.to,
@@ -358,7 +413,7 @@ export class EmailService implements OnModuleInit {
 
   private getPasswordResetConfirmationTemplate(context: PasswordResetEmailContext): string {
     const fallbackLoginUrl =
-      this.configService.get<string>('APP_LOGIN_URL') || 'https://app.healthcare/login';
+      this.configService?.get<string>('APP_LOGIN_URL') || process.env['APP_LOGIN_URL'] || 'https://app.healthcare/login';
     const loginUrl = (context as EmailContext)['loginUrl'] || fallbackLoginUrl;
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">

@@ -2,7 +2,7 @@ import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@config';
 import { BullBoardService } from './bull-board.service';
 import {
   SERVICE_QUEUE,

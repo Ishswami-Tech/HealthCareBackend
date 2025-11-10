@@ -1,4 +1,4 @@
-import { Injectable, Inject, Optional } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 import { PrismaClient } from '@prisma/client';
@@ -112,8 +112,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   constructor(
     protected readonly prismaService: PrismaService,
+    @Inject(forwardRef(() => ConnectionPoolManager))
     protected readonly connectionPoolManager: ConnectionPoolManager,
+    @Inject(forwardRef(() => DatabaseMetricsService))
     protected readonly metricsService: DatabaseMetricsService,
+    @Inject(forwardRef(() => ClinicIsolationService))
     protected readonly clinicIsolationService: ClinicIsolationService,
     protected readonly queryOptimizer: HealthcareQueryOptimizerService,
     protected readonly loggingService: LoggingService,

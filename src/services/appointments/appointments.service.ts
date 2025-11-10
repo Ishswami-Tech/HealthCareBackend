@@ -1,5 +1,5 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 

@@ -49,6 +49,7 @@ import { UserService } from '@services/users';
 ```
 
 ### Rules
+- **Configuration**: MUST use `@config` (enhanced ConfigService), NOT `@nestjs/config`
 - Use `@types/*` as the single source of truth for shared domain types/interfaces.
 - DTOs and controllers/services must not import from `@database/types`; use mappers to `@types` instead.
 - Infrastructure imports must use `@logging`, `@cache`, `@events`, `@queue`, and `@infrastructure/database`.
@@ -67,7 +68,7 @@ import { UserService } from '@services/users';
 @Module({
   imports: [
     // External modules
-    ConfigModule.forRoot(),
+    ConfigModule, // @Global() - already configured in config.module.ts
     TypeOrmModule.forRoot(),
     
     // Internal modules
@@ -97,6 +98,55 @@ import { UserService } from '@services/users';
 export class AppModule {}
 ```
 
+## ⚙️ Configuration Management (MANDATORY)
+
+### **Use Enhanced ConfigService from @config**
+```typescript
+// ✅ DO - Use enhanced ConfigService from @config
+import { ConfigService } from '@config';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly configService: ConfigService) {}
+
+  someMethod() {
+    // Type-safe access with IDE autocomplete
+    const appConfig = this.configService.getAppConfig();
+    const port = appConfig.port; // TypeScript knows this is a number
+    
+    // Or use generic getter
+    const redisHost = this.configService.get<string>('redis.host');
+    
+    // Helper methods
+    if (this.configService.isDevelopment()) {
+      // Development-specific logic
+    }
+  }
+}
+
+// ❌ DON'T - Use NestJS ConfigService directly
+import { ConfigService } from '@nestjs/config'; // FORBIDDEN
+```
+
+### **ConfigModule Usage**
+```typescript
+// ✅ DO - Import ConfigModule (it's @Global())
+import { ConfigModule } from '@config';
+
+@Module({
+  imports: [
+    ConfigModule, // Already configured, just import it
+    // ... other modules
+  ],
+})
+export class MyModule {}
+```
+
+### **Configuration Types**
+- All configuration types are in `@core/types/config.types.ts`
+- Import types: `import type { Config, AppConfig, RedisConfig } from '@core/types'`
+- Never define config types in service files - use centralized types
+
 ## 🔧 Dependency Injection Patterns
 
 ### **Constructor Injection**
@@ -108,7 +158,7 @@ export class UserService {
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
     private readonly eventEmitter: EventEmitter2,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService // From @config
   ) {}
 
   // Service methods

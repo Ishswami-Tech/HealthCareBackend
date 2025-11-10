@@ -5,6 +5,8 @@ import {
   UnauthorizedException,
   HttpException,
   HttpStatus,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
@@ -137,7 +139,8 @@ export class JwtAuthGuard implements CanActivate {
       }
 
       // Skip rate limiting and security checks in development mode
-      if (this.redisService.isDevelopmentMode()) {
+      const isDev = process.env['NODE_ENV'] === 'development' || process.env['DEV_MODE'] === 'true';
+      if (isDev) {
         const token = this.extractTokenFromHeader(request);
         if (!token) {
           throw new UnauthorizedException('No token provided');
@@ -226,7 +229,8 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     } catch (_error) {
       // Skip _error handling in development mode
-      if (this.redisService.isDevelopmentMode()) {
+      const isDev = process.env['NODE_ENV'] === 'development' || process.env['DEV_MODE'] === 'true';
+      if (isDev) {
         throw _error;
       }
       await this.handleAuthenticationError(_error as Error, context);
@@ -471,7 +475,8 @@ export class JwtAuthGuard implements CanActivate {
     });
 
     // Skip device fingerprint check in DEV_MODE
-    if (!this.redisService.isDevelopmentMode()) {
+    const isDev = process.env['NODE_ENV'] === 'development' || process.env['DEV_MODE'] === 'true';
+    if (!isDev) {
       const currentFingerprint = this.generateDeviceFingerprint(request);
       if (sessionData.deviceFingerprint !== currentFingerprint) {
         void logger.log(
