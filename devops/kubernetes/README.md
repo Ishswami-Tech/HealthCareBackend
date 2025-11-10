@@ -1,111 +1,90 @@
 # Kubernetes Deployment Guide
 
-## Production Deployment
+## Current Configuration: 3 × VPS 10 (Dev Phase)
 
-### Step 1: Update Image Registry
+**Cluster Setup:**
+- **3 × CLOUD VPS 10**: 4 vCPU, 8GB RAM each
+- **Total Resources**: 12 vCPU, 24GB RAM
+- **Cost**: $11.88/month
+- **Capacity**: 150-200 active users (dev/testing)
 
-Edit `overlays/production/kustomization.yaml`:
-```yaml
-images:
-  - name: your-registry/healthcare-api
-    newName: ghcr.io/YOUR_USERNAME/healthcare-api
-    newTag: v1.0.0
-```
+---
 
-### Step 2: Setup Secrets
+## Quick Start
 
-```powershell
-.\scripts\setup-production-secrets.ps1
-```
+### 1. Setup Cluster
+See [SETUP_GUIDE.md](./SETUP_GUIDE.md) for complete cluster setup instructions.
 
-### Step 3: Deploy
-
-```powershell
-.\scripts\deploy-production.ps1
-```
-
-### Step 4: Verify
-
+### 2. Apply Configuration
 ```bash
-kubectl get pods -n healthcare-backend
-curl https://api.ishswami.in/health
+# Calculate configuration for VPS 10 (dev phase)
+.\devops\kubernetes\scripts\calculate-cluster-config.ps1 -NewTier vps10 -NodeCount 3
+
+# Apply configuration
+./devops/kubernetes/scripts/apply-dynamic-config.sh
+```
+
+### 3. Deploy Application
+```powershell
+# Production
+.\scripts\deploy-production.ps1
+
+# Local (Docker Desktop)
+.\scripts\deploy-local.ps1
 ```
 
 ---
 
-## Local Deployment (Docker Desktop)
+## Documentation
 
-### Step 1: Enable Kubernetes & Containerd
+1. **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Complete setup, configuration, and troubleshooting
+2. **[SCALING_GUIDE.md](./SCALING_GUIDE.md)** - Dynamic scaling, upgrades, and capacity planning
+3. **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Architecture, pod placement, and design decisions
 
-Docker Desktop → Settings → Kubernetes → Enable
-- Containerd is the default runtime (automatically enabled)
+---
 
-### Step 2: Deploy
+## Key Features
 
-**Option A: Full deployment (builds image and deploys)**
-```powershell
-.\scripts\deploy-local.ps1
-```
+- ✅ **Dynamic Configuration** - Automatically scales with cluster resources
+- ✅ **Dev-Optimized** - Configured for 3 × VPS 10 (dev phase)
+- ✅ **Auto-Scaling** - HPA scales pods based on CPU/Memory
+- ✅ **High Availability** - Distributed pods across nodes
+- ✅ **Easy Upgrade** - Single command to upgrade to production
 
-**Option B: Skip build (uses existing image)**
-```powershell
-.\scripts\deploy-local.ps1 -SkipBuild
-```
+---
 
-**Option C: Using npm scripts**
-```powershell
-npm run k8s:local:deploy        # Full deployment
-npm run k8s:local:deploy:nobuild # Skip build
-```
-
-**Available flags:**
-- `-SkipBuild` - Skip Docker image build (uses existing `healthcare-api:local` image)
-- `-SkipSecrets` - Skip secret creation (uses existing secrets)
-- `-SkipMigration` - Skip database migration job
-- `-ImageTag <tag>` - Use custom image tag (default: `local`)
-
-**Note:** Docker Desktop automatically shares images with containerd/Kubernetes
-
-### Step 3: Access
+## Common Commands
 
 ```bash
-kubectl port-forward -n healthcare-backend svc/healthcare-api 8088:8088
-# Open: http://localhost:8088
-```
+# Check cluster status
+kubectl get nodes
+kubectl get pods -n healthcare-backend
 
-**Or use npm script:**
-```powershell
-npm run k8s:local:portforward
-```
+# Monitor resources
+kubectl top nodes
+kubectl top pods -n healthcare-backend
 
-### Step 4: Monitor & Debug
+# Check HPA
+kubectl get hpa -n healthcare-backend
 
-```powershell
 # View logs
-npm run k8s:local:logs
-
-# Check status
-npm run k8s:local:status
-
-# Access shell
-npm run k8s:local:shell
+kubectl logs -n healthcare-backend -l app=healthcare-api
 ```
 
-### Step 5: Clean Up
+---
 
-```powershell
-.\scripts\teardown-local.ps1
-# OR
-npm run k8s:local:teardown
-```
+## Upgrade Path
 
-### Troubleshooting
+**Current (Dev):** 3 × VPS 10 ($11.88/month) → 150-200 users
+**Next (Production):** 3 × VPS 20 ($19.08/month) → 250-350 users
+**Future:** 3 × VPS 30 ($36/month) → 500-700 users
 
-**Docker build fails with network errors:**
-- Retry the build when network is stable
-- Or use `-SkipBuild` flag if you have an existing image
-- Check Docker Desktop network settings
+See [SCALING_GUIDE.md](./SCALING_GUIDE.md) for detailed upgrade instructions.
 
-**Image not found:**
-- Build manually: `docker build -f devops/docker/Dockerfile -t healthcare-api:local .`
-- Or let the script build it (may take longer)
+---
+
+## Support
+
+- **Setup Issues:** See [SETUP_GUIDE.md](./SETUP_GUIDE.md) troubleshooting section
+- **Scaling Questions:** See [SCALING_GUIDE.md](./SCALING_GUIDE.md)
+- **Architecture Questions:** See [ARCHITECTURE.md](./ARCHITECTURE.md)

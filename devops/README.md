@@ -49,7 +49,7 @@ Helpers:
 ## PgBouncer
 - Service: `pgbouncer.healthcare-backend.svc:6432`
 - Use `?pgbouncer=true` in app connection string to disable prepared statements
-- Run Prisma migrations against `database-migration-url` (direct Postgres) — not PgBouncer
+- Run Prisma migrations against `database-migration-url` (direct Postgres) ï¿½ not PgBouncer
 
 ## Backups & Restore (WAL-G)
 - Archiving enabled (`archive_mode=on`, `wal-g wal-push`)
@@ -58,12 +58,12 @@ Helpers:
 - Restore runbook: use Job at `devops/kubernetes/base/postgres-restore-job.yaml` (scale down, fetch, scale up)
 
 ## Makefile Commands
-- `k8s-local-build` — build local image (nerdctl or docker)
-- `k8s-local-deploy` — deploy local overlay
-- `k8s-local-access` — port-forward API 8088
-- `k8s-secrets-validate` — check required secrets/keys
-- `k8s-secrets-apply` — apply both secret sets from env
-- `k8s-walg-backup` — trigger WAL-G base backup and prune
+- `k8s-local-build` ï¿½ build local image (nerdctl or docker)
+- `k8s-local-deploy` ï¿½ deploy local overlay
+- `k8s-local-access` ï¿½ port-forward API 8088
+- `k8s-secrets-validate` ï¿½ check required secrets/keys
+- `k8s-secrets-apply` ï¿½ apply both secret sets from env
+- `k8s-walg-backup` ï¿½ trigger WAL-G base backup and prune
 
 ## File Map
 - Kubernetes base: `devops/kubernetes/base/*` (API, Worker, Postgres, Redis, PgBouncer, RBAC, PDB, VPA, Ingress, NetworkPolicies)
