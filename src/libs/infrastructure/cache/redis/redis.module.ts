@@ -1,6 +1,6 @@
 // External imports
 import { Module, Global } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule } from '@config';
 
 // Internal imports - Infrastructure
 import { LoggingModule } from '@infrastructure/logging';

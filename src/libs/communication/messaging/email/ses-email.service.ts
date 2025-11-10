@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -55,12 +55,12 @@ export class SESEmailService implements OnModuleInit {
 
   private initializeAWSSES(): void {
     try {
-      const awsRegion = this.configService.get<string>('AWS_REGION');
-      const awsAccessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
-      const awsSecretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
+      const awsRegion = this.configService?.get<string>('AWS_REGION') || process.env['AWS_REGION'];
+      const awsAccessKeyId = this.configService?.get<string>('AWS_ACCESS_KEY_ID') || process.env['AWS_ACCESS_KEY_ID'];
+      const awsSecretAccessKey = this.configService?.get<string>('AWS_SECRET_ACCESS_KEY') || process.env['AWS_SECRET_ACCESS_KEY'];
       this.fromEmail =
-        this.configService.get<string>('AWS_SES_FROM_EMAIL') || 'noreply@healthcare.com';
-      this.fromName = this.configService.get<string>('AWS_SES_FROM_NAME') || 'Healthcare App';
+        this.configService?.get<string>('AWS_SES_FROM_EMAIL') || process.env['AWS_SES_FROM_EMAIL'] || 'noreply@healthcare.com';
+      this.fromName = this.configService?.get<string>('AWS_SES_FROM_NAME') || process.env['AWS_SES_FROM_NAME'] || 'Healthcare App';
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
         void this.loggingService.log(

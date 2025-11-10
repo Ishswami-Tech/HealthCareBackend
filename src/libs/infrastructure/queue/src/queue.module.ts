@@ -1,6 +1,6 @@
-import { Module, DynamicModule, forwardRef } from '@nestjs/common';
+import { Module, DynamicModule, forwardRef, Global } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@config';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -13,6 +13,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { QueueStatusGateway } from './sockets/queue-status.gateway';
 import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
+import { LoggingModule } from '@infrastructure/logging';
 import {
   APPOINTMENT_QUEUE,
   EMAIL_QUEUE,
@@ -74,39 +75,47 @@ export class QueueModule {
     if (serviceName === 'clinic') {
       queueNames = clinicQueues;
       // Fashion-specific Redis configuration
+      const redisPassword = process.env['REDIS_PASSWORD'];
+      const hasPassword = redisPassword && redisPassword.trim().length > 0;
       redisConfig = {
         host: process.env['REDIS_HOST'] || 'localhost',
         port: parseInt(process.env['REDIS_PORT'] || '6379'),
-        password: process.env['REDIS_PASSWORD'],
+        ...(hasPassword && { password: redisPassword }),
         db: parseInt(process.env['REDIS_DB'] || '2'), // Database for queue operations
       };
     } else if (serviceName === 'worker') {
       // Worker processes ALL queues from both services
       queueNames = [...clinicQueues, ...clinicQueues];
       // Worker uses default Redis configuration
+      const redisPassword = process.env['REDIS_PASSWORD'];
+      const hasPassword = redisPassword && redisPassword.trim().length > 0;
       redisConfig = {
         host: process.env['REDIS_HOST'] || 'localhost',
         port: parseInt(process.env['REDIS_PORT'] || '6379'),
-        password: process.env['REDIS_PASSWORD'],
+        ...(hasPassword && { password: redisPassword }),
         db: parseInt(process.env['REDIS_DB'] || '1'),
       };
     } else {
       // Default to clinic queues (including 'clinic' service)
       queueNames = clinicQueues;
       // Clinic-specific Redis configuration
+      const redisPassword = process.env['CLINIC_REDIS_PASSWORD'] || process.env['REDIS_PASSWORD'];
+      const hasPassword = redisPassword && redisPassword.trim().length > 0;
       redisConfig = {
         host: process.env['CLINIC_REDIS_HOST'] || process.env['REDIS_HOST'] || 'localhost',
         port: parseInt(process.env['CLINIC_REDIS_PORT'] || process.env['REDIS_PORT'] || '6379'),
-        password: process.env['CLINIC_REDIS_PASSWORD'] || process.env['REDIS_PASSWORD'],
+        ...(hasPassword && { password: redisPassword }),
         db: parseInt(process.env['CLINIC_REDIS_DB'] || '1'), // Separate DB for clinic
       };
     }
 
     return {
       module: QueueModule,
+      global: true, // Make QueueModule global so QueueService is available everywhere
       imports: [
         forwardRef(() => DatabaseModule),
         ConfigModule,
+        LoggingModule, // Explicitly import LoggingModule to ensure LoggingService is available
         QueueMonitoringModule,
         BullModule.forRootAsync({
           imports: [ConfigModule],
@@ -173,9 +182,11 @@ export class QueueModule {
         ),
       ],
       providers: [
+        // Core services first - QueueService must be available before QueueStatusGateway
         QueueService,
         QueueProcessor,
         ...(serviceName === 'worker' ? [SharedWorkerService] : []),
+        // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
         ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
         {
           provide: 'BullBoard',

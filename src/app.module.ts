@@ -1,5 +1,5 @@
 import { Module, NestModule } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule } from '@config';
 import { UsersModule } from './services/users/users.module';
 import { AuthModule } from './services/auth/auth.module';
 import { HealthModule } from './services/health/health.module';
@@ -16,9 +16,6 @@ import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from '@infrastructure/queue/src/queue.module';
-// Queue constants imported but not used in module configuration
-import configuration from './config/configuration';
-import { HealthController } from './services/health/health.controller';
 import { SocketModule } from '@communication/socket/socket.module';
 import { NotificationModule } from './services/notification/notification.module';
 import { BillingModule } from './services/billing/billing.module';
@@ -27,39 +24,8 @@ import { EHRModule } from './services/ehr/ehr.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath:
-        process.env['NODE_ENV'] === 'production' ? '.env.production' : '.env.development',
-      load: [configuration],
-      expandVariables: true,
-      cache: true,
-      validate: config => {
-        // Core required environment variables
-        const required = ['API_URL', 'SWAGGER_URL', 'BULL_BOARD_URL', 'SOCKET_URL'];
-
-        // Development-only services
-        if (process.env['NODE_ENV'] !== 'production') {
-          required.push('REDIS_COMMANDER_URL');
-          required.push('PRISMA_STUDIO_URL');
-          required.push('PGADMIN_URL');
-        } else {
-          // Set only Prisma Studio URL for production (needed for some internal routes)
-          config['PRISMA_STUDIO_URL'] = '/prisma';
-          config['PGADMIN_URL'] = '/pgadmin';
-          // Explicitly delete Redis Commander config in production
-          delete config['REDIS_COMMANDER_URL'];
-          delete config['REDIS_UI_URL'];
-        }
-
-        for (const key of required) {
-          if (!config[key]) {
-            throw new Error(`Missing required environment variable: ${key}`);
-          }
-        }
-        return config;
-      },
-    }),
+    // ConfigModule is @Global() and already configured in config.module.ts
+    ConfigModule,
     EventEmitterModule.forRoot({
       // Add WebSocket specific event emitter config
       wildcard: true,
@@ -75,6 +41,8 @@ import { EHRModule } from './services/ehr/ehr.module';
       secret: process.env['JWT_SECRET'] || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
+    // Core modules must be loaded before SocketModule to ensure LoggingService is available
+    LoggingModule,
     // Socket modules
     SocketModule,
     // Auth and user management
@@ -94,11 +62,10 @@ import { EHRModule } from './services/ehr/ehr.module';
     // Support modules
     HealthModule,
     WhatsAppModule,
-    LoggingModule,
     BullBoardModule,
   ],
   controllers: [AppController],
-  providers: [AppService, HealthController],
+  providers: [AppService],
 })
 export class AppModule implements NestModule {
   configure() {

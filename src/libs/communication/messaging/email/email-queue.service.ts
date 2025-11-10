@@ -1,6 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { Queue, Job } from 'bull';
+import { Injectable, Inject } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue, Job } from 'bullmq';
 import { LoggingService } from '@infrastructure/logging';
+import { QueueService } from '@infrastructure/queue';
+import { EMAIL_QUEUE } from '@infrastructure/queue';
 import { LogType, LogLevel } from '@core/types';
 
 export interface EmailQueueData {
@@ -45,14 +48,12 @@ export interface EmailQueueStats {
 
 @Injectable()
 export class EmailQueueService {
-  private readonly emailQueue: Queue<EmailQueueData>;
-
   constructor(
-    emailQueue: Queue<EmailQueueData>,
+    @InjectQueue(EMAIL_QUEUE)
+    private readonly emailQueue: Queue<EmailQueueData>,
+    private readonly queueService: QueueService,
     private readonly loggingService: LoggingService
-  ) {
-    this.emailQueue = emailQueue;
-  }
+  ) {}
 
   async addEmailToQueue(
     emailData: EmailQueueData,
@@ -60,23 +61,25 @@ export class EmailQueueService {
       delay?: number;
       attempts?: number;
       backoff?: number | { type: string; delay: number };
-      priority?: number;
+      priority?: 'low' | 'normal' | 'high' | 'critical';
       removeOnComplete?: number;
       removeOnFail?: number;
     }
   ): Promise<Job<EmailQueueData>> {
     try {
-      const priority = this.getPriorityValue(emailData.priority);
-
-      const job = await this.emailQueue.add('send-email', emailData, {
-        delay: emailData.delay || options?.delay || 0,
-        attempts: options?.attempts || 3,
-        backoff: options?.backoff || 2000,
-        priority,
-        removeOnComplete: options?.removeOnComplete || 50,
-        removeOnFail: options?.removeOnFail || 20,
-        ...options,
-      });
+      const priorityString = options?.priority || emailData.priority || 'normal';
+      const job = await this.queueService.addJob<EmailQueueData>(
+        EMAIL_QUEUE,
+        'send-email',
+        emailData,
+        {
+          delay: emailData.delay || options?.delay || 0,
+          attempts: options?.attempts || 3,
+          priority: this.getPriorityValue(priorityString),
+          removeOnComplete: options?.removeOnComplete || 50,
+          removeOnFail: options?.removeOnFail || 20,
+        }
+      );
 
       void this.loggingService.log(
         LogType.QUEUE,
@@ -128,9 +131,8 @@ export class EmailQueueService {
         const batchDelay = batchNumber * delayBetweenBatches;
 
         for (const emailData of batch) {
-          const priority = this.getPriorityValue(emailData.priority);
-
-          const job = await this.emailQueue.add(
+          const job = await this.queueService.addJob<EmailQueueData>(
+            EMAIL_QUEUE,
             'send-bulk-email',
             {
               ...emailData,
@@ -143,8 +145,7 @@ export class EmailQueueService {
             {
               delay: batchDelay + (emailData.delay || 0),
               attempts: options?.attempts || 3,
-              backoff: options?.backoff || 2000,
-              priority,
+              priority: this.getPriorityValue(emailData.priority || 'normal'),
               removeOnComplete: options?.removeOnComplete || 50,
               removeOnFail: options?.removeOnFail || 20,
             }
@@ -194,16 +195,23 @@ export class EmailQueueService {
     }
   ): Promise<Job<EmailQueueData>> {
     try {
-      const priority = this.getPriorityValue(emailData.priority);
-
-      const job = await this.emailQueue.add('send-recurring-email', emailData, {
-        repeat: { cron: cronExpression },
+      // Use direct queue access for recurring jobs (cron) as QueueService doesn't support repeat option
+      const job = await this.emailQueue.add(
+        'send-recurring-email',
+        emailData,
+        {
+          repeat: { pattern: cronExpression },
         attempts: options?.attempts || 3,
-        backoff: options?.backoff || 2000,
-        priority,
+          backoff: options?.backoff
+            ? typeof options.backoff === 'number'
+              ? { type: 'exponential', delay: options.backoff }
+              : options.backoff
+            : { type: 'exponential', delay: 2000 },
+          priority: this.getPriorityValue(emailData.priority),
         removeOnComplete: options?.removeOnComplete || 50,
         removeOnFail: options?.removeOnFail || 20,
-      });
+        }
+      );
 
       void this.loggingService.log(
         LogType.QUEUE,
@@ -239,7 +247,9 @@ export class EmailQueueService {
 
   async getJob(jobId: string | number): Promise<Job<EmailQueueData> | null> {
     try {
-      return await this.emailQueue.getJob(jobId);
+      const jobIdString = String(jobId);
+      const job = await this.emailQueue.getJob(jobIdString);
+      return job || null;
     } catch (error) {
       void this.loggingService.log(
         LogType.QUEUE,
@@ -257,7 +267,8 @@ export class EmailQueueService {
 
   async removeJob(jobId: string | number): Promise<boolean> {
     try {
-      const job = await this.emailQueue.getJob(jobId);
+      const jobIdString = String(jobId);
+      const job = await this.emailQueue.getJob(jobIdString);
       if (job) {
         await job.remove();
         void this.loggingService.log(
@@ -287,7 +298,8 @@ export class EmailQueueService {
 
   async retryFailedJob(jobId: string | number): Promise<boolean> {
     try {
-      const job = await this.emailQueue.getJob(jobId);
+      const jobIdString = String(jobId);
+      const job = await this.emailQueue.getJob(jobIdString);
       if (job) {
         await job.retry();
         void this.loggingService.log(
@@ -317,21 +329,14 @@ export class EmailQueueService {
 
   async getQueueStats(): Promise<EmailQueueStats> {
     try {
-      const [waiting, active, completed, failed, delayed] = await Promise.all([
-        this.emailQueue.getWaiting(),
-        this.emailQueue.getActive(),
-        this.emailQueue.getCompleted(),
-        this.emailQueue.getFailed(),
-        this.emailQueue.getDelayed(),
-      ]);
-
+      const metrics = await this.queueService.getQueueMetrics(EMAIL_QUEUE);
       return {
-        waiting: waiting.length,
-        active: active.length,
-        completed: completed.length,
-        failed: failed.length,
-        delayed: delayed.length,
-        paused: 0, // Not available in current Bull version
+        waiting: metrics.waiting,
+        active: metrics.active,
+        completed: metrics.completed,
+        failed: metrics.failed,
+        delayed: metrics.delayed,
+        paused: 0, // BullMQ doesn't track paused count separately
       };
     } catch (error) {
       void this.loggingService.log(
@@ -357,7 +362,12 @@ export class EmailQueueService {
 
   async getFailedJobs(start = 0, end = -1): Promise<Job<EmailQueueData>[]> {
     try {
-      return await this.emailQueue.getFailed(start, end);
+      const jobs = await this.queueService.getJobs(EMAIL_QUEUE, { status: ['failed'] });
+      // Apply start/end range if specified
+      if (end === -1) {
+        return jobs.slice(start) as Job<EmailQueueData>[];
+      }
+      return jobs.slice(start, end + 1) as Job<EmailQueueData>[];
     } catch (error) {
       void this.loggingService.log(
         LogType.QUEUE,
@@ -416,7 +426,9 @@ export class EmailQueueService {
 
   async clearCompletedJobs(): Promise<number> {
     try {
-      const completedJobs = await this.emailQueue.getCompleted();
+      const completedJobs = await this.queueService.getJobs(EMAIL_QUEUE, {
+        status: ['completed'],
+      });
       let clearedCount = 0;
 
       for (const job of completedJobs) {
@@ -502,8 +514,8 @@ export class EmailQueueService {
 
   async drainQueue(): Promise<void> {
     try {
-      // Remove all jobs from the queue
-      await this.emailQueue.empty();
+      // Remove all jobs from the queue using obliterate (BullMQ method)
+      await this.emailQueue.obliterate({ force: true });
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
@@ -524,18 +536,20 @@ export class EmailQueueService {
     }
   }
 
-  private getPriorityValue(priority?: string): number {
+  private getPriorityValue(
+    priority?: 'low' | 'normal' | 'high' | 'critical' | string
+  ): number {
     switch (priority) {
       case 'critical':
-        return 10;
+        return 1; // Critical - highest priority
       case 'high':
-        return 5;
+        return 2; // High priority
       case 'normal':
-        return 0;
+        return 3; // Normal priority (default)
       case 'low':
-        return -5;
+        return 4; // Low priority
       default:
-        return 0;
+        return 3; // Default to normal
     }
   }
 
@@ -550,25 +564,32 @@ export class EmailQueueService {
   }> {
     try {
       const stats = await this.getQueueStats();
-      const completed = await this.emailQueue.getCompleted(0, 99);
+      const metrics = await this.queueService.getQueueMetrics(EMAIL_QUEUE);
+      const jobs = await this.queueService.getJobs(EMAIL_QUEUE, { status: ['completed'] });
+      const completed = jobs.slice(0, 99);
 
       // Calculate performance metrics
       const totalProcessed = stats.completed + stats.failed;
-      const errorRate = totalProcessed > 0 ? (stats.failed / totalProcessed) * 100 : 0;
+      const calculatedErrorRate = totalProcessed > 0 ? (stats.failed / totalProcessed) * 100 : 0;
+      const errorRate = metrics.errorRate || calculatedErrorRate;
 
       // Calculate average processing time from recent completed jobs
       const recentJobs = completed.slice(-50);
       const avgWaitTime =
         recentJobs.length > 0
           ? recentJobs.reduce((sum, job) => {
-              const wait = job.processedOn && job.timestamp ? job.processedOn - job.timestamp : 0;
+              const wait =
+                job.processedOn && job.timestamp ? job.processedOn - job.timestamp : 0;
               return sum + wait;
             }, 0) / recentJobs.length
-          : 0;
+          : metrics.averageProcessingTime || 0;
 
       // Estimate throughput (jobs per hour based on recent activity)
-      const hourlyThroughput = recentJobs.length > 0 ? (recentJobs.length / 1) * 60 : 0;
-
+      const hourlyThroughput = metrics.throughputPerMinute
+        ? metrics.throughputPerMinute * 60
+        : recentJobs.length > 0
+          ? recentJobs.length * 60
+          : 0;
       const isHealthy =
         stats.active < 100 && // Not too many active jobs
         stats.failed < 50 && // Not too many failed jobs

@@ -41,6 +41,7 @@
       "@events/*": ["src/libs/infrastructure/events/*"],
       "@queue/*": ["src/libs/infrastructure/queue/*"],
       "@security/*": ["src/libs/security/*"],
+      "@config": ["src/config"],
       "@config/*": ["src/config/*"]
     }
   }

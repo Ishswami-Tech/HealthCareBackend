@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule } from '@config';
 import { JwtModule } from '@nestjs/jwt';
 import { SessionManagementService } from './session-management.service';
 import { DatabaseModule } from '@infrastructure/database';
