@@ -51,7 +51,7 @@ interface IUser {}        // Interfaces: PascalCase with 'I' prefix
 ```typescript
 // 1. External imports (Node.js, npm packages)
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // 2. Internal imports - Infrastructure layer

@@ -1,4 +1,11 @@
 /**
+ * Configuration Types for Healthcare Application
+ * @module ConfigTypes
+ * @description Centralized type definitions for application configuration
+ * All configuration-related types are defined here and imported by config files
+ */
+
+/**
  * Application configuration interface
  * @interface AppConfig
  */
@@ -104,7 +111,7 @@ export interface PrismaConfig {
 }
 
 /**
- * Rate limiting configuration interface
+ * Rate limiting configuration interface (basic)
  * @interface RateLimitConfig
  */
 export interface RateLimitConfig {
@@ -115,12 +122,53 @@ export interface RateLimitConfig {
 }
 
 /**
+ * Rate limit rule configuration
+ * @interface RateLimitRule
+ */
+export interface RateLimitRule {
+  /** Maximum number of requests allowed */
+  readonly limit: number;
+  /** Time window in seconds */
+  readonly window: number;
+  /** Allow burst requests (optional) */
+  readonly burst?: number;
+  /** Request cost multiplier (optional) */
+  readonly cost?: number;
+}
+
+/**
+ * Enhanced rate limit configuration interface
+ * @interface EnhancedRateLimitConfig
+ */
+export interface EnhancedRateLimitConfig {
+  /** Whether rate limiting is enabled */
+  readonly enabled: boolean;
+  /** Rate limit rules for different endpoints */
+  readonly rules: {
+    readonly [key: string]: RateLimitRule;
+  };
+  /** Security-related rate limiting settings */
+  readonly security: {
+    /** Maximum authentication attempts */
+    readonly maxAttempts: number;
+    /** Authentication attempt window in seconds */
+    readonly attemptWindow: number;
+    /** Progressive lockout intervals in minutes */
+    readonly lockoutIntervals: readonly number[];
+    /** Maximum concurrent sessions per user */
+    readonly maxConcurrentSessions: number;
+    /** Session inactivity threshold in seconds */
+    readonly sessionInactivityThreshold: number;
+  };
+}
+
+/**
  * Logging configuration interface
  * @interface LoggingConfig
  */
 export interface LoggingConfig {
   /** Log level (error, warn, info, debug, verbose) */
-  readonly level: 'error' | 'warn' | 'info' | 'debug' | 'verbose';
+  readonly level: ConfigLogLevel;
   /** Whether to enable audit logging */
   readonly enableAuditLogs: boolean;
 }
@@ -242,8 +290,10 @@ export type Environment = 'development' | 'production' | 'test';
 
 /**
  * Log level type definition
+ * Note: LogLevel enum is defined in logging.types.ts
+ * This type is kept for backward compatibility with config interfaces
  */
-export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'verbose';
+export type ConfigLogLevel = 'error' | 'warn' | 'info' | 'debug' | 'verbose';
 
 /**
  * Configuration validation result
@@ -256,3 +306,5 @@ export interface ConfigValidationResult {
   /** Array of validation warnings */
   readonly warnings: readonly string[];
 }
+
+

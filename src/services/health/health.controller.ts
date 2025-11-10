@@ -107,8 +107,89 @@ export class HealthController {
       },
     },
   })
-  async getHealth(): Promise<HealthCheckResponse> {
-    return this.healthService.checkHealth();
+  async getHealth(@Res() res: FastifyReply): Promise<void> {
+    try {
+      const health = await this.healthService.checkHealth();
+      return res.status(200).send(health);
+    } catch (error) {
+      // Fallback health response if health check fails
+      const fallbackResponse: HealthCheckResponse = {
+        status: 'degraded',
+        timestamp: new Date().toISOString(),
+        environment: process.env['NODE_ENV'] || 'development',
+        version: process.env['npm_package_version'] || '0.0.1',
+        systemMetrics: {
+          uptime: process.uptime(),
+          memoryUsage: {
+            heapTotal: 0,
+            heapUsed: 0,
+            rss: 0,
+            external: 0,
+            systemTotal: 0,
+            systemFree: 0,
+            systemUsed: 0,
+          },
+          cpuUsage: {
+            user: 0,
+            system: 0,
+            cpuCount: 0,
+            cpuModel: 'unknown',
+            cpuSpeed: 0,
+          },
+        },
+        services: {
+          api: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            error: error instanceof Error ? error.message : 'Health check failed',
+          },
+          database: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            metrics: {
+              queryResponseTime: 0,
+              activeConnections: 0,
+              maxConnections: 0,
+              connectionUtilization: 0,
+            },
+          },
+          redis: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            metrics: {
+              connectedClients: 0,
+              usedMemory: 0,
+              totalKeys: 0,
+              lastSave: new Date().toISOString(),
+            },
+          },
+          queues: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          logger: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          socket: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          email: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+        },
+      };
+      return res.status(200).send(fallbackResponse);
+    }
   }
 
   @Get('detailed')
@@ -168,25 +249,241 @@ export class HealthController {
       ],
     },
   })
-  async getDetailedHealth(): Promise<DetailedHealthCheckResponse> {
-    return this.healthService.checkDetailedHealth();
+  async getDetailedHealth(@Res() res: FastifyReply): Promise<void> {
+    try {
+      const health = await this.healthService.checkDetailedHealth();
+      return res.status(200).send(health);
+    } catch (error) {
+      // Fallback detailed health response if health check fails
+      let baseHealth: HealthCheckResponse;
+      try {
+        baseHealth = await this.healthService.checkHealth();
+      } catch (_fallbackError) {
+        // If getHealth also fails, create minimal fallback
+        baseHealth = {
+          status: 'degraded',
+          timestamp: new Date().toISOString(),
+          environment: process.env['NODE_ENV'] || 'development',
+          version: process.env['npm_package_version'] || '0.0.1',
+          systemMetrics: {
+            uptime: process.uptime(),
+            memoryUsage: {
+              heapTotal: 0,
+              heapUsed: 0,
+              rss: 0,
+              external: 0,
+              systemTotal: 0,
+              systemFree: 0,
+              systemUsed: 0,
+            },
+            cpuUsage: {
+              user: 0,
+              system: 0,
+              cpuCount: 0,
+              cpuModel: 'unknown',
+              cpuSpeed: 0,
+            },
+          },
+          services: {
+            api: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              error: 'Health check service unavailable',
+            },
+            database: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              metrics: {
+                queryResponseTime: 0,
+                activeConnections: 0,
+                maxConnections: 0,
+                connectionUtilization: 0,
+              },
+            },
+            redis: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              metrics: {
+                connectedClients: 0,
+                usedMemory: 0,
+                totalKeys: 0,
+                lastSave: new Date().toISOString(),
+              },
+            },
+            queues: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+            logger: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+            socket: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+            email: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+          },
+        };
+      }
+      const fallbackResponse: DetailedHealthCheckResponse = {
+        ...baseHealth,
+        services: {
+          ...baseHealth.services,
+          queues: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          logger: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          socket: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+        },
+        processInfo: {
+          pid: process.pid,
+          ppid: process.ppid,
+          platform: process.platform,
+          versions: Object.fromEntries(
+            Object.entries(process.versions).filter(([, value]) => value !== undefined)
+          ) as Record<string, string>,
+        },
+        memory: {
+          heapUsed: 0,
+          heapTotal: 0,
+          external: 0,
+          arrayBuffers: 0,
+        },
+        cpu: {
+          user: 0,
+          system: 0,
+        },
+      };
+      return res.status(200).send(fallbackResponse);
+    }
   }
 
   @Get('/api-health')
   @Public()
   async apiHealth(@Res() res: FastifyReply) {
-    const health = await this.getHealth();
+    try {
+      const health = await this.healthService.checkHealth();
     return res.send(health);
+    } catch (error) {
+      const fallbackResponse: HealthCheckResponse = {
+        status: 'degraded',
+        timestamp: new Date().toISOString(),
+        environment: process.env['NODE_ENV'] || 'development',
+        version: process.env['npm_package_version'] || '0.0.1',
+        systemMetrics: {
+          uptime: process.uptime(),
+          memoryUsage: {
+            heapTotal: 0,
+            heapUsed: 0,
+            rss: 0,
+            external: 0,
+            systemTotal: 0,
+            systemFree: 0,
+            systemUsed: 0,
+          },
+          cpuUsage: {
+            user: 0,
+            system: 0,
+            cpuCount: 0,
+            cpuModel: 'unknown',
+            cpuSpeed: 0,
+          },
+        },
+        services: {
+          api: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            error: error instanceof Error ? error.message : 'Health check failed',
+          },
+          database: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            metrics: {
+              queryResponseTime: 0,
+              activeConnections: 0,
+              maxConnections: 0,
+              connectionUtilization: 0,
+            },
+          },
+          redis: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            metrics: {
+              connectedClients: 0,
+              usedMemory: 0,
+              totalKeys: 0,
+              lastSave: new Date().toISOString(),
+            },
+          },
+          queues: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          logger: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          socket: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+          email: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          },
+        },
+      };
+      return res.send(fallbackResponse);
+    }
   }
 
   @Get('/api')
   @Public()
   async apiStatus(@Res() res: FastifyReply) {
-    return res.send({
-      status: 'ok',
-      message: 'API is running',
-      timestamp: new Date().toISOString(),
-    });
+    try {
+      return res.send({
+        status: 'ok',
+        message: 'API is running',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      // Log any error that occurs in this simple endpoint
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      return res.status(200).send({
+        status: 'ok',
+        message: 'API is running',
+        timestamp: new Date().toISOString(),
+        debug: errorMsg,
+      });
+    }
   }
 
   @Get('/favicon.ico')

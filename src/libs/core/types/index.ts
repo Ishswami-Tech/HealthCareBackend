@@ -175,3 +175,29 @@ export * from './app.types';
 
 // Plugin Types (centralized plugin system types)
 export * from './plugin.types';
+
+// Config Types (centralized configuration types)
+// Export specific types to avoid conflicts
+export type {
+  AppConfig,
+  UrlsConfig,
+  DomainsConfig,
+  DatabaseConfig,
+  RedisConfig,
+  JwtConfig,
+  PrismaConfig,
+  RateLimitConfig,
+  EnhancedRateLimitConfig,
+  LoggingConfig,
+  EmailConfig,
+  CorsConfig,
+  SecurityConfig,
+  WhatsappConfig,
+  Config,
+  ProductionConfig,
+  Environment,
+  ConfigValidationResult,
+  RateLimitRule,
+} from './config.types';
+// Re-export utility types from constants (they're defined there)
+export type { RedisPrefixKey, RedisPrefixValue, EnvVarName } from '@config/constants';

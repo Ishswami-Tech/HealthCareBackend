@@ -1,5 +1,5 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 import type { PrismaService } from './prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -36,18 +36,18 @@ export class ClinicIsolationService implements OnModuleInit {
   private readonly MAX_CACHE_SIZE = 10000; // Maximum cache entries
 
   constructor(
+    @Inject(forwardRef(() => HealthcareDatabaseClient))
     private databaseService: HealthcareDatabaseClient,
     private configService: ConfigService,
     private loggingService: LoggingService
   ) {
-    this.maxClinics = this.configService.get<number>(
-      'healthcare.multiClinic.maxClinicsPerApp',
-      200
-    ); // Optimized for 200 clinics
-    this.maxLocationsPerClinic = this.configService.get<number>(
-      'healthcare.multiClinic.maxLocationsPerClinic',
-      50
-    ); // Optimized for 50 locations per clinic
+    // Use ConfigService with dotted notation for configuration access
+    // ConfigService.get() retrieves values from the configuration factory or environment
+    const maxClinicsEnv = process.env['MAX_CLINICS'];
+    const maxLocationsEnv = process.env['MAX_LOCATIONS_PER_CLINIC'];
+    
+    this.maxClinics = maxClinicsEnv ? parseInt(maxClinicsEnv, 10) : 200; // Default: 200 clinics
+    this.maxLocationsPerClinic = maxLocationsEnv ? parseInt(maxLocationsEnv, 10) : 50; // Default: 50 locations per clinic
   }
 
   async onModuleInit() {

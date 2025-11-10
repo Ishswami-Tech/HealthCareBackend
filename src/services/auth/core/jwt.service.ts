@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { TokenPayload, AuthTokens } from '@core/types';
 import * as crypto from 'crypto';
@@ -33,9 +33,10 @@ export class JwtAuthService {
    */
   async generateAccessToken(payload: TokenPayload): Promise<string> {
     try {
+      const expiresInValue = this.configService?.get<string>('JWT_ACCESS_EXPIRES_IN') || process.env['JWT_ACCESS_EXPIRES_IN'] || '15m';
       return await this.jwtService.signAsync(payload, {
-        expiresIn: this.configService.get('JWT_ACCESS_EXPIRES_IN') || '15m',
-      });
+        expiresIn: expiresInValue,
+      } as any);
     } catch (_error) {
       this.logger.error(
         'Failed to generate access token',
@@ -50,9 +51,10 @@ export class JwtAuthService {
    */
   async generateRefreshToken(payload: TokenPayload): Promise<string> {
     try {
+      const expiresInValue = this.configService?.get<string>('JWT_REFRESH_EXPIRES_IN') || process.env['JWT_REFRESH_EXPIRES_IN'] || '7d';
       return await this.jwtService.signAsync(payload, {
-        expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN') || '7d',
-      });
+        expiresIn: expiresInValue,
+      } as any);
     } catch (_error) {
       this.logger.error(
         'Failed to generate refresh token',

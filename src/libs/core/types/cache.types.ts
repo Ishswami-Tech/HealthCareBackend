@@ -192,11 +192,11 @@ export interface CacheOperationOptions {
 }
 
 /**
- * Rate limit configuration
- * @interface RateLimitConfig
- * @description Configuration for rate limiting
+ * Cache rate limit configuration
+ * @interface CacheRateLimitConfig
+ * @description Configuration for cache-specific rate limiting
  */
-export interface RateLimitConfig {
+export interface CacheRateLimitConfig {
   /** Maximum number of requests */
   readonly limit: number;
   /** Time window in seconds */
@@ -472,7 +472,7 @@ export interface CacheConfigUpdate {
   /** Default TTL in seconds for new cache entries */
   readonly defaultTtl?: number;
   /** Rate limit configurations by type */
-  readonly rateLimits?: Record<string, RateLimitConfig>;
+  readonly rateLimits?: Record<string, CacheRateLimitConfig>;
   /** Policy for memory management */
   readonly maxMemoryPolicy?:
     | 'noeviction'

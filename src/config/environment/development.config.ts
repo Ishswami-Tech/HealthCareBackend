@@ -1,5 +1,5 @@
-import type { Config } from '@config/config.types';
-import { ENV_VARS, DEFAULT_CONFIG } from '@config/constants';
+import type { Config } from '@core/types';
+import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
 
 /**
  * Parses integer from environment variable with validation
@@ -49,7 +49,7 @@ export default function createDevelopmentConfig(): Config {
       environment: 'development' as const,
       isDev: process.env['IS_DEV'] !== 'false',
       host: process.env['HOST'] || 'localhost',
-      bindAddress: process.env['BIND_ADDRESS'] || 'localhost',
+      bindAddress: process.env['BIND_ADDRESS'] || '0.0.0.0',
       baseUrl:
         process.env['BASE_URL'] ||
         `http://localhost:${process.env[ENV_VARS.PORT] || DEFAULT_CONFIG.PORT}`,

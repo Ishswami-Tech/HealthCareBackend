@@ -3,7 +3,6 @@ import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
-// import type { Doctor } from "../../../../libs/infrastructure/database/prisma/prisma.types";
 
 import type {
   AppointmentLocation,

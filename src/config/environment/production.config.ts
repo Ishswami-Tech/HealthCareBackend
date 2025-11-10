@@ -1,5 +1,5 @@
-import type { ProductionConfig } from '@config/config.types';
-import { ENV_VARS, DEFAULT_CONFIG } from '@config/constants';
+import type { ProductionConfig } from '@core/types';
+import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
 
 /**
  * Parses integer from environment variable with validation

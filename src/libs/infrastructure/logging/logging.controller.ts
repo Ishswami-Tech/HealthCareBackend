@@ -1,5 +1,5 @@
 // External imports
-import { Controller, Get, Query, Res, Post } from '@nestjs/common';
+import { Controller, Get, Query, Res, Post, Inject, forwardRef } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { ApiTags } from '@nestjs/swagger';
 
@@ -12,7 +12,10 @@ import { LogType, LogLevel } from '@core/types';
 @ApiTags('Logging')
 @Controller('logger')
 export class LoggingController {
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService
+  ) {}
 
   private getHtmlTemplate(activeTab: 'logs' | 'events' = 'logs'): string {
     return `<!DOCTYPE html>

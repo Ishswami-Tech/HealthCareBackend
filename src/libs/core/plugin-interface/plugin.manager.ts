@@ -11,7 +11,7 @@
 // External imports
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -78,8 +78,8 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService
   ) {
-    this.defaultTimeout = this.configService.get<number>('PLUGIN_TIMEOUT', 30000);
-    this.defaultRetryAttempts = this.configService.get<number>('PLUGIN_RETRY_ATTEMPTS', 3);
+    this.defaultTimeout = this.configService?.get<number>('PLUGIN_TIMEOUT', 30000) || parseInt(process.env['PLUGIN_TIMEOUT'] || '30000', 10);
+    this.defaultRetryAttempts = this.configService?.get<number>('PLUGIN_RETRY_ATTEMPTS', 3) || parseInt(process.env['PLUGIN_RETRY_ATTEMPTS'] || '3', 10);
   }
 
   /**
@@ -682,7 +682,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
    * @private
    */
   private startHealthMonitoring(): void {
-    const interval = this.configService.get<number>('PLUGIN_HEALTH_CHECK_INTERVAL', 30000); // 30 seconds
+    const interval = this.configService?.get<number>('PLUGIN_HEALTH_CHECK_INTERVAL', 30000) || parseInt(process.env['PLUGIN_HEALTH_CHECK_INTERVAL'] || '30000', 10); // 30 seconds
 
     this.healthCheckInterval = setInterval(() => {
       void this.performHealthCheck();

@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseRepository, RepositoryResult, QueryOptions } from './base.repository';
 import { DatabaseService } from '@infrastructure/database';
 import { CreateUserDto, UpdateUserDto } from '@dtos/user.dto';
@@ -78,6 +78,7 @@ function toUserBaseArray(result: unknown) {
 @Injectable()
 export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUserDto, string> {
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     databaseService: DatabaseService,
     loggingService: LoggingService,
     @Optional() cacheService?: CacheService

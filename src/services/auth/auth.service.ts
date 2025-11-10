@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
@@ -504,7 +504,7 @@ export class AuthService {
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.get('FRONTEND_URL')}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService.get<string>('FRONTEND_URL')}/reset-password?token=${resetToken}`,
         },
       });
 

@@ -29,8 +29,8 @@ spec:
         fsGroup: 1000
       containers:
       - name: worker
-        image: your-registry/healthcare-worker:latest
-        imagePullPolicy: Always
+        image: healthcare-api:latest
+        imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

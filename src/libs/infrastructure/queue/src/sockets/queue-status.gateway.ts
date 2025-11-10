@@ -14,6 +14,7 @@ import {
   ConnectedSocket,
   OnGatewayInit,
 } from '@nestjs/websockets';
+import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { QueueService } from '@infrastructure/queue/src/queue.service';
 
@@ -35,7 +36,8 @@ import type { ClientSession, QueueFilters } from '@core/types/queue.types';
   },
   namespace: '/queue-status',
 })
-export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+@Injectable()
+export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer() server!: Server;
 
   private connectedClients = new Map<string, ClientSession>();
@@ -50,13 +52,64 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
   };
 
   private metricsStreamInterval!: NodeJS.Timeout;
+  private isInitialized = false;
 
   constructor(
     private readonly queueService: QueueService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 
+  /**
+   * OnModuleInit ensures LoggingService is available before WebSocket initialization
+   * According to NestJS lifecycle: OnModuleInit.onModuleInit() is called after all modules are initialized
+   * Using forwardRef() to handle circular dependency between QueueModule and LoggingModule
+   */
+  onModuleInit() {
+    // Verify LoggingService is available (it should be since LoggingModule is @Global())
+    // With forwardRef, we need to check at runtime
+    if (!this.loggingService) {
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'LoggingService is not available - dependency injection failed',
+        undefined,
+        { gateway: 'QueueStatusGateway' },
+        'QueueStatusGateway.onModuleInit'
+      );
+    }
+    this.isInitialized = true;
+  }
+
+  /**
+   * afterInit is called when WebSocket server is initialized
+   * This may be called before onModuleInit completes, so we check initialization status
+   * Using forwardRef means we need to handle potential timing issues
+   */
   afterInit(_server: Server) {
+    // Wait for module initialization to complete if not ready
+    // This handles the case where WebSocket initialization happens before OnModuleInit
+    if (!this.isInitialized || !this.loggingService) {
+      // Use setTimeout to allow onModuleInit to complete
+      // This is necessary when using forwardRef due to circular dependencies
+      setTimeout(() => {
+        if (this.isInitialized && this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            '🚀 Queue Status Gateway initialized (delayed)',
+            'QueueStatusGateway'
+          );
+          void this.startMetricsStreaming();
+        } else {
+          // Fallback to console if LoggingService still not available
+          // This should not happen in normal operation but provides resilience
+          console.error('[QueueStatusGateway] Failed to initialize - LoggingService not available after delay');
+        }
+      }, 100);
+      return;
+    }
+
+    // LoggingService is guaranteed to be available here
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,

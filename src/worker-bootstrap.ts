@@ -12,26 +12,19 @@
 
 import { NestFactory } from '@nestjs/core';
 import type { INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { DatabaseModule } from '@infrastructure/database';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { QueueModule } from '@infrastructure/queue/src/queue.module';
 import { LoggingModule } from '@infrastructure/logging';
 import type { LoggingService } from '@infrastructure/logging';
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import configuration from './config/configuration';
+import { ConfigModule } from '@config';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath:
-        process.env['NODE_ENV'] === 'production' ? '.env.production' : '.env.development',
-      load: [configuration],
-      expandVariables: true,
-      cache: true,
-    }),
+    // ConfigModule is @Global() and already configured in config.module.ts
+    ConfigModule,
     DatabaseModule,
     CacheModule,
     LoggingModule,
@@ -69,9 +62,9 @@ async function bootstrap() {
           'Healthcare Worker initialized successfully',
           'WorkerBootstrap',
           {
-            serviceName: configService.get('SERVICE_NAME', 'clinic'),
-            redisHost: configService.get('REDIS_HOST', 'localhost'),
-            redisPort: configService.get('REDIS_PORT', 6379),
+            serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
+            redisHost: configService.get<string>('REDIS_HOST', 'localhost'),
+            redisPort: configService.get<number>('REDIS_PORT', 6379),
           }
         );
       }
@@ -79,10 +72,10 @@ async function bootstrap() {
       // Fallback to console.error/warn if LoggingService fails
       console.error('✅ Healthcare Worker initialized successfully');
       console.error(
-        `🔄 Processing queues for ${configService.get('SERVICE_NAME', 'clinic')} domain`
+        `🔄 Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
       );
       console.error(
-        `📊 Redis Connection: ${configService.get('REDIS_HOST', 'localhost')}:${configService.get('REDIS_PORT', 6379)}`
+        `📊 Redis Connection: ${configService.get<string>('REDIS_HOST', 'localhost')}:${configService.get<number>('REDIS_PORT', 6379)}`
       );
     }
 

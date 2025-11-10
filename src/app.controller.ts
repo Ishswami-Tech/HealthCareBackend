@@ -2,9 +2,9 @@ import { Controller, Get, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
 import { Public } from '@core/decorators/public.decorator';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { FastifyReply } from 'fastify';
-import { HealthController } from './services/health/health.controller';
+import { HealthService } from './services/health/health.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type {
@@ -20,7 +20,7 @@ export class AppController {
   constructor(
     private readonly appService: AppService,
     private readonly configService: ConfigService,
-    private readonly healthController: HealthController,
+    private readonly healthService: HealthService,
     private readonly loggingService: LoggingService
   ) {}
 
@@ -36,12 +36,41 @@ export class AppController {
   })
   async getDashboard(@Res() res: FastifyReply) {
     try {
-      const host: string = this.configService.get<string>('API_URL') || 'https://api.ishswami.in';
+      const host: string = this.configService?.get<string>('API_URL') || process.env['API_URL'] || 'https://api.ishswami.in';
       const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
       const isProduction = process.env['NODE_ENV'] === 'production';
 
-      // Get real-time service status from health controller
-      const healthData = await this.healthController.getDetailedHealth();
+      // Get real-time service status from health service with error handling
+      let healthData;
+      try {
+        healthData = await this.healthService.checkDetailedHealth();
+      } catch (healthError) {
+        // If health check fails, use default degraded status
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Health check failed in dashboard, using default status',
+          'AppController',
+          {
+            error: healthError instanceof Error ? healthError.message : String(healthError),
+          }
+        );
+        // Create a default health data structure
+        healthData = {
+          status: 'degraded',
+          timestamp: new Date().toISOString(),
+          environment: process.env['NODE_ENV'] || 'development',
+          services: {
+            api: { status: 'unhealthy', responseTime: 0, lastChecked: new Date().toISOString() },
+            database: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
+            redis: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
+            queues: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
+            logger: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
+            socket: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
+            email: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
+          },
+        };
+      }
 
       // Map health data to service status format
       const healthStatus = {
@@ -95,14 +124,14 @@ export class AppController {
         {
           name: 'API Documentation',
           description: 'Swagger API documentation and testing interface.',
-          url: `${baseUrl}${this.configService.get('SWAGGER_URL') || '/docs'}`,
+          url: `${baseUrl}${this.configService?.get<string>('SWAGGER_URL', '/docs') || process.env['SWAGGER_URL'] || '/docs'}`,
           active: isApiRunning,
           category: 'Documentation',
         },
         {
           name: 'Queue Dashboard',
           description: 'Queue management and monitoring dashboard.',
-          url: `${baseUrl}${this.configService.get('BULL_BOARD_URL') || '/queue-dashboard'}`,
+          url: `${baseUrl}${this.configService?.get<string>('BULL_BOARD_URL', '/queue-dashboard') || process.env['BULL_BOARD_URL'] || '/queue-dashboard'}`,
           active: isQueueRunning,
           category: 'Monitoring',
         },
@@ -135,7 +164,7 @@ export class AppController {
           name: 'Redis Commander',
           description: 'Redis database management interface.',
           url: isProduction
-            ? `${this.configService.get('REDIS_COMMANDER_URL', '/redis-ui')}`
+            ? `${this.configService?.get<string>('REDIS_COMMANDER_URL', '/redis-ui') || process.env['REDIS_COMMANDER_URL'] || '/redis-ui'}`
             : `${baseUrl}/redis-ui`,
           active: isRedisRunning && isRedisCommanderRunning,
           category: 'Database',
@@ -149,7 +178,7 @@ export class AppController {
           name: 'Prisma Studio',
           description: 'PostgreSQL database management through Prisma.',
           url: isProduction
-            ? `${this.configService.get('PRISMA_STUDIO_URL', '/prisma')}`
+            ? `${this.configService?.get<string>('PRISMA_STUDIO_URL', '/prisma') || process.env['PRISMA_STUDIO_URL'] || '/prisma'}`
             : `${baseUrl}/prisma`,
           active: isDatabaseRunning && isPrismaStudioRunning,
           category: 'Database',
@@ -162,7 +191,7 @@ export class AppController {
           name: 'pgAdmin',
           description: 'PostgreSQL database management interface.',
           url: isProduction
-            ? `${this.configService.get('PGADMIN_URL', '/pgadmin')}`
+            ? `${this.configService?.get('PGADMIN_URL', '/pgadmin')}`
             : `${baseUrl}/pgadmin`,
           active: isDatabaseRunning && isPgAdminRunning,
           category: 'Database',
@@ -177,7 +206,7 @@ export class AppController {
       // Calculate overall system health
       const totalServices = Object.keys(healthData.services).length;
       const healthyServices = Object.values(healthData.services).filter(
-        service => service.status === 'healthy'
+        (service: { status?: string }) => service?.status === 'healthy'
       ).length;
       const isSystemHealthy = healthyServices === totalServices;
 
@@ -191,20 +220,23 @@ export class AppController {
           lastChecked: new Date().toLocaleString(),
           details: `${healthyServices} of ${totalServices} services are healthy`,
         },
-        services: Object.entries(healthData.services).map(([name, service]) => ({
+        services: Object.entries(healthData.services).map(([name, service]) => {
+          const serviceData = service as { status?: string; responseTime?: number; details?: string; lastChecked?: string };
+          return {
           id: name.toLowerCase(),
           name: name.charAt(0).toUpperCase() + name.slice(1),
-          status: service.status,
-          isHealthy: service.status === 'healthy',
-          responseTime: service.responseTime || 0,
+            status: serviceData.status || 'unknown',
+            isHealthy: serviceData.status === 'healthy',
+            responseTime: serviceData.responseTime || 0,
           details:
-            service.details ||
-            (service.status === 'healthy'
+              serviceData.details ||
+              (serviceData.status === 'healthy'
               ? 'Service is responding normally'
               : 'Service is experiencing issues'),
-          lastChecked: service.lastChecked || new Date().toLocaleString(),
+            lastChecked: serviceData.lastChecked || new Date().toLocaleString(),
           metrics: {},
-        })),
+          };
+        }),
       };
 
       // Only fetch logs in development mode
@@ -247,7 +279,7 @@ export class AppController {
     description: 'WebSocket test page HTML',
   })
   async getSocketTestPage(@Res() res: FastifyReply) {
-    const baseUrl: string = this.configService.get<string>('API_URL') || 'http://localhost:8088';
+    const baseUrl: string = this.configService?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:8088';
 
     const html = `
 <!DOCTYPE html>

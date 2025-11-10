@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -12,9 +12,32 @@ export class InvoicePDFService {
 
   constructor(private readonly configService: ConfigService) {
     // Create invoices directory if it doesn't exist
-    this.invoicesDir = path.join(process.cwd(), 'storage', 'invoices');
-    if (!fs.existsSync(this.invoicesDir)) {
-      fs.mkdirSync(this.invoicesDir, { recursive: true });
+    // Try app storage first, fallback to /tmp if permission denied
+    const storageDir = path.join(process.cwd(), 'storage', 'invoices');
+    const tmpDir = path.join('/tmp', 'invoices');
+    
+    try {
+      if (!fs.existsSync(storageDir)) {
+        fs.mkdirSync(storageDir, { recursive: true, mode: 0o755 });
+      }
+      this.invoicesDir = storageDir;
+    } catch (error) {
+      // If permission denied, use /tmp as fallback
+      this.logger.warn(
+        `Could not create storage directory at ${storageDir}, using /tmp as fallback: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+      try {
+        if (!fs.existsSync(tmpDir)) {
+          fs.mkdirSync(tmpDir, { recursive: true, mode: 0o755 });
+        }
+        this.invoicesDir = tmpDir;
+      } catch (tmpError) {
+        this.logger.error(
+          `Failed to create fallback directory at ${tmpDir}: ${tmpError instanceof Error ? tmpError.message : 'Unknown error'}`
+        );
+        // Last resort: use current working directory
+        this.invoicesDir = process.cwd();
+      }
     }
   }
 
@@ -379,7 +402,7 @@ export class InvoicePDFService {
    * Get public URL for invoice PDF
    */
   getPublicInvoiceUrl(fileName: string): string {
-    const baseUrl = this.configService.get<string>('API_URL') || 'http://localhost:3000';
+    const baseUrl = this.configService?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:3000';
     return `${baseUrl}/api/billing/invoices/download/${fileName}`;
   }
 
