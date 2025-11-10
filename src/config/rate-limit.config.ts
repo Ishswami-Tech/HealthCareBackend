@@ -1,46 +1,5 @@
 import { registerAs } from '@nestjs/config';
-// import { ENV_VARS } from "./constants"; // Not used in this file
-
-/**
- * Rate limit rule configuration
- * @interface RateLimitRule
- */
-export interface RateLimitRule {
-  /** Maximum number of requests allowed */
-  readonly limit: number;
-  /** Time window in seconds */
-  readonly window: number;
-  /** Allow burst requests (optional) */
-  readonly burst?: number;
-  /** Request cost multiplier (optional) */
-  readonly cost?: number;
-}
-
-/**
- * Rate limit configuration interface
- * @interface RateLimitConfig
- */
-export interface RateLimitConfig {
-  /** Whether rate limiting is enabled */
-  readonly enabled: boolean;
-  /** Rate limit rules for different endpoints */
-  readonly rules: {
-    readonly [key: string]: RateLimitRule;
-  };
-  /** Security-related rate limiting settings */
-  readonly security: {
-    /** Maximum authentication attempts */
-    readonly maxAttempts: number;
-    /** Authentication attempt window in seconds */
-    readonly attemptWindow: number;
-    /** Progressive lockout intervals in minutes */
-    readonly lockoutIntervals: readonly number[];
-    /** Maximum concurrent sessions per user */
-    readonly maxConcurrentSessions: number;
-    /** Session inactivity threshold in seconds */
-    readonly sessionInactivityThreshold: number;
-  };
-}
+import type { EnhancedRateLimitConfig } from '@core/types';
 
 /**
  * Parses integer from environment variable with validation
@@ -70,7 +29,7 @@ function parseRateLimitInteger(
  * @param config - Rate limit configuration
  * @throws Error if configuration is invalid
  */
-function validateRateLimitConfig(config: RateLimitConfig): void {
+function validateRateLimitConfig(config: EnhancedRateLimitConfig): void {
   if (config.security.maxAttempts < 1) {
     throw new Error('maxAttempts must be at least 1');
   }
@@ -95,8 +54,8 @@ function validateRateLimitConfig(config: RateLimitConfig): void {
 /**
  * Rate limit configuration factory
  */
-export default registerAs('rateLimit', (): RateLimitConfig => {
-  const config: RateLimitConfig = {
+export default registerAs('rateLimit', (): EnhancedRateLimitConfig => {
+  const config: EnhancedRateLimitConfig = {
     enabled: process.env['RATE_LIMIT_ENABLED'] !== 'false',
     rules: {
       // API endpoints

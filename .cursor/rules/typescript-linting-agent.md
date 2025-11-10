@@ -54,6 +54,7 @@ import { UserService } from '../../../services/users/user.service';
 - Services/controllers MUST import shared types from `@types` (single source of truth).
 
 ### **Alias Usage (MANDATORY)**
+- **Configuration MUST import from `@config`** - Use enhanced ConfigService, NOT `@nestjs/config`
 - Logging MUST import from `@logging/*`.
 - Cache MUST import from `@cache/*`.
 - Events MUST import from `@events/*`.
@@ -64,12 +65,14 @@ import { UserService } from '../../../services/users/user.service';
 ```typescript
 // ✅ Correct
 import type { Appointment } from '@types';
+import { ConfigService } from '@config'; // Enhanced type-safe ConfigService
 import { LoggingService } from '@logging';
 import { CacheService } from '@cache';
 import { EventService } from '@events';
 import { QueueService } from '@queue';
 
 // ❌ Incorrect
+import { ConfigService } from '@nestjs/config'; // FORBIDDEN - use @config instead
 import type { Appointment } from '../../libs/core/types/appointment.types';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { CacheService } from '@infrastructure/cache/cache.service';

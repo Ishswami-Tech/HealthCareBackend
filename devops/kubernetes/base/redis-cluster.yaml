@@ -50,7 +50,8 @@ spec:
             --cluster-announce-bus-port 16379 \
             --cluster-announce-ip "$REDIS_CLUSTER_ANNOUNCE_IP" \
             --requirepass "$REDIS_PASSWORD" \
-            --masterauth "$REDIS_PASSWORD"
+            --masterauth "$REDIS_PASSWORD" \
+            --protected-mode no
         ports:
         - containerPort: 6379
           name: client

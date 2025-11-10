@@ -13,3 +13,4 @@
 
 export * from '@communication/socket';
 export * from '@communication/messaging';
+export { CommunicationModule } from '@communication/communication.module';

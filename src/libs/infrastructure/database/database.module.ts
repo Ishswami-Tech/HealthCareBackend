@@ -1,5 +1,5 @@
 import { Module, Global, OnModuleInit } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@config';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PrismaModule } from './prisma/prisma.module';
@@ -46,13 +46,20 @@ import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
  */
 @Global()
 @Module({
-  imports: [PrismaModule, LoggingModule, CacheModule, ConfigModule.forFeature(healthcareConfig)],
+  imports: [
+    PrismaModule,
+    LoggingModule,
+    CacheModule,
+    // ConfigModule is @Global() - healthcare config should be loaded in config.module.ts
+    ConfigModule,
+  ],
   providers: [
     // ALL components are INTERNAL - only HealthcareDatabaseClient is exported
-    ConnectionPoolManager, // @internal - used by HealthcareDatabaseClient
-    HealthcareQueryOptimizerService, // @internal - used by HealthcareDatabaseClient
-    DatabaseMetricsService, // @internal - used by HealthcareDatabaseClient
-    ClinicIsolationService, // @internal - used by HealthcareDatabaseClient
+    // Order matters for circular dependencies: list services before services that depend on them
+    ClinicIsolationService, // @internal - no dependencies on other providers
+    HealthcareQueryOptimizerService, // @internal - no dependencies on other providers
+    ConnectionPoolManager, // @internal - must be before DatabaseMetricsService and HealthcareDatabaseClient
+    DatabaseMetricsService, // @internal - depends on ConnectionPoolManager and HealthcareDatabaseClient
     UserRepository, // @internal - infrastructure component, not exported
     SimplePatientRepository, // @internal - infrastructure component, not exported
     {
@@ -78,6 +85,7 @@ import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
     // DO NOT export any other components - they are internal infrastructure
     HealthcareDatabaseClient, // Internal class - exported as "DatabaseService" in index.ts (ONLY PUBLIC INTERFACE)
     // Note: HealthcareDatabaseClient itself is NOT exported publicly - only DatabaseService alias is public
+    ClinicIsolationService, // Export for GuardsModule to resolve circular dependency
   ],
 })
 export class DatabaseModule implements OnModuleInit {
@@ -98,7 +106,7 @@ export class DatabaseModule implements OnModuleInit {
       const isWindows = process.platform === 'win32';
 
       // Get schema path from environment
-      const originalSchemaPath = this.configService.get<string>('PRISMA_SCHEMA_PATH');
+      const originalSchemaPath = this.configService?.get<string>('PRISMA_SCHEMA_PATH') || undefined;
       let resolvedSchemaPath = originalSchemaPath;
 
       void this.loggingService.log(
@@ -210,7 +218,7 @@ export class DatabaseModule implements OnModuleInit {
     try {
       // Validate healthcare configuration
       const { validateHealthcareConfig } = await import('./config/healthcare.config');
-      const healthcareConf = this.configService.get<Record<string, unknown>>('healthcare');
+      const healthcareConf = this.configService?.get<Record<string, unknown>>('healthcare') || undefined;
       if (healthcareConf) {
         validateHealthcareConfig(healthcareConf);
       }

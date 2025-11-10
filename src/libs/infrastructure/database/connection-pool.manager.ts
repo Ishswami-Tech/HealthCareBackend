@@ -1,5 +1,5 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 import type { PrismaService } from './prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -49,6 +49,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private configService: ConfigService,
+    @Inject(forwardRef(() => HealthcareDatabaseClient))
     private databaseService: HealthcareDatabaseClient,
     private loggingService: LoggingService
   ) {
@@ -114,9 +115,9 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private initializePool() {
     // Initialize connection pool configuration for Prisma - Optimized for 10M+ users
     const poolConfig = {
-      min: this.configService.get<number>('DB_POOL_MIN', 50), // Increased from 20
-      max: this.configService.get<number>('DB_POOL_MAX', 500), // Increased from 300 for scale
-      maxUses: this.configService.get<number>('DB_POOL_MAX_USES', 10000), // Increased from 7500
+      min: this.configService?.get<number>('DB_POOL_MIN', 50) || parseInt(process.env['DB_POOL_MIN'] || '50', 10), // Increased from 20
+      max: this.configService?.get<number>('DB_POOL_MAX', 500) || parseInt(process.env['DB_POOL_MAX'] || '500', 10), // Increased from 300 for scale
+      maxUses: this.configService?.get<number>('DB_POOL_MAX_USES', 10000) || parseInt(process.env['DB_POOL_MAX_USES'] || '10000', 10), // Increased from 7500
     };
 
     // Update metrics with estimated values
@@ -708,7 +709,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         };
       };
     };
-    const healthcareConfig = this.configService.get<HealthcareConfigShape | undefined>(
+    const healthcareConfig = this.configService?.get<HealthcareConfigShape | undefined>(
       'healthcare'
     );
     const readReplicasEnabled = healthcareConfig?.database?.connectionPool?.readReplicas?.enabled;
@@ -796,7 +797,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         };
       };
     };
-    const healthcareConfig = this.configService.get<HealthcareConfigShape | undefined>(
+    const healthcareConfig = this.configService?.get<HealthcareConfigShape | undefined>(
       'healthcare'
     );
     const autoScaling = healthcareConfig?.database?.performance?.autoScaling;
