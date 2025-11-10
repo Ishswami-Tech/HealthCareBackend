@@ -4,9 +4,12 @@ import { EmailController } from '@communication/messaging/email/email.controller
 import { EmailTemplatesService } from '@communication/messaging/email/email-templates.service';
 import { EmailQueueService } from '@communication/messaging/email/email-queue.service';
 import { SESEmailService } from '@communication/messaging/email/ses-email.service';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule } from '@config';
 import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database';
+import { QueueModule } from '@infrastructure/queue';
+import { BullModule } from '@nestjs/bullmq';
+import { EMAIL_QUEUE } from '@infrastructure/queue';
 
 /**
  * Email Module
@@ -26,18 +29,14 @@ import { DatabaseModule } from '@infrastructure/database';
  */
 @Module({
   imports: [
-    ConfigModule.forFeature(() => ({
-      email: {
-        host: process.env['EMAIL_HOST'],
-        port: parseInt(process.env['EMAIL_PORT'] || '587', 10),
-        secure: process.env['EMAIL_SECURE'] === 'true',
-        user: process.env['EMAIL_USER'],
-        password: process.env['EMAIL_PASSWORD'],
-        from: process.env['EMAIL_FROM'],
-      },
-    })),
+    // ConfigModule is @Global() - email config is already loaded in config.module.ts
+    ConfigModule,
     LoggingModule,
     DatabaseModule, // Optional: For email delivery logging/audit trails
+    // QueueModule is already imported globally via AppModule.forRoot()
+    BullModule.registerQueue({
+      name: EMAIL_QUEUE,
+    }), // Register queue for @InjectQueue decorator
   ],
   controllers: [EmailController],
   providers: [EmailService, EmailTemplatesService, EmailQueueService, SESEmailService],

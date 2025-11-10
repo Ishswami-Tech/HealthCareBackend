@@ -25,7 +25,7 @@ function validateJwtConfig(config: JwtModuleOptions): void {
 export const jwtConfig: JwtModuleOptions = {
   secret: process.env[ENV_VARS.JWT_SECRET] || 'your-secret-key',
   signOptions: {
-    expiresIn: process.env[ENV_VARS.JWT_EXPIRATION] || DEFAULT_CONFIG.JWT_EXPIRATION,
+    expiresIn: (process.env[ENV_VARS.JWT_EXPIRATION] || DEFAULT_CONFIG.JWT_EXPIRATION) as any,
   },
 };
 

@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
 import { RepositoryResult } from '@core/types/database.types';
@@ -19,7 +19,9 @@ import type { PrismaService } from '@infrastructure/database/prisma/prisma.servi
 @Injectable()
 export class SimplePatientRepository {
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => ClinicIsolationService))
     private readonly clinicIsolationService: ClinicIsolationService,
     @Optional() private readonly cacheService?: CacheService,
     @Optional() private readonly loggingService?: LoggingService

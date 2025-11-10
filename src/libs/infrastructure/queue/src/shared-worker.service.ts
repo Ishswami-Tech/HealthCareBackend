@@ -8,7 +8,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 
 import { Worker, Job } from 'bullmq';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache';
 
 // Internal imports - Infrastructure
@@ -92,9 +92,9 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   private initializeWorkers() {
     try {
       const redisConnection = {
-        host: this.configService.get<string>('redis.host', 'localhost'),
-        port: this.configService.get<number>('redis.port', 6379),
-        db: this.configService.get<number>('redis.db', 0),
+        host: this.configService?.get<string>('redis.host', 'localhost') || process.env['REDIS_HOST'] || 'localhost',
+        port: this.configService?.get<number>('redis.port', 6379) || parseInt(process.env['REDIS_PORT'] || '6379', 10),
+        db: this.configService?.get<number>('redis.db', 0) || parseInt(process.env['REDIS_DB'] || '0', 10),
         maxRetriesPerRequest: null,
         retryDelayOnFailover: 100,
         connectTimeout: 10000,
@@ -104,8 +104,8 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
         family: 4,
         enableReadyCheck: false,
         retryDelayOnCloseConnection: 500,
-        ...(this.configService.get<string>('redis.password') && {
-          password: this.configService.get<string>('redis.password'),
+        ...((this.configService?.get<string>('redis.password') || process.env['REDIS_PASSWORD'])?.trim() && {
+          password: (this.configService?.get<string>('redis.password') || process.env['REDIS_PASSWORD'])?.trim(),
         }),
       };
 

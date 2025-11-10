@@ -1,4 +1,4 @@
-import type { Config } from './config.types';
+import type { Config } from '@core/types';
 import { DEFAULT_CONFIG, ENV_VARS } from './constants';
 
 /**
@@ -71,6 +71,7 @@ function validateRequiredEnvVars(requiredVars: readonly string[]): void {
  * Creates the application configuration
  * @returns Configuration object
  * @throws Error if required environment variables are missing
+ * @deprecated Use development.config.ts or production.config.ts instead
  */
 export default function createConfiguration(): Config {
   // Validate required environment variables in production

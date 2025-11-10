@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
@@ -40,7 +40,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     JwtModule,
     RedisModule,
     RateLimitModule,
-    DatabaseModule,
+    forwardRef(() => DatabaseModule),
     LoggingModule,
     RbacModule,
     CacheModule,
@@ -50,7 +50,6 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     JwtAuthService,
     RolesGuard,
     ClinicGuard,
-    RbacGuard,
     Reflector,
     LoggingService,
     RateLimitService,
@@ -59,12 +58,12 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     JwtAuthGuard,
     RolesGuard,
     ClinicGuard,
-    RbacGuard,
     LoggingService,
     JwtModule,
     RateLimitModule,
     RateLimitService,
     JwtAuthService,
+    RbacModule, // Export RbacModule so RbacGuard and RbacService are available
   ],
 })
 export class GuardsModule {}

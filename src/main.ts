@@ -22,7 +22,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel as AppLogLevel } from '@core/types';
 import developmentConfig from './config/environment/development.config';
 import productionConfig from './config/environment/production.config';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingInterceptor } from '@infrastructure/logging/logging.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
@@ -117,12 +117,12 @@ async function configureProductionMiddleware(
   await registerFastifyPlugin(app, fastifyRateLimit, {
     max: parseInt(process.env['RATE_LIMIT_MAX'] || '1000', 10),
     timeWindow: process.env['RATE_LIMIT_WINDOW'] || '1 minute',
-    redis: configService.get('REDIS_URL')
+      redis: (configService?.get('REDIS_URL') || process.env['REDIS_URL'])
       ? {
-          host: configService.get<string>('REDIS_HOST') || 'localhost',
-          port: configService.get<number>('REDIS_PORT') || 6379,
-          ...(configService.get<string>('REDIS_PASSWORD') && {
-            password: configService.get<string>('REDIS_PASSWORD'),
+          host: configService?.get<string>('REDIS_HOST') || process.env['REDIS_HOST'] || 'localhost',
+          port: configService?.get<number>('REDIS_PORT') || parseInt(process.env['REDIS_PORT'] || '6379', 10),
+          ...((configService?.get<string>('REDIS_PASSWORD') || process.env['REDIS_PASSWORD'])?.trim() && {
+            password: (configService?.get<string>('REDIS_PASSWORD') || process.env['REDIS_PASSWORD'])?.trim(),
           }),
         }
       : undefined,
@@ -172,10 +172,13 @@ async function configureProductionMiddleware(
   // Enable shutdown hooks for graceful shutdown
   app.enableShutdownHooks();
 
-  // Set global prefix
-  app.setGlobalPrefix('api/v1', {
-    exclude: ['health', 'metrics', 'docs', { path: 'docs/(.*)', method: RequestMethod.GET }],
-  });
+  // Set global prefix - can be disabled by setting API_PREFIX to empty string
+  const apiPrefix = configService?.get<string>('API_PREFIX') || process.env['API_PREFIX'] || 'api/v1';
+  if (apiPrefix && apiPrefix.trim() !== '') {
+    app.setGlobalPrefix(apiPrefix, {
+      exclude: ['health', 'metrics', 'docs', { path: 'docs/*', method: RequestMethod.GET }],
+    });
+  }
 
   logger.log(' Production middleware configured');
 }
@@ -319,99 +322,33 @@ async function bootstrap() {
 
     const envConfig = environment === 'production' ? productionConfig() : developmentConfig();
 
-    // Configure Fastify logger based on environment
-    // Using Record<string, unknown> for logger config to handle Fastify type incompatibilities
-    const loggerConfig: Record<string, unknown> = {
-      level: process.env['NODE_ENV'] === 'production' ? 'warn' : 'info',
-      serializers: {
-        req: (req: unknown): SerializedRequest => {
-          // Type-safe access to request properties
-          const request = req as {
-            url?: string;
-            method?: string;
-            headers?: Record<string, unknown>;
-          };
-          // Skip detailed logging for health check and common endpoints
-          if (
-            request.url === '/health' ||
-            request.url === '/api-health' ||
-            request.url?.includes('socket.io') ||
-            request.url?.includes('/logs/')
-          ) {
-            return {
-              method: request.method || 'GET',
-              url: request.url || '',
-              skip: true,
-            };
-          }
-          return {
-            method: request.method || 'GET',
-            url: request.url || '',
-            headers: request.headers || {},
-          };
-        },
-        res: (res: unknown) => {
-          const response = res as { statusCode?: number };
-          return {
-            statusCode: response.statusCode || 200,
-          };
-        },
-        err: (err: unknown) => {
-          const error = err as { message?: string; stack?: string };
-          return {
-            type: 'ERROR',
-            message: error.message || 'Unknown error',
-            stack: error.stack || 'No stack trace',
-          };
-        },
-      },
-    };
-
-    // Add pretty printing only in development
-    if (process.env['NODE_ENV'] !== 'production') {
-      loggerConfig['transport'] = {
-        target: 'pino-pretty',
-        options: {
-          translateTime: false,
-          ignore: 'pid,hostname',
-          messageFormat: '{msg}',
-          colorize: true,
-        },
-      };
-    }
-
     // Production optimized Fastify adapter with horizontal scaling support
-    // Type assertion for FastifyAdapter options due to complex type requirements
-    // FastifyAdapter has strict type requirements that don't perfectly match our logger config
-    // Using Record<string, unknown> for type safety when dealing with third-party type incompatibilities
+    // Disable Fastify's built-in logger - we use custom LoggingService instead
+    // LoggingInterceptor and HttpExceptionFilter will handle all logging through LoggingService
     const fastifyAdapterOptions: Record<string, unknown> = {
-      logger: loggerConfig,
-      disableRequestLogging: true,
+      // Omit logger option - Fastify will use default no-op logger
+      // Custom LoggingService handles all logging via NestJS logger system
+      disableRequestLogging: true, // Disable Fastify request logging - LoggingInterceptor handles this
       requestIdLogLabel: 'requestId',
-      requestIdHeader: 'x-request-id',
+      requestIdHeader: isHorizontalScaling ? `x-request-id-${instanceId}` : 'x-request-id',
       trustProxy: envConfig.security.trustProxy === 1,
 
       // Production performance optimizations
       bodyLimit: environment === 'production' ? 50 * 1024 * 1024 : 10 * 1024 * 1024, // 50MB in prod
       keepAliveTimeout: environment === 'production' ? 65000 : 5000,
-      maxParamLength: 500,
       connectionTimeout: environment === 'production' ? 60000 : 30000,
       requestTimeout: environment === 'production' ? 30000 : 10000,
 
+      // Router options (moved from deprecated root-level properties)
+      routerOptions: {
+        caseSensitive: false,
+        ignoreTrailingSlash: true,
+        maxParamLength: 500,
+      },
+
       // Horizontal scaling optimizations
       ...(isHorizontalScaling && {
-        serverFactory: (handler: unknown, opts: Record<string, unknown>) => {
-          // Enhanced server configuration for load balanced instances
-          const server = fastify({
-            ...(opts || {}),
-            ignoreTrailingSlash: true,
-            caseSensitive: false,
-            // Optimize for high concurrency across instances
-            pluginTimeout: 30000,
-            requestIdHeader: `x-request-id-${instanceId}`,
-          });
-          return server;
-        },
+        pluginTimeout: 30000,
       }),
 
       // HTTP/2 support for production
@@ -507,12 +444,13 @@ async function bootstrap() {
       const { createClient } = await import('redis');
 
       // Redis client configuration with improved error handling
-      const redisHost = configService.get<string>('REDIS_HOST') || '127.0.0.1';
-      const redisPort = configService.get<string>('REDIS_PORT') || '6379';
-      const redisPassword = configService.get<string>('REDIS_PASSWORD');
+      const redisHost = configService?.get<string>('REDIS_HOST') || process.env['REDIS_HOST'] || '127.0.0.1';
+      const redisPort = configService?.get<string>('REDIS_PORT') || process.env['REDIS_PORT'] || '6379';
+      const redisPassword = configService?.get<string>('REDIS_PASSWORD') || process.env['REDIS_PASSWORD'];
+      // Only include password if it's actually set (Redis might not require auth if protected mode is disabled)
       const redisConfig = {
         url: `redis://${String(redisHost).trim()}:${String(redisPort).trim()}`,
-        ...(redisPassword && { password: redisPassword }),
+        ...(redisPassword && redisPassword.trim() && { password: redisPassword }),
         retryStrategy: (times: number) => {
           const maxRetries = 5;
           if (times > maxRetries) {
@@ -617,10 +555,8 @@ async function bootstrap() {
               cors: {
                 origin:
                   process.env['NODE_ENV'] === 'production'
-                    ? (process.env['CORS_ORIGIN']?.split(',') as string[]) || [
-                        'https://ishswami.in',
-                      ]
-                    : '*',
+                    ? ((configService?.get<string>('CORS_ORIGIN') || process.env['CORS_ORIGIN'] || '*')?.split(',') as string[]) || '*'
+                    : (configService?.get<string>('CORS_ORIGIN') || process.env['CORS_ORIGIN'] || '*')?.split(',') || '*',
                 methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
                 credentials: true,
                 allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -757,27 +693,12 @@ async function bootstrap() {
     }
 
     // Enable CORS with specific configuration
+    // Get CORS origins from environment variables
+    const corsOrigin = configService?.get<string>('CORS_ORIGIN', '*') || process.env['CORS_ORIGIN'] || '*';
+    const corsOrigins = corsOrigin === '*' ? '*' : corsOrigin.split(',').map(origin => origin.trim());
+    
     app.enableCors({
-      origin:
-        process.env['NODE_ENV'] === 'production'
-          ? [
-              'https://ishswami.in',
-              'https://www.ishswami.in',
-              /\.ishswami\.in$/,
-              'http://localhost:3000', // Allow local development frontend
-              'https://accounts.google.com',
-              'https://oauth2.googleapis.com',
-              'https://www.googleapis.com',
-            ]
-          : [
-              'http://localhost:3000',
-              'http://localhost:8088',
-              'http://localhost:5050',
-              'http://localhost:8082',
-              'https://accounts.google.com',
-              'https://oauth2.googleapis.com',
-              'https://www.googleapis.com',
-            ],
+      origin: corsOrigins,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       credentials: true,
       allowedHeaders: [
@@ -806,17 +727,10 @@ async function bootstrap() {
       if (request.method === 'OPTIONS') {
         const origin = request.headers.origin;
         if (origin) {
-          const allowedOrigins =
-            process.env['NODE_ENV'] === 'production'
-              ? ['https://ishswami.in', 'https://www.ishswami.in', 'http://localhost:3000'] // Allow local development frontend
-              : [
-                  'http://localhost:3000',
-                  'http://localhost:8088',
-                  'http://localhost:5050',
-                  'http://localhost:8082',
-                ];
+          const corsOrigin = configService?.get<string>('CORS_ORIGIN', '*') || process.env['CORS_ORIGIN'] || '*';
+          const allowedOrigins = corsOrigin === '*' ? ['*'] : corsOrigin.split(',').map(o => o.trim());
 
-          if (allowedOrigins.includes(origin) || /\.ishswami\.in$/.test(origin)) {
+          if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
             reply.header('Access-Control-Allow-Origin', origin);
             reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
             reply.header(
@@ -880,15 +794,13 @@ async function bootstrap() {
           imgSrc: ["'self'", 'data:', 'https:', 'blob:'] as readonly string[],
           connectSrc: [
             "'self'",
-            'http://localhost:3000',
-            'https://ishswami.in',
-            'https://www.ishswami.in',
-            'https://api.ishswami.in',
-            'wss://api.ishswami.in',
+            configService?.get<string>('FRONTEND_URL', '') || process.env['FRONTEND_URL'] || '',
+            configService?.get<string>('API_URL', '') || process.env['API_URL'] || '',
+            (configService?.get<string>('API_URL', '') || process.env['API_URL'] || '').replace('http://', 'wss://').replace('https://', 'wss://'),
             'https://accounts.google.com',
             'https://oauth2.googleapis.com',
             'https://www.googleapis.com',
-          ] as readonly string[],
+          ].filter(Boolean) as readonly string[],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'] as readonly string[],
           frameSrc: ["'self'", 'https://accounts.google.com'] as readonly string[],
           objectSrc: ["'none'"] as readonly string[],
@@ -896,8 +808,8 @@ async function bootstrap() {
           formAction: [
             "'self'",
             'https://accounts.google.com',
-            'http://localhost:3000',
-          ] as readonly string[],
+            configService?.get<string>('FRONTEND_URL', '') || process.env['FRONTEND_URL'] || '',
+          ].filter(Boolean) as readonly string[],
           frameAncestors: ["'none'"] as readonly string[],
         },
       },
@@ -909,17 +821,19 @@ async function bootstrap() {
     // Configure Swagger with environment variables
     // ConfigService.get<T>() returns T | undefined, using generic type parameter for type safety
     const _port =
-      configService.get<number | string>('PORT') ||
-      configService.get<number | string>('VIRTUAL_PORT') ||
+      configService?.get<number | string>('PORT') ||
+      configService?.get<number | string>('VIRTUAL_PORT') ||
+      process.env['PORT'] ||
+      process.env['VIRTUAL_PORT'] ||
       8088;
-    const _virtualHost = configService.get<string>('VIRTUAL_HOST') || 'localhost';
-    const apiUrl = configService.get<string>('API_URL');
-    const swaggerUrl = configService.get<string>('SWAGGER_URL') || '/docs';
-    const _bullBoardUrl = configService.get<string>('BULL_BOARD_URL') || '/queue-dashboard';
-    const _socketUrl = configService.get<string>('SOCKET_URL') || '/socket.io';
-    const _redisCommanderUrl = configService.get<string>('REDIS_COMMANDER_URL');
-    const _prismaStudioUrl = configService.get<string>('PRISMA_STUDIO_URL');
-    const _loggerUrl = configService.get<string>('LOGGER_URL') || '/logger';
+    const _virtualHost = configService?.get<string>('VIRTUAL_HOST') || process.env['VIRTUAL_HOST'] || 'localhost';
+    const apiUrl = configService?.get<string>('API_URL') || process.env['API_URL'];
+    const swaggerUrl = configService?.get<string>('SWAGGER_URL') || process.env['SWAGGER_URL'] || '/docs';
+    const _bullBoardUrl = configService?.get<string>('BULL_BOARD_URL') || process.env['BULL_BOARD_URL'] || '/queue-dashboard';
+    const _socketUrl = configService?.get<string>('SOCKET_URL') || process.env['SOCKET_URL'] || '/socket.io';
+    const _redisCommanderUrl = configService?.get<string>('REDIS_COMMANDER_URL') || process.env['REDIS_COMMANDER_URL'];
+    const _prismaStudioUrl = configService?.get<string>('PRISMA_STUDIO_URL') || process.env['PRISMA_STUDIO_URL'];
+    const _loggerUrl = configService?.get<string>('LOGGER_URL') || process.env['LOGGER_URL'] || '/logger';
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);
 
@@ -964,12 +878,9 @@ async function bootstrap() {
 
       await app.listen(port, bindAddress);
 
-      logger.log(`Application is running in ${envConfig.app.environment} mode:`);
-      logger.log(`- Local: http://${host}:${port}`);
-      logger.log(`- Base URL: ${envConfig.app.baseUrl}`);
-      logger.log(
-        `- Swagger Docs: ${envConfig.app.environment === 'production' ? envConfig.app.apiUrl : envConfig.app.baseUrl}${envConfig.urls.swagger}`
-      );
+      logger.log(`Application is running in ${envConfig.app.environment} mode on port ${port}`);
+      logger.log(`- API URL: ${envConfig.app.baseUrl}`);
+      logger.log(`- Swagger Docs: ${envConfig.app.baseUrl}${envConfig.urls.swagger}`);
       logger.log(`- Health Check: ${envConfig.app.baseUrl}/health`);
 
       if (envConfig.app.environment === 'development') {
