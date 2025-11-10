@@ -10,7 +10,7 @@ resources:
   - rbac.yaml
   - network-policies.yaml
   - limitrange.yaml
-  - resourcequota.yaml
+  - resourcequota-dynamic.yaml
   - configmap.yaml
   - postgres-config.yaml
   - api-deployment.yaml
