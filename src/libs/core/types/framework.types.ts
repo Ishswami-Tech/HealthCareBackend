@@ -48,7 +48,7 @@ export interface MiddlewareConfig {
   readonly versioningHeader?: string;
   readonly defaultVersion?: string;
   readonly globalPrefix?: string;
-  readonly prefixExclude?: string[];
+  readonly prefixExclude?: Array<string | { path: string; method: string }>;
   readonly enableShutdownHooks?: boolean;
 }
 

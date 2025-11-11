@@ -84,7 +84,9 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     @Optional()
     @Inject(forwardRef(() => CircuitBreakerService))

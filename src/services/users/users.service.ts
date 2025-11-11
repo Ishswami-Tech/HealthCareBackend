@@ -1,9 +1,15 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
-import { LogLevel, LogType } from '@core/types';
+import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
+
+// Helper function to get EventService token for forwardRef (avoids type resolution issues)
+// This should be used when injecting EventService with forwardRef to prevent circular dependency type errors
+function getEventServiceToken(): typeof EventService {
+  return EventService;
+}
 import type { UserProfile } from '@core/types';
 import { isPrismaDatabaseError } from '@core/types/error.types';
 import { Role } from '@core/types/enums.types';
@@ -55,6 +61,8 @@ type UserWithRelations = User & {
 
 @Injectable()
 export class UsersService {
+  private readonly eventService: IEventService;
+
   private formatDateToString(date: Date | string | null | undefined): string {
     if (date instanceof Date) {
       return date.toISOString().split('T')[0] || '';
@@ -64,15 +72,24 @@ export class UsersService {
     }
     return '';
   }
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly eventService: EventService,
+    @Inject(forwardRef(getEventServiceToken))
+    eventService: unknown,
     private readonly rbacService: RbacService,
     private readonly authService: AuthService,
     private readonly errors: HealthcareErrorsService
-  ) {}
+  ) {
+    // Type guard ensures type safety when using the service
+    // This handles forwardRef circular dependency type resolution issues
+    if (!isEventService(eventService)) {
+      throw new Error('EventService is not available or invalid');
+    }
+    this.eventService = eventService;
+  }
 
   async findAll(role?: Role): Promise<UserResponseDto[]> {
     const cacheKey = `users:all:${role || 'all'}`;

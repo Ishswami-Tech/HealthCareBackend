@@ -1,4 +1,4 @@
-import { Injectable, Logger, INestApplication } from '@nestjs/common';
+import { Injectable, Logger, INestApplication, Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
@@ -21,7 +21,10 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 export class GracefulShutdownService {
   private readonly logger = new Logger(GracefulShutdownService.name);
 
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService
+  ) {}
 
   /**
    * Setup graceful shutdown handlers
@@ -154,7 +157,10 @@ export class GracefulShutdownService {
  */
 @Injectable()
 export class ProcessErrorHandlersService {
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService
+  ) {}
 
   /**
    * Setup process error handlers

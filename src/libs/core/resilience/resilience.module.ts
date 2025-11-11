@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { LoggingModule } from '@infrastructure/logging';
+// LoggingModule is @Global() - no need to import it
 import { CircuitBreakerService } from './circuit-breaker.service';
 import { GracefulShutdownService, ProcessErrorHandlersService } from './graceful-shutdown.service';
 
@@ -18,7 +18,9 @@ import { GracefulShutdownService, ProcessErrorHandlersService } from './graceful
  * ```
  */
 @Module({
-  imports: [LoggingModule],
+  imports: [
+    // LoggingModule is @Global() - available for injection without explicit import
+  ],
   providers: [CircuitBreakerService, GracefulShutdownService, ProcessErrorHandlersService],
   exports: [CircuitBreakerService, GracefulShutdownService, ProcessErrorHandlersService],
 })
