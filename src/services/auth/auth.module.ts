@@ -1,5 +1,5 @@
 import { Module, OnModuleInit } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 
@@ -25,6 +25,7 @@ import { JwtAuthService } from './core/jwt.service';
 import { OtpService } from './core/otp.service';
 import { PasswordService } from './core/password.service';
 import { SocialAuthService } from './core/social-auth.service';
+import { SignOptions } from 'jsonwebtoken';
 
 // Guards - using shared guards from libs
 
@@ -32,12 +33,15 @@ import { SocialAuthService } from './core/social-auth.service';
   imports: [
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'default-secret',
-        signOptions: {
-          expiresIn: (configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m') as any,
-        },
-      }),
+      useFactory: (configService: ConfigService): JwtModuleOptions => {
+        const expiresIn: string = configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
+        return {
+          secret: configService.get<string>('JWT_SECRET') || 'default-secret',
+          signOptions: {
+            expiresIn: expiresIn as SignOptions['expiresIn'],
+          } as SignOptions,
+        };
+      },
       inject: [ConfigService],
     }),
     DatabaseModule,

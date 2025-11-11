@@ -49,6 +49,14 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   private readonly criticalQueryThreshold = 5000; // 5 seconds
   private readonly maxConnectionPoolUsage = 0.8; // 80%
   private readonly maxErrorRate = 0.05; // 5%
+  private readonly minCacheHitRate = 0.7; // 70% minimum cache hit rate
+
+  // Cache tracking
+  private cacheHits = 0;
+  private cacheMisses = 0;
+  private cacheHitTimes: number[] = [];
+  private cacheMissTimes: number[] = [];
+  private readonly maxCacheTimeHistory = 1000; // Keep last 1000 cache operation times
 
   // Current metrics
   private currentMetrics: DatabaseMetrics = {
@@ -88,10 +96,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   };
 
   constructor(
-    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
     @Inject(forwardRef(() => HealthcareDatabaseClient))
     private readonly databaseService: HealthcareDatabaseClient,
-    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => ConnectionPoolManager))
     private readonly connectionPoolManager: ConnectionPoolManager,
     private readonly queryOptimizer: HealthcareQueryOptimizerService,
@@ -283,6 +291,74 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       lastCheck: new Date(),
       metrics: metrics,
     };
+  }
+
+  /**
+   * Record cache hit
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  recordCacheHit(cacheTime: number): void {
+    this.cacheHits++;
+    this.cacheHitTimes.push(cacheTime);
+
+    // Maintain history size
+    if (this.cacheHitTimes.length > this.maxCacheTimeHistory) {
+      this.cacheHitTimes.shift();
+    }
+
+    // Update cache hit rate in metrics
+    const totalCacheOps = this.cacheHits + this.cacheMisses;
+    if (totalCacheOps > 0) {
+      this.currentMetrics.performance.cacheHitRate = this.cacheHits / totalCacheOps;
+    }
+  }
+
+  /**
+   * Record cache miss
+   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * @internal
+   */
+  recordCacheMiss(cacheMissTime: number): void {
+    this.cacheMisses++;
+    this.cacheMissTimes.push(cacheMissTime);
+
+    // Maintain history size
+    if (this.cacheMissTimes.length > this.maxCacheTimeHistory) {
+      this.cacheMissTimes.shift();
+    }
+
+    // Update cache hit rate in metrics
+    const totalCacheOps = this.cacheHits + this.cacheMisses;
+    if (totalCacheOps > 0) {
+      this.currentMetrics.performance.cacheHitRate = this.cacheHits / totalCacheOps;
+    }
+
+    // Log warning if cache hit rate is low
+    if (
+      totalCacheOps > 100 &&
+      this.currentMetrics.performance.cacheHitRate < this.minCacheHitRate
+    ) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.WARN,
+        `Low cache hit rate detected: ${(this.currentMetrics.performance.cacheHitRate * 100).toFixed(1)}% (threshold: ${(this.minCacheHitRate * 100).toFixed(1)}%)`,
+        this.serviceName,
+        {
+          cacheHitRate: this.currentMetrics.performance.cacheHitRate,
+          cacheHits: this.cacheHits,
+          cacheMisses: this.cacheMisses,
+          totalCacheOps,
+          recommendations: [
+            'Review cache TTL settings - may be too short',
+            'Check cache invalidation strategy - may be too aggressive',
+            'Consider increasing cache size limits',
+            'Review cache key patterns for optimization',
+            'Enable cache warming for frequently accessed data',
+          ],
+        }
+      );
+    }
   }
 
   /**

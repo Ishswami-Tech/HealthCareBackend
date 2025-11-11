@@ -10,6 +10,8 @@ import {
   ParseBoolPipe,
   DefaultValuePipe,
   ParseIntPipe,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
 
@@ -39,7 +41,7 @@ import {
 export class CacheController {
   constructor(
     private readonly redis: RedisService,
-    private readonly loggingService: LoggingService
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {}
 
   /**

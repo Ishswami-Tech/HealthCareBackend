@@ -20,6 +20,11 @@ import { LoggingModule } from '@infrastructure/logging';
 import type { LoggingService } from '@infrastructure/logging';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@config';
+import { ResilienceModule } from '@core/resilience';
+import {
+  GracefulShutdownService,
+  ProcessErrorHandlersService,
+} from '@core/resilience/graceful-shutdown.service';
 
 @Module({
   imports: [
@@ -28,6 +33,7 @@ import { ConfigModule } from '@config';
     DatabaseModule,
     CacheModule,
     LoggingModule,
+    ResilienceModule, // Provides GracefulShutdownService and ProcessErrorHandlersService
     QueueModule.forRoot(),
   ],
   providers: [],
@@ -79,49 +85,92 @@ async function bootstrap() {
       );
     }
 
-    // Graceful shutdown handlers
-    const shutdownHandler = async (signal: string): Promise<void> => {
-      if (logService) {
-        const { LogType, LogLevel } = await import('@core/types');
-        await logService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Received ${signal}, shutting down worker gracefully...`,
-          'WorkerBootstrap',
-          {}
-        );
-      } else {
-        console.error(`📤 Received ${signal}, shutting down worker gracefully...`);
-      }
+    // Setup process error handlers using ProcessErrorHandlersService
+    if (logService && app) {
       try {
-        if (app) {
-          await app.close();
-        }
-        process.exit(0);
+        const processErrorHandlersService = app.get(ProcessErrorHandlersService);
+        processErrorHandlersService.setupErrorHandlers();
       } catch (error) {
+        // If service is not available, log and continue
         if (logService) {
           const { LogType, LogLevel } = await import('@core/types');
           await logService.log(
             LogType.ERROR,
-            LogLevel.ERROR,
-            `Error during ${signal} shutdown`,
+            LogLevel.WARN,
+            'ProcessErrorHandlersService not available, using fallback handlers',
             'WorkerBootstrap',
             { error: error instanceof Error ? error.message : String(error) }
           );
-        } else {
-          console.error(`❌ Error during ${signal} shutdown:`, error);
         }
-        process.exit(1);
       }
-    };
+    }
 
-    process.on('SIGTERM', () => {
-      void shutdownHandler('SIGTERM');
-    });
+    // Setup graceful shutdown using GracefulShutdownService
+    if (app && logService) {
+      try {
+        const gracefulShutdownService = app.get(GracefulShutdownService);
+        gracefulShutdownService.setupShutdownHandlers(app, null, null, null);
+      } catch (error) {
+        // If service is not available, use fallback shutdown handler
+        if (logService) {
+          const { LogType, LogLevel } = await import('@core/types');
+          await logService.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            'GracefulShutdownService not available, using fallback shutdown handler',
+            'WorkerBootstrap',
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        }
 
-    process.on('SIGINT', () => {
-      void shutdownHandler('SIGINT');
-    });
+        // Fallback shutdown handler
+        const shutdownHandler = async (signal: string): Promise<void> => {
+          if (logService) {
+            const { LogType, LogLevel } = await import('@core/types');
+            await logService.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              `Received ${signal}, shutting down worker gracefully...`,
+              'WorkerBootstrap',
+              {}
+            );
+          } else {
+            console.error(`📤 Received ${signal}, shutting down worker gracefully...`);
+          }
+          try {
+            if (app) {
+              await app.close();
+            }
+            process.exit(0);
+          } catch (shutdownError) {
+            if (logService) {
+              const { LogType, LogLevel } = await import('@core/types');
+              await logService.log(
+                LogType.ERROR,
+                LogLevel.ERROR,
+                `Error during ${signal} shutdown`,
+                'WorkerBootstrap',
+                {
+                  error:
+                    shutdownError instanceof Error ? shutdownError.message : String(shutdownError),
+                }
+              );
+            } else {
+              console.error(`❌ Error during ${signal} shutdown:`, shutdownError);
+            }
+            process.exit(1);
+          }
+        };
+
+        process.on('SIGTERM', () => {
+          void shutdownHandler('SIGTERM');
+        });
+
+        process.on('SIGINT', () => {
+          void shutdownHandler('SIGINT');
+        });
+      }
+    }
 
     // Health check endpoint for Docker
     if (process.argv.includes('--healthcheck')) {
@@ -159,15 +208,9 @@ async function bootstrap() {
   }
 }
 
-// Handle unhandled rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-process.on('uncaughtException', error => {
-  console.error('🚨 Uncaught Exception:', error);
-  process.exit(1);
-});
+// Process error handlers are set up by ProcessErrorHandlersService in bootstrap()
+// These fallback handlers are only used if ProcessErrorHandlersService is not available
+// They will be replaced once the service is initialized
 
 bootstrap().catch(error => {
   console.error('🚨 Bootstrap failed:', error);

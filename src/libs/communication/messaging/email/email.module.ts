@@ -7,7 +7,6 @@ import { SESEmailService } from '@communication/messaging/email/ses-email.servic
 import { ConfigModule } from '@config';
 import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database';
-import { QueueModule } from '@infrastructure/queue';
 import { BullModule } from '@nestjs/bullmq';
 import { EMAIL_QUEUE } from '@infrastructure/queue';
 

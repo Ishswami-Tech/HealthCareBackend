@@ -58,7 +58,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DatabaseService } from '@infrastructure/database'; // ✅ Use DatabaseService (NOT PrismaService)
 import { RedisService } from '@infrastructure/cache';
 import { QueueService } from '@infrastructure/queue';
-import { EventsService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2)
+import { EventCategory, EventPriority } from '@core/types';
 
 // 3. Internal imports - Core layer
 import { JwtAuthGuard } from '@core/guards';
@@ -319,6 +320,54 @@ import { RedisService } from '@infrastructure/cache';
 
 // ❌ DON'T
 import { UserService } from '../../../services/users/user.service';
+```
+
+### **Event Service Usage Pattern (MANDATORY)**
+```typescript
+// ✅ DO - Use EventService for all event emissions
+import { EventService } from "@infrastructure/events";
+import { EventCategory, EventPriority } from "@core/types";
+
+@Injectable()
+export class UserService {
+  constructor(private readonly eventService: EventService) {}
+
+  async createUser(data: CreateUserDto): Promise<User> {
+    const user = await this.databaseService.createUserSafe(data);
+
+    // Emit enterprise-grade event
+    await this.eventService.emitEnterprise('user.created', {
+      eventId: `user-created-${user.id}`,
+      eventType: 'user.created',
+      category: EventCategory.USER_ACTIVITY,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'UserService',
+      version: '1.0.0',
+      userId: user.id,
+      clinicId: user.clinicId,
+      payload: { user }
+    });
+
+    return user;
+  }
+}
+
+// ❌ DON'T - Never use EventEmitter2 directly
+import { EventEmitter2 } from "@nestjs/event-emitter";
+this.eventEmitter.emit('user.created', { user }); // Missing: circuit breaker, rate limiting, persistence, HIPAA compliance
+
+// ✅ DO - Use EventService simple API for basic events
+await this.eventService.emit('user.created', { userId: '123' });
+
+// ✅ DO - Use EventService enterprise API for advanced features
+await this.eventService.emitEnterprise('user.created', {
+  eventId: 'evt_123',
+  eventType: 'user.created',
+  category: EventCategory.USER_ACTIVITY,
+  priority: EventPriority.HIGH,
+  payload: { userId: '123' }
+});
 ```
 
 ### **Database Usage Pattern (MANDATORY)**

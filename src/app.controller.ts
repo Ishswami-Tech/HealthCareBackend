@@ -1,4 +1,4 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Res, Inject, forwardRef } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
 import { Public } from '@core/decorators/public.decorator';
@@ -7,21 +7,64 @@ import { FastifyReply } from 'fastify';
 import { HealthService } from './services/health/health.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import type {
-  ServiceInfo,
-  DashboardLogEntry,
-  LoggingServiceLogEntry,
-  DashboardData,
-} from '@core/types/app.types';
+import type { DetailedHealthCheckResponse, ServiceHealth } from '@core/types/common.types';
+
+// Local types for dashboard
+interface ServiceInfo {
+  name: string;
+  description: string;
+  url: string;
+  active: boolean;
+  category: string;
+  credentials?: string;
+  devOnly?: boolean;
+}
+
+interface DashboardLogEntry {
+  timestamp: string | Date;
+  level: string;
+  message: string;
+  source: string;
+  data: string;
+}
+
+interface LoggingServiceLogEntry {
+  timestamp?: string | Date;
+  level?: string;
+  message?: string;
+  type?: string;
+  metadata?: unknown;
+}
+
+interface DashboardData {
+  overallHealth: {
+    status: 'healthy' | 'degraded';
+    statusText: string;
+    healthyCount: number;
+    totalCount: number;
+    lastChecked: string;
+    details: string;
+  };
+  services: Array<{
+    id: string;
+    name: string;
+    status: string;
+    isHealthy: boolean;
+    responseTime: number;
+    details: string;
+    lastChecked: string;
+    metrics: Record<string, unknown>;
+  }>;
+}
 
 @ApiTags('root')
 @Controller()
 export class AppController {
   constructor(
     private readonly appService: AppService,
-    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
     private readonly healthService: HealthService,
-    private readonly loggingService: LoggingService
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {}
 
   @Get()
@@ -36,73 +79,284 @@ export class AppController {
   })
   async getDashboard(@Res() res: FastifyReply) {
     try {
-      const host: string = this.configService?.get<string>('API_URL') || process.env['API_URL'] || 'https://api.ishswami.in';
+      const host: string =
+        this.configService?.get<string>('API_URL') ||
+        process.env['API_URL'] ||
+        'https://api.ishswami.in';
       const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
       const isProduction = process.env['NODE_ENV'] === 'production';
 
-      // Get real-time service status from health service with error handling
+      // Get real-time service status from health service with comprehensive error handling
+      // HealthService is now independent and always returns a valid response
       let healthData;
       try {
-        healthData = await this.healthService.checkDetailedHealth();
+        // Add timeout to prevent hanging - HealthService should respond quickly
+        const healthCheckPromise = this.healthService.checkDetailedHealth();
+        const timeoutPromise = new Promise<DetailedHealthCheckResponse>(resolve => {
+          setTimeout(() => {
+            resolve({
+              status: 'degraded',
+              timestamp: new Date().toISOString(),
+              environment: process.env['NODE_ENV'] || 'development',
+              version: process.env['npm_package_version'] || '0.0.1',
+              systemMetrics: {
+                uptime: process.uptime(),
+                memoryUsage: {
+                  heapTotal: 0,
+                  heapUsed: 0,
+                  rss: 0,
+                  external: 0,
+                  systemTotal: 0,
+                  systemFree: 0,
+                  systemUsed: 0,
+                },
+                cpuUsage: {
+                  user: 0,
+                  system: 0,
+                  cpuCount: 0,
+                  cpuModel: 'unknown',
+                  cpuSpeed: 0,
+                },
+              },
+              services: {
+                api: {
+                  status: 'unhealthy',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                },
+                database: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  metrics: {
+                    queryResponseTime: 0,
+                    activeConnections: 0,
+                    maxConnections: 0,
+                    connectionUtilization: 0,
+                  },
+                },
+                redis: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  metrics: {
+                    connectedClients: 0,
+                    usedMemory: 0,
+                    totalKeys: 0,
+                    lastSave: new Date().toISOString(),
+                  },
+                },
+                queues: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                },
+                logger: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                },
+                socket: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                },
+                email: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                },
+              },
+              processInfo: {
+                pid: process.pid,
+                ppid: process.ppid,
+                platform: process.platform,
+                versions: {},
+              },
+              memory: {
+                heapUsed: 0,
+                heapTotal: 0,
+                external: 0,
+                arrayBuffers: 0,
+              },
+              cpu: {
+                user: 0,
+                system: 0,
+              },
+            });
+          }, 10000); // 10 second timeout
+        });
+        healthData = await Promise.race([healthCheckPromise, timeoutPromise]);
       } catch (healthError) {
-        // If health check fails, use default degraded status
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'Health check failed in dashboard, using default status',
-          'AppController',
-          {
-            error: healthError instanceof Error ? healthError.message : String(healthError),
-          }
-        );
+        // If health check fails completely, use default degraded status
+        // This should rarely happen as HealthService is designed to never throw
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Health check failed in dashboard, using default status',
+            'AppController',
+            {
+              error: healthError instanceof Error ? healthError.message : String(healthError),
+              stack: healthError instanceof Error ? healthError.stack : undefined,
+            }
+          );
+        }
         // Create a default health data structure
         healthData = {
           status: 'degraded',
           timestamp: new Date().toISOString(),
           environment: process.env['NODE_ENV'] || 'development',
+          version: process.env['npm_package_version'] || '0.0.1',
+          systemMetrics: {
+            uptime: process.uptime(),
+            memoryUsage: {
+              heapTotal: 0,
+              heapUsed: 0,
+              rss: 0,
+              external: 0,
+              systemTotal: 0,
+              systemFree: 0,
+              systemUsed: 0,
+            },
+            cpuUsage: {
+              user: 0,
+              system: 0,
+              cpuCount: 0,
+              cpuModel: 'unknown',
+              cpuSpeed: 0,
+            },
+          },
           services: {
-            api: { status: 'unhealthy', responseTime: 0, lastChecked: new Date().toISOString() },
-            database: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
-            redis: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
-            queues: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
-            logger: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
-            socket: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
-            email: { status: 'unknown', responseTime: 0, lastChecked: new Date().toISOString() },
+            api: {
+              status: 'unhealthy',
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+            database: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              metrics: {
+                queryResponseTime: 0,
+                activeConnections: 0,
+                maxConnections: 0,
+                connectionUtilization: 0,
+              },
+            },
+            redis: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              metrics: {
+                connectedClients: 0,
+                usedMemory: 0,
+                totalKeys: 0,
+                lastSave: new Date().toISOString(),
+              },
+            },
+            queues: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+            logger: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+            socket: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+            email: {
+              status: 'unhealthy' as const,
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+            },
+          },
+          processInfo: {
+            pid: process.pid,
+            ppid: process.ppid,
+            platform: process.platform,
+            versions: {},
+          },
+          memory: {
+            heapUsed: 0,
+            heapTotal: 0,
+            external: 0,
+            arrayBuffers: 0,
+          },
+          cpu: {
+            user: 0,
+            system: 0,
           },
         };
       }
 
-      // Map health data to service status format
+      // Map health data to service status format with defensive null checks
+      const healthServices =
+        (healthData && 'services' in healthData ? healthData.services : {}) || {};
       const healthStatus = {
         api: {
-          status: healthData.services.api.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices.api as ServiceHealth | undefined)?.status === 'healthy' ? 'up' : 'down',
         },
         redis: {
-          status: healthData.services.redis.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices.redis as ServiceHealth | undefined)?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         database: {
-          status: healthData.services.database.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices.database as ServiceHealth | undefined)?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         queues: {
-          status: healthData.services.queues.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices.queues as ServiceHealth | undefined)?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         logger: {
-          status: healthData.services.logger.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices.logger as ServiceHealth | undefined)?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         socket: {
-          status: healthData.services.socket.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices.socket as ServiceHealth | undefined)?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         email: {
-          status: healthData.services.email.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices.email as ServiceHealth | undefined)?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         prismaStudio: {
-          status: healthData.services.prismaStudio?.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices as { prismaStudio?: ServiceHealth }).prismaStudio?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         redisCommander: {
-          status: healthData.services.redisCommander?.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices as { redisCommander?: ServiceHealth }).redisCommander?.status ===
+            'healthy'
+              ? 'up'
+              : 'down',
         },
         pgAdmin: {
-          status: healthData.services.pgAdmin?.status === 'healthy' ? 'up' : 'down',
+          status:
+            (healthServices as { pgAdmin?: ServiceHealth }).pgAdmin?.status === 'healthy'
+              ? 'up'
+              : 'down',
         },
         lastUpdated: new Date(),
       };
@@ -201,14 +455,23 @@ export class AppController {
       }
 
       // Filter services based on environment
-      const services = isProduction ? allServices.filter(service => !service.devOnly) : allServices;
+      const services = isProduction
+        ? allServices.filter((service: ServiceInfo) => !service.devOnly)
+        : allServices;
 
-      // Calculate overall system health
-      const totalServices = Object.keys(healthData.services).length;
-      const healthyServices = Object.values(healthData.services).filter(
-        (service: { status?: string }) => service?.status === 'healthy'
-      ).length;
-      const isSystemHealthy = healthyServices === totalServices;
+      // Calculate overall system health with defensive checks
+      const servicesData = healthData && 'services' in healthData ? healthData.services : {};
+      const totalServices = servicesData ? Object.keys(servicesData).length : 0;
+      const healthyServices = servicesData
+        ? Object.values(servicesData).filter(
+            (service: unknown): service is ServiceHealth =>
+              typeof service === 'object' &&
+              service !== null &&
+              'status' in service &&
+              (service as ServiceHealth).status === 'healthy'
+          ).length
+        : 0;
+      const isSystemHealthy = totalServices > 0 && healthyServices === totalServices;
 
       // Initialize health dashboard data
       const dashboardData: DashboardData = {
@@ -220,23 +483,25 @@ export class AppController {
           lastChecked: new Date().toLocaleString(),
           details: `${healthyServices} of ${totalServices} services are healthy`,
         },
-        services: Object.entries(healthData.services).map(([name, service]) => {
-          const serviceData = service as { status?: string; responseTime?: number; details?: string; lastChecked?: string };
-          return {
-          id: name.toLowerCase(),
-          name: name.charAt(0).toUpperCase() + name.slice(1),
-            status: serviceData.status || 'unknown',
-            isHealthy: serviceData.status === 'healthy',
-            responseTime: serviceData.responseTime || 0,
-          details:
-              serviceData.details ||
-              (serviceData.status === 'healthy'
-              ? 'Service is responding normally'
-              : 'Service is experiencing issues'),
-            lastChecked: serviceData.lastChecked || new Date().toLocaleString(),
-          metrics: {},
-          };
-        }),
+        services: servicesData
+          ? Object.entries(servicesData).map(([name, service]) => {
+              const serviceData = service as ServiceHealth;
+              return {
+                id: name.toLowerCase(),
+                name: name.charAt(0).toUpperCase() + name.slice(1),
+                status: serviceData.status || 'unhealthy',
+                isHealthy: serviceData.status === 'healthy',
+                responseTime: serviceData.responseTime || 0,
+                details:
+                  serviceData.details ||
+                  (serviceData.status === 'healthy'
+                    ? 'Service is responding normally'
+                    : 'Service is experiencing issues'),
+                lastChecked: serviceData.lastChecked || new Date().toLocaleString(),
+                metrics: {},
+              };
+            })
+          : [],
       };
 
       // Only fetch logs in development mode
@@ -279,7 +544,10 @@ export class AppController {
     description: 'WebSocket test page HTML',
   })
   async getSocketTestPage(@Res() res: FastifyReply) {
-    const baseUrl: string = this.configService?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:8088';
+    const baseUrl: string =
+      this.configService?.get<string>('API_URL') ||
+      process.env['API_URL'] ||
+      'http://localhost:8088';
 
     const html = `
 <!DOCTYPE html>
@@ -515,13 +783,11 @@ export class AppController {
 
       return logs.slice(0, limit).map(
         (log: LoggingServiceLogEntry): DashboardLogEntry => ({
-          timestamp: log.timestamp || new Date().toISOString(),
-          level: log.level || 'info',
-          message: log.message || 'No message',
-          source: log.type || 'Unknown',
-          data: (log as { metadata?: unknown }).metadata
-            ? JSON.stringify((log as { metadata?: unknown }).metadata)
-            : '{}',
+          timestamp: (log.timestamp as string | Date) || new Date().toISOString(),
+          level: (log.level as string) || 'info',
+          message: (log.message as string) || 'No message',
+          source: (log.type as string) || 'Unknown',
+          data: log.metadata ? JSON.stringify(log.metadata) : '{}',
         })
       );
     } catch (_error) {
@@ -969,7 +1235,7 @@ export class AppController {
             <div class="services-grid">
                 ${services
                   .map(
-                    service => `
+                    (service: ServiceInfo) => `
                     <div class="service-card">
                         <div class="service-card-header">
                             <div class="service-header-content">
@@ -1029,7 +1295,16 @@ export class AppController {
             <div style="margin-top: 1.5rem;">
                 ${healthData.services
                   .map(
-                    service => `
+                    (service: {
+                      id: string;
+                      name: string;
+                      status: string;
+                      isHealthy: boolean;
+                      responseTime: number;
+                      details: string;
+                      lastChecked: string;
+                      metrics: Record<string, unknown>;
+                    }) => `
                     <div class="service-section ${service.isHealthy ? 'healthy' : 'unhealthy'}">
                         <div class="service-header">
                             <div class="service-header-content">
@@ -1047,14 +1322,34 @@ export class AppController {
                                 <span class="metric-value">${service.responseTime} ms</span>
                             </div>
                             ${Object.entries(service.metrics || {})
-                              .map(
-                                ([key, value]: [string, string | number | boolean | undefined]) => `
+                              .map(([key, value]: [string, unknown]) => {
+                                let displayValue = 'N/A';
+                                if (value !== null && value !== undefined) {
+                                  if (
+                                    typeof value === 'object' &&
+                                    !Array.isArray(value) &&
+                                    value.constructor === Object
+                                  ) {
+                                    displayValue = JSON.stringify(value);
+                                  } else if (Array.isArray(value)) {
+                                    displayValue = JSON.stringify(value);
+                                  } else if (
+                                    typeof value === 'string' ||
+                                    typeof value === 'number' ||
+                                    typeof value === 'boolean'
+                                  ) {
+                                    displayValue = String(value);
+                                  } else {
+                                    displayValue = JSON.stringify(value);
+                                  }
+                                }
+                                return `
                                 <div class="metric">
                                     <span class="metric-label">${key}</span>
-                                    <span class="metric-value">${value ?? 'N/A'}</span>
+                                    <span class="metric-value">${displayValue}</span>
                                 </div>
-                            `
-                              )
+                            `;
+                              })
                               .join('')}
                             <div class="metric">
                                 <span class="metric-label">Last Checked</span>
@@ -1091,22 +1386,23 @@ export class AppController {
                                   typeof log.timestamp === 'string'
                                     ? log.timestamp
                                     : new Date(log.timestamp).toISOString();
+                                const level = typeof log.level === 'string' ? log.level : 'info';
                                 return `
                                 <tr>
                                     <td>${formatDateTime(timestamp)}</td>
                                     <td>
                                         <span class="log-level ${
-                                          log.level === 'error'
+                                          level === 'error'
                                             ? 'log-level-error'
-                                            : log.level === 'warn'
+                                            : level === 'warn'
                                               ? 'log-level-warn'
                                               : 'log-level-info'
                                         }">
-                                            ${log.level || 'info'}
+                                            ${level}
                                         </span>
                                     </td>
-                                    <td>${log.source || 'Unknown'}</td>
-                                    <td>${log.message || 'No message'}</td>
+                                    <td>${typeof log.source === 'string' ? log.source : 'Unknown'}</td>
+                                    <td>${typeof log.message === 'string' ? log.message : 'No message'}</td>
                                 </tr>
                             `;
                               })

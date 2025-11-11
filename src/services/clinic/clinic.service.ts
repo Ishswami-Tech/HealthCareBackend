@@ -6,7 +6,14 @@ import type {
   ClinicCreateInput,
   ClinicUpdateInput,
   ClinicResponseDto,
+  ClinicLocationResponseDto,
 } from '@core/types/clinic.types';
+import type { PatientWithUser, Doctor, ClinicAdmin, Clinic } from '@core/types';
+import type { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 
 @Injectable()
 export class ClinicService {
@@ -28,9 +35,10 @@ export class ClinicService {
         dataWithDefaults.db_connection_string ||
         `postgresql://localhost:5432/${dataWithDefaults.databaseName || `clinic_${clinicId.toLowerCase().replace(/[^a-z0-9]/g, '_')}`}`;
 
-      const clinic = await this.databaseService.executeHealthcareWrite(
+      const clinic = await this.databaseService.executeHealthcareWrite<Clinic>(
         async client => {
-          return await client.clinic.create({
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinic.create({
             data: {
               name: data.name,
               address: data.address,
@@ -48,14 +56,14 @@ export class ClinicService {
               language: data.language,
               createdBy: data.createdBy,
               isActive: data.isActive ?? true,
-            },
+            } as PrismaDelegateArgs,
             include: {
               locations: {
-                where: { isActive: true },
+                where: { isActive: true } as PrismaDelegateArgs,
                 take: 1,
-              },
-            },
-          });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: data.createdBy || 'system',
@@ -116,9 +124,12 @@ export class ClinicService {
         };
       }
 
-      const clinic = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findFirst(queryOptions);
-      });
+      const clinic = await this.databaseService.executeHealthcareRead<Clinic | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinic.findFirst(queryOptions as PrismaDelegateArgs);
+        }
+      );
 
       return clinic as ClinicResponseDto | null;
     } catch (error) {
@@ -136,21 +147,22 @@ export class ClinicService {
   async updateClinic(id: string, data: ClinicUpdateInput): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareWrite for update with full optimization layers
-      const clinic = await this.databaseService.executeHealthcareWrite(
+      const clinic = await this.databaseService.executeHealthcareWrite<Clinic>(
         async client => {
-          return await client.clinic.update({
-            where: { id },
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinic.update({
+            where: { id } as PrismaDelegateArgs,
             data: {
               ...data,
               updatedAt: new Date(),
-            },
+            } as PrismaDelegateArgs,
             include: {
               locations: {
-                where: { isActive: true },
+                where: { isActive: true } as PrismaDelegateArgs,
                 take: 1,
-              },
-            },
-          });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: 'system',
@@ -187,12 +199,13 @@ export class ClinicService {
   async getClinicCount(): Promise<number> {
     try {
       // Use executeHealthcareRead for count query
-      const count = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.count({
+      const count = await this.databaseService.executeHealthcareRead<number>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.clinic.count({
           where: {
             isActive: true,
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       });
 
       return count;
@@ -216,15 +229,17 @@ export class ClinicService {
     try {
       // Use executeHealthcareRead for parallel queries with optimization
       const [totalUsers, totalLocations, totalAppointments] = await Promise.all([
-        this.databaseService.executeHealthcareRead(async client => {
-          return await client.userRole.count({
-            where: { clinicId, isActive: true },
-          });
+        this.databaseService.executeHealthcareRead<number>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.userRole.count({
+            where: { clinicId, isActive: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         }),
-        this.databaseService.executeHealthcareRead(async client => {
-          return await client.clinicLocation.count({
-            where: { clinicId, isActive: true },
-          });
+        this.databaseService.executeHealthcareRead<number>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinicLocation.count({
+            where: { clinicId, isActive: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         }),
         this.databaseService.countAppointmentsSafe({
           clinicId,
@@ -251,16 +266,17 @@ export class ClinicService {
   async getAllClinics(userId: string): Promise<ClinicResponseDto[]> {
     try {
       // Use executeHealthcareRead for optimized query
-      const clinics = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findMany({
-          where: { createdBy: userId },
+      const clinics = await this.databaseService.executeHealthcareRead<Clinic[]>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.clinic.findMany({
+          where: { createdBy: userId } as PrismaDelegateArgs,
           include: {
             locations: {
-              where: { isActive: true },
+              where: { isActive: true } as PrismaDelegateArgs,
               take: 1,
-            },
-          },
-        });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       });
       return clinics as ClinicResponseDto[];
     } catch (error) {
@@ -278,18 +294,21 @@ export class ClinicService {
   async getClinicById(id: string, includeInactive = false): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareRead for optimized query
-      const clinic = await this.databaseService.executeHealthcareRead(async client => {
-        const whereClause = includeInactive ? { id } : { id, isActive: true };
-        return await client.clinic.findUnique({
-          where: whereClause,
-          include: {
-            locations: {
-              where: { isActive: true },
-              take: 1,
-            },
-          },
-        });
-      });
+      const clinic = await this.databaseService.executeHealthcareRead<Clinic | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const whereClause = includeInactive ? { id } : { id, isActive: true };
+          return await typedClient.clinic.findUnique({
+            where: whereClause as PrismaDelegateArgs,
+            include: {
+              locations: {
+                where: { isActive: true } as PrismaDelegateArgs,
+                take: 1,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+      );
       if (!clinic) throw new Error('Clinic not found');
       return clinic as ClinicResponseDto;
     } catch (error) {
@@ -307,9 +326,12 @@ export class ClinicService {
   async deleteClinic(id: string): Promise<void> {
     try {
       // Use executeHealthcareWrite for delete with audit logging
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<Clinic>(
         async client => {
-          return await client.clinic.delete({ where: { id } });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinic.delete({
+            where: { id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: 'system',
@@ -343,17 +365,20 @@ export class ClinicService {
   async getClinicByAppName(appName: string): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareRead for optimized query
-      const clinic = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findFirst({
-          where: { app_name: appName },
-          include: {
-            locations: {
-              where: { isActive: true },
-              take: 1,
-            },
-          },
-        });
-      });
+      const clinic = await this.databaseService.executeHealthcareRead<Clinic | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinic.findFirst({
+            where: { app_name: appName } as PrismaDelegateArgs,
+            include: {
+              locations: {
+                where: { isActive: true } as PrismaDelegateArgs,
+                take: 1,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+      );
       if (!clinic) throw new Error('Clinic not found');
       return clinic as ClinicResponseDto;
     } catch (error) {
@@ -368,18 +393,32 @@ export class ClinicService {
     }
   }
 
-  async getClinicDoctors(id: string, _userId: string): Promise<unknown[]> {
+  async getClinicDoctors(
+    id: string,
+    _userId: string
+  ): Promise<Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>> {
     try {
       // Use executeHealthcareRead for optimized query - Doctor is linked via DoctorClinic
-      const doctors = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.doctorClinic.findMany({
-          where: { clinicId: id },
+      const doctors = await this.databaseService.executeHealthcareRead<
+        Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          doctorClinic: {
+            findMany: (
+              args: PrismaDelegateArgs
+            ) => Promise<
+              Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>
+            >;
+          };
+        };
+        return await typedClient.doctorClinic.findMany({
+          where: { clinicId: id } as PrismaDelegateArgs,
           include: {
             doctor: {
-              include: { user: true },
-            },
-          },
-        });
+              include: { user: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       });
       return doctors;
     } catch (error) {
@@ -394,30 +433,35 @@ export class ClinicService {
     }
   }
 
-  async getClinicPatients(id: string, _userId: string): Promise<unknown[]> {
+  async getClinicPatients(id: string, _userId: string): Promise<PatientWithUser[]> {
     try {
       // Use executeHealthcareRead for optimized query - Patients linked via appointments
-      const patients = await this.databaseService.executeHealthcareRead(async client => {
-        // Get unique patient IDs from appointments
-        const appointments = await client.appointment.findMany({
-          where: { clinicId: id },
-          select: { patientId: true },
-          distinct: ['patientId'],
-        });
+      const patients = await this.databaseService.executeHealthcareRead<PatientWithUser[]>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          // Get unique patient IDs from appointments
+          const appointments = await typedClient.appointment.findMany({
+            where: { clinicId: id } as PrismaDelegateArgs,
+            select: { patientId: true } as PrismaDelegateArgs,
+            distinct: ['patientId'] as unknown as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
 
-        const patientIds = appointments.map((a: { patientId: string }) => a.patientId);
+          const typedAppointments = appointments as Array<{ patientId: string }>;
+          const patientIds = typedAppointments.map((a: { patientId: string }) => a.patientId);
 
-        if (patientIds.length === 0) {
-          return [];
+          if (patientIds.length === 0) {
+            return [];
+          }
+
+          const result = await typedClient.patient.findMany({
+            where: {
+              id: { in: patientIds },
+            } as PrismaDelegateArgs,
+            include: { user: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return result as unknown as PatientWithUser[];
         }
-
-        return await client.patient.findMany({
-          where: {
-            id: { in: patientIds },
-          },
-          include: { user: true },
-        });
-      });
+      );
       return patients;
     } catch (error) {
       void this.loggingService.log(
@@ -431,13 +475,17 @@ export class ClinicService {
     }
   }
 
-  async getActiveLocations(clinicId: string): Promise<unknown[]> {
+  async getActiveLocations(clinicId: string): Promise<ClinicLocationResponseDto[]> {
     try {
       // Use executeHealthcareRead for optimized query
-      const locations = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinicLocation.findMany({
-          where: { clinicId, isActive: true },
-        });
+      const locations = await this.databaseService.executeHealthcareRead<
+        ClinicLocationResponseDto[]
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.clinicLocation.findMany({
+          where: { clinicId, isActive: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as ClinicLocationResponseDto[];
       });
       return locations;
     } catch (error) {
@@ -452,24 +500,30 @@ export class ClinicService {
     }
   }
 
-  async assignClinicAdmin(data: Record<string, unknown>): Promise<unknown> {
+  async assignClinicAdmin(
+    data: AssignClinicAdminDto
+  ): Promise<ClinicAdmin & { user: { id: string; name: string; email: string } }> {
     try {
       // Use executeHealthcareWrite for create with audit logging
-      const userId =
-        'userId' in data && typeof data['userId'] === 'string' ? data['userId'] : 'system';
-      const clinicId =
-        'clinicId' in data && typeof data['clinicId'] === 'string' ? data['clinicId'] : '';
+      const userId = data.userId;
+      const clinicId = data.clinicId;
 
-      const admin = await this.databaseService.executeHealthcareWrite(
+      const admin = await this.databaseService.executeHealthcareWrite<
+        ClinicAdmin & { user: { id: string; name: string; email: string } }
+      >(
         async client => {
-          return await client.clinicAdmin.create({
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const result = await typedClient.clinicAdmin.create({
             data: {
               userId,
               clinicId,
               isOwner: 'isOwner' in data ? Boolean(data['isOwner']) : false,
-            },
-            include: { user: true },
-          });
+            } as PrismaDelegateArgs,
+            include: { user: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return result as unknown as ClinicAdmin & {
+            user: { id: string; name: string; email: string };
+          };
         },
         {
           userId,
@@ -494,23 +548,28 @@ export class ClinicService {
     }
   }
 
-  async registerPatientToClinic(data: Record<string, unknown>): Promise<unknown> {
+  async registerPatientToClinic(data: {
+    userId: string;
+    clinicId: string;
+  }): Promise<PatientWithUser> {
     try {
       // Use executeHealthcareWrite for create with audit logging
-      const userId = 'userId' in data && typeof data['userId'] === 'string' ? data['userId'] : '';
+      const userId = data.userId;
 
       if (!userId) {
         throw new Error('userId is required');
       }
 
-      const patient = await this.databaseService.executeHealthcareWrite(
+      const patient = await this.databaseService.executeHealthcareWrite<PatientWithUser>(
         async client => {
-          return await client.patient.create({
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const result = await typedClient.patient.create({
             data: {
               userId,
-            },
-            include: { user: true },
-          });
+            } as PrismaDelegateArgs,
+            include: { user: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return result as unknown as PatientWithUser;
         },
         {
           userId,
@@ -535,13 +594,15 @@ export class ClinicService {
     }
   }
 
-  async associateUserWithClinic(data: Record<string, unknown>): Promise<unknown> {
+  async associateUserWithClinic(data: {
+    userId: string;
+    clinicId: string;
+  }): Promise<{ id: string; userId: string; clinicId: string; createdAt: Date; updatedAt: Date }> {
     try {
       // Use executeHealthcareWrite for create with audit logging
       // Note: User-clinic association is handled via UserRole in RBAC system
-      const userId = 'userId' in data && typeof data['userId'] === 'string' ? data['userId'] : '';
-      const clinicIdOrAppName =
-        'clinicId' in data && typeof data['clinicId'] === 'string' ? data['clinicId'] : '';
+      const userId = data.userId;
+      const clinicIdOrAppName = data.clinicId;
 
       // If clinicId is actually an app name, resolve it to clinicId
       let clinicId = clinicIdOrAppName;
@@ -556,10 +617,13 @@ export class ClinicService {
 
       // Association is handled through UserRole - this method is kept for backward compatibility
       // Actual association should use ClinicUserService
+      // Return a placeholder object matching the expected type
       return {
+        id: '', // Placeholder - actual association uses UserRole
         userId,
         clinicId,
-        associated: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
     } catch (error) {
       void this.loggingService.log(
@@ -576,17 +640,20 @@ export class ClinicService {
   async getCurrentUserClinic(userId: string): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareRead for optimized query - get clinic via UserRole
-      const userRole = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.userRole.findFirst({
+      const userRole = await this.databaseService.executeHealthcareRead<{
+        clinicId: string | null;
+      } | null>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.userRole.findFirst({
           where: {
             userId,
             isActive: true,
             clinicId: { not: null },
-          },
+          } as PrismaDelegateArgs,
           include: {
             role: true,
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       });
 
       if (!userRole || !userRole.clinicId) {

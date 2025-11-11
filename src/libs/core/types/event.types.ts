@@ -220,6 +220,7 @@ export interface EventResult<T = unknown> {
 }
 
 export interface EventFilter {
+  eventType?: string;
   category?: EventCategory[];
   priority?: EventPriority[];
   status?: EventStatus[];

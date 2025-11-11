@@ -66,7 +66,8 @@ import { PrismaService } from '@infrastructure/database';
 import { RedisService } from '@cache';
 import { LoggingService } from '@logging';
 import { QueueService } from '@queue';
-import { EventsService } from '@events';
+import { EventService } from '@infrastructure/events';
+import { EventCategory, EventPriority } from '@core/types';
 
 import { AuthDto, CreateUserDto } from '@dtos';
 
@@ -102,7 +103,7 @@ export class UserService {
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventService: EventService,
     private readonly sessionService: SessionService,
     private readonly rbacService: RbacService
   ) {}
@@ -125,10 +126,21 @@ export class UserService {
         }
       });
 
-      // Emit event for other services
-      this.eventEmitter.emit('user.created', {
+      // Emit event for other services using EnterpriseEventService
+      await this.eventService.emitEnterprise('user.created', {
+        eventId: `user-created-${user.id}`,
+        eventType: 'user.created',
+        category: EventCategory.USER_ACTIVITY,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'UserService',
+        version: '1.0.0',
+        userId: user.id,
+        clinicId: requestContext?.clinicId,
+        payload: {
         user,
         context: requestContext
+        }
       });
 
       // Cache the result (with clinic-specific key if applicable)

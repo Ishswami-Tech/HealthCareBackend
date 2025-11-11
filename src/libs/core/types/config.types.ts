@@ -306,5 +306,3 @@ export interface ConfigValidationResult {
   /** Array of validation warnings */
   readonly warnings: readonly string[];
 }
-
-

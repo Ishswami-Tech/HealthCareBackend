@@ -4,6 +4,7 @@ import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { TokenPayload, AuthTokens } from '@core/types';
 import * as crypto from 'crypto';
+import { SignOptions } from 'jsonwebtoken';
 
 @Injectable()
 export class JwtAuthService {
@@ -33,10 +34,13 @@ export class JwtAuthService {
    */
   async generateAccessToken(payload: TokenPayload): Promise<string> {
     try {
-      const expiresInValue = this.configService?.get<string>('JWT_ACCESS_EXPIRES_IN') || process.env['JWT_ACCESS_EXPIRES_IN'] || '15m';
+      const expiresInValue: string =
+        this.configService?.get<string>('JWT_ACCESS_EXPIRES_IN') ||
+        process.env['JWT_ACCESS_EXPIRES_IN'] ||
+        '15m';
       return await this.jwtService.signAsync(payload, {
-        expiresIn: expiresInValue,
-      } as any);
+        expiresIn: expiresInValue as SignOptions['expiresIn'],
+      } as SignOptions);
     } catch (_error) {
       this.logger.error(
         'Failed to generate access token',
@@ -51,10 +55,13 @@ export class JwtAuthService {
    */
   async generateRefreshToken(payload: TokenPayload): Promise<string> {
     try {
-      const expiresInValue = this.configService?.get<string>('JWT_REFRESH_EXPIRES_IN') || process.env['JWT_REFRESH_EXPIRES_IN'] || '7d';
+      const expiresInValue =
+        this.configService?.get<string>('JWT_REFRESH_EXPIRES_IN') ||
+        process.env['JWT_REFRESH_EXPIRES_IN'] ||
+        '7d';
       return await this.jwtService.signAsync(payload, {
-        expiresIn: expiresInValue,
-      } as any);
+        expiresIn: expiresInValue as SignOptions['expiresIn'],
+      } as SignOptions);
     } catch (_error) {
       this.logger.error(
         'Failed to generate refresh token',

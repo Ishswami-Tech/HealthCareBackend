@@ -202,21 +202,45 @@ export class LoggingService {
           if (this.databaseService) {
             // Use a system user or skip user-dependent operations
             try {
-              const systemUser = await this.databaseService.getPrismaClient().user.findFirst({
-                where: { email: 'system@healthcare.local' },
-              });
+              const systemUser = (await this.databaseService.executeHealthcareRead(async client => {
+                return (await (
+                  client['user'] as {
+                    findFirst: (args: {
+                      where: { email: string };
+                    }) => Promise<{ id: string } | null>;
+                  }
+                ).findFirst({
+                  where: { email: 'system@healthcare.local' },
+                })) as unknown as { id: string } | null;
+              })) as unknown as { id: string } | null;
 
               if (systemUser) {
-                await this.databaseService.getPrismaClient().auditLog.create({
-                  data: {
-                    userId: systemUser.id,
-                    action: type as string,
-                    description: context,
-                    ipAddress: (metadata['ipAddress'] as string | null) || null,
-                    device: (metadata['userAgent'] as string | null) || null,
-                    clinicId: (metadata['clinicId'] as string | null) || null,
+                await this.databaseService.executeHealthcareWrite(
+                  async client => {
+                    const auditLog = client['auditLog'] as {
+                      create: (args: { data: unknown }) => Promise<{ id: string }>;
+                    };
+                    return (await auditLog.create({
+                      data: {
+                        userId: systemUser.id,
+                        action: type as string,
+                        description: context,
+                        ipAddress: (metadata['ipAddress'] as string | null) || null,
+                        device: (metadata['userAgent'] as string | null) || null,
+                        clinicId: (metadata['clinicId'] as string | null) || null,
+                      },
+                    })) as unknown as { id: string };
                   },
-                });
+                  {
+                    userId: systemUser.id,
+                    userRole: 'system',
+                    clinicId: (metadata['clinicId'] as string) || '',
+                    operation: `LOG_${type}`,
+                    resourceType: 'AUDIT_LOG',
+                    resourceId: 'pending',
+                    timestamp: new Date(),
+                  }
+                );
               }
             } catch (_auditError) {
               // Silent fail for audit log creation - resilient logging for high scale
@@ -363,22 +387,47 @@ export class LoggingService {
 
       // Temporarily bypass database query due to schema migration issues
       try {
-        const dbLogs = (await this.databaseService.getPrismaClient().auditLog.findMany({
-          where: whereClause as PrismaDelegateArgs,
-          orderBy: {
-            timestamp: 'desc',
-          },
-          take: 1000, // Increased for 1M users
-          select: {
-            id: true,
-            action: true,
-            description: true,
-            timestamp: true,
-            userId: true,
-            ipAddress: true,
-            device: true,
-            clinicId: true,
-          },
+        const dbLogs = (await this.databaseService.executeHealthcareRead(async client => {
+          const auditLog = client['auditLog'] as {
+            findMany: (args: unknown) => Promise<
+              Array<{
+                id: string;
+                action: string;
+                description: string;
+                timestamp: Date;
+                userId: string;
+                ipAddress: string | null;
+                device: string | null;
+                clinicId: string | null;
+              }>
+            >;
+          };
+          return (await auditLog.findMany({
+            where: whereClause as PrismaDelegateArgs,
+            orderBy: {
+              timestamp: 'desc',
+            },
+            take: 1000, // Increased for 1M users
+            select: {
+              id: true,
+              action: true,
+              description: true,
+              timestamp: true,
+              userId: true,
+              ipAddress: true,
+              device: true,
+              clinicId: true,
+            },
+          })) as unknown as Array<{
+            id: string;
+            action: string;
+            description: string | null;
+            timestamp: Date;
+            userId: string;
+            ipAddress: string | null;
+            device: string | null;
+            clinicId: string | null;
+          }>;
         })) as unknown as Array<{
           id: string;
           action: string;
@@ -390,7 +439,18 @@ export class LoggingService {
           clinicId: string | null;
         }>;
 
-        const result = dbLogs.map(log => {
+        const result = (
+          dbLogs as Array<{
+            id: string;
+            action: string;
+            description: string | null;
+            timestamp: Date;
+            userId: string;
+            ipAddress: string | null;
+            device: string | null;
+            clinicId: string | null;
+          }>
+        ).map(log => {
           return {
             id: log.id,
             type: log.action as LogType,

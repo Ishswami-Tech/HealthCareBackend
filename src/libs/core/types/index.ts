@@ -201,3 +201,6 @@ export type {
 } from './config.types';
 // Re-export utility types from constants (they're defined there)
 export type { RedisPrefixKey, RedisPrefixValue, EnvVarName } from '@config/constants';
+
+// Framework Types (framework wrapper types)
+export * from './framework.types';

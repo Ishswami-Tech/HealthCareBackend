@@ -293,8 +293,19 @@ export class AppointmentWaitlistService {
       } as never);
 
       // Get doctor's working hours and capacity using executeHealthcareRead
-      const doctor = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.doctor.findUnique({
+      const doctor = (await this.databaseService.executeHealthcareRead(async client => {
+        const doctorDelegate = client['doctor'] as {
+          findUnique: (args: {
+            where: { id: string };
+            include: {
+              clinics: {
+                include: { location: { select: { workingHours: boolean } } };
+                take: number;
+              };
+            };
+          }) => Promise<{ clinics?: Array<{ location?: { workingHours: unknown } }> } | null>;
+        };
+        return (await doctorDelegate.findUnique({
           where: { id: doctorId },
           include: {
             clinics: {
@@ -308,21 +319,23 @@ export class AppointmentWaitlistService {
               take: 1, // Get first clinic
             },
           },
-        });
-      });
+        })) as unknown as { clinics?: Array<{ location?: { workingHours: unknown } }> } | null;
+      })) as unknown as { clinics?: Array<{ location?: { workingHours: unknown } }> } | null;
 
       if (!doctor) {
         return false;
       }
 
       // Get first clinic or use defaults
-      const doctorClinic = doctor.clinics?.[0];
+      const doctorClinic = (
+        doctor?.clinics as Array<{ location?: { workingHours: unknown } }> | undefined
+      )?.[0];
       if (!doctorClinic) {
         return false;
       }
 
       // Get working hours from location
-      const location = doctorClinic.location;
+      const location = doctorClinic?.location as { workingHours: unknown } | undefined;
       const maxAppointments = 20; // Default value, can be configured per clinic
 
       if (existingAppointments >= maxAppointments) {

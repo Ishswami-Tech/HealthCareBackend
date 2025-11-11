@@ -12,6 +12,10 @@ import type {
   UpdateQueueEntryDto,
 } from '@core/types/appointment.types';
 import type { TherapyQueueStats } from '@core/types/appointment.types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 
 // Re-export types for backward compatibility
 export type {
@@ -43,15 +47,18 @@ export class TherapyQueueService {
 
     try {
       // Check if queue already exists for this therapy type using executeHealthcareRead
-      const existingQueue = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.therapyQueue.findFirst({
-          where: {
-            clinicId: data.clinicId,
-            therapyType: data.therapyType as TherapyType,
-            isActive: true,
-          },
-        });
-      });
+      const existingQueue = await this.databaseService.executeHealthcareRead<TherapyQueue | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.therapyQueue.findFirst({
+            where: {
+              clinicId: data.clinicId,
+              therapyType: data.therapyType as TherapyType,
+              isActive: true,
+            } as PrismaDelegateArgs,
+          });
+        }
+      );
 
       if (existingQueue) {
         throw new BadRequestException(
@@ -60,15 +67,16 @@ export class TherapyQueueService {
       }
 
       // Use executeHealthcareWrite for create operation
-      const queue = await this.databaseService.executeHealthcareWrite(
+      const queue = await this.databaseService.executeHealthcareWrite<TherapyQueue>(
         async client => {
-          return await client.therapyQueue.create({
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.therapyQueue.create({
             data: {
               clinicId: data.clinicId,
               therapyType: data.therapyType as TherapyType,
               queueName: data.queueName,
               maxCapacity: data.maxCapacity || 10,
-            },
+            } as PrismaDelegateArgs,
           });
         },
         {
@@ -98,7 +106,7 @@ export class TherapyQueueService {
         }
       );
 
-      return queue as TherapyQueue;
+      return queue;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -129,38 +137,41 @@ export class TherapyQueueService {
       }
 
       // Use executeHealthcareRead with client parameter
-      const queues = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.therapyQueue.findMany({
-          where: {
-            clinicId,
-            ...(isActive !== undefined && { isActive }),
-          },
-          include: {
-            queueEntries: {
-              where: {
-                status: {
-                  in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
-                },
-              },
-              orderBy: { position: 'asc' },
-              include: {
-                patient: {
-                  include: {
-                    user: {
-                      select: {
-                        name: true,
-                        email: true,
-                        phone: true,
-                      },
-                    },
+      const queues = await this.databaseService.executeHealthcareRead<TherapyQueue[]>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.therapyQueue.findMany({
+            where: {
+              clinicId,
+              ...(isActive !== undefined && { isActive }),
+            } as PrismaDelegateArgs,
+            include: {
+              queueEntries: {
+                where: {
+                  status: {
+                    in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
                   },
-                },
-              },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
-      });
+                } as PrismaDelegateArgs,
+                orderBy: { position: 'asc' } as PrismaDelegateArgs,
+                include: {
+                  patient: {
+                    include: {
+                      user: {
+                        select: {
+                          name: true,
+                          email: true,
+                          phone: true,
+                        } as PrismaDelegateArgs,
+                      } as PrismaDelegateArgs,
+                    } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+            orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+      );
 
       // Cache the result
       await this.cacheService.set(cacheKey, JSON.stringify(queues), this.QUEUE_CACHE_TTL);
@@ -177,7 +188,7 @@ export class TherapyQueueService {
         }
       );
 
-      return queues as TherapyQueue[];
+      return queues;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -208,46 +219,49 @@ export class TherapyQueueService {
       }
 
       // Use executeHealthcareRead with client parameter
-      const queue = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.therapyQueue.findFirst({
-          where: {
-            clinicId,
-            therapyType,
-            isActive: true,
-          },
-          include: {
-            queueEntries: {
-              where: {
-                status: {
-                  in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
-                },
-              },
-              orderBy: { position: 'asc' },
-              include: {
-                patient: {
-                  include: {
-                    user: {
-                      select: {
-                        name: true,
-                        email: true,
-                        phone: true,
-                      },
-                    },
+      const queue = await this.databaseService.executeHealthcareRead<TherapyQueue | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.therapyQueue.findFirst({
+            where: {
+              clinicId,
+              therapyType,
+              isActive: true,
+            } as PrismaDelegateArgs,
+            include: {
+              queueEntries: {
+                where: {
+                  status: {
+                    in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
                   },
-                },
-                appointment: {
-                  select: {
-                    id: true,
-                    type: true,
-                    date: true,
-                    time: true,
-                  },
-                },
-              },
-            },
-          },
-        });
-      });
+                } as PrismaDelegateArgs,
+                orderBy: { position: 'asc' } as PrismaDelegateArgs,
+                include: {
+                  patient: {
+                    include: {
+                      user: {
+                        select: {
+                          name: true,
+                          email: true,
+                          phone: true,
+                        } as PrismaDelegateArgs,
+                      } as PrismaDelegateArgs,
+                    } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs,
+                  appointment: {
+                    select: {
+                      id: true,
+                      type: true,
+                      date: true,
+                      time: true,
+                    } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+      );
 
       if (!queue) {
         throw new NotFoundException(`No active queue found for therapy type ${therapyType}`);
@@ -264,12 +278,12 @@ export class TherapyQueueService {
         {
           clinicId,
           therapyType,
-          entriesCount: queue.queueEntries.length,
+          entriesCount: queue.queueEntries?.length || 0,
           responseTime: Date.now() - startTime,
         }
       );
 
-      return queue as TherapyQueue;
+      return queue;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -294,20 +308,23 @@ export class TherapyQueueService {
 
     try {
       // Get the queue to check capacity using executeHealthcareRead
-      const queue = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.therapyQueue.findUnique({
-          where: { id: data.queueId },
-          include: {
-            queueEntries: {
-              where: {
-                status: {
-                  in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
-                },
-              },
-            },
-          },
-        });
-      });
+      const queue = await this.databaseService.executeHealthcareRead<TherapyQueue | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.therapyQueue.findUnique({
+            where: { id: data.queueId } as PrismaDelegateArgs,
+            include: {
+              queueEntries: {
+                where: {
+                  status: {
+                    in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+                  },
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+      );
 
       if (!queue) {
         throw new NotFoundException(`Queue with ID ${data.queueId} not found`);
@@ -318,8 +335,8 @@ export class TherapyQueueService {
       }
 
       // Check capacity
-      const queueWithEntries = queue as {
-        queueEntries: unknown[];
+      const queueWithEntries = queue as TherapyQueue & {
+        queueEntries: QueueEntry[];
         maxCapacity: number;
         currentPosition: number;
         therapyType: TherapyType;
@@ -329,17 +346,20 @@ export class TherapyQueueService {
       }
 
       // Check if patient already in queue using executeHealthcareRead
-      const existingEntry = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.queueEntry.findFirst({
-          where: {
-            queueId: data.queueId,
-            patientId: data.patientId,
-            status: {
-              in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
-            },
-          },
-        });
-      });
+      const existingEntry = await this.databaseService.executeHealthcareRead<QueueEntry | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.queueEntry.findFirst({
+            where: {
+              queueId: data.queueId,
+              patientId: data.patientId,
+              status: {
+                in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
+              },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+      );
 
       if (existingEntry) {
         throw new BadRequestException('Patient is already in the queue');
@@ -355,9 +375,10 @@ export class TherapyQueueService {
       );
 
       // Use executeHealthcareWrite for create operation
-      const entry = await this.databaseService.executeHealthcareWrite(
+      const entry = await this.databaseService.executeHealthcareWrite<QueueEntry>(
         async client => {
-          return await client.queueEntry.create({
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.queueEntry.create({
             data: {
               queueId: data.queueId,
               appointmentId: data.appointmentId,
@@ -367,7 +388,7 @@ export class TherapyQueueService {
               estimatedWaitTime,
               notes: data.notes ?? null,
               status: QueueStatus.WAITING,
-            },
+            } as PrismaDelegateArgs,
             include: {
               patient: {
                 include: {
@@ -376,13 +397,13 @@ export class TherapyQueueService {
                       name: true,
                       email: true,
                       phone: true,
-                    },
-                  },
-                },
-              },
+                    } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
               appointment: true,
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: 'system',
@@ -396,14 +417,15 @@ export class TherapyQueueService {
       );
 
       // Update queue current position using executeHealthcareWrite
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<TherapyQueue>(
         async client => {
-          return await client.therapyQueue.update({
-            where: { id: data.queueId },
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.therapyQueue.update({
+            where: { id: data.queueId } as PrismaDelegateArgs,
             data: {
               currentPosition: queueWithEntries.currentPosition + 1,
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: 'system',
@@ -433,7 +455,7 @@ export class TherapyQueueService {
         }
       );
 
-      return entry as QueueEntry;
+      return entry;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -457,10 +479,13 @@ export class TherapyQueueService {
 
     try {
       // Use executeHealthcareWrite for update operation
-      const entry = await this.databaseService.executeHealthcareWrite(
+      const entry = await this.databaseService.executeHealthcareWrite<
+        QueueEntry & { queue: TherapyQueue }
+      >(
         async client => {
-          return await client.queueEntry.update({
-            where: { id: entryId },
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return (await typedClient.queueEntry.update({
+            where: { id: entryId } as PrismaDelegateArgs,
             data: {
               ...(data.position !== undefined && { position: data.position }),
               ...(data.status !== undefined && { status: data.status as QueueStatus }),
@@ -470,7 +495,7 @@ export class TherapyQueueService {
               ...(data.actualWaitTime !== undefined && { actualWaitTime: data.actualWaitTime }),
               ...(data.priority !== undefined && { priority: data.priority }),
               ...(data.notes !== undefined && { notes: data.notes ?? null }),
-            },
+            } as PrismaDelegateArgs,
             include: {
               queue: true,
               patient: {
@@ -480,13 +505,13 @@ export class TherapyQueueService {
                       name: true,
                       email: true,
                       phone: true,
-                    },
-                  },
-                },
-              },
+                    } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
               appointment: true,
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as unknown as QueueEntry & { queue: TherapyQueue };
         },
         {
           userId: 'system',
@@ -500,7 +525,9 @@ export class TherapyQueueService {
       );
 
       // Invalidate cache
-      await this.invalidateQueueCache(entry.queue.clinicId, entry.queueId);
+      const typedEntry = entry as QueueEntry & { queue: TherapyQueue };
+      const clinicId = typedEntry.queue.clinicId;
+      await this.invalidateQueueCache(clinicId, typedEntry.queueId);
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
@@ -514,7 +541,8 @@ export class TherapyQueueService {
         }
       );
 
-      return entry as QueueEntry;
+      const { queue: _queue, ...entryWithoutQueue } = typedEntry;
+      return entryWithoutQueue as QueueEntry;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -544,11 +572,14 @@ export class TherapyQueueService {
    */
   async completeQueueEntry(entryId: string, actualWaitTime?: number): Promise<QueueEntry> {
     // Use executeHealthcareRead with client parameter
-    const entry = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.queueEntry.findUnique({
-        where: { id: entryId },
-      });
-    });
+    const entry = await this.databaseService.executeHealthcareRead<QueueEntry | null>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.queueEntry.findUnique({
+          where: { id: entryId } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
 
     if (!entry) {
       throw new NotFoundException(`Queue entry with ID ${entryId} not found`);
@@ -556,8 +587,9 @@ export class TherapyQueueService {
 
     // Calculate actual wait time if not provided
     let waitTime = actualWaitTime;
-    if (!waitTime && entry.checkedInAt) {
-      const checkedInTime = new Date(entry.checkedInAt).getTime();
+    const entryWithCheckedIn = entry as QueueEntry & { checkedInAt?: Date | string };
+    if (!waitTime && entryWithCheckedIn.checkedInAt) {
+      const checkedInTime = new Date(entryWithCheckedIn.checkedInAt).getTime();
       const currentTime = Date.now();
       waitTime = Math.floor((currentTime - checkedInTime) / (1000 * 60)); // minutes
     }
@@ -576,26 +608,31 @@ export class TherapyQueueService {
 
     try {
       // Use executeHealthcareRead to get entry with queue info
-      const entry = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.queueEntry.findUnique({
-          where: { id: entryId },
-          include: { queue: true },
-        });
-      });
+      const entry = (await this.databaseService.executeHealthcareRead<
+        (QueueEntry & { queue: TherapyQueue }) | null
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.queueEntry.findUnique({
+          where: { id: entryId } as PrismaDelegateArgs,
+          include: { queue: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as (QueueEntry & { queue: TherapyQueue }) | null;
+      })) as (QueueEntry & { queue: TherapyQueue }) | null;
 
       if (!entry) {
         throw new NotFoundException(`Queue entry with ID ${entryId} not found`);
       }
 
       const queueId = entry.queueId;
-      const clinicId = (entry as { queue: { clinicId: string } }).queue?.clinicId || '';
+      const clinicId = entry.queue.clinicId;
 
       // Use executeHealthcareWrite for delete operation
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<QueueEntry>(
         async client => {
-          return await client.queueEntry.delete({
-            where: { id: entryId },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.queueEntry.delete({
+            where: { id: entryId } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: 'system',
@@ -655,14 +692,23 @@ export class TherapyQueueService {
 
     try {
       // Use executeHealthcareRead with client parameter
-      const entry = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.queueEntry.findFirst({
+      const entry = (await this.databaseService.executeHealthcareRead<
+        | (QueueEntry & {
+            queue: TherapyQueue & { queueEntries: QueueEntry[] };
+            position: number;
+            estimatedWaitTime?: number | null;
+            status: string;
+          })
+        | null
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.queueEntry.findFirst({
           where: {
             appointmentId,
             status: {
               in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
             },
-          },
+          } as PrismaDelegateArgs,
           include: {
             queue: {
               include: {
@@ -671,23 +717,44 @@ export class TherapyQueueService {
                     status: {
                       in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
                     },
-                  },
-                },
-              },
-            },
-          },
-        });
-      });
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as
+          | (QueueEntry & {
+              queue: TherapyQueue & { queueEntries: QueueEntry[] };
+              position: number;
+              estimatedWaitTime?: number | null;
+              status: string;
+            })
+          | null;
+      })) as
+        | (QueueEntry & {
+            queue: TherapyQueue & { queueEntries: QueueEntry[] };
+            position: number;
+            estimatedWaitTime?: number | null;
+            status: string;
+          })
+        | null;
 
       if (!entry) {
         throw new NotFoundException('Patient not found in any queue');
       }
 
+      const typedEntry = entry as QueueEntry & {
+        queue: TherapyQueue & { queueEntries: QueueEntry[] };
+        position: number;
+        estimatedWaitTime?: number | null;
+        status: string;
+      };
       const result = {
-        position: entry.position,
-        totalInQueue: entry.queue.queueEntries.length,
-        estimatedWaitTime: entry.estimatedWaitTime || 0,
-        status: entry.status,
+        position: typedEntry.position,
+        totalInQueue: typedEntry.queue.queueEntries.length,
+        estimatedWaitTime: typedEntry.estimatedWaitTime || 0,
+        status: typedEntry.status as QueueStatus,
       };
 
       void this.loggingService.log(
@@ -738,14 +805,18 @@ export class TherapyQueueService {
       }
 
       // Use executeHealthcareRead with client parameter
-      const queue = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.therapyQueue.findUnique({
-          where: { id: queueId },
+      const queue = (await this.databaseService.executeHealthcareRead<
+        (TherapyQueue & { queueEntries: QueueEntry[] }) | null
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.therapyQueue.findUnique({
+          where: { id: queueId } as PrismaDelegateArgs,
           include: {
             queueEntries: true,
-          },
-        });
-      });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as (TherapyQueue & { queueEntries: QueueEntry[] }) | null;
+      })) as (TherapyQueue & { queueEntries: QueueEntry[] }) | null;
 
       if (!queue) {
         throw new NotFoundException(`Queue with ID ${queueId} not found`);
@@ -755,7 +826,8 @@ export class TherapyQueueService {
         status: QueueStatus;
         actualWaitTime?: number | null;
       };
-      const entries = queue.queueEntries as QueueEntryWithStatus[];
+      const typedQueue = queue as TherapyQueue & { queueEntries: QueueEntry[] };
+      const entries = typedQueue.queueEntries as QueueEntryWithStatus[];
       const waiting = entries.filter(
         (e: QueueEntryWithStatus) => e.status === QueueStatus.WAITING
       ).length;
@@ -779,18 +851,18 @@ export class TherapyQueueService {
           : 0;
 
       const currentCapacity = waiting + inProgress;
-      const utilizationRate = (currentCapacity / queue.maxCapacity) * 100;
+      const utilizationRate = (currentCapacity / typedQueue.maxCapacity) * 100;
 
       const stats: TherapyQueueStats = {
-        queueId: queue.id,
-        therapyType: queue.therapyType,
+        queueId: typedQueue.id,
+        therapyType: typedQueue.therapyType,
         totalEntries: entries.length,
         waiting,
         inProgress,
         completed,
         averageWaitTime: Math.round(averageWaitTime),
         currentCapacity,
-        maxCapacity: queue.maxCapacity,
+        maxCapacity: typedQueue.maxCapacity,
         utilizationRate: Math.round(utilizationRate),
       };
 
@@ -830,33 +902,37 @@ export class TherapyQueueService {
    */
   async reorderQueue(queueId: string): Promise<void> {
     // Use executeHealthcareRead to get entries
-    const entries = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.queueEntry.findMany({
+    const entries = await this.databaseService.executeHealthcareRead<QueueEntry[]>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.queueEntry.findMany({
         where: {
           queueId,
           status: {
             in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
           },
-        },
-        orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
-      });
+        } as PrismaDelegateArgs,
+        orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }] as unknown as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
 
     // Update positions using executeHealthcareWrite
     for (let i = 0; i < entries.length; i++) {
-      await this.databaseService.executeHealthcareWrite(
+      const entry = entries[i];
+      if (!entry) continue;
+      await this.databaseService.executeHealthcareWrite<QueueEntry>(
         async client => {
-          return await client.queueEntry.update({
-            where: { id: (entries[i] as { id: string }).id },
-            data: { position: i + 1 },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.queueEntry.update({
+            where: { id: entry.id } as PrismaDelegateArgs,
+            data: { position: i + 1 } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: 'system',
           clinicId: '',
           resourceType: 'QUEUE_ENTRY',
           operation: 'UPDATE',
-          resourceId: (entries[i] as { id: string }).id,
+          resourceId: entry.id,
           userRole: 'system',
           details: { updatedField: 'position', newPosition: i + 1 },
         }
@@ -869,33 +945,38 @@ export class TherapyQueueService {
    */
   private async calculatePosition(queueId: string, priority: number): Promise<number> {
     // Use executeHealthcareRead to get entries
-    const entries = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.queueEntry.findMany({
+    const entries = await this.databaseService.executeHealthcareRead<QueueEntry[]>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.queueEntry.findMany({
         where: {
           queueId,
           status: {
             in: [QueueStatus.WAITING, QueueStatus.IN_PROGRESS],
           },
-        },
-        orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
-      });
+        } as PrismaDelegateArgs,
+        orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }] as unknown as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
 
     // Find position based on priority
     let position = entries.length + 1;
     for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i] as { priority: number; id: string };
-      if (priority > entry.priority) {
+      const entry = entries[i];
+      if (!entry) continue;
+      const typedEntry = entry as QueueEntry & { priority: number };
+      if (priority > typedEntry.priority) {
         position = i + 1;
         // Update positions of entries after this one using executeHealthcareWrite
         for (let j = i; j < entries.length; j++) {
-          const entryToUpdate = entries[j] as { id: string };
-          await this.databaseService.executeHealthcareWrite(
+          const entryToUpdate = entries[j];
+          if (!entryToUpdate) continue;
+          await this.databaseService.executeHealthcareWrite<QueueEntry>(
             async client => {
-              return await client.queueEntry.update({
-                where: { id: entryToUpdate.id },
-                data: { position: j + 2 },
-              });
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+              return await typedClient.queueEntry.update({
+                where: { id: entryToUpdate.id } as PrismaDelegateArgs,
+                data: { position: j + 2 } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
             },
             {
               userId: 'system',

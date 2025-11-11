@@ -3,7 +3,6 @@ import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
-import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { RateLimitService } from '@security/rate-limit/rate-limit.service';

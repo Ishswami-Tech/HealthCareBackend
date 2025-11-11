@@ -1,5 +1,12 @@
 // External imports
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, of, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
@@ -25,7 +32,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   constructor(
     private readonly cacheService: CacheService,
     private readonly reflector: Reflector,
-    private readonly loggingService: LoggingService
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
