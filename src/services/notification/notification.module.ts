@@ -9,9 +9,7 @@ import {
   SNSBackupService,
   DeviceTokenService,
 } from '@communication/messaging/push';
-import {
-  EmailModule,
-} from '@communication/messaging/email';
+import { EmailModule } from '@communication/messaging/email';
 import { ChatBackupService } from '@communication/messaging/chat/chat-backup.service';
 
 @Module({

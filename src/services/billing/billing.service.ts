@@ -29,7 +29,12 @@ import type {
   SubscriptionUpdateInput,
   InvoiceUpdateInput,
 } from '@core/types/input.types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
+import type { AppointmentWithRelations } from '@core/types';
 
 @Injectable()
 export class BillingService {
@@ -801,15 +806,16 @@ export class BillingService {
     // Update appointment to link with subscription using executeHealthcareWrite
     // Note: subscriptionId and isSubscriptionBased are not part of AppointmentUpdateInput
     // Use executeHealthcareWrite for direct Prisma access with full optimization layers
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<AppointmentWithRelations>(
       async client => {
-        return await client.appointment.update({
-          where: { id: appointmentId },
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.appointment.update({
+          where: { id: appointmentId } as PrismaDelegateArgs,
           data: {
             subscriptionId,
             isSubscriptionBased: true,
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',

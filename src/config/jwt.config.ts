@@ -1,4 +1,5 @@
 import type { JwtModuleOptions } from '@nestjs/jwt';
+import type { SignOptions } from 'jsonwebtoken';
 import { ENV_VARS, DEFAULT_CONFIG } from './constants';
 
 /**
@@ -22,11 +23,13 @@ function validateJwtConfig(config: JwtModuleOptions): void {
  * JWT module configuration
  * @constant jwtConfig
  */
+const expiresInValue: string =
+  process.env[ENV_VARS.JWT_EXPIRATION] || DEFAULT_CONFIG.JWT_EXPIRATION;
 export const jwtConfig: JwtModuleOptions = {
   secret: process.env[ENV_VARS.JWT_SECRET] || 'your-secret-key',
   signOptions: {
-    expiresIn: (process.env[ENV_VARS.JWT_EXPIRATION] || DEFAULT_CONFIG.JWT_EXPIRATION) as any,
-  },
+    expiresIn: expiresInValue as SignOptions['expiresIn'],
+  } as SignOptions,
 };
 
 // Validate configuration on module load

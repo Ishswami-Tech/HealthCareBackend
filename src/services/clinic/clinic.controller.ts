@@ -523,10 +523,7 @@ export class ClinicController {
         clinicId: data.clinicId,
       });
 
-      const result = await this.clinicService.assignClinicAdmin({
-        ...data,
-        assignedBy,
-      });
+      const result = await this.clinicService.assignClinicAdmin(data);
 
       this.logger.log(`Clinic admin assigned successfully`);
       return result;

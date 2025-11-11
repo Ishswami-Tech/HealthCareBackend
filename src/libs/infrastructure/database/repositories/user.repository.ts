@@ -80,8 +80,9 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
   constructor(
     @Inject(forwardRef(() => DatabaseService))
     databaseService: DatabaseService,
+    @Inject(forwardRef(() => LoggingService))
     loggingService: LoggingService,
-    @Optional() cacheService?: CacheService
+    @Optional() @Inject(forwardRef(() => CacheService)) cacheService?: CacheService
   ) {
     // Use internal accessor - repositories are infrastructure components
     super(

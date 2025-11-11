@@ -122,8 +122,8 @@ export class AppointmentsService {
     private readonly clinicLocationPlugin: ClinicLocationPlugin, // Medium: Location queries (moderate frequency)
 
     // Infrastructure Services
-    private readonly loggingService: LoggingService,
-    private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
     private readonly queueService: QueueService,
     private readonly eventService: EventService,
     private readonly configService: ConfigService,
@@ -792,7 +792,13 @@ export class AppointmentsService {
         // For complex queries with relations, use executeHealthcareRead with client parameter
         const appointmentWithRelations = (await this.databaseService.executeHealthcareRead(
           async client => {
-            return await client.appointment.findFirst({
+            const appointment = client['appointment'] as {
+              findFirst: (args: {
+                where: { id: string; clinicId: string };
+                include: { patient: boolean; doctor: boolean; clinic: boolean; location: boolean };
+              }) => Promise<AppointmentWithRelations | null>;
+            };
+            return (await appointment.findFirst({
               where: {
                 id,
                 clinicId,
@@ -803,9 +809,9 @@ export class AppointmentsService {
                 clinic: true,
                 location: true,
               },
-            });
+            })) as unknown as AppointmentWithRelations | null;
           }
-        )) as AppointmentWithRelations | null;
+        )) as unknown as AppointmentWithRelations | null;
 
         if (!appointmentWithRelations) {
           throw this.errors.appointmentNotFound(id, 'AppointmentsService.getAppointmentById');
@@ -835,7 +841,13 @@ export class AppointmentsService {
       async () => {
         // Use executeHealthcareRead with client parameter (patient doesn't have safe method yet)
         const patient = await this.databaseService.executeHealthcareRead(async client => {
-          return await client.patient.findFirst({
+          const patientDelegate = client['patient'] as {
+            findFirst: (args: {
+              where: { userId: string };
+              include: { user: boolean };
+            }) => Promise<unknown>;
+          };
+          return await patientDelegate.findFirst({
             where: {
               userId,
             },

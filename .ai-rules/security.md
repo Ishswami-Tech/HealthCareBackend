@@ -682,6 +682,33 @@ export class SessionManagementService implements OnModuleInit {
 - **Security Monitoring**: 10-minute statistics logging, suspicious session detection
 - **Clinic Isolation**: Multi-tenant session support with clinic context
 
+## 🔄 Event-Driven Security
+
+**MANDATORY**: Always use `EventService` from `@infrastructure/events` for security-related events.
+
+```typescript
+import { EventService } from '@infrastructure/events';
+import { EventCategory, EventPriority } from '@core/types';
+
+@Injectable()
+export class SecurityService {
+  constructor(private readonly eventService: EventService) {}
+
+  async logSecurityEvent(eventType: string, details: Record<string, unknown>): Promise<void> {
+    await this.eventService.emitEnterprise(eventType, {
+      eventId: `security-${Date.now()}`,
+      eventType,
+      category: EventCategory.SECURITY,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'SecurityService',
+      version: '1.0.0',
+      payload: details
+    });
+  }
+}
+```
+
 ## 🔍 Audit Logging
 
 **Current Implementation**: Uses enterprise `LoggingService` with structured logging instead of separate audit tables.
@@ -932,6 +959,21 @@ const hashedPassword = await bcrypt.hash(password, 12);
 
 // Use strong JWT secrets
 const secret = process.env.JWT_SECRET; // 256-bit random string
+
+// Use EventService for security events
+import { EventService } from '@infrastructure/events';
+import { EventCategory, EventPriority } from '@core/types';
+
+await this.eventService.emitEnterprise('security.breach', {
+  eventId: `security-${Date.now()}`,
+  eventType: 'security.breach',
+  category: EventCategory.SECURITY,
+  priority: EventPriority.CRITICAL,
+  timestamp: new Date().toISOString(),
+  source: 'SecurityService',
+  version: '1.0.0',
+  payload: { details }
+});
 
 // Sanitize response data
 return {

@@ -11,7 +11,15 @@ import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogLevel, LogType } from '@core/types';
-import { addDateRangeFilter, addStringFilter, USER_SELECT_FIELDS } from '@utils/query';
+import {
+  addDateRangeFilter,
+  addStringFilter,
+  USER_SELECT_FIELDS,
+} from '@infrastructure/database/query';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 import {
   CreateMedicalHistoryDto,
   UpdateMedicalHistoryDto,
@@ -44,17 +52,17 @@ import type {
   LifestyleAssessmentResponse,
 } from '@core/types/ehr.types';
 import type {
-  MedicalHistory,
-  LabReport,
-  RadiologyReport,
-  SurgicalRecord,
-  Vital,
-  Allergy,
-  Medication,
-  Immunization,
-  FamilyHistory,
-  LifestyleAssessment,
-} from '.prisma/client';
+  MedicalHistoryBase,
+  LabReportBase,
+  RadiologyReportBase,
+  SurgicalRecordBase,
+  VitalBase,
+  AllergyBase,
+  MedicationBase,
+  ImmunizationBase,
+  FamilyHistoryBase,
+  LifestyleAssessmentBase,
+} from '@core/types/ehr.types';
 
 @Injectable()
 export class EHRService {
@@ -77,88 +85,125 @@ export class EHRService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const [
-          medicalHistoryRaw,
-          labReportsRaw,
-          radiologyReportsRaw,
-          surgicalRecordsRaw,
-          vitalsRaw,
-          allergiesRaw,
-          medicationsRaw,
-          immunizationsRaw,
-          familyHistoryRaw,
-          lifestyleAssessmentRaw,
-        ]: [
-          MedicalHistory[],
-          LabReport[],
-          RadiologyReport[],
-          SurgicalRecord[],
-          Vital[],
-          Allergy[],
-          Medication[],
-          Immunization[],
-          FamilyHistory[],
-          LifestyleAssessment | null,
-        ] = await Promise.all([
+        const results = (await Promise.all([
           // Use executeHealthcareRead for all queries with full optimization layers
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.medicalHistory.findMany({
-              where: { userId },
-              orderBy: { date: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medicalHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.medicalHistory.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { date: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.labReport.findMany({
-              where: { userId },
-              orderBy: { date: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              labReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.labReport.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { date: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.radiologyReport.findMany({
-              where: { userId },
-              orderBy: { date: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              radiologyReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.radiologyReport.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { date: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.surgicalRecord.findMany({
-              where: { userId },
-              orderBy: { date: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              surgicalRecord: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.surgicalRecord.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { date: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.vital.findMany({
-              where: { userId },
-              orderBy: { recordedAt: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              vital: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.vital.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.allergy.findMany({
-              where: { userId },
-              orderBy: { diagnosedDate: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              allergy: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.allergy.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.medication.findMany({
-              where: { userId },
-              orderBy: { startDate: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medication: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.medication.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.immunization.findMany({
-              where: { userId },
-              orderBy: { dateAdministered: 'desc' },
-            });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              immunization: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.immunization.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { dateAdministered: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.familyHistory.findMany({ where: { userId } });
+          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              familyHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+            };
+            return await typedClient.familyHistory.findMany({
+              where: { userId } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.lifestyleAssessment.findFirst({
-              where: { userId },
-              orderBy: { createdAt: 'desc' },
-            });
-          }),
-        ]);
+          this.databaseService.executeHealthcareRead<LifestyleAssessmentBase | null>(
+            async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                lifestyleAssessment: {
+                  findFirst: (args: PrismaDelegateArgs) => Promise<LifestyleAssessmentBase | null>;
+                };
+              };
+              return await typedClient.lifestyleAssessment.findFirst({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }
+          ),
+        ])) as [
+          MedicalHistoryBase[],
+          LabReportBase[],
+          RadiologyReportBase[],
+          SurgicalRecordBase[],
+          VitalBase[],
+          AllergyBase[],
+          MedicationBase[],
+          ImmunizationBase[],
+          FamilyHistoryBase[],
+          LifestyleAssessmentBase | null,
+        ];
+
+        // Type assertions for the results (using Base types to avoid Prisma type errors)
+        const medicalHistoryRaw = results[0];
+        const labReportsRaw = results[1];
+        const radiologyReportsRaw = results[2];
+        const surgicalRecordsRaw = results[3];
+        const vitalsRaw = results[4];
+        const allergiesRaw = results[5];
+        const medicationsRaw = results[6];
+        const immunizationsRaw = results[7];
+        const familyHistoryRaw = results[8];
+        const lifestyleAssessmentRaw = results[9];
 
         // Transform to response types
         const medicalHistory = medicalHistoryRaw.map(record =>
@@ -243,9 +288,12 @@ export class EHRService {
         if (data.notes) {
           createData.notes = data.notes;
         }
-        return await client.medicalHistory.create({
-          data: createData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medicalHistory: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.medicalHistory.create({
+          data: createData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -258,23 +306,24 @@ export class EHRService {
       }
     );
 
+    const typedRecord = record as MedicalHistoryBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Medical history record created',
       'EHRService',
-      { recordId: record.id, userId: data.userId, clinicId: data.clinicId }
+      { recordId: typedRecord.id, userId: data.userId, clinicId: data.clinicId }
     );
 
     await this.eventService.emit('ehr.medical_history.created', {
-      recordId: record.id,
+      recordId: typedRecord.id,
     });
     await this.invalidateUserEHRCache(data.userId);
     if (data.clinicId) {
       await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
     }
 
-    return this.transformMedicalHistory(record);
+    return this.transformMedicalHistory(typedRecord);
   }
 
   async getMedicalHistory(userId: string, clinicId?: string): Promise<MedicalHistoryResponse[]> {
@@ -284,14 +333,19 @@ export class EHRService {
     }
 
     // Use executeHealthcareRead for optimized query
-    const records = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.medicalHistory.findMany({
-        where,
-        orderBy: { date: 'desc' },
-      });
-    });
+    const records = await this.databaseService.executeHealthcareRead<MedicalHistoryBase[]>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medicalHistory: { findMany: (args: PrismaDelegateArgs) => Promise<MedicalHistoryBase[]> };
+        };
+        return await typedClient.medicalHistory.findMany({
+          where: where as PrismaDelegateArgs,
+          orderBy: { date: 'desc' } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
 
-    return records.map((record: MedicalHistory) => this.transformMedicalHistory(record));
+    return records.map(record => this.transformMedicalHistory(record));
   }
 
   async updateMedicalHistory(
@@ -315,10 +369,13 @@ export class EHRService {
         if (data.date) {
           updateData.date = new Date(data.date);
         }
-        return await client.medicalHistory.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medicalHistory: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.medicalHistory.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -331,42 +388,59 @@ export class EHRService {
       }
     );
 
+    const typedRecord = record as MedicalHistoryBase;
     await this.eventService.emit('ehr.medical_history.updated', {
       recordId: id,
     });
-    await this.invalidateUserEHRCache(record.userId);
+    await this.invalidateUserEHRCache(typedRecord.userId);
 
-    return this.transformMedicalHistory(record);
+    return this.transformMedicalHistory(typedRecord);
   }
 
   async deleteMedicalHistory(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const record = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.medicalHistory.findUnique({
-        where: { id },
-      });
+    const record = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        medicalHistory: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.medicalHistory.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
     if (!record) throw new NotFoundException(`Medical history record with ID ${id} not found`);
 
+    const typedRecord = record as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite(
       async client => {
-        return await client.medicalHistory.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medicalHistory: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.medicalHistory.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: record.userId,
-        clinicId: record.clinicId || '',
+        userId: typedRecord.userId,
+        clinicId: typedRecord.clinicId || '',
         resourceType: 'MEDICAL_HISTORY',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: record.userId },
+        details: { userId: typedRecord.userId },
       }
     );
     await this.eventService.emit('ehr.medical_history.deleted', {
       recordId: id,
     });
-    await this.invalidateUserEHRCache(record.userId);
+    await this.invalidateUserEHRCache(typedRecord.userId);
   }
 
   // ============ Lab Reports ============
@@ -394,9 +468,12 @@ export class EHRService {
         if (data.normalRange) {
           createData.normalRange = data.normalRange;
         }
-        return await client.labReport.create({
-          data: createData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          labReport: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.labReport.create({
+          data: createData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -409,32 +486,38 @@ export class EHRService {
       }
     );
 
+    const typedReport = report as LabReportBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Lab report created',
       'EHRService',
-      { reportId: report.id, userId: data.userId }
+      { reportId: typedReport.id, userId: data.userId }
     );
 
     await this.eventService.emit('ehr.lab_report.created', {
-      reportId: report.id,
+      reportId: typedReport.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return this.transformLabReport(report);
+    return this.transformLabReport(typedReport);
   }
 
   async getLabReports(userId: string): Promise<LabReportResponse[]> {
     // Use executeHealthcareRead for optimized query
-    const records = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.labReport.findMany({
-        where: { userId },
-        orderBy: { date: 'desc' },
-      });
-    });
+    const records = await this.databaseService.executeHealthcareRead<LabReportBase[]>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          labReport: { findMany: (args: PrismaDelegateArgs) => Promise<LabReportBase[]> };
+        };
+        return await typedClient.labReport.findMany({
+          where: { userId } as PrismaDelegateArgs,
+          orderBy: { date: 'desc' } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
 
-    return records.map((record: LabReport) => this.transformLabReport(record));
+    return records.map(record => this.transformLabReport(record));
   }
 
   async updateLabReport(id: string, data: UpdateLabReportDto): Promise<LabReportResponse> {
@@ -463,10 +546,13 @@ export class EHRService {
         if (data.date) {
           updateData.date = new Date(data.date);
         }
-        return await client.labReport.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          labReport: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.labReport.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -479,55 +565,75 @@ export class EHRService {
       }
     );
 
+    const typedReport = report as LabReportBase;
     await this.eventService.emit('ehr.lab_report.updated', { reportId: id });
-    await this.invalidateUserEHRCache(report.userId);
+    await this.invalidateUserEHRCache(typedReport.userId);
 
-    return this.transformLabReport(report);
+    return this.transformLabReport(typedReport);
   }
 
   async deleteLabReport(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const report = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.labReport.findUnique({
-        where: { id },
-      });
+    const report = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        labReport: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.labReport.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
     if (!report) throw new NotFoundException(`Lab report with ID ${id} not found`);
 
+    const typedReport = report as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
-        return await client.labReport.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          labReport: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.labReport.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: report.userId,
-        clinicId: report.clinicId || '',
+        userId: typedReport.userId,
+        clinicId: typedReport.clinicId || '',
         resourceType: 'LAB_REPORT',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: report.userId },
+        details: { userId: typedReport.userId },
       }
     );
     await this.eventService.emit('ehr.lab_report.deleted', { reportId: id });
-    await this.invalidateUserEHRCache(report.userId);
+    await this.invalidateUserEHRCache(typedReport.userId);
   }
 
   // ============ Radiology Reports ============
 
-  async createRadiologyReport(data: CreateRadiologyReportDto): Promise<unknown> {
+  async createRadiologyReport(data: CreateRadiologyReportDto): Promise<RadiologyReportResponse> {
     // Use executeHealthcareWrite for create with audit logging
     const report = await this.databaseService.executeHealthcareWrite(
       async client => {
-        return await client.radiologyReport.create({
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          radiologyReport: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.radiologyReport.create({
           data: {
             userId: data.userId,
             imageType: data.imageType,
             findings: data.findings,
             conclusion: data.conclusion,
             date: new Date(data.date),
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -540,32 +646,40 @@ export class EHRService {
       }
     );
 
+    const typedReport = report as RadiologyReportBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Radiology report created',
       'EHRService',
-      { reportId: report.id, userId: data.userId }
+      { reportId: typedReport.id, userId: data.userId }
     );
 
     await this.eventService.emit('ehr.radiology_report.created', {
-      reportId: report.id,
+      reportId: typedReport.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return report;
+    return this.transformRadiologyReport(typedReport);
   }
 
   async getRadiologyReports(userId: string): Promise<RadiologyReportResponse[]> {
     // Use executeHealthcareRead for optimized query
-    const records = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.radiologyReport.findMany({
-        where: { userId },
-        orderBy: { date: 'desc' },
-      });
-    });
+    const records = await this.databaseService.executeHealthcareRead<RadiologyReportBase[]>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          radiologyReport: {
+            findMany: (args: PrismaDelegateArgs) => Promise<RadiologyReportBase[]>;
+          };
+        };
+        return await typedClient.radiologyReport.findMany({
+          where: { userId } as PrismaDelegateArgs,
+          orderBy: { date: 'desc' } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
 
-    return records.map((record: RadiologyReport) => this.transformRadiologyReport(record));
+    return records.map(record => this.transformRadiologyReport(record));
   }
 
   async updateRadiologyReport(
@@ -593,10 +707,13 @@ export class EHRService {
         if (data.date) {
           updateData.date = new Date(data.date);
         }
-        return await client.radiologyReport.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          radiologyReport: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.radiologyReport.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -609,42 +726,59 @@ export class EHRService {
       }
     );
 
+    const typedReport = report as RadiologyReportBase;
     await this.eventService.emit('ehr.radiology_report.updated', {
       reportId: id,
     });
-    await this.invalidateUserEHRCache(report.userId);
+    await this.invalidateUserEHRCache(typedReport.userId);
 
-    return this.transformRadiologyReport(report);
+    return this.transformRadiologyReport(typedReport);
   }
 
   async deleteRadiologyReport(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const report = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.radiologyReport.findUnique({
-        where: { id },
-      });
+    const report = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        radiologyReport: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.radiologyReport.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
     if (!report) throw new NotFoundException(`Radiology report with ID ${id} not found`);
 
+    const typedReport = report as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
-        return await client.radiologyReport.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          radiologyReport: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.radiologyReport.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: report.userId,
-        clinicId: report.clinicId || '',
+        userId: typedReport.userId,
+        clinicId: typedReport.clinicId || '',
         resourceType: 'RADIOLOGY_REPORT',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: report.userId },
+        details: { userId: typedReport.userId },
       }
     );
     await this.eventService.emit('ehr.radiology_report.deleted', {
       reportId: id,
     });
-    await this.invalidateUserEHRCache(report.userId);
+    await this.invalidateUserEHRCache(typedReport.userId);
   }
 
   // ============ Surgical Records ============
@@ -668,9 +802,12 @@ export class EHRService {
         if (data.notes) {
           createData.notes = data.notes;
         }
-        return await client.surgicalRecord.create({
-          data: createData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          surgicalRecord: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.surgicalRecord.create({
+          data: createData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -683,32 +820,38 @@ export class EHRService {
       }
     );
 
+    const typedRecord = record as SurgicalRecordBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Surgical record created',
       'EHRService',
-      { recordId: record.id, userId: data.userId }
+      { recordId: typedRecord.id, userId: data.userId }
     );
 
     await this.eventService.emit('ehr.surgical_record.created', {
-      recordId: record.id,
+      recordId: typedRecord.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return this.transformSurgicalRecord(record);
+    return this.transformSurgicalRecord(typedRecord);
   }
 
   async getSurgicalRecords(userId: string): Promise<SurgicalRecordResponse[]> {
     // Use executeHealthcareRead for optimized query
-    const records = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.surgicalRecord.findMany({
-        where: { userId },
-        orderBy: { date: 'desc' },
-      });
-    });
+    const records = await this.databaseService.executeHealthcareRead<SurgicalRecordBase[]>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          surgicalRecord: { findMany: (args: PrismaDelegateArgs) => Promise<SurgicalRecordBase[]> };
+        };
+        return await typedClient.surgicalRecord.findMany({
+          where: { userId } as PrismaDelegateArgs,
+          orderBy: { date: 'desc' } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
 
-    return records.map((record: SurgicalRecord) => this.transformSurgicalRecord(record));
+    return records.map(record => this.transformSurgicalRecord(record));
   }
 
   async updateSurgicalRecord(
@@ -736,10 +879,13 @@ export class EHRService {
         if (data.date) {
           updateData.date = new Date(data.date);
         }
-        return await client.surgicalRecord.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          surgicalRecord: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.surgicalRecord.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -752,42 +898,59 @@ export class EHRService {
       }
     );
 
+    const typedRecord = record as SurgicalRecordBase;
     await this.eventService.emit('ehr.surgical_record.updated', {
       recordId: id,
     });
-    await this.invalidateUserEHRCache(record.userId);
+    await this.invalidateUserEHRCache(typedRecord.userId);
 
-    return this.transformSurgicalRecord(record);
+    return this.transformSurgicalRecord(typedRecord);
   }
 
   async deleteSurgicalRecord(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const record = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.surgicalRecord.findUnique({
-        where: { id },
-      });
+    const record = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        surgicalRecord: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.surgicalRecord.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
     if (!record) throw new NotFoundException(`Surgical record with ID ${id} not found`);
 
+    const typedRecord = record as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
-        return await client.surgicalRecord.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          surgicalRecord: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.surgicalRecord.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: record.userId,
-        clinicId: record.clinicId || '',
+        userId: typedRecord.userId,
+        clinicId: typedRecord.clinicId || '',
         resourceType: 'SURGICAL_RECORD',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: record.userId },
+        details: { userId: typedRecord.userId },
       }
     );
     await this.eventService.emit('ehr.surgical_record.deleted', {
       recordId: id,
     });
-    await this.invalidateUserEHRCache(record.userId);
+    await this.invalidateUserEHRCache(typedRecord.userId);
   }
 
   // ============ Vitals ============
@@ -796,14 +959,17 @@ export class EHRService {
     // Use executeHealthcareWrite for create with audit logging
     const vital = await this.databaseService.executeHealthcareWrite(
       async client => {
-        return await client.vital.create({
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          vital: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.vital.create({
           data: {
             userId: data.userId,
             type: data.type,
             value: data.value,
             recordedAt: new Date(data.recordedAt),
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -816,30 +982,34 @@ export class EHRService {
       }
     );
 
+    const typedVital = vital as VitalBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Vital record created',
       'EHRService',
-      { vitalId: vital.id, userId: data.userId, type: data.type }
+      { vitalId: typedVital.id, userId: data.userId, type: data.type }
     );
 
-    await this.eventService.emit('ehr.vital.created', { vitalId: vital.id });
+    await this.eventService.emit('ehr.vital.created', { vitalId: typedVital.id });
     await this.invalidateUserEHRCache(data.userId);
 
-    return this.transformVital(vital);
+    return this.transformVital(typedVital);
   }
 
   async getVitals(userId: string, type?: string) {
     // Use executeHealthcareRead for optimized query
-    return await this.databaseService.executeHealthcareRead(async client => {
-      return await client.vital.findMany({
+    return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        vital: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+      };
+      return await typedClient.vital.findMany({
         where: {
           userId,
           ...(type && { type }),
-        },
-        orderBy: { recordedAt: 'desc' },
-      });
+        } as PrismaDelegateArgs,
+        orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
   }
 
@@ -861,10 +1031,13 @@ export class EHRService {
         if (data.recordedAt) {
           updateData.recordedAt = new Date(data.recordedAt);
         }
-        return await client.vital.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          vital: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.vital.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -877,38 +1050,55 @@ export class EHRService {
       }
     );
 
+    const typedVital = vital as VitalBase;
     await this.eventService.emit('ehr.vital.updated', { vitalId: id });
-    await this.invalidateUserEHRCache(vital.userId);
+    await this.invalidateUserEHRCache(typedVital.userId);
 
-    return this.transformVital(vital);
+    return this.transformVital(typedVital);
   }
 
   async deleteVital(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const vital = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.vital.findUnique({
-        where: { id },
-      });
+    const vital = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        vital: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.vital.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
     if (!vital) throw new NotFoundException(`Vital record with ID ${id} not found`);
 
+    const typedVital = vital as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
-        return await client.vital.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          vital: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.vital.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: vital.userId,
-        clinicId: vital.clinicId || '',
+        userId: typedVital.userId,
+        clinicId: typedVital.clinicId || '',
         resourceType: 'VITAL',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: vital.userId },
+        details: { userId: typedVital.userId },
       }
     );
     await this.eventService.emit('ehr.vital.deleted', { vitalId: id });
-    await this.invalidateUserEHRCache(vital.userId);
+    await this.invalidateUserEHRCache(typedVital.userId);
   }
 
   // ============ Allergies ============
@@ -934,9 +1124,12 @@ export class EHRService {
         if (data.notes) {
           createData.notes = data.notes;
         }
-        return await client.allergy.create({
-          data: createData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          allergy: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.allergy.create({
+          data: createData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -949,29 +1142,33 @@ export class EHRService {
       }
     );
 
+    const typedAllergy = allergy as AllergyBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Allergy record created',
       'EHRService',
-      { allergyId: allergy.id, userId: data.userId }
+      { allergyId: typedAllergy.id, userId: data.userId }
     );
 
     await this.eventService.emit('ehr.allergy.created', {
-      allergyId: allergy.id,
+      allergyId: typedAllergy.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return this.transformAllergy(allergy);
+    return this.transformAllergy(typedAllergy);
   }
 
   async getAllergies(userId: string) {
     // Use executeHealthcareRead for optimized query
-    return await this.databaseService.executeHealthcareRead(async client => {
-      return await client.allergy.findMany({
-        where: { userId },
-        orderBy: { diagnosedDate: 'desc' },
-      });
+    return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        allergy: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+      };
+      return await typedClient.allergy.findMany({
+        where: { userId } as PrismaDelegateArgs,
+        orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
   }
 
@@ -1001,10 +1198,13 @@ export class EHRService {
         if (data.notes) {
           updateData.notes = data.notes;
         }
-        return await client.allergy.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          allergy: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.allergy.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -1017,38 +1217,55 @@ export class EHRService {
       }
     );
 
+    const typedAllergy = allergy as AllergyBase;
     await this.eventService.emit('ehr.allergy.updated', { allergyId: id });
-    await this.invalidateUserEHRCache(allergy.userId);
+    await this.invalidateUserEHRCache(typedAllergy.userId);
 
-    return this.transformAllergy(allergy);
+    return this.transformAllergy(typedAllergy);
   }
 
   async deleteAllergy(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const allergy = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.allergy.findUnique({
-        where: { id },
-      });
+    const allergy = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        allergy: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.allergy.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
     if (!allergy) throw new NotFoundException(`Allergy record with ID ${id} not found`);
 
+    const typedAllergy = allergy as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
-        return await client.allergy.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          allergy: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.allergy.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: allergy.userId,
-        clinicId: allergy.clinicId || '',
+        userId: typedAllergy.userId,
+        clinicId: typedAllergy.clinicId || '',
         resourceType: 'ALLERGY',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: allergy.userId },
+        details: { userId: typedAllergy.userId },
       }
     );
     await this.eventService.emit('ehr.allergy.deleted', { allergyId: id });
-    await this.invalidateUserEHRCache(allergy.userId);
+    await this.invalidateUserEHRCache(typedAllergy.userId);
   }
 
   // ============ Medications ============
@@ -1084,9 +1301,12 @@ export class EHRService {
         if (data.sideEffects) {
           createData.sideEffects = data.sideEffects;
         }
-        return await client.medication.create({
-          data: createData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medication: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.medication.create({
+          data: createData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -1099,32 +1319,36 @@ export class EHRService {
       }
     );
 
+    const typedMedication = medication as MedicationBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Medication record created',
       'EHRService',
-      { medicationId: medication.id, userId: data.userId }
+      { medicationId: typedMedication.id, userId: data.userId }
     );
 
     await this.eventService.emit('ehr.medication.created', {
-      medicationId: medication.id,
+      medicationId: typedMedication.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return this.transformMedication(medication);
+    return this.transformMedication(typedMedication);
   }
 
   async getMedications(userId: string, activeOnly: boolean = false) {
     // Use executeHealthcareRead for optimized query
-    return await this.databaseService.executeHealthcareRead(async client => {
-      return await client.medication.findMany({
+    return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        medication: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+      };
+      return await typedClient.medication.findMany({
         where: {
           userId,
           ...(activeOnly && { isActive: true }),
-        },
-        orderBy: { startDate: 'desc' },
-      });
+        } as PrismaDelegateArgs,
+        orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
   }
 
@@ -1166,10 +1390,13 @@ export class EHRService {
         if (data.sideEffects) {
           updateData.sideEffects = data.sideEffects;
         }
-        return await client.medication.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medication: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.medication.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -1182,42 +1409,59 @@ export class EHRService {
       }
     );
 
+    const typedMedication = medication as MedicationBase;
     await this.eventService.emit('ehr.medication.updated', {
       medicationId: id,
     });
-    await this.invalidateUserEHRCache(medication.userId);
+    await this.invalidateUserEHRCache(typedMedication.userId);
 
-    return this.transformMedication(medication);
+    return this.transformMedication(typedMedication);
   }
 
   async deleteMedication(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const medication = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.medication.findUnique({
-        where: { id },
-      });
+    const medication = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        medication: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.medication.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
     if (!medication) throw new NotFoundException(`Medication record with ID ${id} not found`);
 
+    const typedMedication = medication as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
-        return await client.medication.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medication: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.medication.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: medication.userId,
-        clinicId: medication.clinicId || '',
+        userId: typedMedication.userId,
+        clinicId: typedMedication.clinicId || '',
         resourceType: 'MEDICATION',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: medication.userId },
+        details: { userId: typedMedication.userId },
       }
     );
     await this.eventService.emit('ehr.medication.deleted', {
       medicationId: id,
     });
-    await this.invalidateUserEHRCache(medication.userId);
+    await this.invalidateUserEHRCache(typedMedication.userId);
   }
 
   // ============ Immunizations ============
@@ -1255,9 +1499,12 @@ export class EHRService {
         if (data.notes) {
           createData.notes = data.notes;
         }
-        return await client.immunization.create({
-          data: createData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          immunization: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.immunization.create({
+          data: createData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
@@ -1270,39 +1517,43 @@ export class EHRService {
       }
     );
 
+    const typedImmunization = immunization as ImmunizationBase;
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Immunization record created',
       'EHRService',
-      { immunizationId: immunization.id, userId: data.userId }
+      { immunizationId: typedImmunization.id, userId: data.userId }
     );
 
     await this.eventService.emit('ehr.immunization.created', {
-      immunizationId: immunization.id,
+      immunizationId: typedImmunization.id,
     });
     await this.invalidateUserEHRCache(data.userId);
 
-    return this.transformImmunization(immunization);
+    return this.transformImmunization(typedImmunization);
   }
 
   async getImmunizations(userId: string): Promise<ImmunizationResponse[]> {
     // Use executeHealthcareRead for optimized query
-    const records: Immunization[] = await this.databaseService.executeHealthcareRead(
+    const records = (await this.databaseService.executeHealthcareRead<ImmunizationBase[]>(
       async client => {
-        return await client.immunization.findMany({
-          where: { userId },
-          orderBy: { dateAdministered: 'desc' },
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          immunization: { findMany: (args: PrismaDelegateArgs) => Promise<ImmunizationBase[]> };
+        };
+        return await typedClient.immunization.findMany({
+          where: { userId } as PrismaDelegateArgs,
+          orderBy: { dateAdministered: 'desc' } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       }
-    );
+    )) as unknown as ImmunizationBase[];
 
     return records.map(record => this.transformImmunization(record));
   }
 
   async updateImmunization(id: string, data: UpdateImmunizationDto): Promise<ImmunizationResponse> {
     // Use executeHealthcareWrite for update with audit logging
-    const immunization: Immunization = await this.databaseService.executeHealthcareWrite(
+    const immunization = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
           vaccineName?: string;
@@ -1334,10 +1585,13 @@ export class EHRService {
         if (data.notes) {
           updateData.notes = data.notes;
         }
-        return await client.immunization.update({
-          where: { id },
-          data: updateData,
-        });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          immunization: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.immunization.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId: 'system',
@@ -1353,41 +1607,56 @@ export class EHRService {
     await this.eventService.emit('ehr.immunization.updated', {
       immunizationId: id,
     });
-    await this.invalidateUserEHRCache(immunization.userId);
+    const typedImmunization = immunization as { userId: string };
+    await this.invalidateUserEHRCache(typedImmunization.userId);
 
-    return this.transformImmunization(immunization);
+    return this.transformImmunization(immunization as ImmunizationBase);
   }
 
   async deleteImmunization(id: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
-    const immunization: Immunization | null = await this.databaseService.executeHealthcareRead(
-      async client => {
-        return await client.immunization.findUnique({
-          where: { id },
-        });
-      }
-    );
+    const immunization = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        immunization: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.immunization.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
     if (!immunization) throw new NotFoundException(`Immunization record with ID ${id} not found`);
 
+    const typedImmunization = immunization as { userId: string; clinicId?: string | null };
     // Use executeHealthcareWrite for delete with audit logging
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
-        return await client.immunization.delete({ where: { id } });
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          immunization: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.immunization.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
-        userId: immunization.userId,
-        clinicId: immunization.clinicId || '',
+        userId: typedImmunization.userId,
+        clinicId: typedImmunization.clinicId || '',
         resourceType: 'IMMUNIZATION',
         operation: 'DELETE',
         resourceId: id,
         userRole: 'system',
-        details: { userId: immunization.userId },
+        details: { userId: typedImmunization.userId },
       }
     );
     await this.eventService.emit('ehr.immunization.deleted', {
       immunizationId: id,
     });
-    await this.invalidateUserEHRCache(immunization.userId);
+    await this.invalidateUserEHRCache(typedImmunization.userId);
   }
 
   // ============ Analytics ============
@@ -1397,7 +1666,7 @@ export class EHRService {
     vitalType: string,
     startDate?: Date,
     endDate?: Date
-  ): Promise<{ vitalType: string; data: Vital[]; count: number }> {
+  ): Promise<{ vitalType: string; data: VitalBase[]; count: number }> {
     const where: {
       userId: string;
       type: string;
@@ -1417,11 +1686,14 @@ export class EHRService {
     }
 
     // Use executeHealthcareRead for optimized query
-    const vitals: Vital[] = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.vital.findMany({
-        where,
-        orderBy: { recordedAt: 'asc' },
-      });
+    const vitals = await this.databaseService.executeHealthcareRead<VitalBase[]>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        vital: { findMany: (args: PrismaDelegateArgs) => Promise<VitalBase[]> };
+      };
+      return await typedClient.vital.findMany({
+        where: where as PrismaDelegateArgs,
+        orderBy: { recordedAt: 'asc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
 
     return {
@@ -1433,16 +1705,19 @@ export class EHRService {
 
   async getMedicationAdherence(
     userId: string
-  ): Promise<{ totalActive: number; medications: Medication[] }> {
+  ): Promise<{ totalActive: number; medications: MedicationBase[] }> {
     // Use executeHealthcareRead for optimized query
-    const medications: Medication[] = await this.databaseService.executeHealthcareRead(
+    const medications = await this.databaseService.executeHealthcareRead<MedicationBase[]>(
       async client => {
-        return await client.medication.findMany({
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medication: { findMany: (args: PrismaDelegateArgs) => Promise<MedicationBase[]> };
+        };
+        return await typedClient.medication.findMany({
           where: {
             userId,
             isActive: true,
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       }
     );
 
@@ -1472,7 +1747,21 @@ export class EHRService {
         gte?: Date;
         lte?: Date;
       };
-      [key: string]: unknown;
+      [key: string]:
+        | string
+        | number
+        | boolean
+        | Date
+        | object
+        | null
+        | undefined
+        | {
+            contains?: string;
+            mode?: 'insensitive' | 'default';
+            gte?: Date;
+            lte?: Date;
+            in?: Array<string | number>;
+          };
     }
 
     interface MedicalHistoryWhere extends BaseWhereClause {
@@ -1493,51 +1782,58 @@ export class EHRService {
         where = addStringFilter(where, 'condition', filters.hasCondition);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         // Use executeHealthcareRead for optimized query
-        const medicalHistoryRecords = await this.databaseService.executeHealthcareRead(
-          async client => {
-            return (await client.medicalHistory.findMany({
-              where,
-              select: {
-                id: true,
-                userId: true,
-                clinicId: true,
-                condition: true,
-                diagnosis: true,
-                treatment: true,
-                date: true,
-                doctorId: true,
-                notes: true,
-                createdAt: true,
-                updatedAt: true,
-              } as {
-                id: boolean;
-                userId: boolean;
-                clinicId: boolean;
-                condition: boolean;
-                diagnosis: boolean;
-                treatment: boolean;
-                date: boolean;
-                doctorId: boolean;
-                notes: boolean;
-                createdAt: boolean;
-                updatedAt: boolean;
-              },
-              orderBy: { date: 'desc' },
-            })) as Array<{
-              id: string;
-              userId: string;
-              clinicId: string | null;
-              condition: string;
-              diagnosis: string | null;
-              treatment: string | null;
-              date: Date;
-              doctorId: string | null;
-              notes: string | null;
-              createdAt: Date;
-              updatedAt: Date;
-            }>;
-          }
-        );
+        const medicalHistoryRecords = await this.databaseService.executeHealthcareRead<
+          Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            condition: string;
+            diagnosis: string | null;
+            treatment: string | null;
+            date: Date;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>
+        >(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            medicalHistory: {
+              findMany: (args: PrismaDelegateArgs) => Promise<
+                Array<{
+                  id: string;
+                  userId: string;
+                  clinicId: string | null;
+                  condition: string;
+                  diagnosis: string | null;
+                  treatment: string | null;
+                  date: Date;
+                  doctorId: string | null;
+                  notes: string | null;
+                  createdAt: Date;
+                  updatedAt: Date;
+                }>
+              >;
+            };
+          };
+          return await typedClient.medicalHistory.findMany({
+            where: where as PrismaDelegateArgs,
+            select: {
+              id: true,
+              userId: true,
+              clinicId: true,
+              condition: true,
+              diagnosis: true,
+              treatment: true,
+              date: true,
+              doctorId: true,
+              notes: true,
+              createdAt: true,
+              updatedAt: true,
+            } as PrismaDelegateArgs,
+            orderBy: { date: 'desc' } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        });
         conditions = medicalHistoryRecords.map((record): MedicalHistoryRecord => {
           const result: MedicalHistoryRecord = {
             id: record.id,
@@ -1563,12 +1859,15 @@ export class EHRService {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         // Use executeHealthcareRead for optimized query
-        await this.databaseService.executeHealthcareRead(async client => {
-          return await client.labReport.findMany({
-            where,
-            include: { user: { select: USER_SELECT_FIELDS } },
-            orderBy: { date: 'desc' },
-          });
+        await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            labReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+          };
+          return await typedClient.labReport.findMany({
+            where: where as PrismaDelegateArgs,
+            include: { user: { select: USER_SELECT_FIELDS } } as PrismaDelegateArgs,
+            orderBy: { date: 'desc' } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         });
         // Lab reports don't fit into our current structure, skip for now
         break;
@@ -1578,12 +1877,15 @@ export class EHRService {
         let where: BaseWhereClause = { clinicId };
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         // Use executeHealthcareRead for optimized query
-        await this.databaseService.executeHealthcareRead(async client => {
-          return await client.vital.findMany({
-            where,
-            include: { user: { select: USER_SELECT_FIELDS } },
-            orderBy: { recordedAt: 'desc' },
-          });
+        await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            vital: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+          };
+          return await typedClient.vital.findMany({
+            where: where as PrismaDelegateArgs,
+            include: { user: { select: USER_SELECT_FIELDS } } as PrismaDelegateArgs,
+            orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         });
         // Vitals don't fit into our current structure, skip for now
         break;
@@ -1594,9 +1896,42 @@ export class EHRService {
         where = addStringFilter(where, 'allergen', filters.hasAllergy);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         // Use executeHealthcareRead for optimized query
-        const allergyRecords = await this.databaseService.executeHealthcareRead(async client => {
-          return (await client.allergy.findMany({
-            where,
+        const allergyRecords = await this.databaseService.executeHealthcareRead<
+          Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            allergen: string;
+            severity: string;
+            reaction: string;
+            diagnosedDate: Date;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>
+        >(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            allergy: {
+              findMany: (args: PrismaDelegateArgs) => Promise<
+                Array<{
+                  id: string;
+                  userId: string;
+                  clinicId: string | null;
+                  allergen: string;
+                  severity: string;
+                  reaction: string;
+                  diagnosedDate: Date;
+                  doctorId: string | null;
+                  notes: string | null;
+                  createdAt: Date;
+                  updatedAt: Date;
+                }>
+              >;
+            };
+          };
+          return await typedClient.allergy.findMany({
+            where: where as PrismaDelegateArgs,
             select: {
               id: true,
               userId: true,
@@ -1609,33 +1944,9 @@ export class EHRService {
               notes: true,
               createdAt: true,
               updatedAt: true,
-            } as {
-              id: boolean;
-              userId: boolean;
-              clinicId: boolean;
-              allergen: boolean;
-              severity: boolean;
-              reaction: boolean;
-              diagnosedDate: boolean;
-              doctorId: boolean;
-              notes: boolean;
-              createdAt: boolean;
-              updatedAt: boolean;
-            },
-            orderBy: { diagnosedDate: 'desc' },
-          })) as Array<{
-            id: string;
-            userId: string;
-            clinicId: string | null;
-            allergen: string;
-            severity: string;
-            reaction: string;
-            diagnosedDate: Date;
-            doctorId: string | null;
-            notes: string | null;
-            createdAt: Date;
-            updatedAt: Date;
-          }>;
+            } as PrismaDelegateArgs,
+            orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         });
         allergies = allergyRecords.map((record): AllergyRecord => {
           const result: AllergyRecord = {
@@ -1663,9 +1974,44 @@ export class EHRService {
         where = addStringFilter(where, 'name', filters.onMedication);
         where = addDateRangeFilter(where, filters?.dateFrom, filters?.dateTo);
         // Use executeHealthcareRead for optimized query
-        const medicationRecords = await this.databaseService.executeHealthcareRead(async client => {
-          return (await client.medication.findMany({
-            where,
+        const medicationRecords = await this.databaseService.executeHealthcareRead<
+          Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            name: string;
+            dosage: string;
+            frequency: string;
+            startDate: Date;
+            endDate: Date | null;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>
+        >(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            medication: {
+              findMany: (args: PrismaDelegateArgs) => Promise<
+                Array<{
+                  id: string;
+                  userId: string;
+                  clinicId: string | null;
+                  name: string;
+                  dosage: string;
+                  frequency: string;
+                  startDate: Date;
+                  endDate: Date | null;
+                  doctorId: string | null;
+                  notes: string | null;
+                  createdAt: Date;
+                  updatedAt: Date;
+                }>
+              >;
+            };
+          };
+          return await typedClient.medication.findMany({
+            where: where as PrismaDelegateArgs,
             select: {
               id: true,
               userId: true,
@@ -1679,35 +2025,9 @@ export class EHRService {
               notes: true,
               createdAt: true,
               updatedAt: true,
-            } as {
-              id: boolean;
-              userId: boolean;
-              clinicId: boolean;
-              name: boolean;
-              dosage: boolean;
-              frequency: boolean;
-              startDate: boolean;
-              endDate: boolean;
-              doctorId: boolean;
-              notes: boolean;
-              createdAt: boolean;
-              updatedAt: boolean;
-            },
-            orderBy: { startDate: 'desc' },
-          })) as Array<{
-            id: string;
-            userId: string;
-            clinicId: string | null;
-            name: string;
-            dosage: string;
-            frequency: string;
-            startDate: Date;
-            endDate: Date | null;
-            doctorId: string | null;
-            notes: string | null;
-            createdAt: Date;
-            updatedAt: Date;
-          }>;
+            } as PrismaDelegateArgs,
+            orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         });
         medications = medicationRecords.map((record): MedicationRecord => {
           const result: MedicationRecord = {
@@ -1733,10 +2053,43 @@ export class EHRService {
 
       default: {
         // Get all record types using executeHealthcareRead for optimized queries
-        const [medicalHistoryRecords, allergyRecords, medicationRecords] = await Promise.all([
-          this.databaseService.executeHealthcareRead(async client => {
-            return (await client.medicalHistory.findMany({
-              where: { clinicId },
+        const [medicalHistoryRecords, allergyRecords, medicationRecords] = (await Promise.all([
+          this.databaseService.executeHealthcareRead<
+            Array<{
+              id: string;
+              userId: string;
+              clinicId: string | null;
+              condition: string;
+              diagnosis: string | null;
+              treatment: string | null;
+              date: Date;
+              doctorId: string | null;
+              notes: string | null;
+              createdAt: Date;
+              updatedAt: Date;
+            }>
+          >(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medicalHistory: {
+                findMany: (args: PrismaDelegateArgs) => Promise<
+                  Array<{
+                    id: string;
+                    userId: string;
+                    clinicId: string | null;
+                    condition: string;
+                    diagnosis: string | null;
+                    treatment: string | null;
+                    date: Date;
+                    doctorId: string | null;
+                    notes: string | null;
+                    createdAt: Date;
+                    updatedAt: Date;
+                  }>
+                >;
+              };
+            };
+            return await typedClient.medicalHistory.findMany({
+              where: { clinicId } as PrismaDelegateArgs,
               select: {
                 id: true,
                 userId: true,
@@ -1749,37 +2102,46 @@ export class EHRService {
                 notes: true,
                 createdAt: true,
                 updatedAt: true,
-              } as {
-                id: boolean;
-                userId: boolean;
-                clinicId: boolean;
-                condition: boolean;
-                diagnosis: boolean;
-                treatment: boolean;
-                date: boolean;
-                doctorId: boolean;
-                notes: boolean;
-                createdAt: boolean;
-                updatedAt: boolean;
-              },
-              orderBy: { date: 'desc' },
-            })) as Array<{
+              } as PrismaDelegateArgs,
+              orderBy: { date: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }),
+          this.databaseService.executeHealthcareRead<
+            Array<{
               id: string;
               userId: string;
               clinicId: string | null;
-              condition: string;
-              diagnosis: string | null;
-              treatment: string | null;
-              date: Date;
+              allergen: string;
+              severity: string;
+              reaction: string;
+              diagnosedDate: Date;
               doctorId: string | null;
               notes: string | null;
               createdAt: Date;
               updatedAt: Date;
-            }>;
-          }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return (await client.allergy.findMany({
-              where: { clinicId },
+            }>
+          >(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              allergy: {
+                findMany: (args: PrismaDelegateArgs) => Promise<
+                  Array<{
+                    id: string;
+                    userId: string;
+                    clinicId: string | null;
+                    allergen: string;
+                    severity: string;
+                    reaction: string;
+                    diagnosedDate: Date;
+                    doctorId: string | null;
+                    notes: string | null;
+                    createdAt: Date;
+                    updatedAt: Date;
+                  }>
+                >;
+              };
+            };
+            return await typedClient.allergy.findMany({
+              where: { clinicId } as PrismaDelegateArgs,
               select: {
                 id: true,
                 userId: true,
@@ -1792,37 +2154,48 @@ export class EHRService {
                 notes: true,
                 createdAt: true,
                 updatedAt: true,
-              } as {
-                id: boolean;
-                userId: boolean;
-                clinicId: boolean;
-                allergen: boolean;
-                severity: boolean;
-                reaction: boolean;
-                diagnosedDate: boolean;
-                doctorId: boolean;
-                notes: boolean;
-                createdAt: boolean;
-                updatedAt: boolean;
-              },
-              orderBy: { diagnosedDate: 'desc' },
-            })) as Array<{
+              } as PrismaDelegateArgs,
+              orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }),
+          this.databaseService.executeHealthcareRead<
+            Array<{
               id: string;
               userId: string;
               clinicId: string | null;
-              allergen: string;
-              severity: string;
-              reaction: string;
-              diagnosedDate: Date;
+              name: string;
+              dosage: string;
+              frequency: string;
+              startDate: Date;
+              endDate: Date | null;
               doctorId: string | null;
               notes: string | null;
               createdAt: Date;
               updatedAt: Date;
-            }>;
-          }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return (await client.medication.findMany({
-              where: { clinicId },
+            }>
+          >(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medication: {
+                findMany: (args: PrismaDelegateArgs) => Promise<
+                  Array<{
+                    id: string;
+                    userId: string;
+                    clinicId: string | null;
+                    name: string;
+                    dosage: string;
+                    frequency: string;
+                    startDate: Date;
+                    endDate: Date | null;
+                    doctorId: string | null;
+                    notes: string | null;
+                    createdAt: Date;
+                    updatedAt: Date;
+                  }>
+                >;
+              };
+            };
+            return await typedClient.medication.findMany({
+              where: { clinicId } as PrismaDelegateArgs,
               select: {
                 id: true,
                 userId: true,
@@ -1836,37 +2209,52 @@ export class EHRService {
                 notes: true,
                 createdAt: true,
                 updatedAt: true,
-              } as {
-                id: boolean;
-                userId: boolean;
-                clinicId: boolean;
-                name: boolean;
-                dosage: boolean;
-                frequency: boolean;
-                startDate: boolean;
-                endDate: boolean;
-                doctorId: boolean;
-                notes: boolean;
-                createdAt: boolean;
-                updatedAt: boolean;
-              },
-              orderBy: { startDate: 'desc' },
-            })) as Array<{
-              id: string;
-              userId: string;
-              clinicId: string | null;
-              name: string;
-              dosage: string;
-              frequency: string;
-              startDate: Date;
-              endDate: Date | null;
-              doctorId: string | null;
-              notes: string | null;
-              createdAt: Date;
-              updatedAt: Date;
-            }>;
+              } as PrismaDelegateArgs,
+              orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-        ]);
+        ])) as [
+          Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            condition: string;
+            diagnosis: string | null;
+            treatment: string | null;
+            date: Date;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>,
+          Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            allergen: string;
+            severity: string;
+            reaction: string;
+            diagnosedDate: Date;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>,
+          Array<{
+            id: string;
+            userId: string;
+            clinicId: string | null;
+            name: string;
+            dosage: string;
+            frequency: string;
+            startDate: Date;
+            endDate: Date | null;
+            doctorId: string | null;
+            notes: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+          }>,
+        ];
 
         conditions = medicalHistoryRecords.map((record): MedicalHistoryRecord => {
           const result: MedicalHistoryRecord = {
@@ -1974,73 +2362,135 @@ export class EHRService {
           recentRecords,
           commonConditions,
           commonAllergies,
-        ] = await Promise.all([
+        ] = (await Promise.all([
           // Use executeHealthcareRead for optimized queries
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.medicalHistory.findMany({
-              where: { clinicId },
-              select: { userId: true },
-              distinct: ['userId'],
-            });
-          }) as Promise<Array<{ userId: string }>>,
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.medicalHistory.count({ where: { clinicId } });
+          this.databaseService.executeHealthcareRead<Array<{ userId: string }>>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medicalHistory: {
+                findMany: (args: PrismaDelegateArgs) => Promise<Array<{ userId: string }>>;
+              };
+            };
+            return await typedClient.medicalHistory.findMany({
+              where: { clinicId } as PrismaDelegateArgs,
+              select: { userId: true } as PrismaDelegateArgs,
+              distinct: ['userId'] as unknown as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.labReport.count({ where: { clinicId } });
+          this.databaseService.executeHealthcareRead<number>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medicalHistory: { count: (args: PrismaDelegateArgs) => Promise<number> };
+            };
+            return await typedClient.medicalHistory.count({
+              where: { clinicId } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.vital.count({ where: { clinicId } });
+          this.databaseService.executeHealthcareRead<number>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              labReport: { count: (args: PrismaDelegateArgs) => Promise<number> };
+            };
+            return await typedClient.labReport.count({
+              where: { clinicId } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.allergy.count({ where: { clinicId } });
+          this.databaseService.executeHealthcareRead<number>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              vital: { count: (args: PrismaDelegateArgs) => Promise<number> };
+            };
+            return await typedClient.vital.count({
+              where: { clinicId } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.medication.count({
-              where: { clinicId, isActive: true },
-            });
+          this.databaseService.executeHealthcareRead<number>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              allergy: { count: (args: PrismaDelegateArgs) => Promise<number> };
+            };
+            return await typedClient.allergy.count({
+              where: { clinicId } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }),
+          this.databaseService.executeHealthcareRead<number>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medication: { count: (args: PrismaDelegateArgs) => Promise<number> };
+            };
+            return await typedClient.medication.count({
+              where: { clinicId, isActive: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           }),
           Promise.all([
-            this.databaseService.executeHealthcareRead(async client => {
-              return await client.medicalHistory.count({
+            this.databaseService.executeHealthcareRead<number>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                medicalHistory: { count: (args: PrismaDelegateArgs) => Promise<number> };
+              };
+              return await typedClient.medicalHistory.count({
                 where: {
                   clinicId,
                   createdAt: {
                     gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
                   },
-                },
-              });
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
             }),
-            this.databaseService.executeHealthcareRead(async client => {
-              return await client.labReport.count({
+            this.databaseService.executeHealthcareRead<number>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                labReport: { count: (args: PrismaDelegateArgs) => Promise<number> };
+              };
+              return await typedClient.labReport.count({
                 where: {
                   clinicId,
                   createdAt: {
                     gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
                   },
-                },
-              });
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
             }),
           ]),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.medicalHistory.groupBy({
-              by: ['condition'],
-              where: { clinicId },
-              _count: { condition: true },
-              orderBy: { _count: { condition: 'desc' } },
+          this.databaseService.executeHealthcareRead<
+            Array<{ condition: string | null; _count: { condition: number } }>
+          >(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medicalHistory: {
+                groupBy: (
+                  args: PrismaDelegateArgs
+                ) => Promise<Array<{ condition: string | null; _count: { condition: number } }>>;
+              };
+            };
+            return await typedClient.medicalHistory.groupBy({
+              by: ['condition'] as unknown as PrismaDelegateArgs,
+              where: { clinicId } as PrismaDelegateArgs,
+              _count: { condition: true } as PrismaDelegateArgs,
+              orderBy: { _count: { condition: 'desc' } } as PrismaDelegateArgs,
               take: 10,
-            });
+            } as PrismaDelegateArgs);
           }),
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.allergy.groupBy({
-              by: ['allergen'],
-              where: { clinicId },
-              _count: { allergen: true },
-              orderBy: { _count: { allergen: 'desc' } },
+          this.databaseService.executeHealthcareRead<
+            Array<{ allergen: string | null; _count: { allergen: number } }>
+          >(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              allergy: {
+                groupBy: (
+                  args: PrismaDelegateArgs
+                ) => Promise<Array<{ allergen: string | null; _count: { allergen: number } }>>;
+              };
+            };
+            return await typedClient.allergy.groupBy({
+              by: ['allergen'] as unknown as PrismaDelegateArgs,
+              where: { clinicId } as PrismaDelegateArgs,
+              _count: { allergen: true } as PrismaDelegateArgs,
+              orderBy: { _count: { allergen: 'desc' } } as PrismaDelegateArgs,
               take: 10,
-            });
+            } as PrismaDelegateArgs);
           }),
-        ]);
+        ])) as [
+          Array<{ userId: string }>,
+          number,
+          number,
+          number,
+          number,
+          number,
+          [number, number],
+          Array<{ condition: string | null; _count: { condition: number } }>,
+          Array<{ allergen: string | null; _count: { allergen: number } }>,
+        ];
 
         return {
           clinicId,
@@ -2061,14 +2511,14 @@ export class EHRService {
           insights: {
             commonConditions: commonConditions.map(
               (c: { condition: string | null; _count: { condition: number } }) => ({
-              condition: c.condition || '',
-              count: c._count?.condition || 0,
+                condition: c.condition || '',
+                count: c._count?.condition || 0,
               })
             ),
             commonAllergies: commonAllergies.map(
               (a: { allergen: string | null; _count: { allergen: number } }) => ({
-              allergen: a.allergen || '',
-              count: a._count?.allergen || 0,
+                allergen: a.allergen || '',
+                count: a._count?.allergen || 0,
               })
             ),
           },
@@ -2108,54 +2558,67 @@ export class EHRService {
       `ehr:patients:summary:${clinicId}`,
       async () => {
         // Use executeHealthcareRead for optimized query
-        const patientsWithRecords = (await this.databaseService.executeHealthcareRead(
-          async client => {
-            return await client.user.findMany({
-              where: {
-                OR: [
-                  { medicalHistories: { some: { clinicId } } },
-                  { labReports: { some: { clinicId } } },
-                  { vitals: { some: { clinicId } } },
-                  { allergies: { some: { clinicId } } },
-                  { medications: { some: { clinicId } } },
-                ],
-              },
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                phone: true,
-                dateOfBirth: true,
-                gender: true,
-                medicalHistories: {
-                  where: { clinicId },
-                  orderBy: { date: 'desc' },
-                  take: 1,
-                },
-                allergies: {
-                  where: { clinicId },
-                  select: { allergen: true, severity: true },
-                },
-                medications: {
-                  where: { clinicId, isActive: true },
-                  select: { name: true, dosage: true },
-                },
-              },
-            });
-          }
-        )) as Array<{
-          id: string;
-          firstName: string;
-          lastName: string;
-          email: string | null;
-          phone: string | null;
-          dateOfBirth: Date | null;
-          gender: string | null;
-          medicalHistories: Array<{ date: Date }>;
-          allergies: Array<{ allergen: string; severity: string }>;
-          medications: Array<{ name: string; dosage: string }>;
-        }>;
+        const patientsWithRecords = await this.databaseService.executeHealthcareRead<
+          Array<{
+            id: string;
+            firstName: string | null;
+            lastName: string | null;
+            email: string | null;
+            phone: string | null;
+            dateOfBirth: Date | null;
+            gender: string | null;
+            medicalHistories: Array<{ date: Date }>;
+            allergies: Array<{ allergen: string; severity: string }>;
+            medications: Array<{ name: string; dosage: string }>;
+          }>
+        >(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const result = await typedClient.user.findMany({
+            where: {
+              OR: [
+                { medicalHistories: { some: { clinicId } } } as PrismaDelegateArgs,
+                { labReports: { some: { clinicId } } } as PrismaDelegateArgs,
+                { vitals: { some: { clinicId } } } as PrismaDelegateArgs,
+                { allergies: { some: { clinicId } } } as PrismaDelegateArgs,
+                { medications: { some: { clinicId } } } as PrismaDelegateArgs,
+              ],
+            } as PrismaDelegateArgs,
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              dateOfBirth: true,
+              gender: true,
+              medicalHistories: {
+                where: { clinicId } as PrismaDelegateArgs,
+                orderBy: { date: 'desc' } as PrismaDelegateArgs,
+                take: 1,
+              } as PrismaDelegateArgs,
+              allergies: {
+                where: { clinicId } as PrismaDelegateArgs,
+                select: { allergen: true, severity: true } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+              medications: {
+                where: { clinicId, isActive: true } as PrismaDelegateArgs,
+                select: { name: true, dosage: true } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return result as unknown as Array<{
+            id: string;
+            firstName: string | null;
+            lastName: string | null;
+            email: string | null;
+            phone: string | null;
+            dateOfBirth: Date | null;
+            gender: string | null;
+            medicalHistories: Array<{ date: Date }>;
+            allergies: Array<{ allergen: string; severity: string }>;
+            medications: Array<{ name: string; dosage: string }>;
+          }>;
+        });
 
         type PatientWithRecords = (typeof patientsWithRecords)[number];
         type AllergyRecord = PatientWithRecords['allergies'][number];
@@ -2276,97 +2739,161 @@ export class EHRService {
 
     if (types.includes('conditions')) {
       // Use executeHealthcareRead for optimized query
-      results.conditions = (await this.databaseService.executeHealthcareRead(async client => {
-        return await client.medicalHistory.findMany({
+      results.conditions = await this.databaseService.executeHealthcareRead<
+        Array<{
+          id: string;
+          user: { id: string; firstName: string; lastName: string } | null;
+          condition: string;
+          date: Date;
+          notes?: string;
+        }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medicalHistory: {
+            findMany: (args: PrismaDelegateArgs) => Promise<
+              Array<{
+                id: string;
+                user: { id: string; firstName: string; lastName: string } | null;
+                condition: string;
+                date: Date;
+                notes?: string;
+              }>
+            >;
+          };
+        };
+        return await typedClient.medicalHistory.findMany({
           where: {
             clinicId,
             OR: [
-              { condition: { contains: searchTerm, mode: 'insensitive' } },
-              { notes: { contains: searchTerm, mode: 'insensitive' } },
+              { condition: { contains: searchTerm, mode: 'insensitive' } } as PrismaDelegateArgs,
+              { notes: { contains: searchTerm, mode: 'insensitive' } } as PrismaDelegateArgs,
             ],
-          },
+          } as PrismaDelegateArgs,
           include: {
-            user: { select: { id: true, firstName: true, lastName: true } },
-          },
+            user: { select: { id: true, firstName: true, lastName: true } } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
           take: 20,
-        });
-      })) as Array<{
-        id: string;
-        user: { id: string; firstName: string; lastName: string } | null;
-        condition: string;
-        date: Date;
-        notes?: string;
-      }>;
+        } as PrismaDelegateArgs);
+      });
     }
 
     if (types.includes('allergies')) {
       // Use executeHealthcareRead for optimized query
-      results.allergies = (await this.databaseService.executeHealthcareRead(async client => {
-        return await client.allergy.findMany({
+      results.allergies = await this.databaseService.executeHealthcareRead<
+        Array<{
+          id: string;
+          user: { id: string; firstName: string; lastName: string } | null;
+          allergen: string;
+          severity: string;
+          reaction: string;
+          diagnosedDate: Date;
+        }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          allergy: {
+            findMany: (args: PrismaDelegateArgs) => Promise<
+              Array<{
+                id: string;
+                user: { id: string; firstName: string; lastName: string } | null;
+                allergen: string;
+                severity: string;
+                reaction: string;
+                diagnosedDate: Date;
+              }>
+            >;
+          };
+        };
+        return await typedClient.allergy.findMany({
           where: {
             clinicId,
             allergen: { contains: searchTerm, mode: 'insensitive' },
-          },
+          } as PrismaDelegateArgs,
           include: {
-            user: { select: { id: true, firstName: true, lastName: true } },
-          },
+            user: { select: { id: true, firstName: true, lastName: true } } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
           take: 20,
-        });
-      })) as Array<{
-        id: string;
-        user: { id: string; firstName: string; lastName: string } | null;
-        allergen: string;
-        severity: string;
-        reaction: string;
-        diagnosedDate: Date;
-      }>;
+        } as PrismaDelegateArgs);
+      });
     }
 
     if (types.includes('medications')) {
       // Use executeHealthcareRead for optimized query
-      results.medications = (await this.databaseService.executeHealthcareRead(async client => {
-        return await client.medication.findMany({
+      results.medications = await this.databaseService.executeHealthcareRead<
+        Array<{
+          id: string;
+          user: { id: string; firstName: string; lastName: string } | null;
+          name: string;
+          dosage: string;
+          frequency: string;
+          startDate: Date;
+          isActive: boolean;
+        }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medication: {
+            findMany: (args: PrismaDelegateArgs) => Promise<
+              Array<{
+                id: string;
+                user: { id: string; firstName: string; lastName: string } | null;
+                name: string;
+                dosage: string;
+                frequency: string;
+                startDate: Date;
+                isActive: boolean;
+              }>
+            >;
+          };
+        };
+        return await typedClient.medication.findMany({
           where: {
             clinicId,
             name: { contains: searchTerm, mode: 'insensitive' },
-          },
+          } as PrismaDelegateArgs,
           include: {
-            user: { select: { id: true, firstName: true, lastName: true } },
-          },
+            user: { select: { id: true, firstName: true, lastName: true } } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
           take: 20,
-        });
-      })) as Array<{
-        id: string;
-        user: { id: string; firstName: string; lastName: string } | null;
-        name: string;
-        dosage: string;
-        frequency: string;
-        startDate: Date;
-        isActive: boolean;
-      }>;
+        } as PrismaDelegateArgs);
+      });
     }
 
     if (types.includes('procedures')) {
       // Use executeHealthcareRead for optimized query
-      results.procedures = (await this.databaseService.executeHealthcareRead(async client => {
-        return await client.surgicalRecord.findMany({
+      results.procedures = await this.databaseService.executeHealthcareRead<
+        Array<{
+          id: string;
+          user: { id: string; firstName: string; lastName: string } | null;
+          surgeryName: string;
+          surgeon: string;
+          date: Date;
+          notes?: string;
+        }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          surgicalRecord: {
+            findMany: (args: PrismaDelegateArgs) => Promise<
+              Array<{
+                id: string;
+                user: { id: string; firstName: string; lastName: string } | null;
+                surgeryName: string;
+                surgeon: string;
+                date: Date;
+                notes?: string;
+              }>
+            >;
+          };
+        };
+        return await typedClient.surgicalRecord.findMany({
           where: {
             clinicId,
             surgeryName: { contains: searchTerm, mode: 'insensitive' },
-          },
+          } as PrismaDelegateArgs,
           include: {
-            user: { select: { id: true, firstName: true, lastName: true } },
-          },
+            user: { select: { id: true, firstName: true, lastName: true } } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
           take: 20,
-        });
-      })) as Array<{
-        id: string;
-        user: { id: string; firstName: string; lastName: string } | null;
-        surgeryName: string;
-        surgeon: string;
-        date: Date;
-        notes?: string;
-      }>;
+        } as PrismaDelegateArgs);
+      });
     }
 
     return {
@@ -2414,13 +2941,16 @@ export class EHRService {
       `ehr:alerts:${clinicId}`,
       async () => {
         // Use executeHealthcareRead for optimized queries
-        const [severeAllergies, criticalVitals]: [Allergy[], Vital[]] = await Promise.all([
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.allergy.findMany({
+        const [severeAllergies, criticalVitals] = await Promise.all([
+          this.databaseService.executeHealthcareRead<AllergyBase[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              allergy: { findMany: (args: PrismaDelegateArgs) => Promise<AllergyBase[]> };
+            };
+            return await typedClient.allergy.findMany({
               where: {
                 clinicId,
                 severity: 'Severe',
-              },
+              } as PrismaDelegateArgs,
               include: {
                 user: {
                   select: {
@@ -2428,18 +2958,23 @@ export class EHRService {
                     firstName: true,
                     lastName: true,
                     phone: true,
-                  },
-                },
-              },
-            });
-          }) as Promise<Allergy[]>,
-          this.databaseService.executeHealthcareRead(async client => {
-            return await client.vital.findMany({
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }),
+          this.databaseService.executeHealthcareRead<VitalBase[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              vital: { findMany: (args: PrismaDelegateArgs) => Promise<VitalBase[]> };
+            };
+            return await typedClient.vital.findMany({
               where: {
                 clinicId,
-                type: { in: ['blood_pressure', 'heart_rate', 'temperature'] },
-                recordedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-              },
+                type: { in: ['blood_pressure', 'heart_rate', 'temperature'] } as PrismaDelegateArgs,
+                recordedAt: {
+                  gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
               include: {
                 user: {
                   select: {
@@ -2447,22 +2982,16 @@ export class EHRService {
                     firstName: true,
                     lastName: true,
                     phone: true,
-                  },
-                },
-              },
-              orderBy: { recordedAt: 'desc' },
-            });
-          }) as Promise<Vital[]>,
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+              orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }),
         ]);
 
         // Define types for records with user relation
-        type VitalRecordWithUser = {
-          id: string;
-          userId: string;
-          clinicId: string | null;
-          type: string;
-          value: string;
-          recordedAt: Date;
+        type VitalRecordWithUser = VitalBase & {
           user?: {
             id: string;
             firstName: string | null;
@@ -2471,13 +3000,7 @@ export class EHRService {
           } | null;
         };
 
-        type AllergyRecordWithUser = {
-          id: string;
-          userId: string;
-          allergen: string;
-          severity: string;
-          reaction: string;
-          diagnosedDate: Date;
+        type AllergyRecordWithUser = AllergyBase & {
           user?: {
             id: string;
             firstName: string | null;
@@ -2486,22 +3009,24 @@ export class EHRService {
           } | null;
         };
 
-        const criticalVitalAlerts = (criticalVitals as VitalRecordWithUser[]).filter(vital => {
-          if (vital.type === 'blood_pressure') {
-            const [systolicStr] = String(vital.value).split('/');
-            const systolic = systolicStr ? Number(systolicStr) : 0;
-            return systolic >= 180 || systolic <= 90;
+        const criticalVitalAlerts = (criticalVitals as unknown as VitalRecordWithUser[]).filter(
+          vital => {
+            if (vital.type === 'blood_pressure') {
+              const [systolicStr] = String(vital.value).split('/');
+              const systolic = systolicStr ? Number(systolicStr) : 0;
+              return systolic >= 180 || systolic <= 90;
+            }
+            if (vital.type === 'heart_rate') {
+              const hr = Number(vital.value);
+              return hr >= 120 || hr <= 50;
+            }
+            if (vital.type === 'temperature') {
+              const temp = Number(vital.value);
+              return temp >= 103 || temp <= 95;
+            }
+            return false;
           }
-          if (vital.type === 'heart_rate') {
-            const hr = Number(vital.value);
-            return hr >= 120 || hr <= 50;
-          }
-          if (vital.type === 'temperature') {
-            const temp = Number(vital.value);
-            return temp >= 103 || temp <= 95;
-          }
-          return false;
-        });
+        );
 
         return {
           clinicId,
@@ -2545,231 +3070,422 @@ export class EHRService {
 
   // ============ Transform Methods ============
 
-  private transformMedicalHistory(record: MedicalHistory): MedicalHistoryResponse {
+  private transformMedicalHistory(record: MedicalHistoryBase): MedicalHistoryResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      condition: string;
+      diagnosis?: string | null;
+      treatment?: string | null;
+      date: Date;
+      doctorId?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      condition: record.condition,
+      condition: typedRecord.condition,
       diagnosis:
-        'diagnosis' in record && typeof record.diagnosis === 'string' ? record.diagnosis : '',
+        typedRecord.diagnosis && typeof typedRecord.diagnosis === 'string'
+          ? typedRecord.diagnosis
+          : '',
       treatment:
-        'treatment' in record && typeof record.treatment === 'string' ? record.treatment : '',
-      date: record.date.toISOString(),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+        typedRecord.treatment && typeof typedRecord.treatment === 'string'
+          ? typedRecord.treatment
+          : '',
+      date: typedRecord.date.toISOString(),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformLabReport(record: LabReport): LabReportResponse {
+  private transformLabReport(record: LabReportBase): LabReportResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      testName: string;
+      result: string;
+      unit?: string | null;
+      normalRange?: string | null;
+      date: Date;
+      doctorId?: string | null;
+      labName?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      testName: record.testName,
-      result: record.result,
-      unit: 'unit' in record && typeof record.unit === 'string' ? record.unit : '',
+      testName: typedRecord.testName,
+      result: typedRecord.result,
+      unit: typedRecord.unit && typeof typedRecord.unit === 'string' ? typedRecord.unit : '',
       normalRange:
-        'normalRange' in record && typeof record.normalRange === 'string' ? record.normalRange : '',
-      date: record.date.toISOString(),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      labName: 'labName' in record && typeof record.labName === 'string' ? record.labName : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+        typedRecord.normalRange && typeof typedRecord.normalRange === 'string'
+          ? typedRecord.normalRange
+          : '',
+      date: typedRecord.date.toISOString(),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      labName:
+        typedRecord.labName && typeof typedRecord.labName === 'string' ? typedRecord.labName : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformRadiologyReport(record: RadiologyReport): RadiologyReportResponse {
+  private transformRadiologyReport(record: RadiologyReportBase): RadiologyReportResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      imageType: string;
+      findings: string;
+      conclusion: string;
+      date: Date;
+      doctorId?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      imageType: record.imageType,
-      findings: record.findings,
-      conclusion: record.conclusion,
-      date: record.date.toISOString(),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+      imageType: typedRecord.imageType,
+      findings: typedRecord.findings,
+      conclusion: typedRecord.conclusion,
+      date: typedRecord.date.toISOString(),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformSurgicalRecord(record: SurgicalRecord): SurgicalRecordResponse {
+  private transformSurgicalRecord(record: SurgicalRecordBase): SurgicalRecordResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      surgeryName: string;
+      surgeon: string;
+      date: Date;
+      doctorId?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      surgeryName: record.surgeryName,
-      surgeon: record.surgeon,
-      date: record.date.toISOString(),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+      surgeryName: typedRecord.surgeryName,
+      surgeon: typedRecord.surgeon,
+      date: typedRecord.date.toISOString(),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformVital(record: Vital): VitalResponse {
+  private transformVital(record: VitalBase): VitalResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      type: string;
+      value: string | number;
+      unit?: string | null;
+      recordedAt: Date;
+      doctorId?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      type: record.type,
-      value: Number(record.value),
-      unit: 'unit' in record && typeof record.unit === 'string' ? record.unit : '',
-      recordedAt: record.recordedAt.toISOString(),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+      type: typedRecord.type,
+      value: Number(typedRecord.value),
+      unit: typedRecord.unit && typeof typedRecord.unit === 'string' ? typedRecord.unit : '',
+      recordedAt: typedRecord.recordedAt.toISOString(),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformAllergy(record: Allergy): AllergyResponse {
+  private transformAllergy(record: AllergyBase): AllergyResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      allergen: string;
+      severity: string;
+      reaction: string;
+      diagnosedDate: Date;
+      doctorId?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      allergen: record.allergen,
-      severity: record.severity,
-      reaction: record.reaction,
-      diagnosedDate: record.diagnosedDate.toISOString(),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+      allergen: typedRecord.allergen,
+      severity: typedRecord.severity,
+      reaction: typedRecord.reaction,
+      diagnosedDate: typedRecord.diagnosedDate.toISOString(),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformMedication(record: Medication): MedicationResponse {
+  private transformMedication(record: MedicationBase): MedicationResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      name: string;
+      dosage: string;
+      frequency: string;
+      startDate: Date;
+      endDate?: Date | null;
+      doctorId?: string | null;
+      prescribedBy?: string | null;
+      purpose?: string | null;
+      sideEffects?: string | null;
+      isActive?: boolean | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      name: record.name,
-      dosage: record.dosage,
-      frequency: record.frequency,
-      startDate: record.startDate.toISOString(),
-      ...(record.endDate && { endDate: record.endDate.toISOString() }),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
+      name: typedRecord.name,
+      dosage: typedRecord.dosage,
+      frequency: typedRecord.frequency,
+      startDate: typedRecord.startDate.toISOString(),
+      ...(typedRecord.endDate && { endDate: typedRecord.endDate.toISOString() }),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
       prescribedBy:
-        'prescribedBy' in record && typeof record.prescribedBy === 'string'
-          ? record.prescribedBy
+        typedRecord.prescribedBy && typeof typedRecord.prescribedBy === 'string'
+          ? typedRecord.prescribedBy
           : '',
-      purpose: 'purpose' in record && typeof record.purpose === 'string' ? record.purpose : '',
+      purpose:
+        typedRecord.purpose && typeof typedRecord.purpose === 'string' ? typedRecord.purpose : '',
       sideEffects:
-        'sideEffects' in record && typeof record.sideEffects === 'string' ? record.sideEffects : '',
+        typedRecord.sideEffects && typeof typedRecord.sideEffects === 'string'
+          ? typedRecord.sideEffects
+          : '',
       isActive:
-        'isActive' in record && typeof record.isActive === 'boolean' ? record.isActive : false,
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+        typedRecord.isActive && typeof typedRecord.isActive === 'boolean'
+          ? typedRecord.isActive
+          : false,
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformImmunization(record: Immunization): ImmunizationResponse {
+  private transformImmunization(record: ImmunizationBase): ImmunizationResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      vaccineName: string;
+      dateAdministered: Date;
+      nextDueDate?: Date | null;
+      doctorId?: string | null;
+      batchNumber?: string | null;
+      administrator?: string | null;
+      location?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
     return {
-      id: record.id,
-      userId: record.userId,
+      id: typedRecord.id,
+      userId: typedRecord.userId,
       clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
           : '',
-      vaccineName: record.vaccineName,
-      dateAdministered: record.dateAdministered.toISOString(),
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      ...(record.nextDueDate && {
-        nextDueDate: record.nextDueDate.toISOString(),
+      vaccineName: typedRecord.vaccineName,
+      dateAdministered: typedRecord.dateAdministered.toISOString(),
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      ...(typedRecord.nextDueDate && {
+        nextDueDate: typedRecord.nextDueDate.toISOString(),
       }),
       batchNumber:
-        'batchNumber' in record && typeof record.batchNumber === 'string' ? record.batchNumber : '',
-      administrator:
-        'administrator' in record && typeof record.administrator === 'string'
-          ? record.administrator
+        typedRecord.batchNumber && typeof typedRecord.batchNumber === 'string'
+          ? typedRecord.batchNumber
           : '',
-      location: 'location' in record && typeof record.location === 'string' ? record.location : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+      administrator:
+        typedRecord.administrator && typeof typedRecord.administrator === 'string'
+          ? typedRecord.administrator
+          : '',
+      location:
+        typedRecord.location && typeof typedRecord.location === 'string'
+          ? typedRecord.location
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
     };
   }
 
-  private transformFamilyHistory(record: FamilyHistory): FamilyHistoryResponse {
-    const result: FamilyHistoryResponse = {
-      id: record.id,
-      userId: record.userId,
-      clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
-          : '',
-      relation: 'relation' in record && typeof record.relation === 'string' ? record.relation : '',
-      condition: record.condition,
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+  private transformFamilyHistory(record: FamilyHistoryBase): FamilyHistoryResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      relation?: string | null;
+      condition: string;
+      diagnosedAge?: number | null;
+      doctorId?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
     };
-    if ('diagnosedAge' in record && typeof record.diagnosedAge === 'number') {
-      result.diagnosedAge = record.diagnosedAge;
+    const result: FamilyHistoryResponse = {
+      id: typedRecord.id,
+      userId: typedRecord.userId,
+      clinicId:
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
+          : '',
+      relation:
+        typedRecord.relation && typeof typedRecord.relation === 'string'
+          ? typedRecord.relation
+          : '',
+      condition: typedRecord.condition,
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
+    };
+    if (typedRecord.diagnosedAge && typeof typedRecord.diagnosedAge === 'number') {
+      result.diagnosedAge = typedRecord.diagnosedAge;
     }
     return result;
   }
 
-  private transformLifestyleAssessment(record: LifestyleAssessment): LifestyleAssessmentResponse {
-    const result: LifestyleAssessmentResponse = {
-      id: record.id,
-      userId: record.userId,
-      clinicId:
-        'clinicId' in record && typeof record.clinicId === 'string' && record.clinicId
-          ? record.clinicId
-          : '',
-      doctorId: 'doctorId' in record && typeof record.doctorId === 'string' ? record.doctorId : '',
-      notes: 'notes' in record && typeof record.notes === 'string' ? record.notes : '',
-      createdAt: record.createdAt.toISOString(),
-      updatedAt: record.updatedAt.toISOString(),
+  private transformLifestyleAssessment(
+    record: LifestyleAssessmentBase
+  ): LifestyleAssessmentResponse {
+    const typedRecord = record as unknown as {
+      id: string;
+      userId: string;
+      clinicId?: string | null;
+      doctorId?: string | null;
+      diet?: string | null;
+      exercise?: string | null;
+      smoking?: string | null;
+      alcohol?: string | null;
+      sleep?: string | null;
+      stress?: string | null;
+      notes?: string | null;
+      createdAt: Date;
+      updatedAt: Date;
     };
-    if ('diet' in record && typeof record.diet === 'string') {
-      result.diet = record.diet;
+    const result: LifestyleAssessmentResponse = {
+      id: typedRecord.id,
+      userId: typedRecord.userId,
+      clinicId:
+        typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
+          ? typedRecord.clinicId
+          : '',
+      doctorId:
+        typedRecord.doctorId && typeof typedRecord.doctorId === 'string'
+          ? typedRecord.doctorId
+          : '',
+      notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      createdAt: typedRecord.createdAt.toISOString(),
+      updatedAt: typedRecord.updatedAt.toISOString(),
+    };
+    if (typedRecord.diet && typeof typedRecord.diet === 'string') {
+      result.diet = typedRecord.diet;
     }
-    if ('exercise' in record && typeof record.exercise === 'string') {
-      result.exercise = record.exercise;
+    if (typedRecord.exercise && typeof typedRecord.exercise === 'string') {
+      result.exercise = typedRecord.exercise;
     }
-    if ('smoking' in record && typeof record.smoking === 'string') {
-      result.smoking = record.smoking;
+    if (typedRecord.smoking && typeof typedRecord.smoking === 'string') {
+      result.smoking = typedRecord.smoking;
     }
-    if ('alcohol' in record && typeof record.alcohol === 'string') {
-      result.alcohol = record.alcohol;
+    if (typedRecord.alcohol && typeof typedRecord.alcohol === 'string') {
+      result.alcohol = typedRecord.alcohol;
     }
-    if ('sleep' in record && typeof record.sleep === 'string') {
-      result.sleep = record.sleep;
+    if (typedRecord.sleep && typeof typedRecord.sleep === 'string') {
+      result.sleep = typedRecord.sleep;
     }
-    if ('stress' in record && typeof record.stress === 'string') {
-      result.stress = record.stress;
+    if (typedRecord.stress && typeof typedRecord.stress === 'string') {
+      result.stress = typedRecord.stress;
     }
     return result;
   }

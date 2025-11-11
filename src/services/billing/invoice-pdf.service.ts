@@ -15,7 +15,7 @@ export class InvoicePDFService {
     // Try app storage first, fallback to /tmp if permission denied
     const storageDir = path.join(process.cwd(), 'storage', 'invoices');
     const tmpDir = path.join('/tmp', 'invoices');
-    
+
     try {
       if (!fs.existsSync(storageDir)) {
         fs.mkdirSync(storageDir, { recursive: true, mode: 0o755 });
@@ -402,7 +402,10 @@ export class InvoicePDFService {
    * Get public URL for invoice PDF
    */
   getPublicInvoiceUrl(fileName: string): string {
-    const baseUrl = this.configService?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:3000';
+    const baseUrl =
+      this.configService?.get<string>('API_URL') ||
+      process.env['API_URL'] ||
+      'http://localhost:3000';
     return `${baseUrl}/api/billing/invoices/download/${fileName}`;
   }
 

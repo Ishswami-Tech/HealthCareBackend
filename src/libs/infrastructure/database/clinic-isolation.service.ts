@@ -38,14 +38,16 @@ export class ClinicIsolationService implements OnModuleInit {
   constructor(
     @Inject(forwardRef(() => HealthcareDatabaseClient))
     private databaseService: HealthcareDatabaseClient,
+    @Inject(forwardRef(() => ConfigService))
     private configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private loggingService: LoggingService
   ) {
     // Use ConfigService with dotted notation for configuration access
     // ConfigService.get() retrieves values from the configuration factory or environment
     const maxClinicsEnv = process.env['MAX_CLINICS'];
     const maxLocationsEnv = process.env['MAX_LOCATIONS_PER_CLINIC'];
-    
+
     this.maxClinics = maxClinicsEnv ? parseInt(maxClinicsEnv, 10) : 200; // Default: 200 clinics
     this.maxLocationsPerClinic = maxLocationsEnv ? parseInt(maxLocationsEnv, 10) : 50; // Default: 50 locations per clinic
   }

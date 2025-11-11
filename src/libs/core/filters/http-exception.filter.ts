@@ -15,21 +15,26 @@ export type { CustomFastifyRequest } from '@core/types/filter.types';
  * @description Comprehensive exception filter for healthcare applications with enhanced logging,
  * security, and error handling. Provides structured error responses and sanitized logging.
  *
+ * @remarks
+ * - Uses Fastify-specific types (FastifyReply, CustomFastifyRequest) as per AI rules:
+ *   Fastify is the only allowed HTTP framework, so framework-agnostic abstraction is not required.
+ * - Requires LoggingService in constructor for structured logging.
+ * - Sanitizes sensitive data (passwords, tokens, headers) before logging.
+ * - Provides enhanced error categorization and context for healthcare applications.
+ *
  * @example
  * ```typescript
- * // app.module.ts
- * import { APP_FILTER } from '@nestjs/core';
- * import { HttpExceptionFilter } from '@libs/core/filters';
+ * // In main.ts or bootstrap
+ * const filter = new HttpExceptionFilter(loggingService);
+ * app.useGlobalFilters(filter);
  *
- * @Module({
- *   providers: [
- *     {
- *       provide: APP_FILTER,
- *       useClass: HttpExceptionFilter,
- *     },
- *   ],
- * })
- * export class AppModule {}
+ * // Or via MiddlewareManager
+ * middlewareManager.configureFilters(app, [
+ *   {
+ *     filter: HttpExceptionFilter,
+ *     constructorArgs: [loggingService]
+ *   }
+ * ]);
  * ```
  */
 @Catch()

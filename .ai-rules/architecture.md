@@ -292,49 +292,74 @@ export class UserService {
 
 ## 🔄 Event-Driven Architecture
 
-### **Event Emitter Pattern**
+### **Event Service Pattern (MANDATORY)**
+
+**ALWAYS use `EventService` from `@infrastructure/events` instead of direct `EventEmitter2` usage.**
+
 ```typescript
-// Event definitions
-export interface UserEvents {
-  'user.created': { user: User };
-  'user.updated': { user: User; changes: Partial<User> };
-  'user.deleted': { userId: string };
-}
+// ✅ DO - Use EventService
+import { EventService } from '@infrastructure/events';
+import { EventCategory, EventPriority } from '@core/types';
 
 // Service with event emission
 @Injectable()
 export class UserService {
   constructor(
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventService: EventService,
     private readonly userRepository: UserRepository
   ) {}
 
   async create(data: CreateUserDto): Promise<User> {
     const user = await this.userRepository.create(data);
     
-    // Emit event for other services to react
-    this.eventEmitter.emit('user.created', { user });
+    // Emit enterprise-grade event with full features
+    await this.eventService.emitEnterprise('user.created', {
+      eventId: `user-created-${user.id}`,
+      eventType: 'user.created',
+      category: EventCategory.USER_ACTIVITY,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'UserService',
+      version: '1.0.0',
+      userId: user.id,
+      clinicId: user.clinicId,
+      payload: { user }
+    });
     
     return user;
   }
 }
 
-// Event listener
+// Event listener (still uses @OnEvent decorator - works with EventEmitter2 under the hood)
 @Injectable()
 export class NotificationService {
   @OnEvent('user.created')
-  async handleUserCreated(payload: { user: User }) {
-    await this.sendWelcomeEmail(payload.user.email);
+  async handleUserCreated(payload: EnterpriseEventPayload) {
+    const user = payload.payload.user as User;
+    await this.sendWelcomeEmail(user.email);
   }
 
   @OnEvent('user.updated')
-  async handleUserUpdated(payload: { user: User; changes: Partial<User> }) {
-    if (payload.changes.email) {
-      await this.sendEmailChangeNotification(payload.user);
+  async handleUserUpdated(payload: EnterpriseEventPayload) {
+    const userData = payload.payload as { user: User; changes: Partial<User> };
+    if (userData.changes.email) {
+      await this.sendEmailChangeNotification(userData.user);
     }
   }
 }
 ```
+
+**Key Benefits of EventService**:
+- ✅ Built on NestJS EventEmitter2 (compatible with @OnEvent decorators)
+- ✅ Circuit breaker protection via CircuitBreakerService
+- ✅ Rate limiting (1000 events/second per source)
+- ✅ HIPAA-compliant security logging
+- ✅ Event persistence in CacheService with TTL
+- ✅ Event buffering and batch processing
+- ✅ Comprehensive metrics and monitoring
+- ✅ PHI data validation for healthcare events
+- ✅ Simple API for basic use cases (emit, emitAsync, on, once, off)
+- ✅ Enterprise API for advanced features (emitEnterprise, queryEvents, getEventMetrics)
 
 ## 🗄️ Database Architecture
 

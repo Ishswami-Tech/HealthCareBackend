@@ -467,7 +467,8 @@ async findUsers(): Promise<User[]> {
 export class UserService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly logger: LoggingService
+    private readonly logger: LoggingService,
+    private readonly eventService: EventService
   ) {}
 
   async createUserWithProfile(
@@ -491,6 +492,22 @@ export class UserService {
       });
 
       this.logger.info('Patient profile created', { profileId: profile.id });
+
+      // Emit event for user creation (outside transaction for better performance)
+      if (this.eventService) {
+        await this.eventService.emitEnterprise('user.created', {
+          eventId: `user-created-${user.id}`,
+          eventType: 'user.created',
+          category: EventCategory.USER_ACTIVITY,
+          priority: EventPriority.HIGH,
+          timestamp: new Date().toISOString(),
+          source: 'UserService',
+          version: '1.0.0',
+          userId: user.id,
+          clinicId: user.clinicId,
+          payload: { user, profile }
+        });
+      }
 
       return { user, profile };
     });

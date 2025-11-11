@@ -1,4 +1,4 @@
-import { Module, DynamicModule, forwardRef, Global } from '@nestjs/common';
+import { Module, DynamicModule, forwardRef } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@config';
 

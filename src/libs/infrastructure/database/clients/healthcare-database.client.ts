@@ -1,7 +1,7 @@
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@infrastructure/database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { UserWithRelations } from '@core/types/user.types';
@@ -119,9 +119,12 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     @Inject(forwardRef(() => ClinicIsolationService))
     protected readonly clinicIsolationService: ClinicIsolationService,
     protected readonly queryOptimizer: HealthcareQueryOptimizerService,
+    @Inject(forwardRef(() => LoggingService))
     protected readonly loggingService: LoggingService,
     protected readonly eventEmitter: EventEmitter2,
-    @Optional() protected readonly cacheService?: CacheService,
+    @Optional()
+    @Inject(forwardRef(() => CacheService))
+    protected readonly cacheService?: CacheService,
     @Optional()
     @Inject('HealthcareDatabaseConfig')
     config?: HealthcareDatabaseConfig
@@ -139,7 +142,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         complianceLevel: 'HIPAA',
         connectionTimeout: 30000,
         queryTimeout: 15000,
-        maxConnections: 50,
+        maxConnections: 500, // Optimized for 10M+ users (increased from 50)
         healthCheckInterval: 30000,
       } as HealthcareDatabaseConfig;
     }
@@ -311,7 +314,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   /**
-   * Helper method to execute cached read operation
+   * Helper method to execute cached read operation with cache miss tracking
    * @internal
    */
   private async executeCachedRead<T>(
@@ -321,14 +324,91 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     ttl: number = 3600
   ): Promise<T> {
     if (this.cacheService) {
-      return await this.cacheService.cache(cacheKey, operation, {
-        ttl,
-        tags,
-        containsPHI: true,
-        priority: 'high',
-        enableSwr: true,
-      });
+      const cacheStart = Date.now();
+
+      try {
+        // Try to get from cache first
+        const cached = await this.cacheService.get<T>(cacheKey);
+        if (cached !== null && cached !== undefined) {
+          const cacheTime = Date.now() - cacheStart;
+
+          // Update cache hit metrics
+          // metricsService is a required dependency, so recordCacheHit is guaranteed to exist
+          (this.metricsService as { recordCacheHit: (time: number) => void }).recordCacheHit(
+            cacheTime
+          );
+
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.DEBUG,
+            `Cache hit for key: ${cacheKey.substring(0, 100)}`,
+            'HealthcareDatabaseClient',
+            { cacheKey: cacheKey.substring(0, 100), cacheTime, tags }
+          );
+
+          return cached;
+        }
+
+        // Cache miss - execute operation and cache result
+        const cacheMissTime = Date.now() - cacheStart;
+        // metricsService is a required dependency, so recordCacheMiss is guaranteed to exist
+        (this.metricsService as { recordCacheMiss: (time: number) => void }).recordCacheMiss(
+          cacheMissTime
+        );
+
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          `Cache miss for key: ${cacheKey.substring(0, 100)} - executing operation`,
+          'HealthcareDatabaseClient',
+          { cacheKey: cacheKey.substring(0, 100), cacheMissTime, tags }
+        );
+
+        const result = await operation();
+
+        // Cache the result using cache() method which handles TTL and options
+        void this.cacheService
+          .cache(cacheKey, () => Promise.resolve(result), {
+            ttl,
+            tags,
+            containsPHI: true,
+            priority: 'high',
+            enableSwr: true,
+          })
+          .catch((cacheError: unknown) => {
+            const errorMessage =
+              cacheError instanceof Error ? cacheError.message : String(cacheError);
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.WARN,
+              `Failed to cache result for key: ${cacheKey.substring(0, 100)}`,
+              'HealthcareDatabaseClient',
+              {
+                cacheKey: cacheKey.substring(0, 100),
+                error: errorMessage,
+              }
+            );
+          });
+
+        return result;
+      } catch (error: unknown) {
+        // If cache operation fails, fall back to direct operation
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Cache operation failed for key: ${cacheKey.substring(0, 100)}, falling back to direct operation`,
+          'HealthcareDatabaseClient',
+          {
+            cacheKey: cacheKey.substring(0, 100),
+            error: errorMessage,
+          }
+        );
+        return await operation();
+      }
     }
+
+    // No cache service available - execute directly
     return await operation();
   }
 
@@ -387,9 +467,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       return await this.cacheService.cache(
         cacheKey,
         async () => {
-          return await this.executeHealthcareRead(async _client => {
+          return await this.executeHealthcareRead<UserWithRelations | null>(async _client => {
             const prismaService = this.getInternalPrismaClient();
-            return await prismaService.findUserByIdSafe(id);
+            const result = await prismaService.findUserByIdSafe(id);
+            return result;
           });
         },
         {
@@ -403,9 +484,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     }
 
     // Fallback without cache
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<UserWithRelations | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findUserByIdSafe(id);
+      const result = await prismaService.findUserByIdSafe(id);
+      return result;
     });
   }
 
@@ -414,9 +496,25 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return await this.executeCachedRead(
       cacheKey,
       async () => {
-        return await this.executeHealthcareRead(async _client => {
-          const prismaService = this.getInternalPrismaClient();
-          return await prismaService.findUserByEmailSafe(email);
+        return await this.executeHealthcareRead<UserWithRelations | null>(async client => {
+          // Use the client directly instead of calling prismaService.findUserByEmailSafe again
+          // This avoids recursive calls and connection pool exhaustion
+          const userDelegate = (
+            client as unknown as {
+              user: { findUnique: (args: unknown) => Promise<UserWithRelations | null> };
+            }
+          )['user'];
+          const result = await userDelegate.findUnique({
+            where: { email },
+            include: {
+              doctor: true,
+              patient: true,
+              receptionists: true,
+              clinicAdmins: true,
+              superAdmin: true,
+            },
+          });
+          return result;
         });
       },
       [`user:email:${email}`, 'users'],
@@ -430,9 +528,25 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return await this.executeCachedRead(
       cacheKey,
       async () => {
-        return await this.executeHealthcareRead(async _client => {
-          const prismaService = this.getInternalPrismaClient();
-          return await prismaService.findUsersSafe(where);
+        return await this.executeHealthcareRead<UserWithRelations[]>(async client => {
+          // Use the client directly instead of calling prismaService.findUsersSafe again
+          // This avoids recursive calls and connection pool exhaustion
+          const userDelegate = (
+            client as unknown as {
+              user: { findMany: (args: unknown) => Promise<UserWithRelations[]> };
+            }
+          )['user'];
+          const result = await userDelegate.findMany({
+            where,
+            include: {
+              doctor: true,
+              patient: true,
+              receptionists: true,
+              clinicAdmins: true,
+              superAdmin: true,
+            },
+          });
+          return result;
         });
       },
       ['users'],
@@ -441,10 +555,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {
-    const result = await this.executeHealthcareWrite(
+    const result = await this.executeHealthcareWrite<UserWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createUserSafe(data);
+        const result = await prismaService.createUserSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -470,10 +585,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async updateUserSafe(id: string, data: UserUpdateInput): Promise<UserWithRelations> {
-    const result = await this.executeHealthcareWrite(
+    const result = await this.executeHealthcareWrite<UserWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updateUserSafe(id, data);
+        const result = await prismaService.updateUserSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -493,10 +609,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async deleteUserSafe(id: string): Promise<UserWithRelations> {
-    const result = await this.executeHealthcareWrite(
+    const result = await this.executeHealthcareWrite<UserWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteUserSafe(id);
+        const result = await prismaService.deleteUserSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -520,9 +637,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return await this.executeCachedRead(
       cacheKey,
       async () => {
-        return await this.executeHealthcareRead(async _client => {
+        return await this.executeHealthcareRead<AppointmentWithRelations | null>(async _client => {
           const prismaService = this.getInternalPrismaClient();
-          return await prismaService.findAppointmentByIdSafe(id);
+          const result = await prismaService.findAppointmentByIdSafe(id);
+          return result;
         });
       },
       [`appointment:${id}`, 'appointments'],
@@ -536,9 +654,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     return await this.executeCachedRead(
       cacheKey,
       async () => {
-        return await this.executeHealthcareRead(async _client => {
+        return await this.executeHealthcareRead<AppointmentWithRelations[]>(async _client => {
           const prismaService = this.getInternalPrismaClient();
-          return await prismaService.findAppointmentsSafe(where);
+          const result = await prismaService.findAppointmentsSafe(where);
+          return result;
         });
       },
       ['appointments'],
@@ -547,10 +666,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async createAppointmentSafe(data: AppointmentCreateInput): Promise<AppointmentWithRelations> {
-    const result = await this.executeHealthcareWrite(
+    const result = await this.executeHealthcareWrite<AppointmentWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createAppointmentSafe(data);
+        const result = await prismaService.createAppointmentSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -579,10 +699,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     id: string,
     data: AppointmentUpdateInput
   ): Promise<AppointmentWithRelations> {
-    const result = await this.executeHealthcareWrite(
+    const result = await this.executeHealthcareWrite<AppointmentWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updateAppointmentSafe(id, data);
+        const result = await prismaService.updateAppointmentSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -607,10 +728,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async deleteAppointmentSafe(id: string): Promise<AppointmentWithRelations> {
-    const result = await this.executeHealthcareWrite(
+    const result = await this.executeHealthcareWrite<AppointmentWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteAppointmentSafe(id);
+        const result = await prismaService.deleteAppointmentSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -634,46 +756,52 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     clinicId: string,
     date: Date
   ): Promise<AppointmentTimeSlot[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<AppointmentTimeSlot[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findAppointmentTimeSlotsSafe(doctorId, clinicId, date);
+      const result = await prismaService.findAppointmentTimeSlotsSafe(doctorId, clinicId, date);
+      return result;
     });
   }
 
   async countUsersSafe(where: UserWhereInput): Promise<number> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<number>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.countUsersSafe(where);
+      const result = await prismaService.countUsersSafe(where);
+      return result;
     });
   }
 
   async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<number>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.countAppointmentsSafe(where);
+      const result = await prismaService.countAppointmentsSafe(where);
+      return result;
     });
   }
 
   // Billing-related type-safe methods - all use optimization layers
   async findBillingPlanByIdSafe(id: string): Promise<BillingPlanWithRelations | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<BillingPlanWithRelations | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findBillingPlanByIdSafe(id);
+      const result = await prismaService.findBillingPlanByIdSafe(id);
+      return result;
     });
   }
 
   async findBillingPlansSafe(where: BillingPlanWhereInput): Promise<BillingPlanWithRelations[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<BillingPlanWithRelations[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findBillingPlansSafe(where);
+      const result = await prismaService.findBillingPlansSafe(where);
+      return result;
     });
   }
 
   async createBillingPlanSafe(data: BillingPlanCreateInput): Promise<BillingPlanWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<BillingPlanWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createBillingPlanSafe(data);
+        const result = await prismaService.createBillingPlanSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -691,10 +819,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     id: string,
     data: BillingPlanUpdateInput
   ): Promise<BillingPlanWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<BillingPlanWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updateBillingPlanSafe(id, data);
+        const result = await prismaService.updateBillingPlanSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -709,24 +838,27 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async findSubscriptionByIdSafe(id: string): Promise<SubscriptionWithRelations | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<SubscriptionWithRelations | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findSubscriptionByIdSafe(id);
+      const result = await prismaService.findSubscriptionByIdSafe(id);
+      return result;
     });
   }
 
   async findSubscriptionsSafe(where: SubscriptionWhereInput): Promise<SubscriptionWithRelations[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<SubscriptionWithRelations[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findSubscriptionsSafe(where);
+      const result = await prismaService.findSubscriptionsSafe(where);
+      return result;
     });
   }
 
   async createSubscriptionSafe(data: SubscriptionCreateInput): Promise<SubscriptionWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<SubscriptionWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createSubscriptionSafe(data);
+        const result = await prismaService.createSubscriptionSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -744,10 +876,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     id: string,
     data: SubscriptionUpdateInput
   ): Promise<SubscriptionWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<SubscriptionWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updateSubscriptionSafe(id, data);
+        const result = await prismaService.updateSubscriptionSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -762,24 +895,27 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async findInvoiceByIdSafe(id: string): Promise<InvoiceWithRelations | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<InvoiceWithRelations | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findInvoiceByIdSafe(id);
+      const result = await prismaService.findInvoiceByIdSafe(id);
+      return result;
     });
   }
 
   async findInvoicesSafe(where: InvoiceWhereInput): Promise<InvoiceWithRelations[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<InvoiceWithRelations[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findInvoicesSafe(where);
+      const result = await prismaService.findInvoicesSafe(where);
+      return result;
     });
   }
 
   async createInvoiceSafe(data: InvoiceCreateInput): Promise<InvoiceWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<InvoiceWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createInvoiceSafe(data);
+        const result = await prismaService.createInvoiceSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -794,10 +930,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async updateInvoiceSafe(id: string, data: InvoiceUpdateInput): Promise<InvoiceWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<InvoiceWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updateInvoiceSafe(id, data);
+        const result = await prismaService.updateInvoiceSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -812,24 +949,27 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async findPaymentByIdSafe(id: string): Promise<PaymentWithRelations | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<PaymentWithRelations | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findPaymentByIdSafe(id);
+      const result = await prismaService.findPaymentByIdSafe(id);
+      return result;
     });
   }
 
   async findPaymentsSafe(where: PaymentWhereInput): Promise<PaymentWithRelations[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<PaymentWithRelations[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findPaymentsSafe(where);
+      const result = await prismaService.findPaymentsSafe(where);
+      return result;
     });
   }
 
   async createPaymentSafe(data: PaymentCreateInput): Promise<PaymentWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<PaymentWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createPaymentSafe(data);
+        const result = await prismaService.createPaymentSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -844,10 +984,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async updatePaymentSafe(id: string, data: PaymentUpdateInput): Promise<PaymentWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<PaymentWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updatePaymentSafe(id, data);
+        const result = await prismaService.updatePaymentSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -863,10 +1004,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   // Delete methods - all use optimization layers
   async deleteBillingPlanSafe(id: string): Promise<BillingPlanWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<BillingPlanWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteBillingPlanSafe(id);
+        const result = await prismaService.deleteBillingPlanSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -881,10 +1023,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async deleteSubscriptionSafe(id: string): Promise<SubscriptionWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<SubscriptionWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteSubscriptionSafe(id);
+        const result = await prismaService.deleteSubscriptionSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -899,10 +1042,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async deleteInvoiceSafe(id: string): Promise<InvoiceWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<InvoiceWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteInvoiceSafe(id);
+        const result = await prismaService.deleteInvoiceSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -917,10 +1061,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async deletePaymentSafe(id: string): Promise<PaymentWithRelations> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<PaymentWithRelations>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deletePaymentSafe(id);
+        const result = await prismaService.deletePaymentSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -944,10 +1089,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     isSystemPermission?: boolean;
     isActive?: boolean;
   }): Promise<PermissionEntity> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<PermissionEntity>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createPermissionSafe(data);
+        const result = await prismaService.createPermissionSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -962,9 +1108,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async findPermissionByIdSafe(id: string): Promise<PermissionEntity | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<PermissionEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findPermissionByIdSafe(id);
+      const result = await prismaService.findPermissionByIdSafe(id);
+      return result;
     });
   }
 
@@ -973,9 +1120,14 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     action: string,
     domain?: string
   ): Promise<PermissionEntity | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<PermissionEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findPermissionByResourceActionSafe(resource, action, domain);
+      const result = await prismaService.findPermissionByResourceActionSafe(
+        resource,
+        action,
+        domain
+      );
+      return result;
     });
   }
 
@@ -983,9 +1135,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     resource: string,
     domain?: string
   ): Promise<PermissionEntity[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<PermissionEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findPermissionsByResourceSafe(resource, domain);
+      const result = await prismaService.findPermissionsByResourceSafe(resource, domain);
+      return result;
     });
   }
 
@@ -995,10 +1148,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       updatedAt: Date;
     }
   ): Promise<PermissionEntity> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<PermissionEntity>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updatePermissionSafe(id, data);
+        const result = await prismaService.updatePermissionSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -1013,24 +1167,27 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async countRolePermissionsSafe(permissionId: string): Promise<number> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<number>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.countRolePermissionsSafe(permissionId);
+      const result = await prismaService.countRolePermissionsSafe(permissionId);
+      return result;
     });
   }
 
   async findSystemPermissionsSafe(): Promise<PermissionEntity[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<PermissionEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findSystemPermissionsSafe();
+      const result = await prismaService.findSystemPermissionsSafe();
+      return result;
     });
   }
 
   // RBAC - Role Safe Methods
   async findRoleByIdSafe(id: string): Promise<RbacRoleEntity | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<RbacRoleEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findRoleByIdSafe(id);
+      const result = await prismaService.findRoleByIdSafe(id);
+      return result;
     });
   }
 
@@ -1039,9 +1196,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     domain?: string,
     clinicId?: string
   ): Promise<RbacRoleEntity | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<RbacRoleEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findRoleByNameSafe(name, domain, clinicId);
+      const result = await prismaService.findRoleByNameSafe(name, domain, clinicId);
+      return result;
     });
   }
 
@@ -1054,10 +1212,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     isSystemRole?: boolean;
     isActive?: boolean;
   }): Promise<RbacRoleEntity> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<RbacRoleEntity>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createRoleSafe(data);
+        const result = await prismaService.createRoleSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -1072,9 +1231,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async findRolesByDomainSafe(domain?: string, clinicId?: string): Promise<RbacRoleEntity[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<RbacRoleEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findRolesByDomainSafe(domain, clinicId);
+      const result = await prismaService.findRolesByDomainSafe(domain, clinicId);
+      return result;
     });
   }
 
@@ -1087,10 +1247,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       updatedAt: Date;
     }
   ): Promise<RbacRoleEntity> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<RbacRoleEntity>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updateRoleSafe(id, data);
+        const result = await prismaService.updateRoleSafe(id, data);
+        return result;
       },
       {
         userId: 'system',
@@ -1105,17 +1266,19 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async countUserRolesSafe(roleId: string): Promise<number> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<number>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.countUserRolesSafe(roleId);
+      const result = await prismaService.countUserRolesSafe(roleId);
+      return result;
     });
   }
 
   async deleteRolePermissionsSafe(roleId: string): Promise<{ count: number }> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<{ count: number }>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteRolePermissionsSafe(roleId);
+        const result = await prismaService.deleteRolePermissionsSafe(roleId);
+        return result;
       },
       {
         userId: 'system',
@@ -1132,10 +1295,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   async createRolePermissionsSafe(
     permissions: Array<{ roleId: string; permissionId: string }>
   ): Promise<{ count: number }> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<{ count: number }>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createRolePermissionsSafe(permissions);
+        const result = await prismaService.createRolePermissionsSafe(permissions);
+        return result;
       },
       {
         userId: 'system',
@@ -1153,10 +1317,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     roleId: string,
     permissionIds: string[]
   ): Promise<{ count: number }> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<{ count: number }>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.removeRolePermissionsSafe(roleId, permissionIds);
+        const result = await prismaService.removeRolePermissionsSafe(roleId, permissionIds);
+        return result;
       },
       {
         userId: 'system',
@@ -1179,10 +1344,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     isSystemRole?: boolean;
     isActive?: boolean;
   }): Promise<RbacRoleEntity> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<RbacRoleEntity>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createSystemRoleSafe(data);
+        const result = await prismaService.createSystemRoleSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -1202,9 +1368,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     roleId: string,
     clinicId?: string
   ): Promise<UserRoleEntity | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<UserRoleEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findUserRoleAssignmentSafe(userId, roleId, clinicId);
+      const result = await prismaService.findUserRoleAssignmentSafe(userId, roleId, clinicId);
+      return result;
     });
   }
 
@@ -1219,10 +1386,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     permissions?: Record<string, never>;
     schedule?: Record<string, never>;
   }): Promise<UserRoleEntity> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<UserRoleEntity>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createUserRoleSafe(data);
+        const result = await prismaService.createUserRoleSafe(data);
+        return result;
       },
       {
         userId: data.assignedBy ?? 'system',
@@ -1241,9 +1409,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     roleId: string,
     clinicId?: string
   ): Promise<UserRoleEntity | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<UserRoleEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findUserRoleForRevocationSafe(userId, roleId, clinicId);
+      const result = await prismaService.findUserRoleForRevocationSafe(userId, roleId, clinicId);
+      return result;
     });
   }
 
@@ -1257,10 +1426,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       updatedAt: Date;
     }
   ): Promise<UserRoleEntity> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<UserRoleEntity>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.updateUserRoleSafe(id, data);
+        const result = await prismaService.updateUserRoleSafe(id, data);
+        return result;
       },
       {
         userId: data.revokedBy ?? 'system',
@@ -1275,18 +1445,22 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async findUserRolesSafe(userId: string, clinicId?: string): Promise<UserRoleEntity[]> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<UserRoleEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findUserRolesSafe(userId, clinicId);
+      const result = await prismaService.findUserRolesSafe(userId, clinicId);
+      return result;
     });
   }
 
   async findRolePermissionsSafe(
     roleIds: string[]
   ): Promise<Array<RolePermissionEntity & { permission: { resource: string; action: string } }>> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<
+      Array<RolePermissionEntity & { permission: { resource: string; action: string } }>
+    >(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findRolePermissionsSafe(roleIds);
+      const result = await prismaService.findRolePermissionsSafe(roleIds);
+      return result;
     });
   }
 
@@ -1297,17 +1471,24 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     phone?: string;
     email?: string;
   } | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<{
+      name: string;
+      address?: string;
+      phone?: string;
+      email?: string;
+    } | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findClinicByIdSafe(id);
+      const result = await prismaService.findClinicByIdSafe(id);
+      return result;
     });
   }
 
   async deleteClinicSafe(id: string): Promise<{ id: string; name: string }> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<{ id: string; name: string }>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteClinicSafe(id);
+        const result = await prismaService.deleteClinicSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -1326,10 +1507,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     userId: string;
     clinicId: string;
   }): Promise<{ id: string; userId: string; clinicId: string }> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<{ id: string; userId: string; clinicId: string }>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.createClinicAdminSafe(data);
+        const result = await prismaService.createClinicAdminSafe(data);
+        return result;
       },
       {
         userId: 'system',
@@ -1349,9 +1531,15 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     clinicId: string;
     user?: { id: string; email: string; name: string; role: string };
   } | null> {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<{
+      id: string;
+      userId: string;
+      clinicId: string;
+      user?: { id: string; email: string; name: string; role: string };
+    } | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findClinicAdminByIdSafe(id);
+      const result = await prismaService.findClinicAdminByIdSafe(id);
+      return result;
     });
   }
 
@@ -1363,19 +1551,28 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       user?: { id: string; email: string; name: string; role: string } | undefined;
     }>
   > {
-    return await this.executeHealthcareRead(async _client => {
+    return await this.executeHealthcareRead<
+      Array<{
+        id: string;
+        userId: string;
+        clinicId: string;
+        user?: { id: string; email: string; name: string; role: string } | undefined;
+      }>
+    >(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      return await prismaService.findClinicAdminsSafe(where);
+      const result = await prismaService.findClinicAdminsSafe(where);
+      return result;
     });
   }
 
   async deleteClinicAdminSafe(
     id: string
   ): Promise<{ id: string; userId: string; clinicId: string }> {
-    return await this.executeHealthcareWrite(
+    return await this.executeHealthcareWrite<{ id: string; userId: string; clinicId: string }>(
       async _client => {
         const prismaService = this.getInternalPrismaClient();
-        return await prismaService.deleteClinicAdminSafe(id);
+        const result = await prismaService.deleteClinicAdminSafe(id);
+        return result;
       },
       {
         userId: 'system',
@@ -1474,17 +1671,43 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      // Use read replica routing through ConnectionPoolManager for optimal read performance
-      // This automatically routes to read replicas when configured and available
-      await this.connectionPoolManager.executeQueryWithReadReplica<T>(
-        '', // Query executed through Prisma client operation
-        [],
-        { priority: 'normal', timeout: 30000 }
-      );
-
       // Execute the operation with the Prisma client through internal accessor
-      const prismaClient = this.getInternalPrismaClient() as unknown as PrismaTransactionClient;
-      const data = await operation(prismaClient);
+      // Note: Read replica routing is handled at the Prisma client level if configured
+      // Get PrismaService which has all delegates initialized as readonly properties
+      const prismaService = this.getInternalPrismaClient();
+
+      // Ensure prismaClient is initialized (this also ensures delegates are initialized)
+      // PrismaService initializes delegates in constructor, but we need to ensure
+      // the underlying prismaClient exists and is properly initialized
+      let rawClient: PrismaClient;
+      try {
+        rawClient = prismaService.getRawPrismaClient();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          `PrismaClient initialization failed: ${errorMessage}. Please ensure "prisma generate" has been run and the database is accessible.`,
+          undefined,
+          { originalError: errorMessage },
+          'HealthcareDatabaseClient.executeHealthcareRead'
+        );
+      }
+
+      if (!rawClient) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          'PrismaClient is not initialized. Please ensure "prisma generate" has been run.',
+          undefined,
+          {},
+          'HealthcareDatabaseClient.executeHealthcareRead'
+        );
+      }
+
+      // PrismaService has delegates (user, clinic, appointment, etc.) as readonly properties
+      // However, operations expect PrismaTransactionClient which has delegates directly on the client
+      // Use the raw PrismaClient which has all delegates accessible
+      // The rawClient has delegates like client.user, client.clinic, etc. directly accessible
+      const data = await operation(rawClient as unknown as PrismaTransactionClient);
 
       const executionTime = Date.now() - startTime;
 
@@ -1522,15 +1745,34 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       this.metricsService.recordQueryExecution('HEALTHCARE_READ', executionTime, false);
 
       const dbError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = dbError.message || String(error);
+      const errorStack = dbError.stack || 'No stack trace available';
+
+      // Enhanced error logging with full details
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Healthcare read operation failed: ${errorMessage}`,
+        'HealthcareDatabaseClient.executeHealthcareRead',
+        {
+          error: errorMessage,
+          errorStack,
+          errorName: dbError.name,
+          executionTime,
+          errorType: typeof error,
+        }
+      );
+
       this.handleDatabaseError(dbError, 'executeHealthcareRead', {
         executionTime,
+        errorMessage,
       });
 
       throw new HealthcareError(
         ErrorCode.DATABASE_QUERY_FAILED,
-        `Healthcare read operation failed: ${(error as Error).message}`,
+        `Healthcare read operation failed: ${errorMessage}`,
         undefined,
-        { executionTime, originalError: (error as Error).message },
+        { executionTime, originalError: errorMessage, errorStack },
         'HealthcareDatabaseClient.executeHealthcareRead'
       );
     }
@@ -1757,19 +1999,30 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get connection health status
+   * Optimized for fast health checks - bypasses HIPAA logging and slow query detection
    */
   async getHealthStatus(): Promise<DatabaseHealthStatus> {
     try {
       const connectionMetrics = this.connectionPoolManager.getMetrics();
       const start = Date.now();
 
-      // Test database connectivity through internal accessor
-      const prismaClient = this.getInternalPrismaClient();
-      await prismaClient.$queryRaw`SELECT 1`;
+      // Use dedicated health check client to avoid interfering with regular operations
+      // This bypasses executeHealthcareRead to avoid HIPAA logging and slow query detection overhead
+      const healthCheckClient = PrismaService.getHealthCheckClient();
+      const typedClient = healthCheckClient as unknown as {
+        $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+      };
+
+      // Simple SELECT 1 query - fastest possible health check
+      await typedClient.$queryRaw`SELECT 1`;
       const responseTime = Date.now() - start;
 
-      // Trigger auto-scaling check as part of health check
-      void this.triggerAutoScaling().catch(() => {
+      // Trigger auto-scaling check as part of health check (non-blocking with timeout)
+      // Use a very short timeout to prevent health checks from being delayed
+      void Promise.race([
+        this.triggerAutoScaling(),
+        new Promise<void>(resolve => setTimeout(() => resolve(), 500)), // 500ms timeout
+      ]).catch(() => {
         // Auto-scaling failure shouldn't fail health check
       });
 
@@ -2409,22 +2662,28 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Trigger connection pool auto-scaling check
-   * Call this periodically or in response to load changes
    * Auto-scaling adjusts connection pool size based on current load
+   * Optimized to avoid blocking health checks - uses timeout to prevent delays
    */
   async triggerAutoScaling(): Promise<void> {
     try {
-      await this.connectionPoolManager.autoScaleConnectionPool();
+      // Use a timeout to prevent auto-scaling from blocking health checks
+      const scalingPromise = this.connectionPoolManager.autoScaleConnectionPool();
+      const timeoutPromise = new Promise<void>(resolve => {
+        setTimeout(() => resolve(), 1000); // 1 second timeout
+      });
+
+      await Promise.race([scalingPromise, timeoutPromise]);
+    } catch (error) {
+      // Auto-scaling failures should not affect health checks
+      // Silently handle errors to prevent health check delays
+      const errorMessage = error instanceof Error ? error.message : String(error);
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.DEBUG,
-        'Connection pool auto-scaling triggered',
+        `Auto-scaling check completed (may have timed out): ${errorMessage}`,
         'HealthcareDatabaseClient'
       );
-    } catch (error) {
-      const dbError = error instanceof Error ? error : new Error(String(error));
-      this.handleDatabaseError(dbError, 'triggerAutoScaling');
-      throw dbError;
     }
   }
 
@@ -2600,14 +2859,14 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
    * Extract query identifier from operation for optimization tracking
    * @internal
    */
-  private extractQueryIdentifier(
-    operation: (client: PrismaTransactionClient) => Promise<unknown>
+  private extractQueryIdentifier<T>(
+    operation: (client: PrismaTransactionClient) => Promise<T>
   ): string {
     try {
       // Try to extract operation name from function string representation
       const operationStr = operation.toString();
-      // Match common Prisma patterns: client.user.findUnique, client.appointment.findMany, etc.
-      const match = operationStr.match(/client\.(\w+)\.(\w+)/);
+      // Match common Prisma patterns: client['user'].findUnique, client['appointment'].findMany, etc.
+      const match = operationStr.match(/client\[['"](\w+)['"]\]\.(\w+)/);
       if (match) {
         return `${match[1]}.${match[2]}`;
       }
@@ -2634,13 +2893,13 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   private async getStaffCount(clinicId: string): Promise<number> {
     try {
       const result = await this.executeWithClinicContext(clinicId, async client => {
-        const doctorClinicDelegate = client['doctorClinic'] as unknown as {
+        const doctorClinicDelegate = client['doctorClinic'] as {
           count: (args: { where: Record<string, unknown> }) => Promise<number>;
         };
-        const receptionistsDelegate = client['receptionistsAtClinic'] as unknown as {
+        const receptionistsDelegate = client['receptionistsAtClinic'] as {
           count: (args: { where: Record<string, unknown> }) => Promise<number>;
         };
-        const clinicAdminDelegate = client['clinicAdmin'] as unknown as {
+        const clinicAdminDelegate = client['clinicAdmin'] as {
           count: (args: { where: Record<string, unknown> }) => Promise<number>;
         };
 

@@ -70,27 +70,59 @@ export class AppointmentAnalyticsService {
       );
 
       // Use executeHealthcareRead for groupBy and complex queries
-      const [appointmentsByStatus, appointmentsByType, completedAppointments] = await Promise.all([
+      const [appointmentsByStatus, appointmentsByType, completedAppointments] = (await Promise.all([
         this.databaseService.executeHealthcareRead(async client => {
-          return await client.appointment.groupBy({
+          const appointment = client['appointment'] as {
+            groupBy: (args: {
+              by: string[];
+              where: unknown;
+              _count: { status: boolean };
+            }) => Promise<Array<{ status: string; _count: { status: number } }>>;
+          };
+          return (await appointment.groupBy({
             by: ['status'],
             where: whereClause,
             _count: {
               status: true,
             },
-          });
+          })) as unknown as Array<{ status: string; _count: { status: number } }>;
         }),
         this.databaseService.executeHealthcareRead(async client => {
-          return await client.appointment.groupBy({
+          const appointment = client['appointment'] as {
+            groupBy: (args: {
+              by: string[];
+              where: unknown;
+              _count: { type: boolean };
+            }) => Promise<Array<{ type: string; _count: { type: number } }>>;
+          };
+          return (await appointment.groupBy({
             by: ['type'],
             where: whereClause,
             _count: {
               type: true,
             },
-          });
+          })) as unknown as Array<{ type: string; _count: { type: number } }>;
         }),
         this.databaseService.executeHealthcareRead(async client => {
-          return await client.appointment.findMany({
+          const appointment = client['appointment'] as {
+            findMany: (args: {
+              where: unknown;
+              select: {
+                date: boolean;
+                startedAt: boolean;
+                completedAt: boolean;
+                duration: boolean;
+              };
+            }) => Promise<
+              Array<{
+                date: Date;
+                startedAt: Date | null;
+                completedAt: Date | null;
+                duration?: number;
+              }>
+            >;
+          };
+          return (await appointment.findMany({
             where: {
               ...whereClause,
               status: 'COMPLETED',
@@ -101,23 +133,42 @@ export class AppointmentAnalyticsService {
               completedAt: true,
               duration: true,
             },
-          });
+          })) as unknown as Array<{
+            date: Date;
+            startedAt: Date | null;
+            completedAt: Date | null;
+            duration?: number;
+          }>;
         }),
-      ]);
+      ])) as unknown as [
+        Array<{ status: string; _count: { status: number } }>,
+        Array<{ type: string; _count: { type: number } }>,
+        Array<{ date: Date; startedAt: Date | null; completedAt: Date | null; duration?: number }>,
+      ];
 
       const statusMap: Record<string, number> = {};
-      appointmentsByStatus.forEach((item: { status: string; _count: { status: number } }) => {
-        statusMap[item.status] = item._count.status;
-      });
+      (appointmentsByStatus as Array<{ status: string; _count: { status: number } }>).forEach(
+        (item: { status: string; _count: { status: number } }) => {
+          statusMap[item.status] = item._count.status;
+        }
+      );
 
       const typeMap: Record<string, number> = {};
-      appointmentsByType.forEach((item: { type: string; _count: { type: number } }) => {
-        typeMap[item.type] = item._count.type;
-      });
+      (appointmentsByType as Array<{ type: string; _count: { type: number } }>).forEach(
+        (item: { type: string; _count: { type: number } }) => {
+          typeMap[item.type] = item._count.type;
+        }
+      );
 
+      const completedAppointmentsTyped = completedAppointments as Array<{
+        date: Date;
+        startedAt: Date | null;
+        completedAt: Date | null;
+        duration?: number;
+      }>;
       const averageWaitTime =
-        completedAppointments.length > 0
-          ? completedAppointments.reduce(
+        completedAppointmentsTyped.length > 0
+          ? completedAppointmentsTyped.reduce(
               (
                 sum: number,
                 apt: {
@@ -134,7 +185,7 @@ export class AppointmentAnalyticsService {
                 return sum;
               },
               0
-            ) / completedAppointments.length
+            ) / completedAppointmentsTyped.length
           : 0;
 
       const patientSatisfaction = 0; // Patient satisfaction would need to come from a separate Review/Feedback table
@@ -149,11 +200,11 @@ export class AppointmentAnalyticsService {
       const costPerAppointment = 0;
 
       const averageDuration =
-        completedAppointments.length > 0
-          ? completedAppointments.reduce(
+        completedAppointmentsTyped.length > 0
+          ? completedAppointmentsTyped.reduce(
               (sum: number, apt: { duration?: number }) => sum + (apt.duration || 0),
               0
-            ) / completedAppointments.length
+            ) / completedAppointmentsTyped.length
           : 0;
 
       const metrics: AppointmentMetrics = {
@@ -549,7 +600,10 @@ export class AppointmentAnalyticsService {
         clinicMetrics: clinicMetrics.data,
         timeSlotAnalytics: timeSlotAnalytics.data,
         satisfactionAnalytics: satisfactionAnalytics.data,
-        summary: this.generateReportSummary(appointmentMetrics.data, clinicMetrics.data),
+        summary: this.generateReportSummary(
+          appointmentMetrics.data as AppointmentMetrics,
+          clinicMetrics.data as ClinicMetrics
+        ),
       };
 
       return {
@@ -590,13 +644,24 @@ export class AppointmentAnalyticsService {
   /**
    * Generate report summary
    */
-  private generateReportSummary(appointmentMetrics: unknown, _clinicMetrics: unknown): unknown {
+  private generateReportSummary(
+    appointmentMetrics: AppointmentMetrics,
+    _clinicMetrics: ClinicMetrics
+  ): {
+    keyInsights: string[];
+    recommendations: string[];
+    trends: {
+      appointmentGrowth: string;
+      satisfactionTrend: string;
+      efficiencyTrend: string;
+    };
+  } {
     return {
       keyInsights: [
-        `Total appointments: ${(appointmentMetrics as { totalAppointments: number }).totalAppointments}`,
-        `Completion rate: ${(appointmentMetrics as { completionRate: number }).completionRate}%`,
-        `Patient satisfaction: ${(appointmentMetrics as { patientSatisfaction: number }).patientSatisfaction}/5`,
-        `Revenue: $${(appointmentMetrics as { revenue: number }).revenue}`,
+        `Total appointments: ${appointmentMetrics.totalAppointments ?? 0}`,
+        `Completion rate: ${appointmentMetrics.completionRate ?? 0}%`,
+        `Patient satisfaction: ${appointmentMetrics.patientSatisfaction ?? 0}/5`,
+        `Revenue: $${appointmentMetrics.revenue ?? 0}`,
       ],
       recommendations: [
         'Focus on reducing no-show rates',

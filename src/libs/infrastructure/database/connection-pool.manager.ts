@@ -1,11 +1,49 @@
-import { Injectable, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  OnModuleInit,
+  Inject,
+  forwardRef,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@config';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 import type { PrismaService } from './prisma/prisma.service';
+import { PrismaService as PrismaServiceClass } from './prisma/prisma.service';
+import { HealthcareQueryOptimizerService } from './query-optimizer.service';
+// Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
+
+// Internal imports - Core types
+import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
+import type { EnterpriseEventPayload, EventResult } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+
+// Internal imports - Events (using forwardRef to avoid circular dependency)
+// Define interface for EventService to avoid circular dependency type resolution issues
+interface IEventService {
+  emitEnterprise<T extends EnterpriseEventPayload>(
+    eventType: string,
+    payload: T,
+    options?: {
+      priority?: EventPriority;
+      retryPolicy?: { maxRetries: number; retryDelay: number };
+      async?: boolean;
+      timeout?: number;
+    }
+  ): Promise<EventResult>;
+}
+
+// Import EventService class for forwardRef injection (value import)
+// Note: Using forwardRef causes TypeScript to treat EventService as error type,
+// so we use IEventService interface for property types and type guards
+import { EventService } from '@infrastructure/events';
+
+// Helper function to get EventService token for forwardRef (avoids type resolution issues)
+function getEventServiceToken(): typeof EventService {
+  return EventService;
+}
 
 import type {
   ConnectionMetrics,
@@ -47,12 +85,47 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private circuitBreakerThreshold = 5;
   private circuitBreakerTimeout = 30000; // 30 seconds
 
+  private readonly eventService?: IEventService;
+  private readonly queryOptimizer?: HealthcareQueryOptimizerService;
+
+  /**
+   * Type guard to check if eventService is available and has emitEnterprise method
+   * Uses duck typing to avoid circular dependency type resolution issues
+   */
+  private isEventServiceAvailable(service: IEventService | undefined): service is IEventService {
+    if (!service || typeof service !== 'object') {
+      return false;
+    }
+    // Check for emitEnterprise method using duck typing
+    const hasMethod = 'emitEnterprise' in service;
+    const methodType = typeof (service as { emitEnterprise?: unknown }).emitEnterprise;
+    return hasMethod && methodType === 'function';
+  }
+
   constructor(
-    private configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService)) private configService: ConfigService,
     @Inject(forwardRef(() => HealthcareDatabaseClient))
     private databaseService: HealthcareDatabaseClient,
-    private loggingService: LoggingService
+    @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService,
+    @Optional()
+    // Type assertion needed due to circular dependency - EventService type can't be resolved in forwardRef
+    // Using helper function to avoid TypeScript type resolution issues with forwardRef
+    // The type guard ensures type safety at runtime
+    @Inject(forwardRef(getEventServiceToken))
+    eventService?: unknown,
+    @Optional()
+    @Inject(forwardRef(() => HealthcareQueryOptimizerService))
+    queryOptimizer?: HealthcareQueryOptimizerService
   ) {
+    // Assign optional services (handle undefined explicitly for exactOptionalPropertyTypes)
+    // Type assertion needed due to forwardRef circular dependency type resolution
+    // The type guard will ensure type safety when using the service
+    if (eventService !== undefined && this.isEventServiceAvailable(eventService as IEventService)) {
+      this.eventService = eventService as IEventService;
+    }
+    if (queryOptimizer !== undefined) {
+      this.queryOptimizer = queryOptimizer;
+    }
     this.initializeMetrics();
     this.initializeCircuitBreaker();
   }
@@ -115,9 +188,15 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private initializePool() {
     // Initialize connection pool configuration for Prisma - Optimized for 10M+ users
     const poolConfig = {
-      min: this.configService?.get<number>('DB_POOL_MIN', 50) || parseInt(process.env['DB_POOL_MIN'] || '50', 10), // Increased from 20
-      max: this.configService?.get<number>('DB_POOL_MAX', 500) || parseInt(process.env['DB_POOL_MAX'] || '500', 10), // Increased from 300 for scale
-      maxUses: this.configService?.get<number>('DB_POOL_MAX_USES', 10000) || parseInt(process.env['DB_POOL_MAX_USES'] || '10000', 10), // Increased from 7500
+      min:
+        this.configService?.get<number>('DB_POOL_MIN', 50) ||
+        parseInt(process.env['DB_POOL_MIN'] || '50', 10), // Increased from 20
+      max:
+        this.configService?.get<number>('DB_POOL_MAX', 500) ||
+        parseInt(process.env['DB_POOL_MAX'] || '500', 10), // Increased from 300 for scale
+      maxUses:
+        this.configService?.get<number>('DB_POOL_MAX_USES', 10000) ||
+        parseInt(process.env['DB_POOL_MAX_USES'] || '10000', 10), // Increased from 7500
     };
 
     // Update metrics with estimated values
@@ -366,11 +445,12 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       void (async () => {
         try {
           const start = Date.now();
-          // Use internal accessor - ConnectionPoolManager is infrastructure component
-          const prismaClient = (
-            this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
-          ).getInternalPrismaClient();
-          await prismaClient.$queryRaw`SELECT 1`;
+          // Use dedicated health check client to avoid interfering with regular operations
+          const prismaClient = PrismaServiceClass.getHealthCheckClient();
+          const typedClient = prismaClient as unknown as {
+            $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+          };
+          await typedClient.$queryRaw`SELECT 1`;
           const duration = Date.now() - start;
 
           this.metrics.lastHealthCheck = new Date();
@@ -395,6 +475,35 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
               `High connection pool utilization: ${(utilizationRate * 100).toFixed(1)}%`,
               this.serviceName
             );
+
+            // Emit high utilization event using EventService
+            if (this.isEventServiceAvailable(this.eventService)) {
+              void this.eventService.emitEnterprise(
+                'database.connection-pool.high-utilization',
+                {
+                  eventId: `high-utilization-${Date.now()}`,
+                  eventType: 'database.connection-pool.high-utilization',
+                  category: EventCategory.DATABASE,
+                  priority: EventPriority.HIGH,
+                  timestamp: new Date().toISOString(),
+                  source: this.serviceName,
+                  version: '1.0.0',
+                  correlationId: `pool-util-${Date.now()}`,
+                  traceId: `trace-${Date.now()}`,
+                  payload: {
+                    utilizationRate,
+                    activeConnections: this.metrics.activeConnections,
+                    totalConnections: this.metrics.totalConnections,
+                    queueLength,
+                    timestamp: new Date().toISOString(),
+                  },
+                },
+                {
+                  priority: EventPriority.HIGH,
+                  async: true,
+                }
+              );
+            }
           }
 
           if (queueLength > 100) {
@@ -404,6 +513,35 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
               `Large query queue detected: ${queueLength} queries waiting`,
               this.serviceName
             );
+
+            // Emit large queue event using EventService
+            if (this.isEventServiceAvailable(this.eventService)) {
+              void this.eventService.emitEnterprise(
+                'database.connection-pool.large-queue',
+                {
+                  eventId: `large-queue-${Date.now()}`,
+                  eventType: 'database.connection-pool.large-queue',
+                  category: EventCategory.DATABASE,
+                  priority: EventPriority.HIGH,
+                  timestamp: new Date().toISOString(),
+                  source: this.serviceName,
+                  version: '1.0.0',
+                  correlationId: `queue-${Date.now()}`,
+                  traceId: `trace-${Date.now()}`,
+                  payload: {
+                    queueLength,
+                    utilizationRate,
+                    activeConnections: this.metrics.activeConnections,
+                    totalConnections: this.metrics.totalConnections,
+                    timestamp: new Date().toISOString(),
+                  },
+                },
+                {
+                  priority: EventPriority.HIGH,
+                  async: true,
+                }
+              );
+            }
           }
 
           void this.loggingService.log(
@@ -435,7 +573,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     }, 15000); // Every 15 seconds for faster detection under high load
   }
 
-  private updateMetrics(queryTime: number) {
+  private updateMetrics(queryTime: number, query?: string) {
     this.metrics.totalQueries++;
 
     // Update average query time
@@ -443,30 +581,184 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       (this.metrics.averageQueryTime * (this.metrics.totalQueries - 1) + queryTime) /
       this.metrics.totalQueries;
 
+    // Track peak connections
+    if (this.metrics.activeConnections > this.metrics.peakConnections) {
+      this.metrics.peakConnections = this.metrics.activeConnections;
+    }
+
+    // Update connection utilization
+    this.metrics.connectionUtilization =
+      this.metrics.totalConnections > 0
+        ? this.metrics.activeConnections / this.metrics.totalConnections
+        : 0;
+
+    // Enhanced slow query detection with optimization recommendations
     if (queryTime > this.slowQueryThreshold) {
       this.metrics.slowQueries++;
+
+      // Get optimization recommendations
+      const recommendations: string[] = [];
+      if (query) {
+        if (query.includes('SELECT *')) {
+          recommendations.push('Replace SELECT * with specific columns to reduce data transfer');
+        }
+        if (!query.includes('LIMIT') && query.includes('SELECT')) {
+          recommendations.push('Add LIMIT clause to prevent large result sets');
+        }
+        if (query.includes('JOIN') && query.split('JOIN').length > 3) {
+          recommendations.push('Consider simplifying JOINs or splitting into multiple queries');
+        }
+        if (!query.includes('WHERE') && query.includes('SELECT')) {
+          recommendations.push('Add WHERE clause with indexed columns for better performance');
+        }
+      }
+
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.WARN,
-        `Slow query detected: ${queryTime}ms`,
-        this.serviceName
+        `Slow query detected: ${queryTime}ms (threshold: ${this.slowQueryThreshold}ms)`,
+        this.serviceName,
+        {
+          queryTime,
+          threshold: this.slowQueryThreshold,
+          query: query ? query.substring(0, 200) : 'N/A',
+          recommendations:
+            recommendations.length > 0
+              ? recommendations
+              : ['Review query execution plan', 'Check index usage', 'Consider query optimization'],
+          poolUtilization: this.metrics.connectionUtilization,
+          activeConnections: this.metrics.activeConnections,
+        }
       );
+
+      // Trigger query optimization analysis
+      if (query && this.queryOptimizer) {
+        void this.queryOptimizer
+          .optimizeQuery(query, {
+            executionTime: queryTime,
+            slow: true,
+          })
+          .catch(() => {
+            // Optimization analysis failure is non-critical
+          });
+      }
+    }
+
+    // Critical query detection (> 5 seconds)
+    if (queryTime > 5000) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `CRITICAL: Very slow query detected: ${queryTime}ms - immediate optimization required`,
+        this.serviceName,
+        {
+          queryTime,
+          query: query ? query.substring(0, 300) : 'N/A',
+          actionRequired: [
+            'Review query execution plan immediately',
+            'Check for missing indexes',
+            'Consider query rewriting or splitting',
+            'Review database server performance',
+            'Check for table locks or blocking queries',
+          ],
+        }
+      );
+
+      // Emit critical slow query event using EventService
+      if (this.isEventServiceAvailable(this.eventService)) {
+        void this.eventService.emitEnterprise(
+          'database.query.critical-slow',
+          {
+            eventId: `critical-slow-query-${Date.now()}`,
+            eventType: 'database.query.critical-slow',
+            category: EventCategory.DATABASE,
+            priority: EventPriority.CRITICAL,
+            timestamp: new Date().toISOString(),
+            source: this.serviceName,
+            version: '1.0.0',
+            correlationId: `slow-query-${Date.now()}`,
+            traceId: `trace-${Date.now()}`,
+            payload: {
+              queryTime,
+              query: query ? query.substring(0, 300) : 'N/A',
+              threshold: 5000,
+              actionRequired: [
+                'Review query execution plan immediately',
+                'Check for missing indexes',
+                'Consider query rewriting or splitting',
+                'Review database server performance',
+                'Check for table locks or blocking queries',
+              ],
+              poolUtilization: this.metrics.connectionUtilization,
+              activeConnections: this.metrics.activeConnections,
+              timestamp: new Date().toISOString(),
+            },
+          },
+          {
+            priority: EventPriority.CRITICAL,
+            async: true,
+          }
+        );
+      }
     }
   }
 
   private handleCircuitBreakerSuccess() {
     this.circuitBreaker.successCount++;
 
+    // Automatic recovery: Close circuit breaker after 3 successful operations
     if (this.circuitBreaker.isOpen && this.circuitBreaker.successCount >= 3) {
+      const wasOpen = this.circuitBreaker.isOpen;
       this.circuitBreaker.isOpen = false;
       this.circuitBreaker.failureCount = 0;
       this.circuitBreaker.successCount = 0;
+      delete this.circuitBreaker.lastFailure;
+      delete this.circuitBreaker.halfOpenTime;
+      this.metrics.circuitBreakerTrips++;
+
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.INFO,
-        'Circuit breaker closed - database connection restored',
-        this.serviceName
+        'Circuit breaker closed - database connection restored after successful recovery attempts',
+        this.serviceName,
+        {
+          recoveryAttempts: 3,
+          previousState: wasOpen ? 'OPEN' : 'CLOSED',
+          recommendations: [
+            'Monitor database health metrics',
+            'Review error logs for root cause',
+            'Consider increasing circuit breaker threshold if false positives occur',
+          ],
+        }
       );
+
+      // Emit recovery event for monitoring systems using EventService
+      if (this.isEventServiceAvailable(this.eventService)) {
+        void this.eventService.emitEnterprise(
+          'database.circuit-breaker.closed',
+          {
+            eventId: `circuit-breaker-closed-${Date.now()}`,
+            eventType: 'database.circuit-breaker.closed',
+            category: EventCategory.DATABASE,
+            priority: EventPriority.HIGH,
+            timestamp: new Date().toISOString(),
+            source: this.serviceName,
+            version: '1.0.0',
+            correlationId: `cb-recovery-${Date.now()}`,
+            traceId: `trace-${Date.now()}`,
+            payload: {
+              timestamp: new Date().toISOString(),
+              service: this.serviceName,
+              recoveryAttempts: 3,
+              previousState: wasOpen ? 'OPEN' : 'CLOSED',
+            },
+          },
+          {
+            priority: EventPriority.HIGH,
+            async: true,
+          }
+        );
+      }
     }
   }
 
@@ -480,12 +772,72 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     ) {
       this.circuitBreaker.isOpen = true;
       this.circuitBreaker.halfOpenTime = new Date(Date.now() + this.circuitBreakerTimeout);
+      this.metrics.circuitBreakerTrips++;
+
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.ERROR,
-        'Circuit breaker opened - database connection issues detected',
-        this.serviceName
+        `Circuit breaker opened - database connection issues detected (${this.circuitBreaker.failureCount} failures)`,
+        this.serviceName,
+        {
+          failureCount: this.circuitBreaker.failureCount,
+          threshold: this.circuitBreakerThreshold,
+          lastFailure: this.circuitBreaker.lastFailure.toISOString(),
+          recoveryTime: this.circuitBreaker.halfOpenTime.toISOString(),
+          recommendations: [
+            'Check database server status and connectivity',
+            'Review database error logs for root cause',
+            'Verify network connectivity between application and database',
+            'Check database connection pool configuration',
+            'Review recent database migrations or schema changes',
+            `Circuit breaker will attempt recovery after ${this.circuitBreakerTimeout}ms`,
+          ],
+          poolMetrics: {
+            activeConnections: this.metrics.activeConnections,
+            totalConnections: this.metrics.totalConnections,
+            utilization: this.metrics.connectionUtilization,
+          },
+        }
       );
+
+      // Emit circuit breaker open event for monitoring systems using EventService
+      if (this.isEventServiceAvailable(this.eventService)) {
+        void this.eventService.emitEnterprise(
+          'database.circuit-breaker.opened',
+          {
+            eventId: `circuit-breaker-opened-${Date.now()}`,
+            eventType: 'database.circuit-breaker.opened',
+            category: EventCategory.DATABASE,
+            priority: EventPriority.CRITICAL,
+            timestamp: new Date().toISOString(),
+            source: this.serviceName,
+            version: '1.0.0',
+            correlationId: `cb-failure-${Date.now()}`,
+            traceId: `trace-${Date.now()}`,
+            payload: {
+              timestamp: new Date().toISOString(),
+              service: this.serviceName,
+              failureCount: this.circuitBreaker.failureCount,
+              threshold: this.circuitBreakerThreshold,
+              lastFailure: this.circuitBreaker.lastFailure
+                ? this.circuitBreaker.lastFailure.toISOString()
+                : undefined,
+              recoveryTime: this.circuitBreaker.halfOpenTime
+                ? this.circuitBreaker.halfOpenTime.toISOString()
+                : undefined,
+              poolMetrics: {
+                activeConnections: this.metrics.activeConnections,
+                totalConnections: this.metrics.totalConnections,
+                utilization: this.metrics.connectionUtilization,
+              },
+            },
+          },
+          {
+            priority: EventPriority.CRITICAL,
+            async: true,
+          }
+        );
+      }
     }
   }
 
@@ -822,6 +1174,35 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       );
 
       this.metrics.autoScalingEvents++;
+
+      // Emit auto-scaling event using EventService
+      if (this.isEventServiceAvailable(this.eventService)) {
+        void this.eventService.emitEnterprise(
+          'database.connection-pool.auto-scaling',
+          {
+            eventId: `auto-scale-up-${Date.now()}`,
+            eventType: 'database.connection-pool.auto-scaling',
+            category: EventCategory.DATABASE,
+            priority: EventPriority.HIGH,
+            timestamp: new Date().toISOString(),
+            source: this.serviceName,
+            version: '1.0.0',
+            correlationId: `auto-scale-${Date.now()}`,
+            traceId: `trace-${Date.now()}`,
+            payload: {
+              action: 'scale-up',
+              currentConnections,
+              utilization: currentUtilization,
+              targetConnections: Math.min(500, currentConnections + 50),
+              timestamp: new Date().toISOString(),
+            },
+          },
+          {
+            priority: EventPriority.HIGH,
+            async: true,
+          }
+        );
+      }
     }
 
     // Scale down if utilization is consistently low
@@ -839,6 +1220,35 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       );
 
       this.metrics.autoScalingEvents++;
+
+      // Emit auto-scaling event using EventService
+      if (this.isEventServiceAvailable(this.eventService)) {
+        void this.eventService.emitEnterprise(
+          'database.connection-pool.auto-scaling',
+          {
+            eventId: `auto-scale-down-${Date.now()}`,
+            eventType: 'database.connection-pool.auto-scaling',
+            category: EventCategory.DATABASE,
+            priority: EventPriority.NORMAL,
+            timestamp: new Date().toISOString(),
+            source: this.serviceName,
+            version: '1.0.0',
+            correlationId: `auto-scale-${Date.now()}`,
+            traceId: `trace-${Date.now()}`,
+            payload: {
+              action: 'scale-down',
+              currentConnections,
+              utilization: currentUtilization,
+              targetConnections: Math.max(50, currentConnections - 25),
+              timestamp: new Date().toISOString(),
+            },
+          },
+          {
+            priority: EventPriority.NORMAL,
+            async: true,
+          }
+        );
+      }
     }
   }
 

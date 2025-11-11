@@ -126,6 +126,9 @@ export class MyService {
 
 // ❌ DON'T - Use NestJS ConfigService directly
 import { ConfigService } from '@nestjs/config'; // FORBIDDEN
+
+// ❌ DON'T - Use EventEmitter2 directly
+import { EventEmitter2 } from '@nestjs/event-emitter'; // FORBIDDEN - Use EnterpriseEventService instead
 ```
 
 ### **ConfigModule Usage**
@@ -157,7 +160,7 @@ export class UserService {
     private readonly userRepository: UserRepository,
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly configService: ConfigService // From @config
   ) {}
 
@@ -611,59 +614,81 @@ interface RequestContext {
 
 ## 🔄 Event Handling
 
-### **Event Emitter Setup**
+### **Event-Driven Architecture with EventService**
+
+**MANDATORY**: Always use `EventService` from `@infrastructure/events` instead of direct `EventEmitter2` usage.
+
 ```typescript
-// In app.module.ts
+// In app.module.ts - EventsModule is already configured
 @Module({
   imports: [
-    EventEmitterModule.forRoot({
-      wildcard: false,
-      delimiter: '.',
-      newListener: false,
-      removeListener: false,
-      maxListeners: 10,
-      verboseMemoryLeak: false,
-      ignoreErrors: false,
-    })
+    EventsModule, // Provides EventService
+    // ... other modules
   ]
 })
 export class AppModule {}
 
 // Service with events
+import { EventService } from '@infrastructure/events';
+import { EventCategory, EventPriority } from '@core/types';
+
 @Injectable()
 export class UserService {
-  constructor(private eventEmitter: EventEmitter2) {}
+  constructor(private readonly eventService: EventService) {}
 
   async createUser(data: CreateUserDto): Promise<User> {
     const user = await this.userRepository.create(data);
     
-    // Emit event
-    this.eventEmitter.emit('user.created', {
+    // Emit enterprise-grade event with full features
+    await this.eventService.emitEnterprise('user.created', {
+      eventId: `user-created-${user.id}`,
+      eventType: 'user.created',
+      category: EventCategory.USER_ACTIVITY,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'UserService',
+      version: '1.0.0',
+      userId: user.id,
+      clinicId: user.clinicId,
+      payload: {
       user,
       timestamp: new Date(),
-      source: 'UserService'
+      }
     });
     
     return user;
   }
 }
 
-// Event listener
+// Event listener (still uses @OnEvent decorator - works with EventEmitter2 under the hood)
 @Injectable()
 export class UserEventListener {
   @OnEvent('user.created')
-  async handleUserCreated(payload: { user: User; timestamp: Date; source: string }) {
+  async handleUserCreated(payload: EnterpriseEventPayload) {
     // Handle user creation event
-    await this.sendWelcomeEmail(payload.user);
-    await this.createUserProfile(payload.user);
+    const user = payload.payload.user as User;
+    await this.sendWelcomeEmail(user);
+    await this.createUserProfile(user);
   }
 
   @OnEvent('user.*.updated') // Wildcard pattern
-  async handleUserUpdated(payload: any) {
+  async handleUserUpdated(payload: EnterpriseEventPayload) {
     // Handle any user update event
   }
 }
 ```
+
+**Key Features of EventService**:
+- ✅ Built on NestJS EventEmitter2 (compatible with @OnEvent decorators)
+- ✅ Circuit breaker protection via CircuitBreakerService
+- ✅ Rate limiting (1000 events/second per source)
+- ✅ HIPAA-compliant security logging
+- ✅ Event persistence in CacheService with TTL
+- ✅ Event buffering and batch processing
+- ✅ Comprehensive metrics and monitoring
+- ✅ PHI data validation for healthcare events
+- ✅ Simple API: emit(), emitAsync(), on(), once(), off(), removeAllListeners(), getEvents(), clearEvents()
+- ✅ Enterprise API: emitEnterprise(), queryEvents(), getEventMetrics()
 
 ## 🚫 Anti-Patterns to Avoid
 
@@ -671,6 +696,10 @@ export class UserEventListener {
 ```typescript
 // Don't use Express
 import { NestExpressApplication } from '@nestjs/platform-express';
+
+// Don't use EventEmitter2 directly
+import { EventEmitter2 } from '@nestjs/event-emitter';
+constructor(private eventEmitter: EventEmitter2) {} // Use EventService instead
 
 // Don't inject services directly in constructors without interfaces
 constructor(private userService: UserService) {} // Tight coupling
@@ -691,6 +720,10 @@ console.log('Request received'); // Use proper logging
 ```typescript
 // Use Fastify
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
+
+// Use EventService for events
+import { EventService } from '@infrastructure/events';
+constructor(private eventService: EventService) {}
 
 // Use interfaces for loose coupling
 constructor(private userService: IUserService) {}

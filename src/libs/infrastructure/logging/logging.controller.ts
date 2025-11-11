@@ -453,17 +453,17 @@ export class LoggingController {
   }
 
   @Get('events/data')
-  async getEvents(@Query('type') type?: string) {
-    return this.loggingService.getEvents(type);
+  async getEvents(@Query('type') type?: string): Promise<unknown[]> {
+    return await this.loggingService.getEvents(type);
   }
 
   @Post('logs/clear')
-  async clearLogs() {
-    return this.loggingService.clearLogs();
+  async clearLogs(): Promise<{ success: boolean; message: string }> {
+    return (await this.loggingService.clearLogs()) as { success: boolean; message: string };
   }
 
   @Post('events/clear')
-  async clearEvents() {
-    return this.loggingService.clearEvents();
+  async clearEvents(): Promise<{ success: boolean; message: string }> {
+    return (await this.loggingService.clearEvents()) as { success: boolean; message: string };
   }
 }

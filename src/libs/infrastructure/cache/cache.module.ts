@@ -1,11 +1,11 @@
 // External imports
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { ConfigModule } from '@config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ConfigModule } from '@config';
 
 // Internal imports - Infrastructure
-import { LoggingModule } from '@infrastructure/logging';
+// LoggingModule is @Global() - no need to import it
 import { CacheController } from '@infrastructure/cache/controllers/cache.controller';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { RedisService } from '@infrastructure/cache/redis/redis.service';
@@ -29,8 +29,9 @@ import { HealthcareCacheInterceptor } from '@infrastructure/cache/interceptors/h
 @Global()
 @Module({
   imports: [
-    ConfigModule,
-    LoggingModule,
+    // ConfigModule is @Global() but we need to import it with forwardRef to handle circular dependency
+    forwardRef(() => ConfigModule),
+    // LoggingModule is @Global() - no need to import it explicitly
     EventEmitterModule.forRoot({
       // Enterprise-grade event emitter configuration
       wildcard: false,

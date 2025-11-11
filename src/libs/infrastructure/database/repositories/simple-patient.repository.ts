@@ -23,8 +23,12 @@ export class SimplePatientRepository {
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => ClinicIsolationService))
     private readonly clinicIsolationService: ClinicIsolationService,
-    @Optional() private readonly cacheService?: CacheService,
-    @Optional() private readonly loggingService?: LoggingService
+    @Optional()
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService?: CacheService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService?: LoggingService
   ) {}
 
   /**

@@ -253,7 +253,7 @@ export class HealthController {
     try {
       const health = await this.healthService.checkDetailedHealth();
       return res.status(200).send(health);
-    } catch (error) {
+    } catch (_error) {
       // Fallback detailed health response if health check fails
       let baseHealth: HealthCheckResponse;
       try {
@@ -384,7 +384,7 @@ export class HealthController {
   async apiHealth(@Res() res: FastifyReply) {
     try {
       const health = await this.healthService.checkHealth();
-    return res.send(health);
+      return res.send(health);
     } catch (error) {
       const fallbackResponse: HealthCheckResponse = {
         status: 'degraded',

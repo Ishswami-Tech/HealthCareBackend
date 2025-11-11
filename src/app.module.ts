@@ -20,6 +20,8 @@ import { SocketModule } from '@communication/socket/socket.module';
 import { NotificationModule } from './services/notification/notification.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
+import { ResilienceModule } from '@core/resilience';
+import { SecurityModule } from '@security/security.module';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -43,6 +45,9 @@ import { EHRModule } from './services/ehr/ehr.module';
     }),
     // Core modules must be loaded before SocketModule to ensure LoggingService is available
     LoggingModule,
+    // Resilience and security modules
+    ResilienceModule,
+    SecurityModule,
     // Socket modules
     SocketModule,
     // Auth and user management

@@ -270,7 +270,10 @@ export class AppointmentEligibilityService {
     try {
       // Use executeHealthcareRead (patient query was already fixed earlier but this is a duplicate - keep the pattern)
       const patient = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.patient.findUnique({
+        const patientDelegate = client['patient'] as {
+          findUnique: (args: { where: { id: string }; include?: unknown }) => Promise<unknown>;
+        };
+        return await patientDelegate.findUnique({
           where: { id: patientId },
           include: {
             user: {

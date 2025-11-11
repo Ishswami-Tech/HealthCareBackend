@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { QueryMetrics } from '@core/types/database.types';
@@ -46,7 +46,9 @@ export class HealthcareQueryOptimizerService {
   // Index recommendations based on query patterns
   private readonly indexRecommendations = new Map<string, string>();
 
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
+  ) {}
 
   /**
    * Optimize database queries for healthcare operations

@@ -12,11 +12,75 @@ services:
       - "8088:8088"
       - "5555:5555"
     environment:
+      # Application Environment
       NODE_ENV: development
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+      PORT: 8088
+      HOST: 0.0.0.0
+      BIND_ADDRESS: 0.0.0.0
+      
+      # Database Configuration
+      # Connection pool parameters: connection_limit=50, pool_timeout=20
+      # Increased for 10M+ users scalability and to prevent connection pool exhaustion
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=20
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      
+      # Redis Configuration
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      PORT: 8088
+      REDIS_DB: 0
+      REDIS_TTL: 3600
+      REDIS_PREFIX: "healthcare:"
+      REDIS_ENABLED: "true"
+      
+      # JWT Configuration
+      JWT_SECRET: dev-jwt-secret-key-change-in-production
+      JWT_EXPIRATION: 24h
+      JWT_ACCESS_EXPIRES_IN: 24h
+      JWT_REFRESH_EXPIRES_IN: 7d
+      
+      # Base URLs
+      BASE_URL: http://localhost:8088
+      API_URL: http://localhost:8088
+      FRONTEND_URL: http://localhost:3000
+      
+      # CORS Configuration
+      CORS_ORIGIN: http://localhost:3000,http://localhost:8088,http://localhost:5050,http://localhost:8082
+      CORS_CREDENTIALS: "true"
+      
+      # Service URLs
+      SWAGGER_URL: /docs
+      BULL_BOARD_URL: /queue-dashboard
+      SOCKET_URL: /socket.io
+      REDIS_COMMANDER_URL: http://localhost:8082
+      PRISMA_STUDIO_URL: http://localhost:5555
+      PGADMIN_URL: http://localhost:5050
+      
+      # API Configuration
+      API_PREFIX: /api/v1
+      
+      # Logging Configuration
+      LOG_LEVEL: debug
+      ENABLE_AUDIT_LOGS: "true"
+      
+      # Security Configuration
+      SECURITY_RATE_LIMIT: "true"
+      SECURITY_RATE_LIMIT_MAX: 1000
+      SECURITY_RATE_LIMIT_WINDOW_MS: 15000
+      TRUST_PROXY: 1
+      
+      # Rate Limiting
+      RATE_LIMIT_TTL: 60
+      RATE_LIMIT_MAX: 100
+      
+      # Email Configuration (Optional - using defaults)
+      EMAIL_HOST: sandbox.smtp.mailtrap.io
+      EMAIL_PORT: 2525
+      EMAIL_SECURE: "false"
+      EMAIL_FROM: noreply@healthcare.com
+      
+      # Development Tools
+      ENABLE_SWAGGER: "true"
+      ENABLE_PRISMA_STUDIO: "true"
     volumes:
       - ../../:/app
       - /app/node_modules
@@ -29,6 +93,21 @@ services:
     networks:
       - healthcare-network
     restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        until pg_isready -h postgres -p 5432 -U postgres; do
+          echo 'Waiting for postgres...'
+          sleep 2
+        done &&
+        echo 'Database is ready!' &&
+        echo 'Generating Prisma Client...' &&
+        pnpm prisma:generate &&
+        echo 'Running Prisma Migrations...' &&
+        pnpm prisma:migrate || echo 'Migration failed or already applied' &&
+        echo 'Starting application...' &&
+        pnpm start:dev
+      "
 
   postgres:
     image: postgres:16-alpine

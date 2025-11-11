@@ -10,7 +10,7 @@
  * @since 2024
  */
 
-import { Injectable, OnModuleInit, OnModuleDestroy, Inject, Optional } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject } from '@nestjs/common';
 import { Queue, Job, JobsOptions, Worker, JobState } from 'bullmq';
 import { ConfigService } from '@config';
 import { QueueMonitoringService } from './monitoring/queue-monitoring.service';
@@ -1108,7 +1108,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       const queueName = this.getAppointmentQueueName(domain);
-      
+
       // Safely get jobs with comprehensive error handling
       let jobs: Job[] = [];
       try {
@@ -1121,12 +1121,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           LogLevel.WARN,
           `Failed to get jobs for queue ${queueName}, returning default stats`,
           'QueueService',
-          { 
-            locationId, 
-            domain, 
+          {
+            locationId,
+            domain,
             queueName,
             error: getJobsError instanceof Error ? getJobsError.message : String(getJobsError),
-            stack: getJobsError instanceof Error ? getJobsError.stack : undefined
+            stack: getJobsError instanceof Error ? getJobsError.stack : undefined,
           }
         );
         return {
@@ -1180,20 +1180,20 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       // Comprehensive error logging with stack trace
       const errorMessage = _error instanceof Error ? _error.message : String(_error);
       const errorStack = _error instanceof Error ? _error.stack : undefined;
-      
+
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.ERROR,
         `Failed to get location queue stats: ${errorMessage}`,
         'QueueService',
-        { 
-          locationId, 
+        {
+          locationId,
           domain,
           error: errorMessage,
-          stack: errorStack
+          stack: errorStack,
         }
       );
-      
+
       // Always return default stats instead of throwing to prevent health check failures
       return {
         locationId,
@@ -1516,7 +1516,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
             LogLevel.WARN,
             `Auto-scaling failed for queue ${queueName}`,
             'QueueService',
-            { queueName, error: queueError instanceof Error ? queueError.message : String(queueError) }
+            {
+              queueName,
+              error: queueError instanceof Error ? queueError.message : String(queueError),
+            }
           );
         }
       }
@@ -1545,8 +1548,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           },
           {
             connection: {
-              host: this.configService?.get<string>('REDIS_HOST') || process.env['REDIS_HOST'] || 'localhost',
-              port: this.configService?.get<number>('REDIS_PORT') || parseInt(process.env['REDIS_PORT'] || '6379', 10),
+              host:
+                this.configService?.get<string>('REDIS_HOST') ||
+                process.env['REDIS_HOST'] ||
+                'localhost',
+              port:
+                this.configService?.get<number>('REDIS_PORT') ||
+                parseInt(process.env['REDIS_PORT'] || '6379', 10),
             },
             concurrency: 5,
           }

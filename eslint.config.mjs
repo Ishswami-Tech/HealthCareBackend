@@ -3,12 +3,7 @@ import eslint from '@eslint/js';
 import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
-import nestjsConfig from 'eslint-config-nestjs';
 import nestjsTypedPlugin from '@darraghor/eslint-plugin-nestjs-typed';
-
-// Convert legacy config to flat config format
-// eslint-config-nestjs exports a legacy config, so we extract its rules
-const nestjsRules = nestjsConfig.rules || {};
 
 // Extract NestJS Typed plugin rules
 const nestjsTypedRules =
@@ -40,8 +35,6 @@ export default tseslint.config(
       '@darraghor/nestjs-typed': nestjsTypedPlugin,
     },
     rules: {
-      // NestJS config rules (from eslint-config-nestjs)
-      ...nestjsRules,
       // NestJS Typed plugin recommended rules
       ...nestjsTypedRules,
       // Your existing strict TypeScript rules

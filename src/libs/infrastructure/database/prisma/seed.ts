@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { PrismaClient } from '@prisma/client';
 import { faker } from '@faker-js/faker';
 import * as bcrypt from 'bcrypt';
@@ -15,6 +14,7 @@ import {
 } from '@core/types/enums.types';
 import type { Role } from '@core/types/rbac.types';
 import { Gender } from '@dtos/user.dto';
+import type { PrismaClientWithDelegates, PrismaDelegateArgs } from '@core/types/prisma.types';
 
 // Role string literals (Role is a type, not an enum)
 const RoleValues = {
@@ -35,7 +35,50 @@ const RoleValues = {
 const SEED_COUNT = 50;
 
 // Initialize Prisma client with error handling
-const prisma = new PrismaClient();
+// PrismaClient is available at runtime but TypeScript can't verify the type
+const PrismaClientConstructor = PrismaClient as unknown as new () => unknown;
+const prismaClientInstance = new PrismaClientConstructor();
+type ExtendedPrismaClient = PrismaClientWithDelegates & {
+  user: {
+    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; role?: string }>;
+    update: (args: {
+      where: PrismaDelegateArgs;
+      data: PrismaDelegateArgs;
+    }) => Promise<{ id: string }>;
+    findMany: (args?: {
+      where?: PrismaDelegateArgs;
+    }) => Promise<Array<{ id: string; role: string }>>;
+  };
+  superAdmin: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  clinic: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  clinicLocation: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  clinicAdmin: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  doctor: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  doctorClinic: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  receptionist: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  receptionistsAtClinic: {
+    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }>;
+  };
+  patient: {
+    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; userId: string }>;
+  };
+  medicine: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  therapy: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
+  appointment: {
+    create: (args: {
+      data: PrismaDelegateArgs;
+    }) => Promise<{ id: string; clinicId: string; userId: string }>;
+  };
+  payment: {
+    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; clinicId: string }>;
+  };
+  queue: {
+    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; clinicId: string }>;
+  };
+  $connect: () => Promise<void>;
+  $disconnect: () => Promise<void>;
+};
+const prisma = prismaClientInstance as ExtendedPrismaClient;
 
 let userIdCounter = 1;
 const generateUserId = () => `UID${String(userIdCounter++).padStart(6, '0')}`;
@@ -56,7 +99,7 @@ async function main() {
     console.log('Creating SuperAdmin user...');
     const hashedPassword = await bcrypt.hash('admin123', 10);
 
-    const superAdminUser = await prisma.user.create({
+    const superAdminUser = (await (prisma.user.create({
       data: {
         email: 'admin@example.com',
         password: hashedPassword,
@@ -70,19 +113,19 @@ async function main() {
         isVerified: true,
         userid: generateUserId(),
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
-    await prisma.superAdmin.create({
+    (await (prisma.superAdmin.create({
       data: {
         userId: superAdminUser.id,
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // ===== CLINIC CREATION =====
     console.log('Creating clinics...');
 
     // Aadesh Ayurvedalay
-    const clinic1 = await prisma.clinic.create({
+    const clinic1 = (await (prisma.clinic.create({
       data: {
         name: 'Aadesh Ayurvedalay',
         address: 'Pune, Maharashtra',
@@ -100,10 +143,10 @@ async function main() {
         subdomain: 'aadesh',
         isActive: true,
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // Shri Vishwamurthi Ayurvedalay
-    const clinic2 = await prisma.clinic.create({
+    const clinic2 = (await (prisma.clinic.create({
       data: {
         name: 'Shri Vishwamurthi Ayurvedalay',
         address: 'Mumbai, Maharashtra',
@@ -121,12 +164,12 @@ async function main() {
         subdomain: 'vishwamurthi',
         isActive: true,
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // Create clinic locations
     console.log('Creating clinic locations...');
     // Aadesh Ayurvedalay Locations
-    const clinic1Locations = await Promise.all([
+    const clinic1Locations = (await Promise.all([
       prisma.clinicLocation.create({
         data: {
           name: 'Aadesh Main Branch',
@@ -141,7 +184,7 @@ async function main() {
           locationId: generateLocationId(),
           isActive: true,
         },
-      }),
+      }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
           name: 'Aadesh North Branch',
@@ -156,7 +199,7 @@ async function main() {
           locationId: generateLocationId(),
           isActive: true,
         },
-      }),
+      }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
           name: 'Aadesh South Branch',
@@ -171,11 +214,11 @@ async function main() {
           locationId: generateLocationId(),
           isActive: true,
         },
-      }),
-    ]);
+      }) as unknown as Promise<{ id: string }>,
+    ])) as unknown as Array<{ id: string }>;
 
     // Vishwamurthi Ayurvedalay Locations
-    const clinic2Locations = await Promise.all([
+    const clinic2Locations = (await Promise.all([
       prisma.clinicLocation.create({
         data: {
           name: 'Vishwamurthi Main Branch',
@@ -190,7 +233,7 @@ async function main() {
           locationId: generateLocationId(),
           isActive: true,
         },
-      }),
+      }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
           name: 'Vishwamurthi Andheri Branch',
@@ -205,7 +248,7 @@ async function main() {
           locationId: generateLocationId(),
           isActive: true,
         },
-      }),
+      }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
           name: 'Vishwamurthi Powai Branch',
@@ -220,12 +263,12 @@ async function main() {
           locationId: generateLocationId(),
           isActive: true,
         },
-      }),
-    ]);
+      }) as unknown as Promise<{ id: string }>,
+    ])) as unknown as Array<{ id: string }>;
 
     // Create a default clinic admin
     console.log('Creating default clinic admin...');
-    const clinicAdminUser = await prisma.user.create({
+    const clinicAdminUser = (await (prisma.user.create({
       data: {
         email: 'clinicadmin@example.com',
         password: await bcrypt.hash('admin123', 10),
@@ -241,18 +284,18 @@ async function main() {
         clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
         primaryClinicId: clinic1.id,
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
-    await prisma.clinicAdmin.create({
+    (await (prisma.clinicAdmin.create({
       data: {
         userId: clinicAdminUser.id,
         clinicId: clinic1.id,
         isOwner: true,
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // ===== CLINIC ADMIN DEMO USER =====
-    const demoClinicAdmin = await prisma.user.create({
+    const demoClinicAdmin = (await (prisma.user.create({
       data: {
         email: 'clinicadmin1@example.com',
         password: await bcrypt.hash('test1234', 10),
@@ -268,114 +311,123 @@ async function main() {
         clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
         primaryClinicId: clinic1.id,
       },
-    });
-    await prisma.clinicAdmin.create({
+    }) as unknown as Promise<{ id: string; role: string }>)) as unknown as {
+      id: string;
+      role: string;
+    };
+    (await (prisma.clinicAdmin.create({
       data: {
         userId: demoClinicAdmin.id,
         clinicId: clinic1.id,
         isOwner: false,
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // Create Users with different roles
     console.log('Creating users...');
-    const users = await Promise.all([
+    const users = (await Promise.all([
       // Clinic Admins
       ...Array(SEED_COUNT)
         .fill(null)
-        .map((_, i) =>
-          prisma.user.create({
-            data: {
-              email: faker.internet.email(),
-              password: faker.internet.password(),
-              name: faker.person.fullName(),
-              age: faker.number.int({ min: 30, max: 70 }),
-              firstName: faker.person.firstName(),
-              lastName: faker.person.lastName(),
-              phone: faker.phone.number(),
-              role: RoleValues.CLINIC_ADMIN,
-              gender: faker.helpers.arrayElement(Object.values(Gender)),
-              isVerified: true,
-              userid: generateUserId(),
-              clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
-              primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
-            },
-          })
+        .map(
+          (_, i) =>
+            prisma.user.create({
+              data: {
+                email: faker.internet.email(),
+                password: faker.internet.password(),
+                name: faker.person.fullName(),
+                age: faker.number.int({ min: 30, max: 70 }),
+                firstName: faker.person.firstName(),
+                lastName: faker.person.lastName(),
+                phone: faker.phone.number(),
+                role: RoleValues.CLINIC_ADMIN,
+                gender: faker.helpers.arrayElement(Object.values(Gender)),
+                isVerified: true,
+                userid: generateUserId(),
+                clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+                primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
+              },
+            }) as unknown as Promise<{ id: string; role: string }>
         ),
 
       // Doctors
       ...Array(SEED_COUNT)
         .fill(null)
-        .map((_, i) =>
-          prisma.user.create({
-            data: {
-              email: faker.internet.email(),
-              password: faker.internet.password(),
-              name: faker.person.fullName(),
-              age: faker.number.int({ min: 30, max: 70 }),
-              firstName: faker.person.firstName(),
-              lastName: faker.person.lastName(),
-              phone: faker.phone.number(),
-              role: RoleValues.DOCTOR,
-              gender: faker.helpers.arrayElement(Object.values(Gender)),
-              isVerified: true,
-              userid: generateUserId(),
-              clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
-              primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
-            },
-          })
+        .map(
+          (_, i) =>
+            prisma.user.create({
+              data: {
+                email: faker.internet.email(),
+                password: faker.internet.password(),
+                name: faker.person.fullName(),
+                age: faker.number.int({ min: 30, max: 70 }),
+                firstName: faker.person.firstName(),
+                lastName: faker.person.lastName(),
+                phone: faker.phone.number(),
+                role: RoleValues.DOCTOR,
+                gender: faker.helpers.arrayElement(Object.values(Gender)),
+                isVerified: true,
+                userid: generateUserId(),
+                clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+                primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
+              },
+            }) as unknown as Promise<{ id: string; role: string }>
         ),
 
       // Patients
       ...Array(SEED_COUNT)
         .fill(null)
-        .map((_, i) =>
-          prisma.user.create({
-            data: {
-              email: faker.internet.email(),
-              password: faker.internet.password(),
-              name: faker.person.fullName(),
-              age: faker.number.int({ min: 18, max: 80 }),
-              firstName: faker.person.firstName(),
-              lastName: faker.person.lastName(),
-              phone: faker.phone.number(),
-              role: RoleValues.PATIENT,
-              gender: faker.helpers.arrayElement(Object.values(Gender)),
-              isVerified: true,
-              userid: generateUserId(),
-              clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
-              primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
-            },
-          })
+        .map(
+          (_, i) =>
+            prisma.user.create({
+              data: {
+                email: faker.internet.email(),
+                password: faker.internet.password(),
+                name: faker.person.fullName(),
+                age: faker.number.int({ min: 18, max: 80 }),
+                firstName: faker.person.firstName(),
+                lastName: faker.person.lastName(),
+                phone: faker.phone.number(),
+                role: RoleValues.PATIENT,
+                gender: faker.helpers.arrayElement(Object.values(Gender)),
+                isVerified: true,
+                userid: generateUserId(),
+                clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+                primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
+              },
+            }) as unknown as Promise<{ id: string; role: string }>
         ),
 
       // Receptionists
       ...Array(SEED_COUNT)
         .fill(null)
-        .map((_, i) =>
-          prisma.user.create({
-            data: {
-              email: faker.internet.email(),
-              password: faker.internet.password(),
-              name: faker.person.fullName(),
-              age: faker.number.int({ min: 20, max: 50 }),
-              firstName: faker.person.firstName(),
-              lastName: faker.person.lastName(),
-              phone: faker.phone.number(),
-              role: RoleValues.RECEPTIONIST,
-              gender: faker.helpers.arrayElement(Object.values(Gender)),
-              isVerified: true,
-              userid: generateUserId(),
-              clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
-              primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
-            },
-          })
+        .map(
+          (_, i) =>
+            prisma.user.create({
+              data: {
+                email: faker.internet.email(),
+                password: faker.internet.password(),
+                name: faker.person.fullName(),
+                age: faker.number.int({ min: 20, max: 50 }),
+                firstName: faker.person.firstName(),
+                lastName: faker.person.lastName(),
+                phone: faker.phone.number(),
+                role: RoleValues.RECEPTIONIST,
+                gender: faker.helpers.arrayElement(Object.values(Gender)),
+                isVerified: true,
+                userid: generateUserId(),
+                clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+                primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
+              },
+            }) as unknown as Promise<{ id: string; role: string }>
         ),
-    ]);
+    ])) as unknown as Array<{ id: string; role: string }>;
 
     // Create ClinicAdmins with clinic associations
     console.log('Creating clinic admins...');
-    const clinicAdminUsers = users.filter(u => u.role === RoleValues.CLINIC_ADMIN);
+    const clinicAdminUsers = users.filter(
+      (u): u is { id: string; role: string } => u.role === RoleValues.CLINIC_ADMIN
+    );
     await Promise.all(
       clinicAdminUsers.map((user, index) => {
         const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
@@ -385,33 +437,36 @@ async function main() {
             clinicId: clinicId,
             isOwner: index < 2, // First admin for each clinic is owner
           },
-        });
+        }) as unknown as Promise<{ id: string }>;
       })
     );
 
     // Create Doctors with clinic and location associations
     console.log('Creating doctors...');
-    const doctorUsers = users.filter(u => u.role === RoleValues.DOCTOR);
-    const doctors = await Promise.all(
-      doctorUsers.map(user =>
-        prisma.doctor.create({
-          data: {
-            id: user.id,
-            userId: user.id,
-            specialization: faker.person.jobTitle(),
-            experience: faker.number.int({ min: 1, max: 30 }),
-            qualification: faker.person.jobType(),
-            rating: faker.number.float({ min: 3, max: 5, fractionDigits: 1 }),
-            isAvailable: true,
-            consultationFee: faker.number.float({
-              min: 500,
-              max: 2000,
-              fractionDigits: 2,
-            }),
-          },
-        })
-      )
+    const doctorUsers = users.filter(
+      (u): u is { id: string; role: string } => u.role === RoleValues.DOCTOR
     );
+    const doctors = (await Promise.all(
+      doctorUsers.map(
+        user =>
+          prisma.doctor.create({
+            data: {
+              id: user.id,
+              userId: user.id,
+              specialization: faker.person.jobTitle(),
+              experience: faker.number.int({ min: 1, max: 30 }),
+              qualification: faker.person.jobType(),
+              rating: faker.number.float({ min: 3, max: 5, fractionDigits: 1 }),
+              isAvailable: true,
+              consultationFee: faker.number.float({
+                min: 500,
+                max: 2000,
+                fractionDigits: 2,
+              }),
+            },
+          }) as unknown as Promise<{ id: string }>
+      )
+    )) as unknown as Array<{ id: string }>;
 
     // Create DoctorClinic relationships with locations
     console.log('Creating doctor-clinic relationships...');
@@ -449,9 +504,9 @@ async function main() {
     // Create doctor-clinic relationships in batches to handle duplicates
     for (const data of doctorClinicData) {
       try {
-        await prisma.doctorClinic.create({
+        (await (prisma.doctorClinic.create({
           data,
-        });
+        }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
       } catch (_error) {
         // Skip if relationship already exists
         if ((_error as { code?: string }).code !== 'P2002') {
@@ -462,18 +517,20 @@ async function main() {
 
     // Create Receptionists with clinic associations
     console.log('Creating receptionists...');
-    const receptionistUsers = users.filter(u => u.role === RoleValues.RECEPTIONIST);
+    const receptionistUsers = users.filter(
+      (u): u is { id: string; role: string } => u.role === RoleValues.RECEPTIONIST
+    );
 
     // First create receptionists without clinic association
-    const receptionists = await Promise.all(
+    const receptionists = (await Promise.all(
       receptionistUsers.map(user => {
         return prisma.receptionist.create({
           data: {
             userId: user.id,
           },
-        });
+        }) as unknown as Promise<{ id: string }>;
       })
-    );
+    )) as unknown as Array<{ id: string }>;
 
     // Then create the many-to-many relationships
     console.log('Creating receptionist-clinic relationships...');
@@ -485,28 +542,31 @@ async function main() {
             A: clinicId, // clinic id
             B: receptionist.id, // receptionist id
           },
-        });
+        }) as unknown as Promise<{ id: string }>;
       })
     );
 
     // Create Patients with clinic associations
     console.log('Creating patients...');
-    const patientUsers = users.filter(u => u.role === RoleValues.PATIENT);
-    const patients = await Promise.all(
-      patientUsers.map(user =>
-        prisma.patient.create({
-          data: {
-            prakriti: faker.helpers.arrayElement(Object.values(Prakriti)),
-            dosha: faker.helpers.arrayElement(Object.values(Dosha)),
-            user: {
-              connect: {
-                id: user.id,
+    const patientUsers = users.filter(
+      (u): u is { id: string; role: string } => u.role === RoleValues.PATIENT
+    );
+    const patients = (await Promise.all(
+      patientUsers.map(
+        user =>
+          prisma.patient.create({
+            data: {
+              prakriti: faker.helpers.arrayElement(Object.values(Prakriti)),
+              dosha: faker.helpers.arrayElement(Object.values(Dosha)),
+              user: {
+                connect: {
+                  id: user.id,
+                },
               },
             },
-          },
-        })
+          }) as unknown as Promise<{ id: string; userId: string }>
       )
-    );
+    )) as unknown as Array<{ id: string; userId: string }>;
 
     // After creating patients, connect them to clinics
     await Promise.all(
@@ -518,7 +578,7 @@ async function main() {
               connect: { id: clinic1.id },
             },
           },
-        }),
+        }) as unknown as Promise<{ id: string }>,
         prisma.user.update({
           where: { id: patient.userId },
           data: {
@@ -526,12 +586,12 @@ async function main() {
               connect: { id: clinic2.id },
             },
           },
-        }),
+        }) as unknown as Promise<{ id: string }>,
       ])
     );
 
     // ===== DOCTOR DEMO USER =====
-    const demoDoctor = await prisma.user.create({
+    const demoDoctor = (await (prisma.user.create({
       data: {
         email: 'doctor1@example.com',
         password: await bcrypt.hash('test1234', 10),
@@ -547,8 +607,8 @@ async function main() {
         clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
         primaryClinicId: clinic2.id,
       },
-    });
-    const _demoDoctorRecord = await prisma.doctor.create({
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+    const _demoDoctorRecord = (await (prisma.doctor.create({
       data: {
         id: demoDoctor.id,
         userId: demoDoctor.id,
@@ -559,28 +619,28 @@ async function main() {
         isAvailable: true,
         consultationFee: 1000,
       },
-    });
-    await prisma.doctorClinic.create({
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+    (await (prisma.doctorClinic.create({
       data: {
         doctorId: demoDoctor.id,
         clinicId: clinic1.id,
-        locationId: clinic1Locations[0].id,
+        locationId: clinic1Locations[0]?.id ?? clinic1.id,
         startTime: new Date(),
         endTime: new Date(),
       },
-    });
-    await prisma.doctorClinic.create({
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+    (await (prisma.doctorClinic.create({
       data: {
         doctorId: demoDoctor.id,
         clinicId: clinic2.id,
-        locationId: clinic2Locations[0].id,
+        locationId: clinic2Locations[0]?.id ?? clinic2.id,
         startTime: new Date(),
         endTime: new Date(),
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // ===== PATIENT DEMO USER =====
-    const demoPatient = await prisma.user.create({
+    const demoPatient = (await (prisma.user.create({
       data: {
         email: 'patient1@example.com',
         password: await bcrypt.hash('test1234', 10),
@@ -596,17 +656,17 @@ async function main() {
         clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
         primaryClinicId: clinic1.id,
       },
-    });
-    const _demoPatientRecord = await prisma.patient.create({
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+    const _demoPatientRecord = (await (prisma.patient.create({
       data: {
         prakriti: Prakriti.VATA,
         dosha: Dosha.PITTA,
         user: { connect: { id: demoPatient.id } },
       },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // ===== RECEPTIONIST DEMO USER =====
-    const demoReceptionist = await prisma.user.create({
+    const demoReceptionist = (await (prisma.user.create({
       data: {
         email: 'receptionist1@example.com',
         password: await bcrypt.hash('test1234', 10),
@@ -622,56 +682,58 @@ async function main() {
         clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
         primaryClinicId: clinic2.id,
       },
-    });
-    const _demoReceptionistRecord = await prisma.receptionist.create({
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+    const _demoReceptionistRecord = (await (prisma.receptionist.create({
       data: { userId: demoReceptionist.id },
-    });
-    await prisma.receptionistsAtClinic.create({
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+    (await (prisma.receptionistsAtClinic.create({
       data: { A: clinic1.id, B: _demoReceptionistRecord.id },
-    });
-    await prisma.receptionistsAtClinic.create({
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+    (await (prisma.receptionistsAtClinic.create({
       data: { A: clinic2.id, B: _demoReceptionistRecord.id },
-    });
+    }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // Create sample data only in development environment
     if (process.env['NODE_ENV'] === 'development') {
       // Create Medicines
       console.log('Creating medicines...');
-      const medicines1 = await Promise.all(
+      const medicines1 = (await Promise.all(
         Array(SEED_COUNT)
           .fill(null)
-          .map(() =>
-            prisma.medicine.create({
-              data: {
-                name: faker.commerce.productName(),
-                ingredients: faker.commerce.productMaterial(),
-                properties: faker.commerce.productDescription(),
-                dosage: faker.number.int({ min: 1, max: 3 }) + ' times daily',
-                manufacturer: faker.company.name(),
-                type: faker.helpers.arrayElement(Object.values(MedicineType)),
-                clinicId: clinic1.id,
-              },
-            })
+          .map(
+            () =>
+              prisma.medicine.create({
+                data: {
+                  name: faker.commerce.productName(),
+                  ingredients: faker.commerce.productMaterial(),
+                  properties: faker.commerce.productDescription(),
+                  dosage: faker.number.int({ min: 1, max: 3 }) + ' times daily',
+                  manufacturer: faker.company.name(),
+                  type: faker.helpers.arrayElement(Object.values(MedicineType)),
+                  clinicId: clinic1.id,
+                },
+              }) as unknown as Promise<{ id: string }>
           )
-      );
+      )) as unknown as Array<{ id: string }>;
 
-      const medicines2 = await Promise.all(
+      const medicines2 = (await Promise.all(
         Array(SEED_COUNT)
           .fill(null)
-          .map(() =>
-            prisma.medicine.create({
-              data: {
-                name: faker.commerce.productName(),
-                ingredients: faker.commerce.productMaterial(),
-                properties: faker.commerce.productDescription(),
-                dosage: faker.number.int({ min: 1, max: 3 }) + ' times daily',
-                manufacturer: faker.company.name(),
-                type: faker.helpers.arrayElement(Object.values(MedicineType)),
-                clinicId: clinic2.id,
-              },
-            })
+          .map(
+            () =>
+              prisma.medicine.create({
+                data: {
+                  name: faker.commerce.productName(),
+                  ingredients: faker.commerce.productMaterial(),
+                  properties: faker.commerce.productDescription(),
+                  dosage: faker.number.int({ min: 1, max: 3 }) + ' times daily',
+                  manufacturer: faker.company.name(),
+                  type: faker.helpers.arrayElement(Object.values(MedicineType)),
+                  clinicId: clinic2.id,
+                },
+              }) as unknown as Promise<{ id: string }>
           )
-      );
+      )) as unknown as Array<{ id: string }>;
 
       const _medicines = [...medicines1, ...medicines2];
 
@@ -680,34 +742,36 @@ async function main() {
       await Promise.all([
         ...Array(SEED_COUNT)
           .fill(null)
-          .map(() =>
-            prisma.therapy.create({
-              data: {
-                name: faker.commerce.productName(),
-                description: faker.commerce.productDescription(),
-                duration: faker.number.int({ min: 30, max: 120 }),
-                clinicId: clinic1.id,
-              },
-            })
+          .map(
+            () =>
+              prisma.therapy.create({
+                data: {
+                  name: faker.commerce.productName(),
+                  description: faker.commerce.productDescription(),
+                  duration: faker.number.int({ min: 30, max: 120 }),
+                  clinicId: clinic1.id,
+                },
+              }) as unknown as Promise<{ id: string }>
           ),
         ...Array(SEED_COUNT)
           .fill(null)
-          .map(() =>
-            prisma.therapy.create({
-              data: {
-                name: faker.commerce.productName(),
-                description: faker.commerce.productDescription(),
-                duration: faker.number.int({ min: 30, max: 120 }),
-                clinicId: clinic2.id,
-              },
-            })
+          .map(
+            () =>
+              prisma.therapy.create({
+                data: {
+                  name: faker.commerce.productName(),
+                  description: faker.commerce.productDescription(),
+                  duration: faker.number.int({ min: 30, max: 120 }),
+                  clinicId: clinic2.id,
+                },
+              }) as unknown as Promise<{ id: string }>
           ),
       ]);
 
       // Create sample appointments and related data
       console.log('Creating sample appointments and related data...');
-      const appointments = await Promise.all(
-        Array.from({ length: 10 }).map(async (_, index) => {
+      const appointments = (await Promise.all(
+        Array.from({ length: 10 }).map(async (_unused, index) => {
           const appointmentDate = faker.date.future();
           const timeString = appointmentDate.toLocaleTimeString('en-US', {
             hour12: false,
@@ -746,36 +810,38 @@ async function main() {
               notes: faker.lorem.sentence(),
               userId: patient.userId,
             },
-          });
+          }) as unknown as Promise<{ id: string; clinicId: string; userId: string }>;
         })
-      );
+      )) as unknown as Array<{ id: string; clinicId: string; userId: string }>;
 
       // Create sample payments, queues, prescriptions, etc.
       await Promise.all([
         // Payments
-        ...appointments.map(appointment =>
-          prisma.payment.create({
-            data: {
-              amount: faker.number.float({ min: 500, max: 5000 }),
-              status: faker.helpers.arrayElement(Object.values(PaymentStatus)),
-              method: faker.helpers.arrayElement(Object.values(PaymentMethod)),
-              transactionId: faker.string.uuid(),
-              clinicId: appointment.clinicId,
-              appointmentId: appointment.id,
-            },
-          })
+        ...appointments.map(
+          appointment =>
+            prisma.payment.create({
+              data: {
+                amount: faker.number.float({ min: 500, max: 5000 }),
+                status: faker.helpers.arrayElement(Object.values(PaymentStatus)),
+                method: faker.helpers.arrayElement(Object.values(PaymentMethod)),
+                transactionId: faker.string.uuid(),
+                clinicId: appointment.clinicId,
+                appointmentId: appointment.id,
+              },
+            }) as unknown as Promise<{ id: string; clinicId: string }>
         ),
         // Queues
-        ...appointments.map((appointment, index) =>
-          prisma.queue.create({
-            data: {
-              queueNumber: index + 1,
-              estimatedWaitTime: faker.number.int({ min: 5, max: 60 }),
-              status: faker.helpers.arrayElement(Object.values(QueueStatus)),
-              clinicId: appointment.clinicId,
-              appointmentId: appointment.id,
-            },
-          })
+        ...appointments.map(
+          (appointment, index) =>
+            prisma.queue.create({
+              data: {
+                queueNumber: index + 1,
+                estimatedWaitTime: faker.number.int({ min: 5, max: 60 }),
+                status: faker.helpers.arrayElement(Object.values(QueueStatus)),
+                clinicId: appointment.clinicId,
+                appointmentId: appointment.id,
+              },
+            }) as unknown as Promise<{ id: string; clinicId: string }>
         ),
       ]);
     }
@@ -796,7 +862,7 @@ async function main() {
     console.error('Error during seeding:', _error);
     throw _error;
   } finally {
-    await prisma.$disconnect();
+    await (prisma.$disconnect() as unknown as Promise<void>);
   }
 }
 
@@ -805,7 +871,7 @@ async function waitForDatabase() {
   let retries = 5;
   while (retries > 0) {
     try {
-      await prisma.$connect();
+      await (prisma.$connect() as unknown as Promise<void>);
       console.log('Database connection established.');
       return;
     } catch (_error) {
@@ -873,5 +939,5 @@ main()
     process.exit(1);
   })
   .finally(() => {
-    void prisma.$disconnect();
+    void (prisma.$disconnect() as unknown as Promise<void>);
   });

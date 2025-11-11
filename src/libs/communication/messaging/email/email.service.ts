@@ -71,12 +71,15 @@ export class EmailService implements OnModuleInit {
       // Safely get provider with fallback to process.env
       let provider: string;
       try {
-        provider = this.configService?.get<string>('EMAIL_PROVIDER') || process.env['EMAIL_PROVIDER'] || 'smtp';
+        provider =
+          this.configService?.get<string>('EMAIL_PROVIDER') ||
+          process.env['EMAIL_PROVIDER'] ||
+          'smtp';
       } catch {
         provider = process.env['EMAIL_PROVIDER'] || 'smtp';
       }
       this.provider = provider as 'smtp' | 'api';
-      
+
       if (this.provider === 'smtp') {
         await this.initSMTP();
       } else {
@@ -115,7 +118,7 @@ export class EmailService implements OnModuleInit {
           from: process.env['EMAIL_FROM'] || 'noreply@healthcare.com',
         } as EmailConfig;
       }
-      
+
       if (!emailConfig || !emailConfig.user || !emailConfig.password) {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -172,7 +175,7 @@ export class EmailService implements OnModuleInit {
       } catch {
         token = process.env['MAILTRAP_API_TOKEN'];
       }
-      
+
       if (!token) {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -413,7 +416,9 @@ export class EmailService implements OnModuleInit {
 
   private getPasswordResetConfirmationTemplate(context: PasswordResetEmailContext): string {
     const fallbackLoginUrl =
-      this.configService?.get<string>('APP_LOGIN_URL') || process.env['APP_LOGIN_URL'] || 'https://app.healthcare/login';
+      this.configService?.get<string>('APP_LOGIN_URL') ||
+      process.env['APP_LOGIN_URL'] ||
+      'https://app.healthcare/login';
     const loginUrl = (context as EmailContext)['loginUrl'] || fallbackLoginUrl;
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">

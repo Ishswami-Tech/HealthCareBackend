@@ -14,12 +14,12 @@ import {
   ConnectedSocket,
   OnGatewayInit,
 } from '@nestjs/websockets';
-import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { QueueService } from '@infrastructure/queue/src/queue.service';
 
 // Internal imports - Infrastructure
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService, safeLog, safeLogError } from '@infrastructure/logging';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -37,7 +37,9 @@ import type { ClientSession, QueueFilters } from '@core/types/queue.types';
   namespace: '/queue-status',
 })
 @Injectable()
-export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
+export class QueueStatusGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
   @WebSocketServer() server!: Server;
 
   private connectedClients = new Map<string, ClientSession>();
@@ -56,8 +58,9 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
 
   constructor(
     private readonly queueService: QueueService,
+    @Optional()
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService?: LoggingService
   ) {}
 
   /**
@@ -66,18 +69,14 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
    * Using forwardRef() to handle circular dependency between QueueModule and LoggingModule
    */
   onModuleInit() {
-    // Verify LoggingService is available (it should be since LoggingModule is @Global())
-    // With forwardRef, we need to check at runtime
-    if (!this.loggingService) {
-      throw new HealthcareError(
-        ErrorCode.INTERNAL_SERVER_ERROR,
-        'LoggingService is not available - dependency injection failed',
-        undefined,
-        { gateway: 'QueueStatusGateway' },
-        'QueueStatusGateway.onModuleInit'
-      );
+    // LoggingService is optional - if not available, we'll continue without logging
+    // This handles cases where LoggingService might not be initialized yet due to circular dependencies
+    if (this.loggingService) {
+      this.isInitialized = true;
+    } else {
+      // LoggingService not available yet - will retry in afterInit
+      this.isInitialized = false;
     }
-    this.isInitialized = true;
   }
 
   /**
@@ -92,25 +91,22 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
       // Use setTimeout to allow onModuleInit to complete
       // This is necessary when using forwardRef due to circular dependencies
       setTimeout(() => {
-        if (this.isInitialized && this.loggingService) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.INFO,
-            '🚀 Queue Status Gateway initialized (delayed)',
-            'QueueStatusGateway'
-          );
-          void this.startMetricsStreaming();
-        } else {
-          // Fallback to console if LoggingService still not available
-          // This should not happen in normal operation but provides resilience
-          console.error('[QueueStatusGateway] Failed to initialize - LoggingService not available after delay');
-        }
-      }, 100);
+        this.isInitialized = true;
+        safeLog(
+          this.loggingService,
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          '🚀 Queue Status Gateway initialized (delayed)',
+          'QueueStatusGateway'
+        );
+        void this.startMetricsStreaming();
+      }, 500); // Increased delay to 500ms to allow LoggingService to initialize
       return;
     }
 
     // LoggingService is guaranteed to be available here
-    void this.loggingService.log(
+    safeLog(
+      this.loggingService,
       LogType.SYSTEM,
       LogLevel.INFO,
       '🚀 Queue Status Gateway initialized',
@@ -151,7 +147,8 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
 
       void client.join(`tenant:${tenantId}`);
 
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.QUEUE,
         LogLevel.INFO,
         `✅ Client connected: ${client.id} (tenant: ${tenantId}, user: ${userId})`,
@@ -165,17 +162,10 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
 
       void this.sendInitialStatus(client, tenantId);
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `❌ Connection failed for ${client.id}: ${_error instanceof Error ? _error.message : String(_error)}`,
-        'QueueStatusGateway',
-        {
-          clientId: client.id,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
+      safeLogError(this.loggingService, _error, 'QueueStatusGateway', {
+        clientId: client.id,
+        operation: 'handleConnection',
+      });
       client.emit('connection_error', {
         _error: _error instanceof Error ? _error.message : 'Unknown _error',
       });
@@ -209,7 +199,8 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
       this.connectedClients.delete(client.id);
       this.connectionMetrics.activeConnections--;
 
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.QUEUE,
         LogLevel.INFO,
         `👋 Client disconnected: ${client.id} (tenant: ${session.tenantId})`,
@@ -260,7 +251,8 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
         timestamp: new Date().toISOString(),
       });
 
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.QUEUE,
         LogLevel.INFO,
         `📊 Client ${client.id} subscribed to queue ${queueName}`,
@@ -277,16 +269,11 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
         subscribedAt: new Date().toISOString(),
       });
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `❌ Queue subscription failed: ${_error instanceof Error ? _error.message : String(_error)}`,
-        'QueueStatusGateway',
-        {
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
+      safeLogError(this.loggingService, _error, 'QueueStatusGateway', {
+        clientId: client.id,
+        queueName: data.queueName,
+        operation: 'subscribe_queue',
+      });
       client.emit('subscription_error', {
         queueName: data.queueName,
         _error: _error instanceof Error ? _error.message : 'Unknown _error',
@@ -335,16 +322,10 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
         requestedAt: new Date().toISOString(),
       });
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `❌ Metrics request failed: ${_error instanceof Error ? _error.message : String(_error)}`,
-        'QueueStatusGateway',
-        {
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
+      safeLogError(this.loggingService, _error, 'QueueStatusGateway', {
+        clientId: client.id,
+        operation: 'get_queue_metrics',
+      });
       client.emit('metrics_error', {
         _error: _error instanceof Error ? _error.message : 'Unknown _error',
       });
@@ -376,6 +357,9 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
   private startMetricsStreaming() {
     this.metricsStreamInterval = setInterval(() => {
       try {
+        if (!this.queueService || typeof this.queueService.getAllQueueStatuses !== 'function') {
+          return;
+        }
         const allStatuses = this.queueService.getAllQueueStatuses();
 
         for (const [queueName, status] of Object.entries(allStatuses)) {
@@ -390,16 +374,9 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
           timestamp: new Date().toISOString(),
         });
       } catch (_error) {
-        void this.loggingService.log(
-          LogType.QUEUE,
-          LogLevel.ERROR,
-          `Metrics streaming error: ${_error instanceof Error ? _error.message : String(_error)}`,
-          'QueueStatusGateway',
-          {
-            error: _error instanceof Error ? _error.message : String(_error),
-            stack: _error instanceof Error ? _error.stack : undefined,
-          }
-        );
+        safeLogError(this.loggingService, _error, 'QueueStatusGateway', {
+          operation: 'startMetricsStreaming',
+        });
       }
     }, 5000);
   }
@@ -447,6 +424,9 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
   }
 
   private getAccessibleQueues(tenantId: string, requestedQueues?: string[]): string[] {
+    if (!this.queueService || typeof this.queueService.getAllQueueStatuses !== 'function') {
+      return requestedQueues || [];
+    }
     const allStatuses = this.queueService.getAllQueueStatuses();
     const allQueues = Object.keys(allStatuses);
 
@@ -469,6 +449,14 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
   private sendInitialStatus(client: Socket, tenantId: string) {
     try {
       const accessibleQueues = this.getAccessibleQueues(tenantId);
+      if (!this.queueService || typeof this.queueService.getAllQueueStatuses !== 'function') {
+        client.emit('initial_status', {
+          queues: {},
+          tenantId,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
       const queueStatuses = this.queueService.getAllQueueStatuses();
 
       const filteredStatuses = Object.fromEntries(
@@ -487,17 +475,10 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
         },
       });
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Failed to send initial status: ${_error instanceof Error ? _error.message : String(_error)}`,
-        'QueueStatusGateway',
-        {
-          tenantId,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
+      safeLogError(this.loggingService, _error, 'QueueStatusGateway', {
+        tenantId,
+        operation: 'sendInitialStatus',
+      });
     }
   }
 
@@ -517,7 +498,8 @@ export class QueueStatusGateway implements OnGatewayInit, OnGatewayConnection, O
       clearInterval(this.metricsStreamInterval);
     }
 
-    void this.loggingService.log(
+    safeLog(
+      this.loggingService,
       LogType.SYSTEM,
       LogLevel.INFO,
       '🔌 Queue Status Gateway shutdown completed',

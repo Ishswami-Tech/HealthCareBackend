@@ -179,8 +179,8 @@ export class EHRController {
 
   @Get('vitals/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getVitals(@Param('userId') userId: string, @Query('type') type?: string) {
-    return this.ehrService.getVitals(userId, type);
+  async getVitals(@Param('userId') userId: string, @Query('type') type?: string): Promise<unknown> {
+    return (await this.ehrService.getVitals(userId, type)) as unknown;
   }
 
   @Put('vitals/:id')
@@ -206,8 +206,8 @@ export class EHRController {
 
   @Get('allergies/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getAllergies(@Param('userId') userId: string) {
-    return this.ehrService.getAllergies(userId);
+  async getAllergies(@Param('userId') userId: string): Promise<unknown> {
+    return (await this.ehrService.getAllergies(userId)) as unknown;
   }
 
   @Put('allergies/:id')
@@ -233,8 +233,11 @@ export class EHRController {
 
   @Get('medications/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  async getMedications(@Param('userId') userId: string, @Query('activeOnly') activeOnly?: string) {
-    return this.ehrService.getMedications(userId, activeOnly === 'true');
+  async getMedications(
+    @Param('userId') userId: string,
+    @Query('activeOnly') activeOnly?: string
+  ): Promise<unknown> {
+    return (await this.ehrService.getMedications(userId, activeOnly === 'true')) as unknown;
   }
 
   @Put('medications/:id')

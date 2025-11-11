@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
 import { LoggingService } from '@infrastructure/logging';
@@ -151,7 +151,7 @@ export class EmailQueueService {
             }
           );
 
-          jobs.push(job);
+          jobs.push(job as Job<EmailQueueData>);
         }
       }
 
@@ -196,22 +196,18 @@ export class EmailQueueService {
   ): Promise<Job<EmailQueueData>> {
     try {
       // Use direct queue access for recurring jobs (cron) as QueueService doesn't support repeat option
-      const job = await this.emailQueue.add(
-        'send-recurring-email',
-        emailData,
-        {
-          repeat: { pattern: cronExpression },
+      const job = await this.emailQueue.add('send-recurring-email', emailData, {
+        repeat: { pattern: cronExpression },
         attempts: options?.attempts || 3,
-          backoff: options?.backoff
-            ? typeof options.backoff === 'number'
-              ? { type: 'exponential', delay: options.backoff }
-              : options.backoff
-            : { type: 'exponential', delay: 2000 },
-          priority: this.getPriorityValue(emailData.priority),
+        backoff: options?.backoff
+          ? typeof options.backoff === 'number'
+            ? { type: 'exponential', delay: options.backoff }
+            : options.backoff
+          : { type: 'exponential', delay: 2000 },
+        priority: this.getPriorityValue(emailData.priority),
         removeOnComplete: options?.removeOnComplete || 50,
         removeOnFail: options?.removeOnFail || 20,
-        }
-      );
+      });
 
       void this.loggingService.log(
         LogType.QUEUE,
@@ -536,9 +532,7 @@ export class EmailQueueService {
     }
   }
 
-  private getPriorityValue(
-    priority?: 'low' | 'normal' | 'high' | 'critical' | string
-  ): number {
+  private getPriorityValue(priority?: string): number {
     switch (priority) {
       case 'critical':
         return 1; // Critical - highest priority
@@ -578,8 +572,7 @@ export class EmailQueueService {
       const avgWaitTime =
         recentJobs.length > 0
           ? recentJobs.reduce((sum, job) => {
-              const wait =
-                job.processedOn && job.timestamp ? job.processedOn - job.timestamp : 0;
+              const wait = job.processedOn && job.timestamp ? job.processedOn - job.timestamp : 0;
               return sum + wait;
             }, 0) / recentJobs.length
           : metrics.averageProcessingTime || 0;

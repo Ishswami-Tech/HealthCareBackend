@@ -34,9 +34,6 @@ export { JwtAuthGuard } from './guards/jwt-auth.guard';
 export * from './rbac/rbac.guard';
 export * from './guards/roles.guard';
 
-// Pipes
-export * from './pipes/validation.pipe';
-
 // RBAC
 export { PermissionService } from './rbac/permission.service';
 export type { Permission as RBACPermission } from './rbac/permission.service';

@@ -2,6 +2,7 @@
 import type { PaginatedResult, RepositoryContext } from '@core/types';
 import type { QueryOptions } from '@core/types/database.types';
 import { RepositoryResult } from '@core/types/database.types';
+import { Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
@@ -1823,7 +1824,9 @@ export interface IRepositoryFactory {
  * Default repository factory implementation
  */
 export class RepositoryFactory implements IRepositoryFactory {
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
+  ) {}
 
   create<TEntity extends { id: TId }, TCreateInput, TUpdateInput, TId = string>(
     entityName: string,

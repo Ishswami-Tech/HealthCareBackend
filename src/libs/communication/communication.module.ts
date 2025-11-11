@@ -31,4 +31,3 @@ import { SocketModule } from '@communication/socket/socket.module';
   exports: [EmailModule, WhatsAppModule, PushModule, SocketModule],
 })
 export class CommunicationModule {}
-

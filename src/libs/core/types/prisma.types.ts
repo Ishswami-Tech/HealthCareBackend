@@ -30,9 +30,13 @@ import type {
   Clinic,
   AuditLog,
 } from './database.types';
+import type { ClinicLocation } from './clinic.types';
 
 // Import UserWithRelations from user.types.ts
 import type { UserWithRelations } from './user.types';
+
+// Import TherapyQueue and QueueEntry from appointment.types.ts
+import type { TherapyQueue, QueueEntry } from './appointment.types';
 
 // ============================================================================
 // Prisma Delegate Args - Recursive type for method arguments
@@ -435,6 +439,21 @@ export interface ClinicDelegate {
   groupBy: (args: PrismaDelegateArgs) => Promise<Array<Record<string, never>>>;
 }
 
+export interface ClinicLocationDelegate {
+  findUnique: (args: PrismaDelegateArgs) => Promise<ClinicLocation | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<ClinicLocation | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<ClinicLocation[]>;
+  create: (args: PrismaDelegateArgs) => Promise<ClinicLocation>;
+  update: (args: PrismaDelegateArgs) => Promise<ClinicLocation>;
+  delete: (args: PrismaDelegateArgs) => Promise<ClinicLocation>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+  aggregate: (args: PrismaDelegateArgs) => Promise<Record<string, never>>;
+  groupBy: (args: PrismaDelegateArgs) => Promise<Array<Record<string, never>>>;
+}
+
 export interface AuditLogDelegate {
   findUnique: (args: PrismaDelegateArgs) => Promise<AuditLog | null>;
   findFirst: (args: PrismaDelegateArgs) => Promise<AuditLog | null>;
@@ -466,6 +485,36 @@ export interface ReminderScheduleDelegate extends PrismaDelegateBase<Record<stri
   create: (args: PrismaDelegateArgs) => Promise<Record<string, never>>;
   update: (args: PrismaDelegateArgs) => Promise<Record<string, never>>;
   delete: (args: PrismaDelegateArgs) => Promise<Record<string, never>>;
+}
+
+export interface TherapyQueueDelegate {
+  findUnique: (args: PrismaDelegateArgs) => Promise<TherapyQueue | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<TherapyQueue | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<TherapyQueue[]>;
+  create: (args: PrismaDelegateArgs) => Promise<TherapyQueue>;
+  update: (args: PrismaDelegateArgs) => Promise<TherapyQueue>;
+  delete: (args: PrismaDelegateArgs) => Promise<TherapyQueue>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+  aggregate: (args: PrismaDelegateArgs) => Promise<Record<string, never>>;
+  groupBy: (args: PrismaDelegateArgs) => Promise<Array<Record<string, never>>>;
+}
+
+export interface QueueEntryDelegate {
+  findUnique: (args: PrismaDelegateArgs) => Promise<QueueEntry | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<QueueEntry | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<QueueEntry[]>;
+  create: (args: PrismaDelegateArgs) => Promise<QueueEntry>;
+  update: (args: PrismaDelegateArgs) => Promise<QueueEntry>;
+  delete: (args: PrismaDelegateArgs) => Promise<QueueEntry>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+  aggregate: (args: PrismaDelegateArgs) => Promise<Record<string, never>>;
+  groupBy: (args: PrismaDelegateArgs) => Promise<Array<Record<string, never>>>;
 }
 
 // ============================================================================
@@ -509,6 +558,7 @@ export interface PrismaClientWithDelegates {
   nurse: NurseDelegate;
   counselor: CounselorDelegate;
   clinic: ClinicDelegate;
+  clinicLocation: ClinicLocationDelegate;
   appointment: AppointmentDelegate;
   auditLog: AuditLogDelegate;
   notificationTemplate: NotificationTemplateDelegate;
@@ -521,8 +571,17 @@ export interface PrismaClientWithDelegates {
   subscription: SubscriptionDelegate;
   invoice: InvoiceDelegate;
   payment: PaymentDelegate;
+  therapyQueue: TherapyQueueDelegate;
+  queueEntry: QueueEntryDelegate;
   $transaction: TransactionDelegate['$transaction'];
 }
+
+/**
+ * Prisma Transaction Client with all delegates (without $transaction)
+ * This type represents a Prisma client within a transaction context
+ * It has all delegates but excludes $transaction, $connect, $disconnect, etc.
+ */
+export type PrismaTransactionClientWithDelegates = Omit<PrismaClientWithDelegates, '$transaction'>;
 
 // ============================================================================
 // Prisma Client Configuration Types
@@ -660,6 +719,7 @@ export interface StrictPrismaClient {
   nurse: NurseDelegate;
   counselor: CounselorDelegate;
   clinic: ClinicDelegate;
+  clinicLocation: ClinicLocationDelegate;
   appointment: AppointmentDelegate;
   auditLog: AuditLogDelegate;
   notificationTemplate: NotificationTemplateDelegate;
@@ -672,6 +732,8 @@ export interface StrictPrismaClient {
   subscription: SubscriptionDelegate;
   invoice: InvoiceDelegate;
   payment: PaymentDelegate;
+  therapyQueue: TherapyQueueDelegate;
+  queueEntry: QueueEntryDelegate;
   $queryRaw: QueryRawDelegate['$queryRaw'];
   $transaction: TransactionDelegate['$transaction'];
   $connect: () => Promise<void>;

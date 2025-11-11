@@ -12,7 +12,7 @@ import { QueueModule } from '@infrastructure/queue';
 
 @Module({
   imports: [
-    ConfigModule,  // Explicitly import ConfigModule to ensure ConfigService is available
+    ConfigModule, // Explicitly import ConfigModule to ensure ConfigService is available
     DatabaseModule,
     CacheModule,
     QueueModule,

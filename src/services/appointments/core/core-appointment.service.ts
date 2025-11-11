@@ -74,11 +74,11 @@ export class CoreAppointmentService {
 
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService,
-    private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
     private readonly queueService: QueueService,
     private readonly eventService: EventService,
-    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
     private readonly errors: HealthcareErrorsService,
     @Inject(forwardRef(() => ConflictResolutionService))
     private readonly conflictResolutionService: ConflictResolutionService,

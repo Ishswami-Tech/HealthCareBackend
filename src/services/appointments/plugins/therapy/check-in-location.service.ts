@@ -396,7 +396,10 @@ export class CheckInLocationService {
     try {
       // Validate appointment exists using executeHealthcareRead
       const appointment = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.appointment.findUnique({
+        const appointmentDelegate = client['appointment'] as {
+          findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+        };
+        return await appointmentDelegate.findUnique({
           where: { id: data.appointmentId },
         });
       });
@@ -508,7 +511,10 @@ export class CheckInLocationService {
       // Update appointment status using executeHealthcareWrite
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await client.appointment.update({
+          const appointmentDelegate = client['appointment'] as {
+            update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+          };
+          return await appointmentDelegate.update({
             where: { id: data.appointmentId },
             data: {
               checkedInAt: new Date(),

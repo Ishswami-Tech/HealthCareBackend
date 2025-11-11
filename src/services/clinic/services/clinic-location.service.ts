@@ -6,7 +6,12 @@ import type {
   ClinicLocationCreateInput,
   ClinicLocationUpdateInput,
   ClinicLocationResponseDto,
+  ClinicLocation,
 } from '@core/types/clinic.types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 
 @Injectable()
 export class ClinicLocationService {
@@ -21,15 +26,16 @@ export class ClinicLocationService {
   ): Promise<ClinicLocationResponseDto> {
     try {
       // Use executeHealthcareWrite for clinic location creation with full optimization layers
-      const clinicLocation = await this.databaseService.executeHealthcareWrite(
+      const clinicLocation = await this.databaseService.executeHealthcareWrite<ClinicLocation>(
         async client => {
-          return await client.clinicLocation.create({
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinicLocation.create({
             data: {
               ...data,
               workingHours: data.workingHours || '9:00 AM - 5:00 PM',
               isActive: data.isActive ?? true,
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: _userId || 'system',
@@ -115,11 +121,17 @@ export class ClinicLocationService {
         };
       }
 
-      const locations = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinicLocation.findMany(queryOptions);
+      const locations = await this.databaseService.executeHealthcareRead<
+        ClinicLocationResponseDto[]
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.clinicLocation.findMany(
+          queryOptions as PrismaDelegateArgs
+        );
+        return result as unknown as ClinicLocationResponseDto[];
       });
 
-      return locations as ClinicLocationResponseDto[];
+      return locations;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -181,11 +193,18 @@ export class ClinicLocationService {
         };
       }
 
-      const location = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinicLocation.findFirst(queryOptions);
-      });
+      const location =
+        await this.databaseService.executeHealthcareRead<ClinicLocationResponseDto | null>(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            const result = await typedClient.clinicLocation.findFirst(
+              queryOptions as PrismaDelegateArgs
+            );
+            return result as unknown as ClinicLocationResponseDto | null;
+          }
+        );
 
-      return location as ClinicLocationResponseDto | null;
+      return location;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -205,15 +224,16 @@ export class ClinicLocationService {
   ): Promise<ClinicLocationResponseDto> {
     try {
       // Use executeHealthcareWrite for update with full optimization layers
-      const location = await this.databaseService.executeHealthcareWrite(
+      const location = await this.databaseService.executeHealthcareWrite<ClinicLocation>(
         async client => {
-          return await client.clinicLocation.update({
-            where: { id },
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinicLocation.update({
+            where: { id } as PrismaDelegateArgs,
             data: {
               ...data,
               updatedAt: new Date(),
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: _userId || 'system',
@@ -251,15 +271,16 @@ export class ClinicLocationService {
   async deleteLocation(id: string, _userId: string): Promise<void> {
     try {
       // Use executeHealthcareWrite for soft delete with audit logging
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<ClinicLocation>(
         async client => {
-          return await client.clinicLocation.update({
-            where: { id },
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinicLocation.update({
+            where: { id } as PrismaDelegateArgs,
             data: {
               isActive: false,
               updatedAt: new Date(),
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: _userId || 'system',
@@ -294,13 +315,14 @@ export class ClinicLocationService {
   async getLocationCount(clinicId: string): Promise<number> {
     try {
       // Use executeHealthcareRead for count query
-      const count = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinicLocation.count({
+      const count = await this.databaseService.executeHealthcareRead<number>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.clinicLocation.count({
           where: {
             clinicId,
             isActive: true,
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       });
 
       return count;

@@ -19,16 +19,16 @@ import type {
 
 /**
  * Enhanced Type-Safe Configuration Service
- * 
+ *
  * Wraps NestJS ConfigService with:
  * - Full TypeScript type safety
  * - Typed getter methods for better IDE support
  * - Consistent API across the application
  * - Optimized for 10M+ users (singleton, zero overhead)
- * 
+ *
  * @class ConfigService
  * @description Type-safe wrapper around NestJS ConfigService
- * 
+ *
  * Performance Notes:
  * - Singleton pattern (NestJS default) - loaded once at startup
  * - No runtime file I/O - all config loaded in memory
@@ -64,7 +64,7 @@ export class ConfigService {
         return envValue as T;
       }
       throw new Error(`Configuration key "${path}" not found and no default provided`);
-    } catch (error) {
+    } catch (_error) {
       // Fallback to process.env for robustness
       const envValue = process.env[path];
       if (envValue !== undefined) {
@@ -231,4 +231,3 @@ export class ConfigService {
     return this.getAppConfig().environment;
   }
 }
-

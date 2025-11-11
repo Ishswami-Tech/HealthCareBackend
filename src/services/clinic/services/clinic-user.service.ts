@@ -7,6 +7,11 @@ import type {
   ClinicUserUpdateInput,
   ClinicUserResponseDto,
 } from '@core/types/clinic.types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
+import type { UserRoleEntity } from '@core/types/database.types';
 
 @Injectable()
 export class ClinicUserService {
@@ -22,29 +27,36 @@ export class ClinicUserService {
     try {
       // Use executeHealthcareWrite for clinic user creation via UserRole
       // Note: ClinicUser is managed through UserRole model in RBAC system
-      const clinicUser = await this.databaseService.executeHealthcareWrite(
+      const clinicUser = await this.databaseService.executeHealthcareWrite<
+        UserRoleEntity & {
+          user: { id: string; name: string; email: string; phone: string | null };
+          role: { id: string; name: string; displayName: string };
+        }
+      >(
         async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
           // First, find or get the roleId for the given role name
-          const role = await client.rbacRole.findFirst({
+          const role = await typedClient.rbacRole.findFirst({
             where: {
               name: data.role,
               ...(data.clinicId && { clinicId: data.clinicId }),
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
 
           if (!role) {
             throw new Error(`Role ${data.role} not found`);
           }
 
+          const typedRole = role as { id: string };
           // Create UserRole entry
-          return await client.userRole.create({
+          const result = await typedClient.userRole.create({
             data: {
               userId: data.userId,
-              roleId: role.id,
+              roleId: typedRole.id,
               clinicId: data.clinicId || null,
               isActive: data.isActive ?? true,
               assignedBy: 'system',
-            },
+            } as PrismaDelegateArgs,
             include: {
               user: {
                 select: {
@@ -52,17 +64,21 @@ export class ClinicUserService {
                   name: true,
                   email: true,
                   phone: true,
-                },
-              },
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
               role: {
                 select: {
                   id: true,
                   name: true,
                   displayName: true,
-                },
-              },
-            },
-          });
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return result as unknown as UserRoleEntity & {
+            user: { id: string; name: string; email: string; phone: string | null };
+            role: { id: string; name: string; displayName: string };
+          };
         },
         {
           userId: data.userId || _userId || 'system',
@@ -146,14 +162,28 @@ export class ClinicUserService {
             },
           };
 
-      const clinicUsers = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.userRole.findMany({
+      const clinicUsers = await this.databaseService.executeHealthcareRead<
+        Array<
+          UserRoleEntity & {
+            user?: { id: string; name: string; email: string; phone: string | null } | null;
+            role: { name: string };
+          }
+        >
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.userRole.findMany({
           where: {
             clinicId,
             isActive: true,
-          },
-          include,
-        });
+          } as PrismaDelegateArgs,
+          include: include as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as Array<
+          UserRoleEntity & {
+            user?: { id: string; name: string; email: string; phone: string | null } | null;
+            role: { name: string };
+          }
+        >;
       });
 
       // Transform to ClinicUserResponseDto format
@@ -234,27 +264,42 @@ export class ClinicUserService {
             },
           };
 
-      const clinicUsers = await this.databaseService.executeHealthcareRead(async client => {
+      const clinicUsers = await this.databaseService.executeHealthcareRead<
+        Array<
+          UserRoleEntity & {
+            user?: { id: string; name: string; email: string; phone: string | null } | null;
+            role: { name: string };
+          }
+        >
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         // First find roleId for the role name
-        const roleEntity = await client.rbacRole.findFirst({
+        const roleEntity = await typedClient.rbacRole.findFirst({
           where: {
             name: role,
             ...(clinicId && { clinicId }),
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
 
         if (!roleEntity) {
           return [];
         }
 
-        return await client.userRole.findMany({
+        const typedRoleEntity = roleEntity as { id: string };
+        const result = await typedClient.userRole.findMany({
           where: {
             clinicId,
-            roleId: roleEntity.id,
+            roleId: typedRoleEntity.id,
             isActive: true,
-          },
-          include,
-        });
+          } as PrismaDelegateArgs,
+          include: include as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as Array<
+          UserRoleEntity & {
+            user?: { id: string; name: string; email: string; phone: string | null } | null;
+            role: { name: string };
+          }
+        >;
       });
 
       // Transform to ClinicUserResponseDto format
@@ -331,11 +376,24 @@ export class ClinicUserService {
             },
           };
 
-      const clinicUser = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.userRole.findUnique({
-          where: { id },
-          include,
-        });
+      const clinicUser = await this.databaseService.executeHealthcareRead<
+        | (UserRoleEntity & {
+            user?: { id: string; name: string; email: string; phone: string | null } | null;
+            role: { name: string };
+          })
+        | null
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.userRole.findUnique({
+          where: { id } as PrismaDelegateArgs,
+          include: include as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as
+          | (UserRoleEntity & {
+              user?: { id: string; name: string; email: string; phone: string | null } | null;
+              role: { name: string };
+            })
+          | null;
       });
 
       if (!clinicUser) {
@@ -380,8 +438,14 @@ export class ClinicUserService {
   ): Promise<ClinicUserResponseDto> {
     try {
       // Use executeHealthcareWrite for update with full optimization layers via UserRole
-      const clinicUser = await this.databaseService.executeHealthcareWrite(
+      const clinicUser = await this.databaseService.executeHealthcareWrite<
+        UserRoleEntity & {
+          user: { id: string; name: string; email: string; phone: string | null };
+          role: { id: string; name: string; displayName: string };
+        }
+      >(
         async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
           const updateData: { isActive?: boolean; roleId?: string } = {};
 
           if (data.isActive !== undefined) {
@@ -390,22 +454,23 @@ export class ClinicUserService {
 
           if (data.role) {
             // Find roleId for the role name
-            const role = await client.rbacRole.findFirst({
+            const role = await typedClient.rbacRole.findFirst({
               where: {
                 name: data.role,
-              },
-            });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
 
             if (!role) {
               throw new Error(`Role ${data.role} not found`);
             }
 
-            updateData.roleId = role.id;
+            const typedRole = role as { id: string };
+            updateData.roleId = typedRole.id;
           }
 
-          return await client.userRole.update({
-            where: { id },
-            data: updateData,
+          const result = await typedClient.userRole.update({
+            where: { id } as PrismaDelegateArgs,
+            data: updateData as PrismaDelegateArgs,
             include: {
               user: {
                 select: {
@@ -413,17 +478,21 @@ export class ClinicUserService {
                   name: true,
                   email: true,
                   phone: true,
-                },
-              },
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
               role: {
                 select: {
                   id: true,
                   name: true,
                   displayName: true,
-                },
-              },
-            },
-          });
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return result as unknown as UserRoleEntity & {
+            user: { id: string; name: string; email: string; phone: string | null };
+            role: { id: string; name: string; displayName: string };
+          };
         },
         {
           userId: _userId || 'system',
@@ -478,15 +547,16 @@ export class ClinicUserService {
   async deleteClinicUser(id: string, _userId: string): Promise<void> {
     try {
       // Use executeHealthcareWrite for soft delete with audit logging via UserRole
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<UserRoleEntity>(
         async client => {
-          return await client.userRole.update({
-            where: { id },
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.userRole.update({
+            where: { id } as PrismaDelegateArgs,
             data: {
               isActive: false,
               revokedAt: new Date(),
-            },
-          });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         {
           userId: _userId || 'system',
@@ -521,13 +591,14 @@ export class ClinicUserService {
   async getClinicUserCount(clinicId: string): Promise<number> {
     try {
       // Use executeHealthcareRead for count query via UserRole
-      const count = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.userRole.count({
+      const count = await this.databaseService.executeHealthcareRead<number>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.userRole.count({
           where: {
             clinicId,
             isActive: true,
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       });
 
       return count;

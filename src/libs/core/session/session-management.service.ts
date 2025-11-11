@@ -59,16 +59,27 @@ export class SessionManagementService implements OnModuleInit {
    */
   async onModuleInit(): Promise<void> {
     this.config = {
-      maxSessionsPerUser: this.configService?.get<number>('SESSION_MAX_PER_USER', 10) || parseInt(process.env['SESSION_MAX_PER_USER'] || '10', 10),
-      sessionTimeout: this.configService?.get<number>('SESSION_TIMEOUT', 86400) || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10), // 24 hours
-      extendOnActivity: this.configService?.get<boolean>('SESSION_EXTEND_ON_ACTIVITY', true) ?? (process.env['SESSION_EXTEND_ON_ACTIVITY'] !== 'false'),
-      secureCookies: this.configService?.get<boolean>('SESSION_SECURE_COOKIES', true) ?? (process.env['SESSION_SECURE_COOKIES'] !== 'false'),
-      sameSite: ((this.configService?.get<string>('SESSION_SAME_SITE', 'strict') || process.env['SESSION_SAME_SITE'] || 'strict') as
-        | 'strict'
-        | 'lax'
-        | 'none'),
-      distributed: this.configService?.get<boolean>('SESSION_DISTRIBUTED', true) ?? (process.env['SESSION_DISTRIBUTED'] !== 'false'),
-      partitions: this.configService?.get<number>('SESSION_PARTITIONS', 16) || parseInt(process.env['SESSION_PARTITIONS'] || '16', 10),
+      maxSessionsPerUser:
+        this.configService?.get<number>('SESSION_MAX_PER_USER', 10) ||
+        parseInt(process.env['SESSION_MAX_PER_USER'] || '10', 10),
+      sessionTimeout:
+        this.configService?.get<number>('SESSION_TIMEOUT', 86400) ||
+        parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10), // 24 hours
+      extendOnActivity:
+        this.configService?.get<boolean>('SESSION_EXTEND_ON_ACTIVITY', true) ??
+        process.env['SESSION_EXTEND_ON_ACTIVITY'] !== 'false',
+      secureCookies:
+        this.configService?.get<boolean>('SESSION_SECURE_COOKIES', true) ??
+        process.env['SESSION_SECURE_COOKIES'] !== 'false',
+      sameSite: (this.configService?.get<string>('SESSION_SAME_SITE', 'strict') ||
+        process.env['SESSION_SAME_SITE'] ||
+        'strict') as 'strict' | 'lax' | 'none',
+      distributed:
+        this.configService?.get<boolean>('SESSION_DISTRIBUTED', true) ??
+        process.env['SESSION_DISTRIBUTED'] !== 'false',
+      partitions:
+        this.configService?.get<number>('SESSION_PARTITIONS', 16) ||
+        parseInt(process.env['SESSION_PARTITIONS'] || '16', 10),
     };
 
     // Setup cleanup jobs

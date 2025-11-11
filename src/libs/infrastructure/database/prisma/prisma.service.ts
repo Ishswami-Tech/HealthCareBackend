@@ -1,9 +1,22 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Scope } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Scope,
+  Optional,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
+// Use dynamic import for PrismaClient to avoid module caching issues
+// This allows PrismaClient to be loaded after prisma generate completes
+import type { PrismaClient } from '@prisma/client';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import * as fs from 'fs';
+import * as path from 'path';
+import { createRequire } from 'module';
 
 // Re-export PrismaClient for backward compatibility
 // Note: We use composition instead of inheritance to avoid 'any' types
@@ -207,29 +220,209 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly payment!: PaymentDelegate;
   readonly $transaction!: TransactionDelegate['$transaction'];
   private static connectionCount = 0;
-  private static readonly MAX_CONNECTIONS = 200; // Optimized for 1M+ users
+  private static readonly MAX_CONNECTIONS = 500; // Optimized for 10M+ users (increased from 200)
   private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
   private static readonly QUERY_TIMEOUT = 30000; // 30 seconds query timeout
   private static readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Failures before circuit opens
   private static readonly CIRCUIT_BREAKER_TIMEOUT = 60000; // 1 minute circuit timeout
   private static instance: PrismaService | null = null;
+  // Singleton PrismaClient instance shared across all PrismaService instances
+  // This prevents connection pool exhaustion when using REQUEST scope
+  private static sharedPrismaClient: PrismaClient | null = null;
+  // Dedicated PrismaClient instance for health checks
+  // Uses a separate connection pool to avoid interfering with regular operations
+  private static healthCheckPrismaClient: PrismaClient | null = null;
   private static circuitBreakerFailures = 0;
   private static circuitBreakerLastFailure = 0;
   private static isCircuitOpen = false;
 
   /**
+   * Dynamically import PrismaClient to avoid module caching issues
+   * This ensures PrismaClient is loaded after prisma generate completes
+   */
+  private static async loadPrismaClient(): Promise<typeof PrismaClient> {
+    try {
+      // Dynamic import to get fresh PrismaClient
+      const prismaModule = await import('@prisma/client');
+      return prismaModule.PrismaClient;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        `Failed to load PrismaClient: ${errorMessage}. Please ensure "prisma generate" has been run.`,
+        undefined,
+        { originalError: errorMessage },
+        'PrismaService.loadPrismaClient'
+      );
+    }
+  }
+
+  /**
    * Module-level helper to create PrismaClient instance
-   * Isolates type assertions so ESLint treats them as boundaries
+   * Ensures PrismaClient is generated before creating instance
+   * Provides comprehensive error handling for initialization issues
+   * Handles pnpm's module resolution by checking multiple paths
    */
   private static createPrismaClientInstance(
     constructorArgs: PrismaClientConstructorArgs
   ): PrismaClient {
-    type PrismaClientConstructor = new (
-      constructorArgs: PrismaClientConstructorArgs
-    ) => PrismaClient;
-    const PrismaClientConstructorClass = PrismaClient as unknown as PrismaClientConstructor;
-    // Create instance - constructor return type is PrismaClient
-    return new PrismaClientConstructorClass(constructorArgs);
+    try {
+      // Clear require cache for @prisma/client to force reload
+      // This ensures we get a fresh PrismaClient after prisma generate
+      try {
+        const modulePath = require.resolve('@prisma/client');
+        delete require.cache[modulePath];
+        // Also clear any sub-modules that might be cached
+        Object.keys(require.cache).forEach(key => {
+          if (key.includes('@prisma/client') || key.includes('.prisma')) {
+            delete require.cache[key];
+          }
+        });
+      } catch {
+        // Module not in cache yet, that's fine
+      }
+
+      // Try to require @prisma/client directly
+      // With pnpm, the generated client should be accessible through @prisma/client
+      // Use createRequire for type-safe dynamic requires (CommonJS compatibility)
+      // Dynamic require is necessary for Prisma client loading with pnpm
+      const requireModule = createRequire(__filename);
+      let prismaModule: { PrismaClient: typeof PrismaClient } | null = null;
+
+      try {
+        // Dynamic require is necessary for Prisma client loading
+        prismaModule = requireModule('@prisma/client') as { PrismaClient: typeof PrismaClient };
+      } catch (requireError) {
+        // If require fails, try multiple fallback paths for pnpm
+        const cwd = process.cwd();
+        const possiblePaths = [
+          // Standard location
+          path.join(cwd, 'node_modules', '.prisma', 'client'),
+          // pnpm store location (find dynamically)
+          ...(() => {
+            const paths: string[] = [];
+            try {
+              // Try to find pnpm's @prisma/client location
+              const pnpmDir = path.join(cwd, 'node_modules', '.pnpm');
+              if (fs.existsSync(pnpmDir)) {
+                // Look for @prisma+client directories
+                const entries = fs.readdirSync(pnpmDir);
+                for (const entry of entries) {
+                  if (entry.startsWith('@prisma+client@')) {
+                    const prismaPath = path.join(
+                      pnpmDir,
+                      entry,
+                      'node_modules',
+                      '.prisma',
+                      'client'
+                    );
+                    if (fs.existsSync(prismaPath)) {
+                      paths.push(prismaPath);
+                    }
+                  }
+                }
+              }
+            } catch {
+              // Ignore errors when searching
+            }
+            return paths;
+          })(),
+        ];
+
+        for (const clientPath of possiblePaths) {
+          if (fs.existsSync(clientPath)) {
+            try {
+              prismaModule = requireModule(clientPath) as { PrismaClient: typeof PrismaClient };
+              break;
+            } catch {
+              // Continue to next path
+              continue;
+            }
+          }
+        }
+
+        if (!prismaModule) {
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            '@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again.',
+            undefined,
+            {
+              originalError:
+                requireError instanceof Error ? requireError.message : String(requireError),
+              checkedPaths: possiblePaths,
+            },
+            'PrismaService'
+          );
+        }
+      }
+
+      const PrismaClientClass = prismaModule.PrismaClient;
+
+      if (!PrismaClientClass || typeof PrismaClientClass !== 'function') {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          '@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again.',
+          undefined,
+          {},
+          'PrismaService'
+        );
+      }
+
+      // PrismaClient will throw an error if not generated when you try to instantiate it
+      // The error message from Prisma is: "@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again."
+      type PrismaClientConstructor = new (
+        constructorArgs: PrismaClientConstructorArgs
+      ) => PrismaClient;
+      const PrismaClientConstructorClass = PrismaClientClass as unknown as PrismaClientConstructor;
+
+      // Create instance - this will throw if PrismaClient wasn't generated
+      const client = new PrismaClientConstructorClass(constructorArgs);
+
+      // Verify the client is properly initialized by checking for delegates
+      // This ensures PrismaClient was generated correctly
+      if (!client || typeof client !== 'object') {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          'Failed to create PrismaClient instance',
+          undefined,
+          {},
+          'PrismaService'
+        );
+      }
+
+      return client;
+    } catch (error) {
+      // Check if this is the Prisma initialization error
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes('did not initialize yet') ||
+        errorMessage.includes('prisma generate') ||
+        errorMessage.includes('Cannot find module') ||
+        errorMessage.includes('MODULE_NOT_FOUND')
+      ) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          '@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again.',
+          undefined,
+          { originalError: errorMessage },
+          'PrismaService'
+        );
+      }
+
+      // If error is already a HealthcareError, rethrow it
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      // Wrap other errors
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        `Failed to create PrismaClient: ${errorMessage}. Please ensure "prisma generate" has been run.`,
+        undefined,
+        { originalError: errorMessage },
+        'PrismaService'
+      );
+    }
   }
 
   /**
@@ -260,15 +453,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    *
    * @param loggingService - Optional logging service for HIPAA-compliant logging
    */
-  constructor(loggingService?: LoggingService) {
-    // If we already have a Prisma instance, return it
-    if (PrismaService.instance) {
-      // Update logging service if provided
-      if (loggingService) {
-        PrismaService.instance.loggingService = loggingService;
-      }
-      return PrismaService.instance;
+  constructor(
+    @Optional() @Inject(forwardRef(() => LoggingService)) loggingService?: LoggingService
+  ) {
+    // Store logging service if provided
+    if (loggingService) {
+      this.loggingService = loggingService;
     }
+
+    // With REQUEST scope, NestJS creates a new instance per request
+    // We still need to initialize prismaClient on each instance
+    // The singleton pattern is handled via static instance, but each request gets its own instance
+    // Continue with initialization below
 
     // Create PrismaClient instance using composition
     const dbUrlValue = process.env['DATABASE_URL'];
@@ -300,10 +496,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       },
     };
 
-    // Create PrismaClient instance using module-level helper
+    // Use singleton PrismaClient instance to prevent connection pool exhaustion
+    // With REQUEST scope, each PrismaService instance would create its own PrismaClient
+    // which would open its own connection pool, quickly exhausting available connections
+    // By sharing a single PrismaClient instance, we maintain a single connection pool
+    if (!PrismaService.sharedPrismaClient) {
+      PrismaService.sharedPrismaClient =
+        PrismaService.createPrismaClientInstance(prismaConstructorArgs);
+    }
+
     // Use Object.defineProperty to avoid ESLint tracking the assignment
     Object.defineProperty(this, 'prismaClient', {
-      value: PrismaService.createPrismaClientInstance(prismaConstructorArgs),
+      value: PrismaService.sharedPrismaClient,
       writable: true,
       enumerable: false,
       configurable: false,
@@ -487,6 +691,50 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Get a dedicated PrismaClient instance for health checks
+   * This uses a separate connection pool to avoid interfering with regular operations
+   * Health checks run continuously, so they need their own connection
+   */
+  static getHealthCheckClient(): PrismaClient {
+    if (!PrismaService.healthCheckPrismaClient) {
+      const dbUrlValue = process.env['DATABASE_URL'];
+      const nodeEnv = process.env['NODE_ENV'];
+      const isProduction = nodeEnv === 'production';
+
+      // Build log configuration for health checks (minimal logging)
+      type LogLevel = 'error' | 'warn';
+      type LogConfig = { emit: 'stdout'; level: LogLevel };
+      const logConfiguration: LogConfig[] = isProduction
+        ? [{ emit: 'stdout' as const, level: 'error' as const }]
+        : [{ emit: 'stdout' as const, level: 'error' as const }];
+
+      const prismaConstructorArgs: PrismaClientConstructorArgs = {
+        log: logConfiguration,
+        errorFormat: 'minimal' as const,
+        datasources: {
+          db: {
+            ...(dbUrlValue ? { url: dbUrlValue } : {}),
+          },
+        },
+      };
+
+      // Create health check client with minimal connection pool (connection_limit=2)
+      // Health checks are lightweight, so they don't need many connections
+      const healthCheckUrl = dbUrlValue
+        ? `${dbUrlValue}${dbUrlValue.includes('?') ? '&' : '?'}connection_limit=2&pool_timeout=5`
+        : undefined;
+
+      if (healthCheckUrl && prismaConstructorArgs.datasources?.db) {
+        prismaConstructorArgs.datasources.db.url = healthCheckUrl;
+      }
+
+      PrismaService.healthCheckPrismaClient =
+        PrismaService.createPrismaClientInstance(prismaConstructorArgs);
+    }
+    return PrismaService.healthCheckPrismaClient;
+  }
+
+  /**
    * Get the underlying Prisma client instance
    * This method provides access to the PrismaClient for services that need direct access
    */
@@ -495,10 +743,200 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Check if PrismaClient has been generated by checking for the client directory
+   * Handles both local development and Docker environments
+   */
+  private static isPrismaClientGenerated(): boolean {
+    try {
+      const isDocker = fs.existsSync('/.dockerenv');
+      const cwd = process.cwd();
+
+      // Possible Prisma client locations
+      const possiblePaths = [
+        // Standard location (works in both local and Docker)
+        path.join(cwd, 'node_modules', '.prisma', 'client', 'index.js'),
+        // Docker-specific paths
+        isDocker ? '/app/node_modules/.prisma/client/index.js' : null,
+        isDocker ? '/app/dist/node_modules/.prisma/client/index.js' : null,
+        // Alternative locations
+        path.join(cwd, 'dist', 'node_modules', '.prisma', 'client', 'index.js'),
+        // Fallback to check directory existence
+        path.join(cwd, 'node_modules', '.prisma', 'client'),
+      ].filter((p): p is string => p !== null);
+
+      // Check if any of the paths exist
+      for (const clientPath of possiblePaths) {
+        try {
+          if (fs.existsSync(clientPath)) {
+            // If it's a directory, check for index.js inside
+            const stats = fs.statSync(clientPath);
+            if (stats.isDirectory()) {
+              const indexPath = path.join(clientPath, 'index.js');
+              if (fs.existsSync(indexPath)) {
+                return true;
+              }
+            } else if (stats.isFile()) {
+              // It's the index.js file itself
+              return true;
+            }
+          }
+        } catch {
+          // Continue to next path
+          continue;
+        }
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Get the underlying raw PrismaClient for accessing models not exposed as delegates
    * Use this for models like therapyQueue, checkInLocation, etc. that are not typed delegates
    */
   getRawPrismaClient(): PrismaClient {
+    // Ensure prismaClient is initialized before returning
+    if (!this.prismaClient) {
+      // Wait for PrismaClient to be generated with retry mechanism
+      const maxRetries = 10;
+      const retryDelay = 1000; // 1 second
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        // Check if PrismaClient has been generated before attempting to create instance
+        if (!PrismaService.isPrismaClientGenerated()) {
+          if (attempt < maxRetries - 1) {
+            if (this.loggingService) {
+              void this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.WARN,
+                `PrismaClient not generated yet (attempt ${attempt + 1}/${maxRetries}), waiting ${retryDelay}ms...`,
+                'PrismaService.getRawPrismaClient'
+              );
+            }
+            // Use setTimeout in a promise to avoid blocking the event loop
+            // Note: This is a synchronous method, so we use a busy wait but with a check
+            const startWait = Date.now();
+            while (Date.now() - startWait < retryDelay) {
+              // Busy wait - this ensures we wait before retrying
+              // In practice, this should only happen during startup
+            }
+            continue; // Retry
+          } else {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_CONNECTION_FAILED,
+              `PrismaClient has not been generated after ${maxRetries} attempts. Please ensure "prisma generate" has been run.`,
+              undefined,
+              { attempts: maxRetries },
+              'PrismaService.getRawPrismaClient'
+            );
+          }
+        }
+
+        try {
+          // Initialize synchronously if not already done
+          // This can happen with REQUEST scope when instance is created before onModuleInit
+          const dbUrlValue = process.env['DATABASE_URL'];
+          const nodeEnv = process.env['NODE_ENV'];
+          const isProduction = nodeEnv === 'production';
+
+          type LogLevel = 'error' | 'warn' | 'info' | 'query';
+          type LogConfig = { emit: 'stdout'; level: LogLevel };
+          const logConfig: LogConfig[] = isProduction
+            ? [{ emit: 'stdout', level: 'error' }]
+            : [
+                { emit: 'stdout', level: 'query' },
+                { emit: 'stdout', level: 'error' },
+                { emit: 'stdout', level: 'warn' },
+              ];
+
+          const constructorArgs = {
+            datasources: {
+              db: {
+                url: dbUrlValue,
+              },
+            },
+            log: logConfig,
+          } as PrismaClientConstructorArgs;
+
+          this.prismaClient = PrismaService.createPrismaClientInstance(constructorArgs);
+
+          // Verify client is properly initialized
+          if (!this.prismaClient) {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_CONNECTION_FAILED,
+              'PrismaClient instance is null after creation',
+              undefined,
+              {},
+              'PrismaService.getRawPrismaClient'
+            );
+          }
+
+          // Success - break out of retry loop
+          return this.prismaClient;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          const errorMessage = lastError.message;
+
+          // Check if this is the Prisma initialization error
+          if (
+            errorMessage.includes('did not initialize yet') ||
+            errorMessage.includes('prisma generate')
+          ) {
+            // If not the last attempt, wait and retry
+            if (attempt < maxRetries - 1) {
+              if (this.loggingService) {
+                void this.loggingService.log(
+                  LogType.DATABASE,
+                  LogLevel.WARN,
+                  `PrismaClient not ready yet (attempt ${attempt + 1}/${maxRetries}), waiting ${retryDelay}ms...`,
+                  'PrismaService.getRawPrismaClient'
+                );
+              }
+              // Synchronous wait (blocking) - this is intentional to ensure PrismaClient is ready
+              const startWait = Date.now();
+              while (Date.now() - startWait < retryDelay) {
+                // Busy wait - this ensures we wait before retrying
+              }
+              continue; // Retry
+            }
+            // Last attempt failed - throw error
+            throw new HealthcareError(
+              ErrorCode.DATABASE_CONNECTION_FAILED,
+              `PrismaClient initialization failed after ${maxRetries} attempts: ${errorMessage}. Please ensure "prisma generate" has been run.`,
+              undefined,
+              { originalError: errorMessage, attempts: maxRetries },
+              'PrismaService.getRawPrismaClient'
+            );
+          }
+
+          // If it's already a HealthcareError, rethrow it
+          if (error instanceof HealthcareError) {
+            throw error;
+          }
+
+          // Wrap other errors
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            `Failed to initialize PrismaClient: ${errorMessage}. Please ensure "prisma generate" has been run.`,
+            undefined,
+            { originalError: errorMessage },
+            'PrismaService.getRawPrismaClient'
+          );
+        }
+      }
+
+      // If we get here, all retries failed
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        `PrismaClient initialization failed after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}. Please ensure "prisma generate" has been run.`,
+        undefined,
+        { originalError: lastError?.message, attempts: maxRetries },
+        'PrismaService.getRawPrismaClient'
+      );
+    }
     return this.prismaClient;
   }
 
@@ -506,27 +944,27 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     await this.connectWithRetry();
   }
 
-  async onModuleDestroy() {
+  onModuleDestroy() {
     try {
-      if (PrismaService.connectionCount > 0) {
-        await this.$disconnect();
-        PrismaService.connectionCount--;
-        PrismaService.instance = null; // Clear the singleton instance
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.INFO,
-            `Disconnected from database successfully. Remaining connections: ${PrismaService.connectionCount}`,
-            'PrismaService'
-          );
-        }
+      // Don't disconnect the shared PrismaClient here
+      // With REQUEST scope, each PrismaService instance is destroyed after the request
+      // but we want to keep the shared PrismaClient alive for other requests
+      // The shared client will be disconnected when the application shuts down
+      // via a proper cleanup mechanism (e.g., app shutdown hook)
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          'PrismaService instance destroyed (shared PrismaClient remains active)',
+          'PrismaService'
+        );
       }
     } catch (_error) {
       if (this.loggingService) {
         void this.loggingService.log(
           LogType.DATABASE,
           LogLevel.ERROR,
-          'Error disconnecting from database',
+          'Error during PrismaService destruction',
           'PrismaService',
           { error: _error instanceof Error ? _error.message : String(_error) }
         );
@@ -1944,7 +2382,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     query: string,
     ...values: Array<string | number | boolean | null>
   ): Promise<T> {
-    const prismaClient = this.prismaClient as {
+    const prismaClient = this.prismaClient as unknown as {
       $queryRawUnsafe: (
         query: string,
         ...values: Array<string | number | boolean | null>

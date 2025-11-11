@@ -1,13 +1,12 @@
-import { Module, Global, OnModuleInit } from '@nestjs/common';
+import { Module, Global, OnModuleInit, forwardRef, Inject } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@config';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PrismaModule } from './prisma/prisma.module';
-import { LoggingModule, LoggingService } from '@infrastructure/logging';
-import { CacheModule } from '@infrastructure/cache';
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { initDatabase } from './scripts/init-db';
-import { healthcareConfig } from './config/healthcare.config';
+// healthcareConfig is imported by ConfigModule, not used directly here
 import { ConnectionPoolManager } from './connection-pool.manager';
 import { HealthcareQueryOptimizerService } from './query-optimizer.service';
 import { UserRepository } from './repositories/user.repository';
@@ -15,6 +14,7 @@ import { ClinicIsolationService } from './clinic-isolation.service';
 import { SimplePatientRepository } from './repositories/simple-patient.repository';
 import { DatabaseMetricsService } from './database-metrics.service';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
+import { EventsModule } from '@infrastructure/events';
 
 /**
  * Database Module - Single Unified Database Service
@@ -48,10 +48,14 @@ import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 @Module({
   imports: [
     PrismaModule,
-    LoggingModule,
-    CacheModule,
-    // ConfigModule is @Global() - healthcare config should be loaded in config.module.ts
-    ConfigModule,
+    // ConfigModule is @Global() but we need to import it to inject ConfigService
+    // Use forwardRef to handle circular dependency (ConfigModule imports healthcareConfig from this module)
+    forwardRef(() => ConfigModule),
+    // EventsModule for EventService
+    forwardRef(() => EventsModule),
+    // LoggingModule is @Global() and imported before DatabaseModule in AppModule
+    // Since it's @Global(), we don't need to import it explicitly - it's available everywhere
+    // CacheModule is @Global() - no need to import it explicitly
   ],
   providers: [
     // ALL components are INTERNAL - only HealthcareDatabaseClient is exported
@@ -92,10 +96,10 @@ export class DatabaseModule implements OnModuleInit {
   private readonly serviceName = 'DatabaseModule';
 
   constructor(
-    private configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService)) private configService: ConfigService,
     private connectionPoolManager: ConnectionPoolManager,
     private clinicIsolationService: ClinicIsolationService,
-    private loggingService: LoggingService
+    @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService
   ) {}
 
   async onModuleInit() {
@@ -192,7 +196,7 @@ export class DatabaseModule implements OnModuleInit {
       process.env['PRISMA_SCHEMA_PATH'] = resolvedSchemaPath;
 
       // Initialize the database
-      await initDatabase();
+      await initDatabase(this.loggingService);
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.INFO,
@@ -218,7 +222,8 @@ export class DatabaseModule implements OnModuleInit {
     try {
       // Validate healthcare configuration
       const { validateHealthcareConfig } = await import('./config/healthcare.config');
-      const healthcareConf = this.configService?.get<Record<string, unknown>>('healthcare') || undefined;
+      const healthcareConf =
+        this.configService?.get<Record<string, unknown>>('healthcare') || undefined;
       if (healthcareConf) {
         validateHealthcareConfig(healthcareConf);
       }
