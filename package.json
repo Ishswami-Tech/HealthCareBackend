@@ -16,7 +16,7 @@
     "start:prod": "cross-env NODE_ENV=production node dist/main",
     "start:prod:docker": "cross-env NODE_ENV=production docker-compose -f devops/docker/docker-compose.prod.yml up -d",
     "lint": "pnpm exec eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-    "prisma:generate": "prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma && node scripts/copy-prisma-to-pnpm.js",
+    "prisma:generate": "prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma",
     "postinstall": "pnpm prisma:generate",
     "prisma:migrate": "prisma migrate deploy --schema=./src/libs/infrastructure/database/prisma/schema.prisma",
     "prisma:studio": "prisma studio --schema=./src/libs/infrastructure/database/prisma/schema.prisma",

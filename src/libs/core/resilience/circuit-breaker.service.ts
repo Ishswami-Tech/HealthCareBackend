@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 
@@ -47,7 +47,10 @@ export interface CircuitBreakerOptions {
  */
 @Injectable()
 export class CircuitBreakerService {
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService
+  ) {}
   private circuitStates = new Map<
     string,
     {
