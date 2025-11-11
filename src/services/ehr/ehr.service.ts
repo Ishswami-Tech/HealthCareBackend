@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import {
   AllergyRecord,
@@ -10,7 +10,13 @@ import {
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
-import { LogLevel, LogType } from '@core/types';
+import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
+
+// Helper function to get EventService token for forwardRef (avoids type resolution issues)
+// This should be used when injecting EventService with forwardRef to prevent circular dependency type errors
+function getEventServiceToken(): typeof EventService {
+  return EventService;
+}
 import {
   addDateRangeFilter,
   addStringFilter,
@@ -66,12 +72,22 @@ import type {
 
 @Injectable()
 export class EHRService {
+  private readonly eventService: IEventService;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly eventService: EventService
-  ) {}
+    @Inject(forwardRef(getEventServiceToken))
+    eventService: unknown
+  ) {
+    // Type guard ensures type safety when using the service
+    // This handles forwardRef circular dependency type resolution issues
+    if (!isEventService(eventService)) {
+      throw new Error('EventService is not available or invalid');
+    }
+    this.eventService = eventService;
+  }
 
   // ============ Comprehensive Health Record ============
 

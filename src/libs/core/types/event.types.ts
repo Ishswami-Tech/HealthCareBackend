@@ -275,3 +275,61 @@ export interface EventHandlerMetadata {
   deadLetterQueue?: string;
   timeout?: number;
 }
+
+/**
+ * EventService interface for dependency injection
+ * Used to avoid TypeScript type resolution issues with forwardRef
+ * This interface should be used when injecting EventService to prevent circular dependency type errors
+ */
+export interface IEventService {
+  /**
+   * Emit a simple event
+   * @param event - Event name
+   * @param payload - Event payload data
+   * @returns Promise that resolves when event is emitted
+   */
+  emit(event: string, payload: unknown): Promise<void>;
+
+  /**
+   * Emit an event asynchronously (fire-and-forget)
+   * @param event - Event name
+   * @param payload - Event payload data
+   * @returns Promise that resolves when event is emitted
+   */
+  emitAsync(event: string, payload: unknown): Promise<void>;
+
+  /**
+   * Emit an enterprise-grade event with full features
+   * @param eventType - Event type/name
+   * @param payload - Enterprise event payload
+   * @param options - Optional event options
+   * @returns Promise with event result
+   */
+  emitEnterprise<T extends EnterpriseEventPayload>(
+    eventType: string,
+    payload: T,
+    options?: {
+      priority?: EventPriority;
+      retryPolicy?: { maxRetries: number; retryDelay: number };
+      async?: boolean;
+      timeout?: number;
+    }
+  ): Promise<EventResult>;
+}
+
+/**
+ * Type guard to check if a value is a valid IEventService
+ * Uses duck typing to avoid circular dependency type resolution issues
+ * @param service - The service to check
+ * @returns True if the service is a valid IEventService
+ */
+export function isEventService(service: unknown): service is IEventService {
+  if (!service || typeof service !== 'object') {
+    return false;
+  }
+  return (
+    typeof (service as IEventService).emit === 'function' &&
+    typeof (service as IEventService).emitAsync === 'function' &&
+    typeof (service as IEventService).emitEnterprise === 'function'
+  );
+}

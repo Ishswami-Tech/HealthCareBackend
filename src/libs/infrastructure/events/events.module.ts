@@ -2,15 +2,14 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
-// Internal imports - Infrastructure
-import { LoggingModule } from '@infrastructure/logging';
-import { CacheModule } from '@infrastructure/cache';
-
 // Internal imports - Core
 import { ResilienceModule } from '@core/resilience';
 
 // Internal imports - Local
 import { EventService } from './event.service';
+
+// Note: LoggingModule and CacheModule are @Global() - no need to import them
+// LoggingService and CacheService are injected using @Inject(forwardRef(...)) in EventService
 
 /**
  * Events Module
@@ -45,16 +44,11 @@ import { EventService } from './event.service';
  */
 @Module({
   imports: [
-    LoggingModule,
-    CacheModule,
-    EventEmitterModule.forRoot({
-      wildcard: true,
-      delimiter: '.',
-      newListener: true,
-      removeListener: true,
-      maxListeners: 20,
-      verboseMemoryLeak: true,
-    }),
+    // EventEmitterModule is already configured in AppModule with forRoot()
+    // We just need to import it here for EventEmitter2 injection
+    EventEmitterModule,
+    // LoggingModule and CacheModule are @Global() - no need to import them
+    // We use @Inject(forwardRef(...)) in EventService constructor to handle circular dependencies
     forwardRef(() => ResilienceModule), // For CircuitBreakerService
   ],
   providers: [EventService],

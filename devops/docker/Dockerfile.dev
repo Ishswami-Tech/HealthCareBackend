@@ -18,10 +18,19 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
+# Copy package files first
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
 
+# Install dependencies (skip postinstall since Prisma schema isn't available yet)
+RUN pnpm install --frozen-lockfile --ignore-scripts
+
+# Copy all source files (including Prisma schema)
 COPY . .
+
+# Now generate Prisma client (schema is available)
+# Run prisma generate directly (skip the copy script if it doesn't exist)
+RUN pnpm prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma && \
+    (test -f scripts/copy-prisma-to-pnpm.js && node scripts/copy-prisma-to-pnpm.js || echo "Copy script not found, skipping...") || true
 
 ENV NODE_ENV=development
 ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma

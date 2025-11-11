@@ -556,7 +556,13 @@ async function bootstrap() {
       versioningHeader: 'X-API-Version',
       defaultVersion: '1',
       ...(apiPrefix && apiPrefix.trim() !== '' && { globalPrefix: apiPrefix }),
-      prefixExclude: ['', '/', 'health', 'metrics', 'docs'],
+      prefixExclude: [
+        { path: '/', method: 'GET' },
+        { path: '/', method: 'ALL' },
+        'health',
+        'metrics',
+        'docs',
+      ],
       enableShutdownHooks: true,
     };
 

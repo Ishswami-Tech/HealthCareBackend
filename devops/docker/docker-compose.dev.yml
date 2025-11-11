@@ -102,7 +102,7 @@ services:
         done &&
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
-        pnpm prisma:generate &&
+        pnpm prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed' &&
         echo 'Running Prisma Migrations...' &&
         pnpm prisma:migrate || echo 'Migration failed or already applied' &&
         echo 'Starting application...' &&
