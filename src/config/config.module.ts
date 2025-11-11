@@ -10,12 +10,12 @@ import { ENV_VARS } from './constants';
 
 /**
  * Enhanced Configuration Module for the Healthcare Application
- * 
+ *
  * Provides:
  * - Global configuration access throughout the application
  * - Type-safe configuration service wrapper
  * - Optimized for 10M+ users (singleton, zero overhead)
- * 
+ *
  * @module ConfigModule
  */
 @Global()

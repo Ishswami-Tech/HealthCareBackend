@@ -518,3 +518,187 @@ export interface LifestyleAssessmentResponse {
   createdAt: string;
   updatedAt: string;
 }
+
+// ============================================================================
+// BASE ENTITY TYPES (Safe alternatives to Prisma types)
+// ============================================================================
+
+/**
+ * Base MedicalHistory entity type (safe alternative to Prisma type)
+ */
+export interface MedicalHistoryBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  condition: string;
+  diagnosis?: string | null;
+  treatment?: string | null;
+  date: Date;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base LabReport entity type (safe alternative to Prisma type)
+ */
+export interface LabReportBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  testName: string;
+  result: string;
+  unit?: string | null;
+  normalRange?: string | null;
+  labName?: string | null;
+  doctorId?: string | null;
+  notes?: string | null;
+  date: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base RadiologyReport entity type (safe alternative to Prisma type)
+ */
+export interface RadiologyReportBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  imageType: string;
+  findings: string;
+  conclusion: string;
+  date: Date;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base SurgicalRecord entity type (safe alternative to Prisma type)
+ */
+export interface SurgicalRecordBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  surgeryName: string;
+  surgeon: string;
+  date: Date;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base Vital entity type (safe alternative to Prisma type)
+ */
+export interface VitalBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  type: string;
+  value: string;
+  unit?: string | null;
+  recordedAt: Date;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base Allergy entity type (safe alternative to Prisma type)
+ */
+export interface AllergyBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  allergen: string;
+  severity: string;
+  reaction: string;
+  diagnosedDate: Date;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base Medication entity type (safe alternative to Prisma type)
+ */
+export interface MedicationBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  name: string;
+  dosage: string;
+  frequency: string;
+  startDate: Date;
+  endDate?: Date | null;
+  prescribedBy: string;
+  purpose?: string | null;
+  sideEffects?: string | null;
+  isActive: boolean;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base Immunization entity type (safe alternative to Prisma type)
+ */
+export interface ImmunizationBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  vaccineName: string;
+  dateAdministered: Date;
+  nextDueDate?: Date | null;
+  batchNumber?: string | null;
+  administrator?: string | null;
+  location?: string | null;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base FamilyHistory entity type (safe alternative to Prisma type)
+ */
+export interface FamilyHistoryBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  relation?: string | null;
+  condition: string;
+  diagnosedAge?: number | null;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Base LifestyleAssessment entity type (safe alternative to Prisma type)
+ */
+export interface LifestyleAssessmentBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  diet?: string | null;
+  exercise?: string | null;
+  smoking?: string | null;
+  alcohol?: string | null;
+  sleep?: string | null;
+  stress?: string | null;
+  occupation?: string | null;
+  doctorId?: string | null;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}

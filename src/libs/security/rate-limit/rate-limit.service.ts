@@ -25,12 +25,23 @@ export interface RateLimitResult {
 /**
  * Rate Limiting Service for Healthcare Applications
  *
- * Provides comprehensive rate limiting capabilities with Redis-based storage,
+ * Provides programmatic rate limiting capabilities with Redis-based storage,
  * configurable windows, and multiple key generation strategies for healthcare
  * applications. Supports user-based, IP-based, and custom rate limiting.
  *
  * @class RateLimitService
- * @description Enterprise-grade rate limiting service with Redis persistence
+ * @description Enterprise-grade programmatic rate limiting service with Redis persistence
+ *
+ * @remarks
+ * **Rate Limiting Architecture:**
+ * - **Global Middleware**: SecurityConfigService uses @fastify/rate-limit plugin for automatic rate limiting on all requests
+ * - **Programmatic (this service)**: Use RateLimitService for custom rate limiting logic in controllers/services
+ * - **Cache-based**: RedisService.isRateLimited() for cache-aware rate limiting
+ *
+ * **When to use each:**
+ * - Use SecurityConfigService.configureRateLimiting() for global IP-based rate limiting
+ * - Use RateLimitService for endpoint-specific or user-based rate limiting with decorators
+ * - Use RedisService.isRateLimited() for cache-integrated rate limiting
  *
  * @example
  * ```typescript

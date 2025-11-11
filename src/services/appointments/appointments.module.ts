@@ -123,9 +123,9 @@ import { CommunicationModule } from '@communication/communication.module';
           host: configService.get<string>('REDIS_HOST') || 'localhost',
           port: configService.get<number>('REDIS_PORT') || 6379,
           ...(configService.get<string>('REDIS_PASSWORD')?.trim() && {
-            password: configService.get<string>('REDIS_PASSWORD')?.trim() as string,
+            password: configService.get<string>('REDIS_PASSWORD')?.trim(),
           }),
-          db: configService.get<number>('REDIS_DB') || 0,
+          db: configService.get<number>('REDIS_DB', 0),
         },
         defaultJobOptions: {
           removeOnComplete: 1000,

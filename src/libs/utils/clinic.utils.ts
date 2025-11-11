@@ -39,12 +39,18 @@ async function findClinicById(
   where: { clinicId: string } | { id: string }
 ): Promise<ClinicData | null> {
   // Use DatabaseService for proper connection pooling, caching, and optimization
-  return await databaseService.executeHealthcareRead(async client => {
-    return await client.clinic.findUnique({
+  return (await databaseService.executeHealthcareRead(async client => {
+    const clinic = client['clinic'] as {
+      findUnique: (args: {
+        where: { clinicId: string } | { id: string };
+        select: { id: boolean; clinicId: boolean; name: boolean; isActive: boolean };
+      }) => Promise<ClinicData | null>;
+    };
+    return (await clinic.findUnique({
       where: where as { clinicId: string } | { id: string },
       select: { id: true, clinicId: true, name: true, isActive: true },
-    });
-  });
+    })) as unknown as ClinicData | null;
+  })) as unknown as ClinicData | null;
 }
 
 /**

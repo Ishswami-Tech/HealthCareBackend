@@ -12,10 +12,99 @@ This folder contains the operational configuration and scripts to run the Health
 ## Quick Start
 
 ### Docker (local development)
+
+**Prerequisites:**
+- **Docker Desktop installed and running on Windows** (required even when using WSL2)
+- At least 4GB RAM available for Docker
+- WSL2 integration enabled in Docker Desktop settings
+
+**Option 1: Using the startup script (Recommended)**
+
+**⭐ WSL2 (Recommended for Windows):**
 ```bash
+# Open WSL terminal
+wsl
+
+# Navigate to project (adjust path if needed)
+cd /mnt/d/Projects/Doctor\ APP/HealthCareApp/HealthcareFrontend/HealthCareBackend
+
+# Or if you're already in the project directory
+cd devops/docker
+chmod +x start-dev.sh
+./start-dev.sh
+```
+
+**Windows PowerShell (Alternative):**
+```powershell
+cd devops/docker
+.\start-dev.ps1
+```
+
+**Linux/Mac:**
+```bash
+cd devops/docker
+chmod +x start-dev.sh
+./start-dev.sh
+```
+
+> **💡 Why WSL2?** Docker Desktop on Windows uses WSL2 backend by default. Running Docker commands in WSL2 provides:
+> - Better file system performance
+> - More consistent Linux-like environment
+> - Better integration with Docker Desktop
+> - Easier path handling for mounted volumes
+
+**Option 2: Manual startup**
+```bash
+# Navigate to project root
+cd /path/to/HealthCareBackend
+
+# Start all services
 docker compose -f devops/docker/docker-compose.dev.yml up -d --build
+
+# View logs
 docker compose -f devops/docker/docker-compose.dev.yml logs -f api
 ```
+
+**Access Points:**
+- **API**: http://localhost:8088
+- **Swagger Docs**: http://localhost:8088/docs
+- **Health Check**: http://localhost:8088/health
+- **Queue Dashboard**: http://localhost:8088/queue-dashboard
+- **Prisma Studio**: http://localhost:5555
+- **PgAdmin**: http://localhost:5050 (admin@admin.com / admin)
+- **Redis Commander**: http://localhost:8082 (admin / admin)
+
+**Useful Commands:**
+```bash
+# Stop all services
+docker compose -f devops/docker/docker-compose.dev.yml down
+
+# Restart API service
+docker compose -f devops/docker/docker-compose.dev.yml restart api
+
+# View logs for specific service
+docker compose -f devops/docker/docker-compose.dev.yml logs -f api
+docker compose -f devops/docker/docker-compose.dev.yml logs -f postgres
+
+# Access container shell
+docker exec -it healthcare-api sh
+
+# Run Prisma migrations manually
+docker exec -it healthcare-api pnpm prisma:migrate
+
+# Run database seed
+docker exec -it healthcare-api pnpm seed:dev
+
+# Clean up (removes volumes - WARNING: deletes data)
+docker compose -f devops/docker/docker-compose.dev.yml down -v
+```
+
+**What happens on startup:**
+1. PostgreSQL and Redis containers start and wait for health checks
+2. API container waits for database to be ready
+3. Prisma Client is generated
+4. Database migrations are applied automatically
+5. Application starts in development mode with hot-reload
 
 ### Kubernetes (production/staging)
 ```bash

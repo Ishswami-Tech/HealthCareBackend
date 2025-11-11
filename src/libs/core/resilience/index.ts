@@ -11,6 +11,7 @@
  * ```
  */
 
-export { CircuitBreakerService } from './circuit-breaker.service';
 export { ResilienceModule } from './resilience.module';
+export { CircuitBreakerService } from './circuit-breaker.service';
+export { GracefulShutdownService, ProcessErrorHandlersService } from './graceful-shutdown.service';
 export type { CircuitBreakerOptions } from './circuit-breaker.service';

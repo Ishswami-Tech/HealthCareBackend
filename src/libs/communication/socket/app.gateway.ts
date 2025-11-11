@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { WebSocketGateway } from '@nestjs/websockets';
 import { BaseSocket } from '@communication/socket/base-socket';
 import { SocketService } from '@communication/socket/socket.service';
@@ -19,7 +19,7 @@ export class AppGateway extends BaseSocket {
   constructor(
     @Inject('SOCKET_SERVICE') socketService: SocketService,
     @Inject('SOCKET_AUTH_MIDDLEWARE') authMiddleware: SocketAuthMiddleware,
-    @Inject(LoggingService) loggingService: LoggingService
+    @Optional() @Inject(forwardRef(() => LoggingService)) loggingService?: LoggingService
   ) {
     super(socketService, 'AppGateway', authMiddleware, loggingService);
   }

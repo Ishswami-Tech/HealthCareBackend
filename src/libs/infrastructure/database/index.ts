@@ -25,17 +25,17 @@
  *
  * // Use optimized read operations with caching and query optimization
  * const user = await this.databaseService.executeHealthcareRead(async (client) => {
- *   return await client.user.findUnique({ where: { id: userId } });
+ *   return await client['user'].findUnique({ where: { id: userId } });
  * });
  *
  * // Use optimized write operations with audit logging
  * const created = await this.databaseService.executeHealthcareWrite(async (client) => {
- *   return await client.user.create({ data: userData });
+ *   return await client['user'].create({ data: userData });
  * }, auditInfo);
  *
  * // Use clinic context for multi-tenant operations
  * const clinicData = await this.databaseService.executeWithClinicContext(clinicId, async (client) => {
- *   return await client.patient.findMany({ where: { clinicId } });
+ *   return await client['patient'].findMany({ where: { clinicId } });
  * });
  * ```
  *

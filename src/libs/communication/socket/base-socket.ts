@@ -1,5 +1,4 @@
 import {
-  WebSocketGateway,
   WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -9,14 +8,14 @@ import {
   ConnectedSocket,
   WsResponse,
 } from '@nestjs/websockets';
-import { Injectable, Inject, Optional, OnModuleInit } from '@nestjs/common';
+import { Inject, Optional, OnModuleInit, forwardRef } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { SocketService, type SocketEventData } from '@communication/socket/socket.service';
 import {
   SocketAuthMiddleware,
   type AuthenticatedUser,
 } from '@communication/socket/socket-auth.middleware';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService, safeLog, safeLogError } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -51,14 +50,16 @@ type RoomEventData = RoomSuccessData | RoomErrorData;
 
 /**
  * BaseSocket - Base class for WebSocket gateways
- * 
+ *
  * This is a concrete base class that provides common WebSocket functionality.
  * Concrete implementations like AppGateway should extend this and add @WebSocketGateway() decorator.
- * 
+ *
  * Note: BaseSocket should NOT have @Injectable() decorator as it's not a provider itself.
  * Only concrete implementations like AppGateway should be @Injectable().
  */
-export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, OnModuleInit {
+export class BaseSocket
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, OnModuleInit
+{
   @WebSocketServer()
   protected server!: Server;
 
@@ -77,24 +78,23 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
     protected readonly socketService: SocketService | undefined,
     protected readonly providedServiceName: string,
     protected readonly authMiddleware: SocketAuthMiddleware | undefined,
-    protected readonly loggingService: LoggingService
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    protected readonly loggingService?: LoggingService
   ) {
     this.serviceName = providedServiceName || 'BaseSocket';
   }
 
   // OnModuleInit ensures LoggingService is available before WebSocket initialization
   onModuleInit() {
-    // Verify LoggingService is available
-    if (!this.loggingService) {
-      throw new HealthcareError(
-        ErrorCode.SERVICE_UNAVAILABLE,
-        'LoggingService is not available - dependency injection failed',
-        undefined,
-        {},
-        'BaseSocket.onModuleInit'
-      );
+    // LoggingService is optional - if not available, we'll continue without logging
+    // This handles cases where LoggingService might not be initialized yet due to circular dependencies
+    if (this.loggingService) {
+      this.isInitialized = true;
+    } else {
+      // LoggingService not available yet - will retry in afterInit
+      this.isInitialized = false;
     }
-    this.isInitialized = true;
   }
 
   async afterInit(server: Server): Promise<void> {
@@ -104,7 +104,7 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       // Wait a bit for onModuleInit to complete
       // This handles the case where WebSocket initialization happens before OnModuleInit
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       // If still not initialized after delay, log warning but continue
       if (!this.isInitialized || !this.loggingService) {
         console.warn('[BaseSocket] LoggingService not available, initializing without logging');
@@ -122,7 +122,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
     }
 
     try {
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
         'Initializing WebSocket server...',
@@ -130,7 +131,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       );
 
       if (!server) {
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.ERROR,
           'WebSocket server instance not provided',
@@ -157,34 +159,23 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
 
       // Set up error handling for the server
       this.server.on('error', (error: Error) => {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack || '' : '';
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.ERROR,
-          `Socket.IO server error: ${errorMessage}`,
-          this.serviceName,
-          { stack: errorStack }
-        );
+        safeLogError(this.loggingService, error, this.serviceName, {
+          event: 'server_error',
+        });
       });
 
       this.server.on('connection_error', (error: Error) => {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack || '' : '';
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.ERROR,
-          `Socket.IO connection error: ${errorMessage}`,
-          this.serviceName,
-          { stack: errorStack }
-        );
+        safeLogError(this.loggingService, error, this.serviceName, {
+          event: 'connection_error',
+        });
       });
 
       // Initialize SocketService if available
       if (this.socketService) {
         await this.initializeSocketService();
       } else {
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.WARN,
           'SocketService is not available, continuing with limited functionality',
@@ -192,22 +183,17 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         );
       }
 
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
         'WebSocket server initialized successfully',
         this.serviceName
       );
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack || '' : '';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Failed to initialize WebSocket server: ${errorMessage}`,
-        this.serviceName,
-        { stack: errorStack }
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'afterInit',
+      });
       throw error; // Re-throw to fail fast
     }
   }
@@ -224,16 +210,18 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         // TypeScript guard: socketService is guaranteed to be defined here
         const socketService = this.socketService;
         socketService.setServer(this.server);
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.INFO,
           'SocketService initialized successfully',
           this.serviceName
         );
         return;
-      } catch (error) {
+      } catch (error: unknown) {
         this.initializationAttempts++;
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.WARN,
           `Failed to initialize SocketService (attempt ${this.initializationAttempts}/${this.MAX_INITIALIZATION_ATTEMPTS}): ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -246,7 +234,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       }
     }
 
-    void this.loggingService.log(
+    safeLog(
+      this.loggingService,
       LogType.SYSTEM,
       LogLevel.WARN,
       'Continuing with limited functionality after failed SocketService initialization attempts',
@@ -257,7 +246,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
   async handleConnection(client: Socket): Promise<WsResponse<ConnectionEventData>> {
     try {
       if (!this.server) {
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.ERROR,
           'WebSocket server not initialized',
@@ -280,19 +270,18 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
           // Auto-join user to appropriate rooms
           await this.autoJoinRooms(client, user);
 
-          void this.loggingService.log(
+          safeLog(
+            this.loggingService,
             LogType.SYSTEM,
             LogLevel.INFO,
             `Client ${clientId} authenticated and joined rooms (User: ${user.userId}, Role: ${user.role})`,
             this.serviceName
           );
         } catch (authError) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.ERROR,
-            `Authentication failed for ${clientId}: ${authError instanceof Error ? authError.message : 'Unknown error'}`,
-            this.serviceName
-          );
+          safeLogError(this.loggingService, authError, this.serviceName, {
+            clientId,
+            operation: 'authentication',
+          });
           client.disconnect();
           return {
             event: 'error',
@@ -300,7 +289,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
           };
         }
       } else {
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.INFO,
           `Client connected (no auth): ${clientId}`,
@@ -337,14 +327,10 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
             : null,
         },
       };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error handling connection: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'handleConnection',
+      });
       return { event: 'error', data: { message: 'Connection error' } };
     }
   }
@@ -375,27 +361,26 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         }
       }
 
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
         `Client ${client.id} auto-joined ${rooms.length} rooms: ${rooms.join(', ')}`,
         this.serviceName
       );
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error auto-joining rooms for ${client.id}: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        clientId: client.id,
+        operation: 'autoJoinRooms',
+      });
     }
   }
 
   handleDisconnect(client: Socket): void {
     try {
       const clientId = client.id;
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
         `Client disconnected: ${clientId}`,
@@ -416,14 +401,10 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
           }
         }
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error handling disconnection: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'handleDisconnect',
+      });
     }
   }
 
@@ -435,7 +416,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         this.reconnectAttempts.set(client.id, attempts + 1);
 
         setTimeout(() => {
-          void this.loggingService.log(
+          safeLog(
+            this.loggingService,
             LogType.SYSTEM,
             LogLevel.INFO,
             `Attempting to reconnect client ${client.id} (attempt ${attempts + 1})`,
@@ -444,7 +426,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
           client.disconnect(true);
         }, delay);
       } else {
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.ERROR,
           `Max reconnection attempts reached for client ${client.id}`,
@@ -452,14 +435,10 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         );
         client.disconnect();
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error in handleSocketError: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'handleSocketError',
+      });
     }
   }
 
@@ -470,7 +449,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         this.reconnectAttempts.set(client.id, attempts + 1);
 
         setTimeout(() => {
-          void this.loggingService.log(
+          safeLog(
+            this.loggingService,
             LogType.SYSTEM,
             LogLevel.INFO,
             `Attempting to reconnect client ${client.id} (attempt ${attempts + 1})`,
@@ -479,14 +459,10 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
           client.disconnect(true);
         }, this.RECONNECT_INTERVAL);
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error in handleReconnection: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'handleReconnection',
+      });
     }
   }
 
@@ -499,16 +475,11 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       const { room } = data;
       await this.joinRoom(client, room);
       return { event: 'joinRoom', data: { success: true, room } };
-    } catch (error) {
+    } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack || '' : '';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error joining room: ${errorMessage}`,
-        this.serviceName,
-        { stack: errorStack }
-      );
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'handleJoinRoom',
+      });
       return {
         event: 'joinRoom',
         data: { success: false, error: errorMessage },
@@ -525,16 +496,11 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       const { room } = data;
       await this.leaveRoom(client, room);
       return { event: 'leaveRoom', data: { success: true, room } };
-    } catch (error) {
+    } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack || '' : '';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error leaving room: ${errorMessage}`,
-        this.serviceName,
-        { stack: errorStack }
-      );
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'handleLeaveRoom',
+      });
       return {
         event: 'leaveRoom',
         data: { success: false, error: errorMessage },
@@ -558,21 +524,20 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       }
       this.clientsByRoom.get(room)?.add(client.id);
 
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
         `Client ${client.id} joined room: ${room}`,
         this.serviceName
       );
       return { success: true };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error in joinRoom: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'joinRoom',
+        room,
+        clientId: client.id,
+      });
       return { success: false };
     }
   }
@@ -596,21 +561,20 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
         }
       }
 
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
         `Client ${client.id} left room: ${room}`,
         this.serviceName
       );
       return { success: true };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error in leaveRoom: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'leaveRoom',
+        room,
+        clientId: client.id,
+      });
       return { success: false };
     }
   }
@@ -627,14 +591,11 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       for (const room of rooms) {
         await this.leaveRoom(client, room);
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error in leaveAllRooms: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'leaveAllRooms',
+        clientId: client.id,
+      });
     }
   }
 
@@ -649,21 +610,20 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
   protected broadcastToRoom(room: string, event: string, data: SocketEventData): void {
     try {
       this.server.to(room).emit(event, data);
-      void this.loggingService.log(
+      safeLog(
+        this.loggingService,
         LogType.SYSTEM,
         LogLevel.DEBUG,
         `Broadcasted ${event} to room ${room}`,
         this.serviceName,
         { room, event }
       );
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error in broadcastToRoom: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'broadcastToRoom',
+        room,
+        event,
+      });
     }
   }
 
@@ -672,7 +632,8 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
       const socket = this.server.sockets.sockets.get(clientId);
       if (socket) {
         socket.emit(event, data);
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.DEBUG,
           `Sent ${event} to client ${clientId}`,
@@ -680,21 +641,20 @@ export class BaseSocket implements OnGatewayConnection, OnGatewayDisconnect, OnG
           { clientId, event }
         );
       } else {
-        void this.loggingService.log(
+        safeLog(
+          this.loggingService,
           LogType.SYSTEM,
           LogLevel.WARN,
           `Client ${clientId} not found for sending ${event}`,
           this.serviceName
         );
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Error in sendToUser: ${errorMessage}`,
-        this.serviceName
-      );
+    } catch (error: unknown) {
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'sendToUser',
+        clientId,
+        event,
+      });
     }
   }
 }

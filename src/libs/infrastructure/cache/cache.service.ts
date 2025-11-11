@@ -1,5 +1,12 @@
 // External imports
-import { Injectable, OnModuleInit, OnModuleDestroy, HttpStatus, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  HttpStatus,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { ConfigService } from '@config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
@@ -145,16 +152,30 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   };
 
   constructor(
-    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly eventEmitter: EventEmitter2,
-    private readonly loggingService: LoggingService
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {
     // Helper function to safely get config values with fallback to process.env
     // ConfigService is global, but we add try-catch for robustness
     const getConfig = <T>(key: string, defaultValue: T): T => {
       try {
-        return this.configService?.get<T>(key, defaultValue);
+        if (!this.configService || typeof this.configService.get !== 'function') {
+          const envValue = process.env[key];
+          if (envValue !== undefined) {
+            // Try to parse as the same type as defaultValue
+            if (typeof defaultValue === 'number') {
+              return (parseInt(envValue, 10) || defaultValue) as T;
+            }
+            if (typeof defaultValue === 'boolean') {
+              return (envValue === 'true' || envValue === '1') as T;
+            }
+            return envValue as T;
+          }
+          return defaultValue;
+        }
+        return this.configService.get<T>(key, defaultValue);
       } catch {
         // Fallback to process.env if ConfigService.get fails
         const envValue = process.env[key];
@@ -315,7 +336,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     );
 
     // Initialize shards based on configuration
-    const shardConfigs = this.configService?.get<Array<Record<string, unknown>>>('CACHE_SHARDS', []) || [];
+    const shardConfigs =
+      this.configService?.get<Array<Record<string, unknown>>>('CACHE_SHARDS', []) || [];
     this.cacheShards = shardConfigs.map((config: Record<string, unknown>, index: number) => {
       const shardConfig = config;
       return {

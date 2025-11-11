@@ -12,6 +12,19 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto } from '@dtos/user.dto';
 import { AuthService } from '@services/auth/auth.service';
 import { HealthcareErrorsService } from '@core/errors';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
+import type {
+  Doctor,
+  Patient,
+  Receptionist,
+  ClinicAdmin,
+  SuperAdmin,
+  AuditLog,
+  Clinic,
+} from '@core/types';
 
 type UserWithRelations = User & {
   doctor?: {
@@ -37,6 +50,7 @@ type UserWithRelations = User & {
     id: string;
     userId: string;
   } | null;
+  [key: string]: unknown;
 };
 
 @Injectable()
@@ -67,8 +81,17 @@ export class UsersService {
       cacheKey,
       async () => {
         // Use executeHealthcareRead for optimized query with caching
-        const users = (await this.databaseService.executeHealthcareRead(async client => {
-          return await client.user.findMany({
+        const users = await this.databaseService.executeHealthcareRead<
+          Array<{
+            id: string;
+            email: string;
+            name: string | null;
+            role: string;
+            [key: string]: unknown;
+          }>
+        >(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const result = await typedClient.user.findMany({
             ...(role ? { where: { role } } : {}),
             include: {
               doctor: role === Role.DOCTOR,
@@ -83,30 +106,39 @@ export class UsersService {
               supportStaff: role === Role.SUPPORT_STAFF,
               nurse: role === Role.NURSE,
               counselor: role === Role.COUNSELOR,
-            },
-          });
-        })) as unknown as UserWithRelations[];
-
-        const result = users.map((userData: UserWithRelations): UserResponseDto => {
-          const { password: _password, ...user } = userData;
-          const userResponse: UserResponseDto = {
-            id: user.id,
-            email: user.email,
-            firstName: user.firstName ?? '',
-            lastName: user.lastName ?? '',
-            role: user.role as Role,
-            isVerified: user.isVerified,
-            isActive: true, // User accounts are active by default
-            createdAt: user.createdAt,
-            updatedAt: user.updatedAt,
-            phone: user.phone ?? '',
-          };
-
-          if (user.dateOfBirth) {
-            userResponse.dateOfBirth = this.formatDateToString(user.dateOfBirth);
-          }
-          return userResponse;
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return result as unknown as Array<{
+            id: string;
+            email: string;
+            name: string | null;
+            role: string;
+            [key: string]: unknown;
+          }>;
         });
+
+        const result = (users as unknown as UserWithRelations[]).map(
+          (userData: UserWithRelations): UserResponseDto => {
+            const { password: _password, ...user } = userData;
+            const userResponse: UserResponseDto = {
+              id: user.id,
+              email: user.email,
+              firstName: user.firstName ?? '',
+              lastName: user.lastName ?? '',
+              role: user.role as Role,
+              isVerified: user.isVerified,
+              isActive: true, // User accounts are active by default
+              createdAt: user.createdAt,
+              updatedAt: user.updatedAt,
+              phone: user.phone ?? '',
+            };
+
+            if (user.dateOfBirth) {
+              userResponse.dateOfBirth = this.formatDateToString(user.dateOfBirth);
+            }
+            return userResponse;
+          }
+        );
 
         return result;
       },
@@ -221,8 +253,22 @@ export class UsersService {
     }
 
     // Get with relations if needed
-    const user = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.user.findFirst({
+    const user = await this.databaseService.executeHealthcareRead<{
+      id: string;
+      email: string;
+      [key: string]: unknown;
+    } | null>(async client => {
+      const result = await (
+        client as {
+          user: {
+            findFirst: (args: unknown) => Promise<{
+              id: string;
+              email: string;
+              [key: string]: unknown;
+            } | null>;
+          };
+        }
+      )['user'].findFirst({
         where: {
           email: {
             mode: 'insensitive',
@@ -237,6 +283,7 @@ export class UsersService {
           superAdmin: true,
         },
       });
+      return result;
     });
 
     if (!user) {
@@ -278,8 +325,9 @@ export class UsersService {
 
   async count(): Promise<number> {
     // Use executeHealthcareRead for count query
-    return await this.databaseService.executeHealthcareRead(async client => {
-      return await client.user.count();
+    return await this.databaseService.executeHealthcareRead<number>(async client => {
+      const result = await (client as { user: { count: () => Promise<number> } })['user'].count();
+      return result;
     });
   }
 
@@ -321,17 +369,27 @@ export class UsersService {
       const userRaw = await this.databaseService.findUserByEmailSafe(data.email);
       // If we need relations, use executeHealthcareRead
       const user = userRaw
-        ? await this.databaseService.executeHealthcareRead(async client => {
-            return await client.user.findUnique({
-              where: { id: userRaw.id },
+        ? await this.databaseService.executeHealthcareRead<{
+            id: string;
+            email: string;
+            [key: string]: unknown;
+          } | null>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            const result = await typedClient.user.findUnique({
+              where: { id: userRaw.id } as PrismaDelegateArgs,
               include: {
                 doctor: data.role === Role.DOCTOR,
                 patient: data.role === Role.PATIENT,
                 receptionists: data.role === Role.RECEPTIONIST,
                 clinicAdmins: data.role === Role.CLINIC_ADMIN,
                 superAdmin: data.role === Role.SUPER_ADMIN,
-              },
-            });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            return result as {
+              id: string;
+              email: string;
+              [key: string]: unknown;
+            } | null;
           })
         : null;
 
@@ -405,17 +463,27 @@ export class UsersService {
       const existingUserRaw = await this.databaseService.findUserByIdSafe(id);
       // Get with relations if needed
       const existingUser = existingUserRaw
-        ? await this.databaseService.executeHealthcareRead(async client => {
-            return await client.user.findUnique({
-              where: { id },
+        ? await this.databaseService.executeHealthcareRead<{
+            id: string;
+            email: string;
+            [key: string]: unknown;
+          } | null>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            const result = await typedClient.user.findUnique({
+              where: { id } as PrismaDelegateArgs,
               include: {
                 doctor: true,
                 patient: true,
                 receptionists: true,
                 clinicAdmins: true,
                 superAdmin: true,
-              },
-            });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            return result as {
+              id: string;
+              email: string;
+              [key: string]: unknown;
+            } | null;
           })
         : null;
 
@@ -432,7 +500,7 @@ export class UsersService {
         {
           userId: id,
           updateFields: Object.keys(updateUserDto),
-          role: existingUser.role,
+          role: (existingUser as { role?: string })['role'] || '',
         }
       );
 
@@ -465,13 +533,28 @@ export class UsersService {
       }
 
       // Handle role-specific data updates
-      if ((existingUser.role as Role) === Role.DOCTOR && cleanedData.specialization) {
+      if (
+        (existingUser as { role?: string })['role'] === Role.DOCTOR &&
+        cleanedData.specialization
+      ) {
         const existingUserWithDoctor = existingUser as unknown as UserWithRelations;
         // Ensure doctor record exists using executeHealthcareWrite
         if (!existingUserWithDoctor.doctor) {
-          await this.databaseService.executeHealthcareWrite(
+          await this.databaseService.executeHealthcareWrite<{
+            id: string;
+            userId: string;
+            [key: string]: unknown;
+          }>(
             async client => {
-              return await client.doctor.create({
+              return await (
+                client as {
+                  doctor: {
+                    create: (
+                      args: unknown
+                    ) => Promise<{ id: string; userId: string; [key: string]: unknown }>;
+                  };
+                }
+              )['doctor'].create({
                 data: {
                   userId: id,
                   specialization: cleanedData.specialization ?? '',
@@ -484,7 +567,9 @@ export class UsersService {
             },
             {
               userId: id,
-              clinicId: existingUser.primaryClinicId || '',
+              clinicId: String(
+                (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
+              ),
               resourceType: 'DOCTOR',
               operation: 'CREATE',
               resourceId: id,
@@ -494,22 +579,25 @@ export class UsersService {
           );
         } else if (existingUserWithDoctor.doctor) {
           const doctorData = existingUserWithDoctor.doctor;
-          await this.databaseService.executeHealthcareWrite(
+          await this.databaseService.executeHealthcareWrite<Doctor>(
             async client => {
-              return await client.doctor.update({
-                where: { userId: id },
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+              return await typedClient.doctor.update({
+                where: { userId: id } as PrismaDelegateArgs,
                 data: {
                   specialization: cleanedData.specialization ?? doctorData.specialization,
                   experience:
                     typeof cleanedData.experience === 'string'
                       ? parseInt(cleanedData.experience) || doctorData.experience
                       : doctorData.experience,
-                },
-              });
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
             },
             {
               userId: id,
-              clinicId: existingUser.primaryClinicId || '',
+              clinicId: String(
+                (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
+              ),
               resourceType: 'DOCTOR',
               operation: 'UPDATE',
               resourceId: id,
@@ -527,17 +615,27 @@ export class UsersService {
       // Update the user record using updateUserSafe or executeHealthcareWrite
       await this.databaseService.updateUserSafe(id, cleanedData as never);
       // Fetch updated user with relations
-      const user = (await this.databaseService.executeHealthcareRead(async client => {
-        return await client.user.findUnique({
-          where: { id },
+      const user = (await this.databaseService.executeHealthcareRead<{
+        id: string;
+        email: string;
+        [key: string]: unknown;
+      } | null>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.user.findUnique({
+          where: { id } as PrismaDelegateArgs,
           include: {
             doctor: true,
             patient: true,
             receptionists: true,
             clinicAdmins: true,
             superAdmin: true,
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as {
+          id: string;
+          email: string;
+          [key: string]: unknown;
+        } | null;
       })) as unknown as UserWithRelations;
 
       // Invalidate cache
@@ -647,17 +745,27 @@ export class UsersService {
     }
 
     // Get user with relations for role-specific deletion
-    const user = (await this.databaseService.executeHealthcareRead(async client => {
-      return await client.user.findUnique({
-        where: { id },
+    const user = (await this.databaseService.executeHealthcareRead<{
+      id: string;
+      email: string;
+      [key: string]: unknown;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const result = await typedClient.user.findUnique({
+        where: { id } as PrismaDelegateArgs,
         include: {
           doctor: true,
           patient: true,
           receptionists: true,
           clinicAdmins: true,
           superAdmin: true,
-        },
-      });
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      return result as {
+        id: string;
+        email: string;
+        [key: string]: unknown;
+      } | null;
     })) as unknown as UserWithRelations;
 
     if (!user) {
@@ -668,7 +776,7 @@ export class UsersService {
     const userWithRelations = user;
     const auditInfo = {
       userId: id,
-      clinicId: user.primaryClinicId || '',
+      clinicId: String((user as { primaryClinicId?: string | null })['primaryClinicId'] || ''),
       resourceType: 'USER',
       operation: 'DELETE',
       resourceId: id,
@@ -677,21 +785,23 @@ export class UsersService {
     };
 
     if ((user.role as Role) === Role.DOCTOR && userWithRelations.doctor) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<Doctor>(
         async client => {
-          return await client.doctor.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.doctor.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'DOCTOR' }
       );
     }
     if ((user.role as Role) === Role.PATIENT && userWithRelations.patient) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<Patient>(
         async client => {
-          return await client.patient.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.patient.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'PATIENT' }
       );
@@ -701,11 +811,12 @@ export class UsersService {
       userWithRelations.receptionists &&
       userWithRelations.receptionists.length > 0
     ) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<Receptionist>(
         async client => {
-          return await client.receptionist.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.receptionist.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'RECEPTIONIST' }
       );
@@ -715,21 +826,23 @@ export class UsersService {
       userWithRelations.clinicAdmins &&
       userWithRelations.clinicAdmins.length > 0
     ) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<ClinicAdmin>(
         async client => {
-          return await client.clinicAdmin.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinicAdmin.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'CLINIC_ADMIN' }
       );
     }
     if ((user.role as Role) === Role.SUPER_ADMIN && userWithRelations.superAdmin) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<SuperAdmin>(
         async client => {
-          return await client.superAdmin.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.superAdmin.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'SUPER_ADMIN' }
       );
@@ -758,16 +871,17 @@ export class UsersService {
   private async logAuditEvent(userId: string, action: string, description: string): Promise<void> {
     // Use executeHealthcareWrite for audit log creation
     // Note: Using fields that match the Prisma AuditLog schema (updated with resourceType, resourceId, metadata, userAgent)
-    await this.databaseService.executeHealthcareWrite(
+    await this.databaseService.executeHealthcareWrite<AuditLog>(
       async client => {
-        await client.auditLog.create({
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.auditLog.create({
           data: {
             userId,
             action,
             description: description || '',
             timestamp: new Date(),
-          },
-        });
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       },
       {
         userId,
@@ -868,17 +982,27 @@ export class UsersService {
       throw this.errors.userNotFound(id, 'UsersService.updateUserRole');
     }
 
-    const userRaw = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.user.findUnique({
-        where: { id },
+    const userRaw = await this.databaseService.executeHealthcareRead<{
+      id: string;
+      email: string;
+      [key: string]: unknown;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const result = await typedClient.user.findUnique({
+        where: { id } as PrismaDelegateArgs,
         include: {
           doctor: true,
           patient: true,
           receptionists: true,
           clinicAdmins: true,
           superAdmin: true,
-        },
-      });
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      return result as {
+        id: string;
+        email: string;
+        [key: string]: unknown;
+      } | null;
     });
 
     if (!userRaw) {
@@ -890,7 +1014,7 @@ export class UsersService {
     // Delete old role-specific records using executeHealthcareWrite
     const auditInfo = {
       userId: id,
-      clinicId: user.primaryClinicId || '',
+      clinicId: String((user as { primaryClinicId?: string | null })['primaryClinicId'] || ''),
       resourceType: 'USER',
       operation: 'UPDATE',
       resourceId: id,
@@ -899,21 +1023,26 @@ export class UsersService {
     };
 
     if ((user.role as Role) === Role.DOCTOR && user.doctor) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<Doctor>(
         async client => {
-          return await client.doctor.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.doctor.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'DOCTOR' }
       );
     }
-    if ((user.role as Role) === Role.PATIENT && user.patient) {
-      await this.databaseService.executeHealthcareWrite(
+    if (
+      (user as { role?: string })['role'] === Role.PATIENT &&
+      (user as { patient?: unknown })['patient']
+    ) {
+      await this.databaseService.executeHealthcareWrite<Patient>(
         async client => {
-          return await client.patient.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.patient.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'PATIENT' }
       );
@@ -923,11 +1052,12 @@ export class UsersService {
       user.receptionists &&
       user.receptionists.length > 0
     ) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<Receptionist>(
         async client => {
-          return await client.receptionist.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.receptionist.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'RECEPTIONIST' }
       );
@@ -937,21 +1067,26 @@ export class UsersService {
       user.clinicAdmins &&
       user.clinicAdmins.length > 0
     ) {
-      await this.databaseService.executeHealthcareWrite(
+      await this.databaseService.executeHealthcareWrite<ClinicAdmin>(
         async client => {
-          return await client.clinicAdmin.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinicAdmin.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'CLINIC_ADMIN' }
       );
     }
-    if ((user.role as Role) === Role.SUPER_ADMIN && user.superAdmin) {
-      await this.databaseService.executeHealthcareWrite(
+    if (
+      (user as { role?: string })['role'] === Role.SUPER_ADMIN &&
+      (user as { superAdmin?: unknown })['superAdmin']
+    ) {
+      await this.databaseService.executeHealthcareWrite<SuperAdmin>(
         async client => {
-          return await client.superAdmin.delete({
-            where: { userId: id },
-          });
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.superAdmin.delete({
+            where: { userId: id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
         },
         { ...auditInfo, resourceType: 'SUPER_ADMIN' }
       );
@@ -960,7 +1095,7 @@ export class UsersService {
     // Create new role-specific records using executeHealthcareWrite
     const createAuditInfo = {
       userId: id,
-      clinicId: user.primaryClinicId || '',
+      clinicId: String((user as { primaryClinicId?: string | null })['primaryClinicId'] || ''),
       resourceType: 'USER',
       operation: 'CREATE',
       resourceId: id,
@@ -970,45 +1105,49 @@ export class UsersService {
 
     switch (role) {
       case Role.PATIENT:
-        await this.databaseService.executeHealthcareWrite(
+        await this.databaseService.executeHealthcareWrite<Patient>(
           async client => {
-            return await client.patient.create({
-              data: { userId: id },
-            });
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.patient.create({
+              data: { userId: id } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           },
           { ...createAuditInfo, resourceType: 'PATIENT' }
         );
         break;
       case Role.DOCTOR:
-        await this.databaseService.executeHealthcareWrite(
+        await this.databaseService.executeHealthcareWrite<Doctor>(
           async client => {
-            return await client.doctor.create({
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.doctor.create({
               data: {
                 userId: id,
                 specialization: '',
                 experience: 0,
-              },
-            });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           },
           { ...createAuditInfo, resourceType: 'DOCTOR' }
         );
         break;
       case Role.RECEPTIONIST:
-        await this.databaseService.executeHealthcareWrite(
+        await this.databaseService.executeHealthcareWrite<Receptionist>(
           async client => {
-            return await client.receptionist.create({
-              data: { userId: id },
-            });
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.receptionist.create({
+              data: { userId: id } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           },
           { ...createAuditInfo, resourceType: 'RECEPTIONIST' }
         );
         break;
       case Role.CLINIC_ADMIN: {
         // Get clinics using executeHealthcareRead
-        const clinics = await this.databaseService.executeHealthcareRead(async client => {
-          return await client.clinic.findMany({
+        const clinics = await this.databaseService.executeHealthcareRead<Clinic[]>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.clinic.findMany({
             take: 1,
-          });
+          } as PrismaDelegateArgs);
         });
         if (!clinics || clinics.length === 0) {
           throw this.errors.clinicNotFound(undefined, 'UsersService.updateUserRole');
@@ -1019,14 +1158,15 @@ export class UsersService {
           throw this.errors.clinicNotFound(undefined, 'UsersService.updateUserRole');
         }
 
-        await this.databaseService.executeHealthcareWrite(
+        await this.databaseService.executeHealthcareWrite<ClinicAdmin>(
           async client => {
-            return await client.clinicAdmin.create({
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.clinicAdmin.create({
               data: {
                 userId: id,
                 clinicId: targetClinicId,
-              },
-            });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           },
           {
             ...createAuditInfo,
@@ -1037,11 +1177,24 @@ export class UsersService {
         break;
       }
       case Role.SUPER_ADMIN:
-        await this.databaseService.executeHealthcareWrite(
+        await this.databaseService.executeHealthcareWrite<{
+          id: string;
+          userId: string;
+          [key: string]: unknown;
+        }>(
           async client => {
-            return await client.superAdmin.create({
+            const result = await (
+              client as {
+                superAdmin: {
+                  create: (
+                    args: unknown
+                  ) => Promise<{ id: string; userId: string; [key: string]: unknown }>;
+                };
+              }
+            )['superAdmin'].create({
               data: { userId: id },
             });
+            return result;
           },
           { ...createAuditInfo, resourceType: 'SUPER_ADMIN' }
         );
@@ -1051,17 +1204,27 @@ export class UsersService {
     // Update user role using updateUserSafe
     await this.databaseService.updateUserSafe(id, { role } as never);
     // Fetch updated user with relations
-    const updatedUser = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.user.findUnique({
-        where: { id },
+    const updatedUser = await this.databaseService.executeHealthcareRead<{
+      id: string;
+      email: string;
+      [key: string]: unknown;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const result = await typedClient.user.findUnique({
+        where: { id } as PrismaDelegateArgs,
         include: {
           doctor: true,
           patient: true,
           receptionists: true,
           clinicAdmins: true,
           superAdmin: true,
-        },
-      });
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      return result as {
+        id: string;
+        email: string;
+        [key: string]: unknown;
+      } | null;
     });
 
     // Invalidate cache

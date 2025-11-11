@@ -1,8 +1,9 @@
 generator client {
-  provider      = "prisma-client-js"
-  output        = "../../../../../node_modules/.prisma/client"
-  binaryTargets = ["native", "linux-musl"]
-  engineType    = "library"
+  provider        = "prisma-client-js"
+  output          = "../../../../../node_modules/.prisma/client"
+  previewFeatures = []
+  binaryTargets   = ["native", "linux-musl"]
+  engineType      = "library"
 }
 
 datasource db {
@@ -11,100 +12,84 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(uuid())
-  userid            String    @unique
-  email             String    @unique
-  password          String
-  name              String
-  age               Int
-  firstName         String?
-  lastName          String?
-  phone             String?
-  role              Role      @default(PATIENT)
-  profilePicture    String?
-  gender            String?
-  dateOfBirth       DateTime?
-  address           String?
-  city              String?
-  state             String?
-  country           String?
-  zipCode           String?
-  emergencyContact  String?
-  isVerified        Boolean   @default(false)
-  lastLogin         DateTime?
-  lastLoginIP       String?
-  lastLoginDevice   String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  passwordChangedAt DateTime?
-  googleId          String?
-  facebookId        String?
-  appleId           String?
-  appName           String?
-  medicalConditions String?
-
-  // NEW AYURVEDIC FIELDS
-  prakriti           Prakriti?           // Body constitution
-  vikriti            String?             // Current state/imbalance
-  doshaImbalances    Json?               // Array of dosha imbalances
-  agni               AgniType?           // Digestive fire strength
-  dinacharya         String?             // Daily routine
-  ritucharya         String?             // Seasonal routine
-  dietaryRestrictionsJson Json?          // Food restrictions (JSON format)
-  lifestyleFactors   Json?               // Lifestyle assessment
-  seasonalPatterns   Json?               // Seasonal health patterns
-
-  // Primary clinic association
-  primaryClinicId String? // Primary clinic for the user
-  primaryClinic   Clinic? @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
-
-  // Many-to-many clinic associations
-  clinics Clinic[] @relation("UserClinics")
-
-  // Role-specific clinic associations
-  clinicAdmins  ClinicAdmin[]
-  receptionists Receptionist[]
-
-  // Clinics created by this user
-  createdClinics Clinic[] @relation("UserCreatedClinics")
-
-  // Other relationships
-  appointments           Appointment[]
-  auditLogs              AuditLog[]
-  doctor                 Doctor?
-  notifications          Notification[]
-  patient                Patient?
-  superAdmin             SuperAdmin?
-  pharmacist             Pharmacist?
-  therapist              Therapist?
-  labTechnician          LabTechnician?
-  financeBilling         FinanceBilling?
-  supportStaff           SupportStaff?
-  nurse                  Nurse?
-  counselor              Counselor?
-  medicalHistories       MedicalHistory[]
-  labReports             LabReport[]
-  radiologyReports       RadiologyReport[]
-  surgicalRecords        SurgicalRecord[]
-  mentalHealthNotes      MentalHealthNote[]
-  vitals                 Vital[]
-  nadiParikshas          NadiPariksha[]
-  ayurvedicPrescriptions AyurvedicPrescription[]
-  prakritiAnalyses       PrakritiAnalysis[]
-  immunizations          Immunization[]
-  allergies              Allergy[]
-  familyHistories        FamilyHistory[]
-  lifestyleAssessments   LifestyleAssessment[]
-  emergencyContacts      EmergencyContact[]
-  insurances             Insurance[]
-  medications            Medication[]
-  dietaryRestrictions    DietaryRestriction[]
-
-  // RBAC Relations
-  userRoles UserRole[]
-
-  // Video Consultation Relations
-  videoParticipants VideoParticipant[]
+  id                      String                  @id @default(uuid())
+  userid                  String                  @unique
+  email                   String                  @unique
+  password                String
+  name                    String
+  age                     Int
+  firstName               String?
+  lastName                String?
+  phone                   String?
+  role                    Role                    @default(PATIENT)
+  profilePicture          String?
+  gender                  String?
+  dateOfBirth             DateTime?
+  address                 String?
+  city                    String?
+  state                   String?
+  country                 String?
+  zipCode                 String?
+  emergencyContact        String?
+  isVerified              Boolean                 @default(false)
+  lastLogin               DateTime?
+  lastLoginIP             String?
+  lastLoginDevice         String?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  passwordChangedAt       DateTime?
+  googleId                String?
+  facebookId              String?
+  appleId                 String?
+  appName                 String?
+  medicalConditions       String?
+  prakriti                Prakriti?
+  vikriti                 String?
+  doshaImbalances         Json?
+  agni                    AgniType?
+  dinacharya              String?
+  ritucharya              String?
+  dietaryRestrictionsJson Json?
+  lifestyleFactors        Json?
+  seasonalPatterns        Json?
+  primaryClinicId         String?
+  allergies               Allergy[]
+  appointments            Appointment[]
+  auditLogs               AuditLog[]
+  ayurvedicPrescriptions  AyurvedicPrescription[]
+  clinicAdmins            ClinicAdmin?
+  counselor               Counselor?
+  dietaryRestrictions     DietaryRestriction[]
+  doctor                  Doctor?
+  emergencyContacts       EmergencyContact[]
+  familyHistories         FamilyHistory[]
+  financeBilling          FinanceBilling?
+  immunizations           Immunization[]
+  insurances              Insurance[]
+  labReports              LabReport[]
+  labTechnician           LabTechnician?
+  lifestyleAssessments    LifestyleAssessment[]
+  medicalHistories        MedicalHistory[]
+  medications             Medication[]
+  mentalHealthNotes       MentalHealthNote[]
+  nadiParikshas           NadiPariksha[]
+  notifications           Notification[]
+  nurse                   Nurse?
+  patient                 Patient?
+  pharmacist              Pharmacist?
+  prakritiAnalyses        PrakritiAnalysis[]
+  radiologyReports        RadiologyReport[]
+  receptionists           Receptionist?
+  superAdmin              SuperAdmin?
+  supportStaff            SupportStaff?
+  surgicalRecords         SurgicalRecord[]
+  therapist               Therapist?
+  userRoles               UserRole[]
+  vitals                  Vital[]
+  createdClinics          Clinic[]                @relation("UserCreatedClinics")
+  primaryClinic           Clinic?                 @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
+  videoParticipants       VideoParticipant[]
+  clinics                 Clinic[]                @relation("UserClinics")
 
   @@index([primaryClinicId])
   @@index([email])
@@ -125,67 +110,55 @@ model Receptionist {
 }
 
 model Clinic {
-  id                   String         @id @default(uuid())
-  clinicId             String         @unique
-  name                 String
-  address              String
-  phone                String
-  email                String         @unique
-  app_name             String         @unique
-  db_connection_string String
-  databaseName         String?
-  databaseStatus       DatabaseStatus @default(CREATING)
-  databaseCreatedAt    DateTime?
-  databaseLastSync     DateTime?
-  isActive             Boolean        @default(true)
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
-  createdBy            String
-  subdomain            String?        @unique
-  logo                 String?
-  website              String?
-  description          String?
-  timezone             String?        @default("UTC")
-  currency             String?        @default("INR")
-  language             String?        @default("en")
-  settings             Json?
-
-  // Multi-tenant relationships
-  primaryUsers  User[] @relation("UserPrimaryClinic")
-  users         User[] @relation("UserClinics")
-  createdByUser User   @relation("UserCreatedClinics", fields: [createdBy], references: [id])
-
-  // Role-specific relationships
+  id                    String                       @id @default(uuid())
+  clinicId              String                       @unique
+  name                  String
+  address               String
+  phone                 String
+  email                 String                       @unique
+  app_name              String                       @unique
+  db_connection_string  String
+  databaseName          String?
+  databaseStatus        DatabaseStatus               @default(CREATING)
+  databaseCreatedAt     DateTime?
+  databaseLastSync      DateTime?
+  isActive              Boolean                      @default(true)
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+  createdBy             String
+  subdomain             String?                      @unique
+  logo                  String?
+  website               String?
+  description           String?
+  timezone              String?                      @default("UTC")
+  currency              String?                      @default("INR")
+  language              String?                      @default("en")
+  settings              Json?
   appointments          Appointment[]
+  appointmentTemplates  AppointmentTemplate[]
+  ayurvedicTherapies    AyurvedicTherapy[]
+  businessRules         BusinessRule[]
+  checkInLocations      CheckInLocation[]
   admins                ClinicAdmin[]
   doctors               DoctorClinic[]
+  eligibilityChecks     EligibilityCheck[]
+  eligibilityCriteria   EligibilityCriteria[]
+  rbacRoles             RbacRole[]
   receptionists         Receptionist[]
+  recurringSeries       RecurringAppointmentSeries[]
+  resources             Resource[]
+  resourceBookings      ResourceBooking[]
+  rolePermissions       RolePermission[]
+  therapyQueues         TherapyQueue[]
+  therapySessions       TherapySession[]
+  userRoles             UserRole[]
+  waitlistEntries       WaitlistEntry[]
   ReceptionistsAtClinic ReceptionistsAtClinic[]
   locations             ClinicLocation[]
-
-  // RBAC Relations
-  rbacRoles RbacRole[]
-  userRoles UserRole[]
-
-  // New Relations for Enhanced Features
-  businessRules        BusinessRule[]
-  eligibilityCriteria  EligibilityCriteria[]
-  eligibilityChecks    EligibilityCheck[]
-  appointmentTemplates AppointmentTemplate[]
-  recurringSeries      RecurringAppointmentSeries[]
-  waitlistEntries      WaitlistEntry[]
-  resources            Resource[]
-  resourceBookings     ResourceBooking[]
-  videoConsultations   VideoConsultation[]
-  
-  // NEW AYURVEDIC RELATIONS
-  ayurvedicTherapies   AyurvedicTherapy[]
-  therapyQueues         TherapyQueue[]
-  checkInLocations      CheckInLocation[]
-  
-  // Additional relations for new models
-  rolePermissions       RolePermission[]
-  therapySessions        TherapySession[]
+  createdByUser         User                         @relation("UserCreatedClinics", fields: [createdBy], references: [id])
+  primaryUsers          User[]                       @relation("UserPrimaryClinic")
+  videoConsultations    VideoConsultation[]
+  users                 User[]                       @relation("UserClinics")
 
   @@index([app_name])
   @@index([isActive])
@@ -289,59 +262,51 @@ model Counselor {
 }
 
 model Doctor {
-  id              String         @id @default(uuid())
-  userId          String         @unique
-  specialization  String
-  experience      Int
-  qualification   String?
-  consultationFee Float?
-  rating          Float?         @default(0.0)
-  isAvailable     Boolean        @default(true)
-  workingHours    Json?
-  createdAt       DateTime       @default(now())
-  appointments    Appointment[]
-  user            User           @relation(fields: [userId], references: [id])
-  clinics         DoctorClinic[]
-  healthRecords   HealthRecord[]
-  prescriptions   Prescription[]
-  reviews         Review[]
-
-  // New Relations for Enhanced Features
+  id                   String                @id @default(uuid())
+  userId               String                @unique
+  specialization       String
+  experience           Int
+  qualification        String?
+  consultationFee      Float?
+  rating               Float?                @default(0.0)
+  isAvailable          Boolean               @default(true)
+  workingHours         Json?
+  createdAt            DateTime              @default(now())
+  appointments         Appointment[]
   appointmentTemplates AppointmentTemplate[]
+  user                 User                  @relation(fields: [userId], references: [id])
+  clinics              DoctorClinic[]
+  healthRecords        HealthRecord[]
+  prescriptions        Prescription[]
+  reviews              Review[]
+  therapySessions      TherapySession[]
   waitlistEntries      WaitlistEntry[]
   videoConsultations   VideoConsultation[]
-  
-  // NEW AYURVEDIC RELATIONS
-  therapySessions      TherapySession[]
 }
 
 model Patient {
-  id            String         @id @default(uuid())
-  userId        String         @unique
-  prakriti      Prakriti?
-  dosha         Dosha?
-  createdAt     DateTime       @default(now())
-  appointments  Appointment[]
-  healthRecords HealthRecord[]
-  user          User           @relation(fields: [userId], references: [id])
-  prescriptions Prescription[]
-
-  // New Relations for Enhanced Features
-  eligibilityChecks  EligibilityCheck[]
-  recurringSeries    RecurringAppointmentSeries[]
-  waitlistEntries    WaitlistEntry[]
-  insurance          Insurance[]
-  videoConsultations VideoConsultation[]
-  reviews            Review[]
-  
-  // NEW AYURVEDIC RELATIONS
-  therapySessions    TherapySession[]
-  queueEntries       QueueEntry[]
+  id                 String                       @id @default(uuid())
+  userId             String                       @unique
+  prakriti           Prakriti?
+  dosha              Dosha?
+  createdAt          DateTime                     @default(now())
+  appointments       Appointment[]
   checkIns           CheckIn[]
+  eligibilityChecks  EligibilityCheck[]
+  healthRecords      HealthRecord[]
+  insurance          Insurance[]
+  user               User                         @relation(fields: [userId], references: [id])
+  prescriptions      Prescription[]
+  queueEntries       QueueEntry[]
+  recurringSeries    RecurringAppointmentSeries[]
+  reviews            Review[]
+  therapySessions    TherapySession[]
+  waitlistEntries    WaitlistEntry[]
+  videoConsultations VideoConsultation[]
 }
 
 model Appointment {
-  id                  String            @id @default(uuid())
+  id                  String              @id @default(uuid())
   type                AppointmentType
   doctorId            String
   patientId           String
@@ -351,7 +316,7 @@ model Appointment {
   time                String
   duration            Int
   status              AppointmentStatus
-  priority            String?           @default("NORMAL")
+  priority            String?             @default("NORMAL")
   notes               String?
   userId              String
   updatedBy           String?
@@ -359,32 +324,28 @@ model Appointment {
   metadata            Json?
   cancelledBy         String?
   cancelledAt         DateTime?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
   therapyId           String?
   startedAt           DateTime?
   checkedInAt         DateTime?
   completedAt         DateTime?
-  clinic              Clinic            @relation(fields: [clinicId], references: [id])
-  doctor              Doctor            @relation(fields: [doctorId], references: [id])
-  location            ClinicLocation    @relation(fields: [locationId], references: [id])
-  patient             Patient           @relation(fields: [patientId], references: [id])
-  therapy             Therapy?          @relation(fields: [therapyId], references: [id])
-  user                User              @relation(fields: [userId], references: [id])
+  subscriptionId      String?
+  isSubscriptionBased Boolean             @default(false)
+  clinic              Clinic              @relation(fields: [clinicId], references: [id])
+  doctor              Doctor              @relation(fields: [doctorId], references: [id])
+  location            ClinicLocation      @relation(fields: [locationId], references: [id])
+  patient             Patient             @relation(fields: [patientId], references: [id])
+  subscription        Subscription?       @relation(fields: [subscriptionId], references: [id])
+  therapy             Therapy?            @relation(fields: [therapyId], references: [id])
+  user                User                @relation(fields: [userId], references: [id])
+  checkIns            CheckIn[]
   payment             Payment?
   queue               Queue?
-  subscriptionId      String?
-  isSubscriptionBased Boolean           @default(false)
-  subscription        Subscription?     @relation(fields: [subscriptionId], references: [id])
-
-  // New Relations for Enhanced Features
-  resourceBookings  ResourceBooking[]
-  VideoConsultation VideoConsultation[]
-  
-  // NEW AYURVEDIC RELATIONS
-  therapySessions   TherapySession[]
-  queueEntries       QueueEntry[]
-  checkIns           CheckIn[]
+  queueEntries        QueueEntry[]
+  resourceBookings    ResourceBooking[]
+  therapySessions     TherapySession[]
+  VideoConsultation   VideoConsultation[]
 
   @@index([doctorId])
   @@index([patientId])
@@ -507,10 +468,10 @@ model Subscription {
   appointmentsRemaining Int?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
-  plan                  BillingPlan        @relation(fields: [planId], references: [id])
-  payments              Payment[]
-  invoices              Invoice[]
   appointments          Appointment[]
+  invoices              Invoice[]
+  payments              Payment[]
+  plan                  BillingPlan        @relation(fields: [planId], references: [id])
 
   @@index([userId])
   @@index([planId])
@@ -543,29 +504,29 @@ model BillingPlan {
 }
 
 model Invoice {
-  id             String        @id @default(uuid())
-  invoiceNumber  String        @unique
-  userId         String
-  subscriptionId String?
-  clinicId       String
-  amount         Float
-  tax            Float?        @default(0)
-  discount       Float?        @default(0)
-  totalAmount    Float
-  status         InvoiceStatus @default(DRAFT)
-  dueDate        DateTime
-  paidAt         DateTime?
-  description    String?
-  lineItems      Json?
-  metadata       Json?
-  pdfFilePath    String?       // Path to generated PDF invoice
-  pdfUrl         String?       // Public URL to access PDF
-  sentViaWhatsApp Boolean      @default(false)
-  whatsappSentAt DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
-  payments       Payment[]
+  id              String        @id @default(uuid())
+  invoiceNumber   String        @unique
+  userId          String
+  subscriptionId  String?
+  clinicId        String
+  amount          Float
+  tax             Float?        @default(0)
+  discount        Float?        @default(0)
+  totalAmount     Float
+  status          InvoiceStatus @default(DRAFT)
+  dueDate         DateTime
+  paidAt          DateTime?
+  description     String?
+  lineItems       Json?
+  metadata        Json?
+  pdfFilePath     String?
+  pdfUrl          String?
+  sentViaWhatsApp Boolean       @default(false)
+  whatsappSentAt  DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+  payments        Payment[]
 
   @@index([userId])
   @@index([subscriptionId])
@@ -630,9 +591,9 @@ model AuditLog {
   resourceId   String?
   metadata     Json?
   clinicId     String?
-  user         User     @relation(fields: [userId], references: [id])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
 
   @@index([clinicId])
   @@index([resourceType])
@@ -698,20 +659,792 @@ model ReceptionistsAtClinic {
   @@map("_ReceptionistsAtClinic")
 }
 
+model MedicalHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  clinicId  String?
+  condition String
+  diagnosis String?
+  treatment String?
+  doctorId  String?
+  notes     String?
+  date      DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model LabReport {
+  id          String   @id @default(uuid())
+  userId      String
+  clinicId    String?
+  testName    String
+  result      String
+  unit        String?
+  normalRange String?
+  labName     String?
+  doctorId    String?
+  notes       String?
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model RadiologyReport {
+  id         String   @id @default(uuid())
+  userId     String
+  clinicId   String?
+  imageType  String
+  findings   String
+  conclusion String
+  doctorId   String?
+  notes      String?
+  date       DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model SurgicalRecord {
+  id          String   @id @default(uuid())
+  userId      String
+  clinicId    String?
+  surgeryName String
+  surgeon     String
+  doctorId    String?
+  notes       String?
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model MentalHealthNote {
+  id          String   @id @default(uuid())
+  userId      String
+  clinicId    String?
+  therapist   String
+  sessionNote String
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+}
+
+model Vital {
+  id         String   @id @default(uuid())
+  userId     String
+  clinicId   String?
+  type       String
+  value      String
+  unit       String?
+  doctorId   String?
+  notes      String?
+  recordedAt DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model NadiPariksha {
+  id           String   @id @default(uuid())
+  userId       String
+  diagnosis    String
+  pulseType    String
+  notes        String?
+  date         DateTime
+  practitioner String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model AyurvedicPrescription {
+  id           String   @id @default(uuid())
+  userId       String
+  formulation  String
+  dosage       String
+  duration     String
+  instructions String?
+  prescribedAt DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model PrakritiAnalysis {
+  id           String   @id @default(uuid())
+  userId       String
+  vataLevel    Int
+  pittaLevel   Int
+  kaphaLevel   Int
+  dominantType String
+  notes        String?
+  assessedAt   DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Immunization {
+  id               String    @id @default(uuid())
+  userId           String
+  clinicId         String?
+  vaccineName      String
+  dateAdministered DateTime
+  nextDueDate      DateTime?
+  batchNumber      String?
+  administrator    String?
+  location         String?
+  doctorId         String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  user             User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model Allergy {
+  id            String   @id @default(uuid())
+  userId        String
+  clinicId      String?
+  allergen      String
+  severity      String
+  reaction      String
+  diagnosedDate DateTime
+  doctorId      String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model FamilyHistory {
+  id           String   @id @default(uuid())
+  userId       String
+  clinicId     String?
+  relation     String
+  condition    String
+  diagnosedAge Int?
+  doctorId     String?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model LifestyleAssessment {
+  id         String   @id @default(uuid())
+  userId     String
+  clinicId   String?
+  diet       String?
+  exercise   String?
+  smoking    String?
+  alcohol    String?
+  sleep      String?
+  stress     String?
+  occupation String?
+  doctorId   String?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model EmergencyContact {
+  id             String   @id @default(uuid())
+  userId         String
+  name           String
+  relationship   String
+  phone          String
+  alternatePhone String?
+  address        String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Insurance {
+  id                String    @id @default(uuid())
+  userId            String
+  provider          String
+  policyNumber      String
+  groupNumber       String?
+  primaryHolder     String
+  coverageStartDate DateTime
+  coverageEndDate   DateTime?
+  coverageType      String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  patientId         String?
+  Patient           Patient?  @relation(fields: [patientId], references: [id])
+  user              User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Medication {
+  id           String    @id @default(uuid())
+  userId       String
+  clinicId     String?
+  name         String
+  dosage       String
+  frequency    String
+  startDate    DateTime
+  endDate      DateTime?
+  prescribedBy String
+  purpose      String?
+  sideEffects  String?
+  doctorId     String?
+  notes        String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  user         User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([doctorId])
+}
+
+model DietaryRestriction {
+  id           String    @id @default(uuid())
+  userId       String
+  restriction  String
+  reason       String?
+  startDate    DateTime
+  endDate      DateTime?
+  prescribedBy String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  user         User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Permission {
+  id                 String           @id @default(uuid())
+  name               String
+  resource           String
+  action             String
+  description        String?
+  domain             String           @default("healthcare")
+  isSystemPermission Boolean          @default(false)
+  isActive           Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  rolePermissions    RolePermission[]
+
+  @@unique([resource, action, domain])
+  @@index([resource, action])
+  @@index([domain])
+}
+
+model RbacRole {
+  id           String           @id @default(uuid())
+  name         String
+  displayName  String
+  description  String?
+  domain       String           @default("healthcare")
+  clinicId     String?
+  isSystemRole Boolean          @default(false)
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  clinic       Clinic?          @relation(fields: [clinicId], references: [id])
+  permissions  RolePermission[]
+  userRoles    UserRole[]
+
+  @@unique([name, domain, clinicId])
+  @@index([domain, clinicId])
+}
+
+model UserRole {
+  id          String    @id @default(uuid())
+  userId      String
+  roleId      String
+  clinicId    String?
+  assignedBy  String    @default("SYSTEM")
+  assignedAt  DateTime  @default(now())
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  revokedBy   String?
+  isActive    Boolean   @default(true)
+  isPrimary   Boolean   @default(false)
+  permissions Json?
+  schedule    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  clinic      Clinic?   @relation(fields: [clinicId], references: [id])
+  role        RbacRole  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, clinicId])
+  @@index([userId])
+  @@index([roleId])
+  @@index([clinicId])
+  @@index([isPrimary])
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  clinicId     String?
+  isActive     Boolean    @default(true)
+  assignedAt   DateTime   @default(now())
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  clinic       Clinic?    @relation(fields: [clinicId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         RbacRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId, clinicId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@index([clinicId])
+}
+
+model BusinessRule {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  priority    Int      @default(1)
+  isActive    Boolean  @default(true)
+  conditions  Json
+  actions     Json
+  clinicId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  clinic      Clinic?  @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
+  @@index([isActive, priority])
+}
+
+model EligibilityCriteria {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  clinicId    String
+  conditions  Json
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  clinic      Clinic   @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
+  @@index([isActive])
+}
+
+model EligibilityCheck {
+  id              String   @id @default(uuid())
+  patientId       String
+  appointmentType String
+  clinicId        String
+  requestedDate   DateTime
+  criteria        Json
+  result          Json
+  checkedAt       DateTime @default(now())
+  clinic          Clinic   @relation(fields: [clinicId], references: [id])
+  patient         Patient  @relation(fields: [patientId], references: [id])
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([checkedAt])
+}
+
+model AppointmentTemplate {
+  id                         String                       @id @default(uuid())
+  name                       String
+  description                String?
+  clinicId                   String
+  doctorId                   String
+  type                       String
+  duration                   Int
+  timeSlots                  Json
+  recurringPattern           String
+  recurringDays              Json?
+  recurringInterval          Int                          @default(1)
+  startDate                  DateTime
+  endDate                    DateTime?
+  isActive                   Boolean                      @default(true)
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  clinic                     Clinic                       @relation(fields: [clinicId], references: [id])
+  doctor                     Doctor                       @relation(fields: [doctorId], references: [id])
+  RecurringAppointmentSeries RecurringAppointmentSeries[]
+
+  @@index([clinicId])
+  @@index([doctorId])
+  @@index([isActive])
+}
+
+model RecurringAppointmentSeries {
+  id         String              @id @default(uuid())
+  templateId String
+  patientId  String
+  clinicId   String
+  startDate  DateTime
+  endDate    DateTime
+  status     String              @default("active")
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  clinic     Clinic              @relation(fields: [clinicId], references: [id])
+  patient    Patient             @relation(fields: [patientId], references: [id])
+  template   AppointmentTemplate @relation(fields: [templateId], references: [id])
+
+  @@index([templateId])
+  @@index([patientId])
+  @@index([clinicId])
+}
+
+model WaitlistEntry {
+  id                  String             @id @default(uuid())
+  patientId           String
+  doctorId            String
+  clinicId            String
+  priority            Int                @default(1)
+  status              String             @default("waiting")
+  requestedDate       DateTime
+  notes               String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  videoConsultationId String?
+  clinic              Clinic             @relation(fields: [clinicId], references: [id])
+  doctor              Doctor             @relation(fields: [doctorId], references: [id])
+  patient             Patient            @relation(fields: [patientId], references: [id])
+  videoConsultation   VideoConsultation? @relation(fields: [videoConsultationId], references: [id])
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([clinicId])
+  @@index([status, priority])
+}
+
+model Resource {
+  id              String            @id @default(uuid())
+  name            String
+  type            String
+  clinicId        String
+  capacity        Int?
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  clinic          Clinic            @relation(fields: [clinicId], references: [id])
+  ResourceBooking ResourceBooking[]
+
+  @@index([clinicId])
+  @@index([type])
+  @@index([isActive])
+}
+
+model ResourceBooking {
+  id            String       @id @default(uuid())
+  resourceId    String
+  appointmentId String?
+  startTime     DateTime
+  endTime       DateTime
+  status        String       @default("booked")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  clinicId      String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  Clinic        Clinic?      @relation(fields: [clinicId], references: [id])
+  resource      Resource     @relation(fields: [resourceId], references: [id])
+
+  @@index([resourceId])
+  @@index([appointmentId])
+  @@index([startTime, endTime])
+}
+
+model VideoConsultation {
+  id                   String             @id @default(uuid())
+  appointmentId        String
+  patientId            String
+  doctorId             String
+  clinicId             String
+  roomId               String             @unique
+  meetingUrl           String
+  status               VideoCallStatus    @default(SCHEDULED)
+  startTime            DateTime?
+  endTime              DateTime?
+  duration             Int?
+  recordingUrl         String?
+  recordingId          String?
+  isRecording          Boolean            @default(false)
+  maxParticipants      Int                @default(2)
+  recordingEnabled     Boolean            @default(true)
+  screenSharingEnabled Boolean            @default(true)
+  chatEnabled          Boolean            @default(true)
+  waitingRoomEnabled   Boolean            @default(true)
+  autoRecord           Boolean            @default(false)
+  iceServers           Json?
+  turnServers          Json?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  WaitlistEntry        WaitlistEntry[]
+  appointment          Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  clinic               Clinic             @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor               Doctor             @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient              Patient            @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  participants         VideoParticipant[]
+  recordings           VideoRecording[]
+
+  @@index([appointmentId])
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([clinicId])
+  @@index([status])
+  @@map("video_consultations")
+}
+
+model VideoParticipant {
+  id                String                 @id @default(uuid())
+  consultationId    String
+  userId            String
+  role              VideoParticipantRole   @default(PARTICIPANT)
+  status            VideoParticipantStatus @default(INVITED)
+  joinedAt          DateTime?
+  leftAt            DateTime?
+  duration          Int?
+  peerId            String?
+  connectionId      String?
+  isAudioEnabled    Boolean                @default(true)
+  isVideoEnabled    Boolean                @default(true)
+  isScreenSharing   Boolean                @default(false)
+  audioQuality      Float?
+  videoQuality      Float?
+  connectionQuality Float?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  consultation      VideoConsultation      @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  user              User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([consultationId])
+  @@index([userId])
+  @@index([status])
+  @@map("video_participants")
+}
+
+model VideoRecording {
+  id              String            @id @default(uuid())
+  consultationId  String
+  fileName        String
+  filePath        String
+  fileSize        BigInt?
+  duration        Int?
+  format          String            @default("mp4")
+  quality         String            @default("720p")
+  storageProvider String            @default("local")
+  storageUrl      String?
+  isProcessed     Boolean           @default(false)
+  isPublic        Boolean           @default(false)
+  accessToken     String?
+  expiresAt       DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  consultation    VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+
+  @@index([consultationId])
+  @@index([isProcessed])
+  @@map("video_recordings")
+}
+
+model AyurvedicTherapy {
+  id                String           @id @default(uuid())
+  name              String
+  description       String?
+  therapyType       TherapyType
+  duration          TherapyDuration
+  estimatedDuration Int
+  isActive          Boolean          @default(true)
+  clinicId          String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  clinic            Clinic           @relation(fields: [clinicId], references: [id])
+  sessions          TherapySession[]
+
+  @@index([clinicId])
+  @@index([therapyType])
+}
+
+model TherapySession {
+  id              String           @id @default(uuid())
+  therapyId       String
+  appointmentId   String
+  patientId       String
+  doctorId        String
+  clinicId        String
+  sessionDate     DateTime
+  startTime       DateTime
+  endTime         DateTime?
+  status          TherapyStatus    @default(SCHEDULED)
+  notes           String?
+  observations    Json?
+  nextSessionDate DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  appointment     Appointment      @relation(fields: [appointmentId], references: [id])
+  clinic          Clinic           @relation(fields: [clinicId], references: [id])
+  doctor          Doctor           @relation(fields: [doctorId], references: [id])
+  patient         Patient          @relation(fields: [patientId], references: [id])
+  therapy         AyurvedicTherapy @relation(fields: [therapyId], references: [id])
+
+  @@index([therapyId])
+  @@index([appointmentId])
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([clinicId])
+  @@index([sessionDate])
+}
+
+model TherapyQueue {
+  id                String       @id @default(uuid())
+  clinicId          String
+  therapyType       TherapyType
+  queueName         String
+  isActive          Boolean      @default(true)
+  maxCapacity       Int          @default(10)
+  currentPosition   Int          @default(0)
+  estimatedWaitTime Int?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  queueEntries      QueueEntry[]
+  clinic            Clinic       @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
+  @@index([therapyType])
+  @@index([isActive])
+}
+
+model QueueEntry {
+  id                String       @id @default(uuid())
+  queueId           String
+  appointmentId     String
+  patientId         String
+  position          Int
+  status            QueueStatus  @default(WAITING)
+  estimatedWaitTime Int?
+  actualWaitTime    Int?
+  checkedInAt       DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  priority          Int          @default(0)
+  notes             String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  appointment       Appointment  @relation(fields: [appointmentId], references: [id])
+  patient           Patient      @relation(fields: [patientId], references: [id])
+  queue             TherapyQueue @relation(fields: [queueId], references: [id])
+
+  @@index([queueId])
+  @@index([appointmentId])
+  @@index([patientId])
+  @@index([status])
+  @@index([position])
+}
+
+model CheckInLocation {
+  id           String    @id @default(uuid())
+  clinicId     String
+  locationName String
+  qrCode       String    @unique
+  coordinates  Json
+  radius       Float
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  checkIns     CheckIn[]
+  clinic       Clinic    @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
+  @@index([qrCode])
+}
+
+model CheckIn {
+  id            String          @id @default(uuid())
+  appointmentId String
+  locationId    String
+  patientId     String
+  checkedInAt   DateTime        @default(now())
+  coordinates   Json?
+  deviceInfo    Json?
+  isVerified    Boolean         @default(false)
+  verifiedBy    String?
+  notes         String?
+  appointment   Appointment     @relation(fields: [appointmentId], references: [id])
+  location      CheckInLocation @relation(fields: [locationId], references: [id])
+  patient       Patient         @relation(fields: [patientId], references: [id])
+
+  @@index([appointmentId])
+  @@index([locationId])
+  @@index([patientId])
+  @@index([checkedInAt])
+}
+
 enum Role {
   SUPER_ADMIN
   CLINIC_ADMIN
   DOCTOR
   PATIENT
   RECEPTIONIST
-  // NEW AYURVEDIC ROLES
-  PHARMACIST           // Medicine desk management
-  THERAPIST           // Panchakarma specialist
-  LAB_TECHNICIAN      // Diagnostic test management
-  FINANCE_BILLING     // Payment and invoice management
-  SUPPORT_STAFF       // General clinic support
-  NURSE               // Clinical support
-  COUNSELOR           // Patient counseling
+  PHARMACIST
+  THERAPIST
+  LAB_TECHNICIAN
+  FINANCE_BILLING
+  SUPPORT_STAFF
+  NURSE
+  COUNSELOR
 }
 
 enum Gender {
@@ -778,19 +1511,18 @@ enum AppointmentType {
   IN_PERSON
   VIDEO_CALL
   HOME_VISIT
-  // NEW AYURVEDIC TYPES
-  VIDDHAKARMA        // Surgical procedures
-  AGNIKARMA          // Fire therapy
-  PANCHAKARMA        // Detoxification therapies
-  NADI_PARIKSHA      // Pulse diagnosis
-  DOSHA_ANALYSIS     // Constitutional assessment
-  SHIRODHARA         // Oil pouring therapy
-  VIRECHANA          // Purgation therapy
-  ABHYANGA           // Oil massage
-  SWEDANA            // Sweating therapy
-  BASTI              // Enema therapy
-  NASYA              // Nasal therapy
-  RAKTAMOKSHANA      // Bloodletting therapy
+  VIDDHAKARMA
+  AGNIKARMA
+  PANCHAKARMA
+  NADI_PARIKSHA
+  DOSHA_ANALYSIS
+  SHIRODHARA
+  VIRECHANA
+  ABHYANGA
+  SWEDANA
+  BASTI
+  NASYA
+  RAKTAMOKSHANA
 }
 
 enum Dosha {
@@ -823,27 +1555,26 @@ enum DatabaseStatus {
   DISABLED
 }
 
-// NEW AYURVEDIC ENUMS
 enum TherapyType {
-  SHODHANA           // Purification therapies
-  SHAMANA            // Palliative therapies
-  RASAYANA           // Rejuvenation therapies
-  VAJIKARANA         // Aphrodisiac therapies
+  SHODHANA
+  SHAMANA
+  RASAYANA
+  VAJIKARANA
 }
 
 enum TherapyDuration {
-  SHORT              // 30-60 minutes
-  MEDIUM             // 1-3 hours
-  LONG               // 3-8 hours
-  EXTENDED           // Multiple days
-  RESIDENTIAL        // 7-21 days
+  SHORT
+  MEDIUM
+  LONG
+  EXTENDED
+  RESIDENTIAL
 }
 
 enum AgniType {
-  TIKSHNA            // Sharp/strong
-  MANDA              // Slow/weak
-  SAMA               // Balanced
-  VISHAMA            // Irregular
+  TIKSHNA
+  MANDA
+  SAMA
+  VISHAMA
 }
 
 enum TherapyStatus {
@@ -852,705 +1583,6 @@ enum TherapyStatus {
   COMPLETED
   CANCELLED
   PAUSED
-}
-
-model MedicalHistory {
-  id        String   @id @default(uuid())
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String
-  clinicId  String?
-  condition String
-  diagnosis String?
-  treatment String?
-  doctorId  String?
-  notes     String?
-  date      DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model LabReport {
-  id          String   @id @default(uuid())
-  user        User     @relation(fields: [userId], references: [id])
-  userId      String
-  clinicId    String?
-  testName    String
-  result      String
-  unit        String?
-  normalRange String?
-  labName     String?
-  doctorId    String?
-  notes       String?
-  date        DateTime
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model RadiologyReport {
-  id         String   @id @default(uuid())
-  user       User     @relation(fields: [userId], references: [id])
-  userId     String
-  clinicId   String?
-  imageType  String
-  findings   String
-  conclusion String
-  doctorId   String?
-  notes      String?
-  date       DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model SurgicalRecord {
-  id          String   @id @default(uuid())
-  user        User     @relation(fields: [userId], references: [id])
-  userId      String
-  clinicId    String?
-  surgeryName String
-  surgeon     String
-  doctorId    String?
-  notes       String?
-  date        DateTime
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model MentalHealthNote {
-  id          String   @id @default(uuid())
-  user        User     @relation(fields: [userId], references: [id])
-  userId      String
-  clinicId    String?
-  therapist   String
-  sessionNote String
-  date        DateTime
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-}
-
-model Vital {
-  id         String   @id @default(uuid())
-  user       User     @relation(fields: [userId], references: [id])
-  userId     String
-  clinicId   String?
-  type       String
-  value      String
-  unit       String?
-  doctorId   String?
-  notes      String?
-  recordedAt DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-
-model NadiPariksha {
-  id           String   @id @default(uuid())
-  user         User     @relation(fields: [userId], references: [id])
-  userId       String
-  diagnosis    String
-  pulseType    String
-  notes        String?
-  date         DateTime
-  practitioner String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId])
-}
-
-model AyurvedicPrescription {
-  id           String   @id @default(uuid())
-  user         User     @relation(fields: [userId], references: [id])
-  userId       String
-  formulation  String
-  dosage       String
-  duration     String
-  instructions String?
-  prescribedAt DateTime
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId])
-}
-
-model PrakritiAnalysis {
-  id           String   @id @default(uuid())
-  user         User     @relation(fields: [userId], references: [id])
-  userId       String
-  vataLevel    Int
-  pittaLevel   Int
-  kaphaLevel   Int
-  dominantType String
-  notes        String?
-  assessedAt   DateTime
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId])
-}
-
-model Immunization {
-  id               String    @id @default(uuid())
-  user             User      @relation(fields: [userId], references: [id])
-  userId           String
-  clinicId         String?
-  vaccineName      String
-  dateAdministered DateTime
-  nextDueDate      DateTime?
-  batchNumber      String?
-  administrator    String?
-  location         String?
-  doctorId         String?
-  notes            String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model Allergy {
-  id            String   @id @default(uuid())
-  user          User     @relation(fields: [userId], references: [id])
-  userId        String
-  clinicId      String?
-  allergen      String
-  severity      String // Mild, Moderate, Severe
-  reaction      String
-  diagnosedDate DateTime
-  doctorId      String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model FamilyHistory {
-  id           String   @id @default(uuid())
-  user         User     @relation(fields: [userId], references: [id])
-  userId       String
-  clinicId     String?
-  relation     String // Father, Mother, Sibling, etc.
-  condition    String
-  diagnosedAge Int?
-  doctorId     String?
-  notes        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model LifestyleAssessment {
-  id         String   @id @default(uuid())
-  user       User     @relation(fields: [userId], references: [id])
-  userId     String
-  clinicId   String?
-  diet       String?
-  exercise   String?
-  smoking    String? // Never, Former, Current
-  alcohol    String? // Never, Occasional, Regular
-  sleep      String?
-  stress     String?
-  occupation String?
-  doctorId   String?
-  notes      String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model EmergencyContact {
-  id             String   @id @default(uuid())
-  user           User     @relation(fields: [userId], references: [id])
-  userId         String
-  name           String
-  relationship   String
-  phone          String
-  alternatePhone String?
-  address        String?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@index([userId])
-}
-
-model Insurance {
-  id                String    @id @default(uuid())
-  user              User      @relation(fields: [userId], references: [id])
-  userId            String
-  provider          String
-  policyNumber      String
-  groupNumber       String?
-  primaryHolder     String
-  coverageStartDate DateTime
-  coverageEndDate   DateTime?
-  coverageType      String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  Patient           Patient?  @relation(fields: [patientId], references: [id])
-  patientId         String?
-
-  @@index([userId])
-}
-
-model Medication {
-  id           String    @id @default(uuid())
-  user         User      @relation(fields: [userId], references: [id])
-  userId       String
-  clinicId     String?
-  name         String
-  dosage       String
-  frequency    String
-  startDate    DateTime
-  endDate      DateTime?
-  prescribedBy String
-  purpose      String?
-  sideEffects  String?
-  doctorId     String?
-  notes        String?
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  @@index([userId])
-  @@index([clinicId])
-  @@index([doctorId])
-}
-
-model DietaryRestriction {
-  id           String    @id @default(uuid())
-  user         User      @relation(fields: [userId], references: [id])
-  userId       String
-  restriction  String
-  reason       String?
-  startDate    DateTime
-  endDate      DateTime?
-  prescribedBy String?
-  notes        String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  @@index([userId])
-}
-
-// RBAC Models for Authentication System
-model Permission {
-  id                 String   @id @default(uuid())
-  name               String
-  resource           String
-  action             String
-  description        String?
-  domain             String   @default("healthcare")
-  isSystemPermission Boolean  @default(false)
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  // Relations
-  rolePermissions RolePermission[]
-
-  @@unique([resource, action, domain])
-  @@index([resource, action])
-  @@index([domain])
-}
-
-model RbacRole {
-  id           String   @id @default(uuid())
-  name         String
-  displayName  String
-  description  String?
-  domain       String   @default("healthcare")
-  clinicId     String?
-  isSystemRole Boolean  @default(false)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Relations
-  clinic      Clinic?          @relation(fields: [clinicId], references: [id])
-  userRoles   UserRole[]
-  permissions RolePermission[]
-
-  @@unique([name, domain, clinicId])
-  @@index([domain, clinicId])
-}
-
-model UserRole {
-  id         String    @id @default(uuid())
-  userId     String
-  roleId     String
-  clinicId   String?
-  assignedBy String    @default("SYSTEM")
-  assignedAt DateTime  @default(now())
-  expiresAt  DateTime?
-  revokedAt  DateTime?
-  revokedBy  String?
-  isActive   Boolean   @default(true)
-  // NEW FIELDS
-  isPrimary  Boolean   @default(false)  // Primary role for the clinic
-  permissions Json?                     // Role-specific permissions
-  schedule   Json?                       // Role-specific schedule
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-
-  // Relations
-  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role   RbacRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  clinic Clinic?  @relation(fields: [clinicId], references: [id])
-
-  @@unique([userId, roleId, clinicId])
-  @@index([userId])
-  @@index([roleId])
-  @@index([clinicId])
-  @@index([isPrimary])
-}
-
-model RolePermission {
-  id           String   @id @default(uuid())
-  roleId       String
-  permissionId String
-  clinicId     String?  // Clinic-specific permissions
-  isActive     Boolean  @default(true)
-  assignedAt   DateTime @default(now())
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Relations
-  role       RbacRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  clinic     Clinic?    @relation(fields: [clinicId], references: [id])
-
-  @@unique([roleId, permissionId, clinicId])
-  @@index([roleId])
-  @@index([permissionId])
-  @@index([clinicId])
-}
-
-// Business Rules Engine Models
-model BusinessRule {
-  id          String   @id @default(uuid())
-  name        String
-  description String
-  priority    Int      @default(1)
-  isActive    Boolean  @default(true)
-  conditions  Json
-  actions     Json
-  clinicId    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  clinic Clinic? @relation(fields: [clinicId], references: [id])
-
-  @@index([clinicId])
-  @@index([isActive, priority])
-}
-
-// Eligibility Criteria Models
-model EligibilityCriteria {
-  id          String   @id @default(uuid())
-  name        String
-  description String
-  clinicId    String
-  conditions  Json
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  clinic Clinic @relation(fields: [clinicId], references: [id])
-
-  @@index([clinicId])
-  @@index([isActive])
-}
-
-model EligibilityCheck {
-  id              String   @id @default(uuid())
-  patientId       String
-  appointmentType String
-  clinicId        String
-  requestedDate   DateTime
-  criteria        Json
-  result          Json
-  checkedAt       DateTime @default(now())
-
-  // Relations
-  patient Patient @relation(fields: [patientId], references: [id])
-  clinic  Clinic  @relation(fields: [clinicId], references: [id])
-
-  @@index([patientId])
-  @@index([clinicId])
-  @@index([checkedAt])
-}
-
-// Appointment Templates Models
-model AppointmentTemplate {
-  id                String    @id @default(uuid())
-  name              String
-  description       String?
-  clinicId          String
-  doctorId          String
-  type              String
-  duration          Int // in minutes
-  timeSlots         Json // array of time slots
-  recurringPattern  String // daily, weekly, monthly, yearly
-  recurringDays     Json? // array of days for weekly pattern
-  recurringInterval Int       @default(1)
-  startDate         DateTime
-  endDate           DateTime?
-  isActive          Boolean   @default(true)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  // Relations
-  clinic                     Clinic                       @relation(fields: [clinicId], references: [id])
-  doctor                     Doctor                       @relation(fields: [doctorId], references: [id])
-  RecurringAppointmentSeries RecurringAppointmentSeries[]
-
-  @@index([clinicId])
-  @@index([doctorId])
-  @@index([isActive])
-}
-
-model RecurringAppointmentSeries {
-  id         String   @id @default(uuid())
-  templateId String
-  patientId  String
-  clinicId   String
-  startDate  DateTime
-  endDate    DateTime
-  status     String   @default("active") // active, paused, completed, cancelled
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  // Relations
-  template AppointmentTemplate @relation(fields: [templateId], references: [id])
-  patient  Patient             @relation(fields: [patientId], references: [id])
-  clinic   Clinic              @relation(fields: [clinicId], references: [id])
-
-  @@index([templateId])
-  @@index([patientId])
-  @@index([clinicId])
-}
-
-// Waitlist Models
-model WaitlistEntry {
-  id            String   @id @default(uuid())
-  patientId     String
-  doctorId      String
-  clinicId      String
-  priority      Int      @default(1)
-  status        String   @default("waiting") // waiting, notified, scheduled, cancelled
-  requestedDate DateTime
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  // Relations
-  patient             Patient            @relation(fields: [patientId], references: [id])
-  doctor              Doctor             @relation(fields: [doctorId], references: [id])
-  clinic              Clinic             @relation(fields: [clinicId], references: [id])
-  videoConsultation   VideoConsultation? @relation(fields: [videoConsultationId], references: [id])
-  videoConsultationId String?
-
-  @@index([patientId])
-  @@index([doctorId])
-  @@index([clinicId])
-  @@index([status, priority])
-}
-
-// Resource Management Models
-model Resource {
-  id        String   @id @default(uuid())
-  name      String
-  type      String // room, equipment, vehicle
-  clinicId  String
-  capacity  Int?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  clinic          Clinic            @relation(fields: [clinicId], references: [id])
-  ResourceBooking ResourceBooking[]
-
-  @@index([clinicId])
-  @@index([type])
-  @@index([isActive])
-}
-
-model ResourceBooking {
-  id            String   @id @default(uuid())
-  resourceId    String
-  appointmentId String?
-  startTime     DateTime
-  endTime       DateTime
-  status        String   @default("booked") // booked, cancelled, completed
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  // Relations
-  resource    Resource     @relation(fields: [resourceId], references: [id])
-  appointment Appointment? @relation(fields: [appointmentId], references: [id])
-  Clinic      Clinic?      @relation(fields: [clinicId], references: [id])
-  clinicId    String?
-
-  @@index([resourceId])
-  @@index([appointmentId])
-  @@index([startTime, endTime])
-}
-
-// Video Consultation Models
-model VideoConsultation {
-  id            String      @id @default(uuid())
-  appointmentId String
-  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  patientId     String
-  patient       Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  doctorId      String
-  doctor        Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  clinicId      String
-  clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-
-  // Video call details
-  roomId     String          @unique
-  meetingUrl String
-  status     VideoCallStatus @default(SCHEDULED)
-  startTime  DateTime?
-  endTime    DateTime?
-  duration   Int? // in minutes
-
-  // Recording and media
-  recordingUrl String?
-  recordingId  String?
-  isRecording  Boolean @default(false)
-
-  // Settings
-  maxParticipants      Int     @default(2)
-  recordingEnabled     Boolean @default(true)
-  screenSharingEnabled Boolean @default(true)
-  chatEnabled          Boolean @default(true)
-  waitingRoomEnabled   Boolean @default(true)
-  autoRecord           Boolean @default(false)
-
-  // WebRTC details
-  iceServers  Json?
-  turnServers Json?
-
-  // Participants
-  participants VideoParticipant[]
-  recordings   VideoRecording[]
-
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  WaitlistEntry WaitlistEntry[]
-
-  @@index([appointmentId])
-  @@index([patientId])
-  @@index([doctorId])
-  @@index([clinicId])
-  @@index([status])
-  @@map("video_consultations")
-}
-
-model VideoParticipant {
-  id             String            @id @default(uuid())
-  consultationId String
-  consultation   VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
-  userId         String
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Participant details
-  role     VideoParticipantRole   @default(PARTICIPANT)
-  status   VideoParticipantStatus @default(INVITED)
-  joinedAt DateTime?
-  leftAt   DateTime?
-  duration Int? // in minutes
-
-  // WebRTC details
-  peerId          String?
-  connectionId    String?
-  isAudioEnabled  Boolean @default(true)
-  isVideoEnabled  Boolean @default(true)
-  isScreenSharing Boolean @default(false)
-
-  // Quality metrics
-  audioQuality      Float?
-  videoQuality      Float?
-  connectionQuality Float?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([consultationId])
-  @@index([userId])
-  @@index([status])
-  @@map("video_participants")
-}
-
-model VideoRecording {
-  id             String            @id @default(uuid())
-  consultationId String
-  consultation   VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
-
-  // Recording details
-  fileName String
-  filePath String
-  fileSize BigInt?
-  duration Int? // in seconds
-  format   String  @default("mp4")
-  quality  String  @default("720p")
-
-  // Storage details
-  storageProvider String  @default("local")
-  storageUrl      String?
-  isProcessed     Boolean @default(false)
-
-  // Access control
-  isPublic    Boolean   @default(false)
-  accessToken String?
-  expiresAt   DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([consultationId])
-  @@index([isProcessed])
-  @@map("video_recordings")
 }
 
 enum VideoCallStatus {
@@ -1600,160 +1632,4 @@ enum InvoiceStatus {
   VOID
   UNCOLLECTIBLE
   OVERDUE
-}
-
-// =============================================
-// AYURVEDIC THERAPY MANAGEMENT MODELS
-// =============================================
-
-model AyurvedicTherapy {
-  id                String          @id @default(uuid())
-  name              String
-  description       String?
-  therapyType       TherapyType
-  duration          TherapyDuration
-  estimatedDuration Int             // in minutes
-  isActive          Boolean         @default(true)
-  clinicId          String
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  
-  // Relations
-  clinic            Clinic          @relation(fields: [clinicId], references: [id])
-  sessions          TherapySession[]
-  
-  @@index([clinicId])
-  @@index([therapyType])
-}
-
-model TherapySession {
-  id                String          @id @default(uuid())
-  therapyId         String
-  appointmentId     String
-  patientId         String
-  doctorId          String
-  clinicId          String
-  sessionDate       DateTime
-  startTime         DateTime
-  endTime           DateTime?
-  status            TherapyStatus   @default(SCHEDULED)
-  notes             String?
-  observations      Json?
-  nextSessionDate   DateTime?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  
-  // Relations
-  therapy           AyurvedicTherapy @relation(fields: [therapyId], references: [id])
-  appointment       Appointment     @relation(fields: [appointmentId], references: [id])
-  patient           Patient         @relation(fields: [patientId], references: [id])
-  doctor            Doctor          @relation(fields: [doctorId], references: [id])
-  clinic            Clinic          @relation(fields: [clinicId], references: [id])
-  
-  @@index([therapyId])
-  @@index([appointmentId])
-  @@index([patientId])
-  @@index([doctorId])
-  @@index([clinicId])
-  @@index([sessionDate])
-}
-
-// =============================================
-// SPECIALIZED QUEUE MANAGEMENT MODELS
-// =============================================
-
-model TherapyQueue {
-  id                String      @id @default(uuid())
-  clinicId          String
-  therapyType       TherapyType
-  queueName         String      // e.g., "Panchakarma Queue", "Agnikarma Queue"
-  isActive          Boolean     @default(true)
-  maxCapacity      Int         @default(10)
-  currentPosition   Int         @default(0)
-  estimatedWaitTime Int?        // in minutes
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  
-  // Relations
-  clinic            Clinic      @relation(fields: [clinicId], references: [id])
-  queueEntries      QueueEntry[]
-  
-  @@index([clinicId])
-  @@index([therapyType])
-  @@index([isActive])
-}
-
-model QueueEntry {
-  id                String      @id @default(uuid())
-  queueId           String
-  appointmentId     String
-  patientId         String
-  position          Int
-  status            QueueStatus @default(WAITING)
-  estimatedWaitTime Int?        // in minutes
-  actualWaitTime   Int?        // in minutes
-  checkedInAt       DateTime?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  priority          Int         @default(0)
-  notes             String?
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  
-  // Relations
-  queue             TherapyQueue @relation(fields: [queueId], references: [id])
-  appointment       Appointment  @relation(fields: [appointmentId], references: [id])
-  patient           Patient      @relation(fields: [patientId], references: [id])
-  
-  @@index([queueId])
-  @@index([appointmentId])
-  @@index([patientId])
-  @@index([status])
-  @@index([position])
-}
-
-// =============================================
-// LOCATION-BASED CHECK-IN MODELS
-// =============================================
-
-model CheckInLocation {
-  id                String    @id @default(uuid())
-  clinicId          String
-  locationName      String
-  qrCode            String    @unique
-  coordinates       Json      // {lat: number, lng: number}
-  radius            Float     // in meters
-  isActive          Boolean   @default(true)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  
-  // Relations
-  clinic            Clinic    @relation(fields: [clinicId], references: [id])
-  checkIns          CheckIn[]
-  
-  @@index([clinicId])
-  @@index([qrCode])
-}
-
-model CheckIn {
-  id                String    @id @default(uuid())
-  appointmentId    String
-  locationId        String
-  patientId         String
-  checkedInAt       DateTime  @default(now())
-  coordinates       Json?     // Patient's location when checked in
-  deviceInfo        Json?     // Device information
-  isVerified        Boolean   @default(false)
-  verifiedBy        String?   // Staff member who verified
-  notes             String?
-  
-  // Relations
-  appointment       Appointment    @relation(fields: [appointmentId], references: [id])
-  location          CheckInLocation @relation(fields: [locationId], references: [id])
-  patient           Patient        @relation(fields: [patientId], references: [id])
-  
-  @@index([appointmentId])
-  @@index([locationId])
-  @@index([patientId])
-  @@index([checkedInAt])
 }
