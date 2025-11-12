@@ -153,6 +153,9 @@ export class LoggingService {
         }
 
         // Cache expired or not set - fetch from database with timeout
+        if (!this.databaseService) {
+          return null;
+        }
         const systemUser = await Promise.race([
           this.databaseService.executeHealthcareRead(async client => {
             // Use findUnique if email is unique, otherwise findFirst

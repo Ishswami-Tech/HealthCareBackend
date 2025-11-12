@@ -91,6 +91,10 @@ export class AppController {
       let healthData;
       try {
         // Add timeout to prevent hanging - HealthService should respond quickly
+        // Check if healthService is available before calling
+        if (!this.healthService) {
+          throw new Error('HealthService is not available');
+        }
         const healthCheckPromise = this.healthService.checkDetailedHealth();
         const timeoutPromise = new Promise<DetailedHealthCheckResponse>(resolve => {
           setTimeout(() => {
@@ -190,17 +194,22 @@ export class AppController {
       } catch (healthError) {
         // If health check fails completely, use default degraded status
         // This should rarely happen as HealthService is designed to never throw
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'Health check failed in dashboard, using default status',
-            'AppController',
-            {
-              error: healthError instanceof Error ? healthError.message : String(healthError),
-              stack: healthError instanceof Error ? healthError.stack : undefined,
-            }
-          );
+        try {
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              'Health check failed in dashboard, using default status',
+              'AppController',
+              {
+                error: healthError instanceof Error ? healthError.message : String(healthError),
+                stack: healthError instanceof Error ? healthError.stack : undefined,
+              }
+            );
+          }
+        } catch (logError) {
+          // Ignore logging errors - we still want to show the dashboard
+          console.error('Failed to log health check error:', logError);
         }
         // Create a default health data structure
         healthData = {
@@ -406,7 +415,7 @@ export class AppController {
         {
           name: 'Email Service',
           description: 'Email sending and template management.',
-          url: `${baseUrl}/email-status`,
+          url: `${baseUrl}/email/status`,
           active: isEmailRunning,
           category: 'Services',
         },
@@ -505,7 +514,16 @@ export class AppController {
       };
 
       // Only fetch logs in development mode
-      const recentLogs = isProduction ? [] : await this.getRecentLogs();
+      let recentLogs: DashboardLogEntry[] = [];
+      try {
+        if (!isProduction && this.loggingService) {
+          recentLogs = await this.getRecentLogs();
+        }
+      } catch (logError) {
+        // Ignore log fetching errors - we still want to show the dashboard
+        console.error('Failed to fetch recent logs:', logError);
+        recentLogs = [];
+      }
 
       // Generate HTML content with both service cards and health data
       const html = this.generateDashboardHtml(
@@ -519,17 +537,34 @@ export class AppController {
       res.header('Content-Type', 'text/html');
       return res.send(html);
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Error serving dashboard',
-        'AppController',
-        {
-          error: _error instanceof Error ? _error.message : 'Unknown error',
-          stack: _error instanceof Error ? _error.stack : String(_error),
+      try {
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'Error serving dashboard',
+            'AppController',
+            {
+              error: _error instanceof Error ? _error.message : 'Unknown error',
+              stack: _error instanceof Error ? _error.stack : String(_error),
+            }
+          );
         }
-      );
-      return res.send('Error loading dashboard. Please check server logs.');
+      } catch (logError) {
+        // Ignore logging errors
+        console.error('Failed to log dashboard error:', logError);
+      }
+      // Return a simple error page instead of crashing
+      return res.status(500).send(`
+        <html>
+          <head><title>Dashboard Error</title></head>
+          <body>
+            <h1>Error loading dashboard</h1>
+            <p>Please check server logs for details.</p>
+            <p>Error: ${_error instanceof Error ? _error.message : 'Unknown error'}</p>
+          </body>
+        </html>
+      `);
     }
   }
 

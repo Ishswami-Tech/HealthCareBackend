@@ -193,7 +193,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       try {
         // Defensive: handle case where this.config is undefined or null
         if (this.config && typeof this.config.get === 'function') {
-          environment = this.config.get('NODE_ENV') || process.env['NODE_ENV'] || 'development';
+          environment = this.config.get<string>('NODE_ENV') || process.env['NODE_ENV'] || 'development';
         } else {
           environment = process.env['NODE_ENV'] || 'development';
         }
