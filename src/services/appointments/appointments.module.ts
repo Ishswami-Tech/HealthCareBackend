@@ -149,7 +149,7 @@ import { CommunicationModule } from '@communication/communication.module';
       { name: 'clinic-reminder' },
       { name: 'clinic-followup' }
     ),
-    EventEmitterModule.forRoot(),
+    EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
   controllers: [AppointmentsController, AppointmentPluginController],
   providers: [

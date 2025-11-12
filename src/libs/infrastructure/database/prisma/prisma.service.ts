@@ -95,8 +95,8 @@ import type {
   CounselorDelegate,
   ClinicDelegate,
   AuditLogDelegate,
-  NotificationTemplateDelegate,
-  ReminderScheduleDelegate,
+  // NotificationTemplateDelegate, // Commented out: notificationTemplate model doesn't exist in Prisma schema
+  // ReminderScheduleDelegate, // Commented out: reminderSchedule model doesn't exist in Prisma schema
   TransactionDelegate,
 } from '@core/types';
 
@@ -208,8 +208,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly clinic!: ClinicDelegate;
   readonly appointment!: AppointmentDelegate;
   readonly auditLog!: AuditLogDelegate;
-  readonly notificationTemplate!: NotificationTemplateDelegate;
-  readonly reminderSchedule!: ReminderScheduleDelegate;
+  // readonly notificationTemplate!: NotificationTemplateDelegate;
+  // Commented out: notificationTemplate model doesn't exist in Prisma schema
+  // readonly reminderSchedule!: ReminderScheduleDelegate;
+  // Commented out: reminderSchedule model doesn't exist in Prisma schema
   readonly permission!: PermissionDelegate;
   readonly rbacRole!: RbacRoleDelegate;
   readonly rolePermission!: RolePermissionDelegate;
@@ -646,8 +648,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<ClinicDelegate>('clinic', 'clinic');
     assignDelegate<AppointmentDelegate>('appointment', 'appointment');
     assignDelegate<AuditLogDelegate>('auditLog', 'auditLog');
-    assignDelegate<NotificationTemplateDelegate>('notificationTemplate', 'notificationTemplate');
-    assignDelegate<ReminderScheduleDelegate>('reminderSchedule', 'reminderSchedule');
+    // assignDelegate<NotificationTemplateDelegate>('notificationTemplate', 'notificationTemplate');
+    // Commented out: notificationTemplate model doesn't exist in Prisma schema
+    // assignDelegate<ReminderScheduleDelegate>('reminderSchedule', 'reminderSchedule');
+    // Commented out: reminderSchedule model doesn't exist in Prisma schema
     assignDelegate<PermissionDelegate>('permission', 'permission');
     assignDelegate<RbacRoleDelegate>('rbacRole', 'rbacRole');
     assignDelegate<RolePermissionDelegate>('rolePermission', 'rolePermission');

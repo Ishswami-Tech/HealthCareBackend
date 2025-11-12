@@ -1,10 +1,10 @@
 import { HttpStatus } from '@nestjs/common';
 import { ErrorCode } from './error-codes.enum';
 import { ErrorMessages } from './error-messages.constant';
-import type { ErrorMetadata, ApiErrorResponse } from '@core/types/error.types';
+import type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure.types';
 
 // Re-export types for backward compatibility
-export type { ErrorMetadata, ApiErrorResponse } from '@core/types/error.types';
+export type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure.types';
 
 /**
  * Custom Healthcare Error class that extends the standard Error

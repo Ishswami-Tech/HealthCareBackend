@@ -744,6 +744,7 @@ export class JwtAuthGuard implements CanActivate {
 
   private isPublicPath(path: string): boolean {
     const publicPaths = [
+      '/',
       '/auth/login',
       '/auth/register',
       '/auth/forgot-password',
@@ -758,6 +759,10 @@ export class JwtAuthGuard implements CanActivate {
       '/swagger',
       '/favicon.ico',
     ];
+    // Exact match for root path, prefix match for others
+    if (path === '/' || path === '') {
+      return true;
+    }
     return publicPaths.some(publicPath => path.startsWith(publicPath));
   }
 }

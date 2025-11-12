@@ -5,7 +5,6 @@ import { AuthModule } from './services/auth/auth.module';
 import { HealthModule } from './services/health/health.module';
 import { AppController } from './app.controller';
 import { CacheModule } from '@infrastructure/cache/cache.module';
-import { WhatsAppModule } from '@communication/messaging/whatsapp/whatsapp.module';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { ClinicModule } from './services/clinic/clinic.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
@@ -16,12 +15,12 @@ import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from '@infrastructure/queue/src/queue.module';
-import { SocketModule } from '@communication/socket/socket.module';
-import { NotificationModule } from './services/notification/notification.module';
+import { CommunicationModule } from '@communication/communication.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
 import { ResilienceModule } from '@core/resilience';
 import { SecurityModule } from '@security/security.module';
+import { EventsModule } from '@infrastructure/events';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -43,13 +42,13 @@ import { SecurityModule } from '@security/security.module';
       secret: process.env['JWT_SECRET'] || 'your-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
-    // Core modules must be loaded before SocketModule to ensure LoggingService is available
+    // Core modules must be loaded before communication modules to ensure LoggingService is available
     LoggingModule,
+    // Central event system - must be loaded early for event-driven architecture
+    EventsModule,
     // Resilience and security modules
     ResilienceModule,
     SecurityModule,
-    // Socket modules
-    SocketModule,
     // Auth and user management
     AuthModule,
     UsersModule,
@@ -62,11 +61,10 @@ import { SecurityModule } from '@security/security.module';
     ClinicModule,
     BillingModule,
     EHRModule,
-    // Communication modules
-    NotificationModule,
+    // Unified Communication Module (includes all channels: socket, push, email, WhatsApp, SMS, listeners)
+    CommunicationModule,
     // Support modules
     HealthModule,
-    WhatsAppModule,
     BullBoardModule,
   ],
   controllers: [AppController],

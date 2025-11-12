@@ -614,9 +614,15 @@ interface RequestContext {
 
 ## 🔄 Event Handling
 
-### **Event-Driven Architecture with EventService**
+### **Centralized EventService - Single Source of Truth**
 
-**MANDATORY**: Always use `EventService` from `@infrastructure/events` instead of direct `EventEmitter2` usage.
+**MANDATORY**: EventService is the CENTRAL EVENT HUB for the entire application. All event emissions MUST go through EventService.
+
+**Architecture:**
+- EventService acts as the single source of truth for all event emissions
+- Built on NestJS EventEmitter2 (compatible with @OnEvent decorators)
+- All services emit events through EventService
+- Listeners can use @OnEvent decorators or EventService.onAny() to listen to events
 
 ```typescript
 // In app.module.ts - EventsModule is already configured
@@ -679,16 +685,23 @@ export class UserEventListener {
 ```
 
 **Key Features of EventService**:
+- ✅ **Single Source of Truth** - All event emissions go through EventService
 - ✅ Built on NestJS EventEmitter2 (compatible with @OnEvent decorators)
 - ✅ Circuit breaker protection via CircuitBreakerService
 - ✅ Rate limiting (1000 events/second per source)
 - ✅ HIPAA-compliant security logging
 - ✅ Event persistence in CacheService with TTL
-- ✅ Event buffering and batch processing
+- ✅ Event buffering and batch processing (50,000 events max buffer)
 - ✅ Comprehensive metrics and monitoring
 - ✅ PHI data validation for healthcare events
-- ✅ Simple API: emit(), emitAsync(), on(), once(), off(), removeAllListeners(), getEvents(), clearEvents()
+- ✅ Simple API: emit(), emitAsync(), on(), once(), off(), onAny(), removeAllListeners(), getEvents(), clearEvents()
 - ✅ Enterprise API: emitEnterprise(), queryEvents(), getEventMetrics()
+- ✅ Wildcard subscriptions via `onAny()` for listening to all events
+
+**Integration with Communication:**
+- ✅ CommunicationService uses EventService to emit `communication.sent` events
+- ✅ EventSocketBroadcaster uses `EventService.onAny()` to broadcast events to WebSocket clients
+- ✅ NotificationEventListener uses `@OnEvent('**')` to listen to all events and trigger communication
 
 ## 🚫 Anti-Patterns to Avoid
 
@@ -749,4 +762,9 @@ this.logger.info('Request received', { context: 'LoggingInterceptor' });
 
 **💡 These NestJS patterns ensure proper framework usage, maintainable code, and optimal performance with Fastify.**
 
-**Last Updated**: December 2024
+**Last Updated**: January 2025
+
+## 📚 Additional Resources
+
+- **Event & Communication Integration**: See `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md` for detailed integration verification
+- **EventService API**: See `src/libs/infrastructure/events/event.service.ts` for complete method documentation

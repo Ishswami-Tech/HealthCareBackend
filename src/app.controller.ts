@@ -58,7 +58,7 @@ interface DashboardData {
 }
 
 @ApiTags('root')
-@Controller()
+@Controller('')
 export class AppController {
   constructor(
     private readonly appService: AppService,
