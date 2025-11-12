@@ -557,8 +557,8 @@ async function bootstrap() {
       defaultVersion: '1',
       ...(apiPrefix && apiPrefix.trim() !== '' && { globalPrefix: apiPrefix }),
       prefixExclude: [
+        { path: '', method: 'GET' },
         { path: '/', method: 'GET' },
-        { path: '/', method: 'ALL' },
         'health',
         'metrics',
         'docs',
@@ -568,6 +568,42 @@ async function bootstrap() {
 
     // Configure middleware (pipes, versioning, prefix, shutdown hooks)
     middlewareManager.configure(app, middlewareConfig);
+
+    // CRITICAL: Manually register root route after global prefix is set
+    // NestJS setGlobalPrefix exclusion doesn't always work reliably for root path
+    // This ensures the dashboard route is accessible at /
+    try {
+      const httpAdapter = app.getHttpAdapter();
+      const fastifyInstance = httpAdapter.getInstance() as {
+        get?: (
+          path: string,
+          handler: (request: unknown, reply: unknown) => Promise<unknown>
+        ) => void;
+      };
+      if (fastifyInstance?.get) {
+        // Get AppController instance from NestJS container using the class token
+        const { AppController } = await import('./app.controller');
+        const appController = app.get(AppController);
+        if (
+          appController &&
+          typeof (appController as { getDashboard?: (reply: unknown) => Promise<unknown> })
+            .getDashboard === 'function'
+        ) {
+          const typedController = appController as {
+            getDashboard: (reply: unknown) => Promise<unknown>;
+          };
+          fastifyInstance.get('/', async (_request: unknown, reply: unknown) => {
+            return typedController.getDashboard(reply);
+          });
+          logger.log('Root route / manually registered for dashboard');
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        `Failed to manually register root route: ${error instanceof Error ? error.message : String(error)}`
+      );
+      // Continue - the route might still work via normal NestJS registration
+    }
 
     // Configure filters and interceptors separately (not in configure method)
     if (loggingService) {

@@ -12,11 +12,6 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
 
-// Helper function to get EventService token for forwardRef (avoids type resolution issues)
-// This should be used when injecting EventService with forwardRef to prevent circular dependency type errors
-function getEventServiceToken(): typeof EventService {
-  return EventService;
-}
 import {
   addDateRangeFilter,
   addStringFilter,
@@ -78,7 +73,7 @@ export class EHRService {
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    @Inject(forwardRef(getEventServiceToken))
+    @Inject(forwardRef(() => EventService))
     eventService: unknown
   ) {
     // Type guard ensures type safety when using the service

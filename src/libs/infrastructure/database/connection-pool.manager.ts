@@ -40,11 +40,6 @@ interface IEventService {
 // so we use IEventService interface for property types and type guards
 import { EventService } from '@infrastructure/events';
 
-// Helper function to get EventService token for forwardRef (avoids type resolution issues)
-function getEventServiceToken(): typeof EventService {
-  return EventService;
-}
-
 import type {
   ConnectionMetrics,
   QueryOptions,
@@ -111,7 +106,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     // Type assertion needed due to circular dependency - EventService type can't be resolved in forwardRef
     // Using helper function to avoid TypeScript type resolution issues with forwardRef
     // The type guard ensures type safety at runtime
-    @Inject(forwardRef(getEventServiceToken))
+    @Inject(forwardRef(() => EventService))
     eventService?: unknown,
     @Optional()
     @Inject(forwardRef(() => HealthcareQueryOptimizerService))

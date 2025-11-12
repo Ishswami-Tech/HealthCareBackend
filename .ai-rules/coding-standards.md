@@ -66,8 +66,8 @@ import { PrismaService } from '@infrastructure/database';
 import { RedisService } from '@cache';
 import { LoggingService } from '@logging';
 import { QueueService } from '@queue';
-import { EventService } from '@infrastructure/events';
-import { EventCategory, EventPriority } from '@core/types';
+import { EventService, getEventServiceToken } from '@infrastructure/events';
+import { EventCategory, EventPriority, type IEventService, isEventService } from '@core/types';
 
 import { AuthDto, CreateUserDto } from '@dtos';
 
@@ -126,7 +126,7 @@ export class UserService {
         }
       });
 
-      // Emit event for other services using EnterpriseEventService
+      // Emit event via centralized EventService (single source of truth)
       await this.eventService.emitEnterprise('user.created', {
         eventId: `user-created-${user.id}`,
         eventType: 'user.created',
@@ -138,8 +138,8 @@ export class UserService {
         userId: user.id,
         clinicId: requestContext?.clinicId,
         payload: {
-        user,
-        context: requestContext
+          user,
+          context: requestContext
         }
       });
 
@@ -504,7 +504,14 @@ async create(@Body() createUserDto: CreateUserDto) {
 
 **💡 Remember**: These standards ensure code consistency, maintainability, and reliability across the healthcare system.
 
-**Last Updated**: December 2024
+**Last Updated**: January 2025
+
+## 📚 EventService Integration
+
+For comprehensive EventService usage patterns and integration details, see:
+- **Architecture**: `.ai-rules/architecture.md` - Event-Driven Architecture section
+- **NestJS Patterns**: `.ai-rules/nestjs-specific.md` - Event Handling section
+- **Integration Verification**: `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`
 
 ## 🧭 Change Management Policy
 - Prefer editing existing files to add features and fixes; create new files only when necessary.

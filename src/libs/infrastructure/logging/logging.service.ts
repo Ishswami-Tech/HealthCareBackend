@@ -96,6 +96,14 @@ export class LoggingService {
   private readonly maxBufferSize = 10000; // Increased for 1M users
   private readonly flushInterval = 5000; // 5 seconds for 1M users
   private metricsFlushInterval!: NodeJS.Timeout;
+  // Cache system user to avoid querying database on every log (prevents connection pool exhaustion)
+  private cachedSystemUser: { id: string } | null = null;
+  private systemUserCacheTime = 0;
+  private readonly systemUserCacheTTL = 3600000; // 1 hour cache
+  // Flag to disable database logging when connection pool is exhausted
+  private isDatabaseLoggingDisabled = false;
+  // Mutex to prevent concurrent system user queries (race condition protection)
+  private systemUserQueryPromise: Promise<{ id: string } | null> | null = null;
 
   constructor(
     @Optional()
@@ -106,6 +114,117 @@ export class LoggingService {
   ) {
     this.serviceName = process.env['SERVICE_NAME'] || 'healthcare';
     this.initMetricsBuffering();
+  }
+
+  /**
+   * Get cached system user to avoid querying database on every log
+   * This prevents connection pool exhaustion from logging operations
+   * CRITICAL: Uses mutex to prevent concurrent queries (race condition protection)
+   */
+  private async getCachedSystemUser(): Promise<{ id: string } | null> {
+    if (!this.databaseService) {
+      return null;
+    }
+
+    const now = Date.now();
+    // Return cached user if still valid (CRITICAL: Check cache first to avoid unnecessary queries)
+    if (this.cachedSystemUser && now - this.systemUserCacheTime < this.systemUserCacheTTL) {
+      return this.cachedSystemUser;
+    }
+
+    // CRITICAL: If database logging is disabled, don't try to fetch (prevents loops)
+    if (this.isDatabaseLoggingDisabled) {
+      // Return cached user if available, otherwise null
+      return this.cachedSystemUser;
+    }
+
+    // CRITICAL: Use mutex to prevent concurrent queries (race condition protection)
+    // If a query is already in progress, wait for it instead of starting a new one
+    if (this.systemUserQueryPromise) {
+      return this.systemUserQueryPromise;
+    }
+
+    // Create a new query promise and store it as the mutex
+    this.systemUserQueryPromise = (async (): Promise<{ id: string } | null> => {
+      try {
+        // Double-check cache after acquiring mutex (another thread might have set it)
+        if (this.cachedSystemUser && Date.now() - this.systemUserCacheTime < this.systemUserCacheTTL) {
+          return this.cachedSystemUser;
+        }
+
+        // Cache expired or not set - fetch from database with timeout
+        const systemUser = await Promise.race([
+          this.databaseService.executeHealthcareRead(async client => {
+            // Use findUnique if email is unique, otherwise findFirst
+            const userDelegate = client['user'] as {
+              findUnique?: (args: {
+                where: { email: string };
+                select?: { id: boolean };
+              }) => Promise<{ id: string } | null>;
+              findFirst: (args: {
+                where: { email: string };
+                select?: { id: boolean };
+              }) => Promise<{ id: string } | null>;
+            };
+
+            // Prefer findUnique for better performance (uses unique index)
+            if (userDelegate.findUnique) {
+              return (await userDelegate.findUnique({
+                where: { email: 'system@healthcare.local' },
+                select: { id: true }, // Only select id to minimize data transfer
+              })) as unknown as { id: string } | null;
+            }
+
+            // Fallback to findFirst if findUnique is not available
+            return (await userDelegate.findFirst({
+              where: { email: 'system@healthcare.local' },
+              select: { id: true }, // Only select id to minimize data transfer
+            })) as unknown as { id: string } | null;
+          }),
+          new Promise<null>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error('System user fetch timeout'));
+            }, 3000); // 3 second timeout
+          }),
+        ]) as { id: string } | null;
+
+        if (systemUser) {
+          this.cachedSystemUser = systemUser;
+          this.systemUserCacheTime = Date.now();
+        } else {
+          // System user doesn't exist - cache null result for 5 minutes to prevent repeated queries
+          // This prevents infinite queries when system user is missing
+          this.cachedSystemUser = null;
+          this.systemUserCacheTime = Date.now() - (this.systemUserCacheTTL - 300000); // Cache null for 5 minutes
+        }
+        return systemUser;
+      } catch (error) {
+        // If fetch fails, disable database logging to prevent loops
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (
+          errorMessage.includes('timeout') ||
+          errorMessage.includes('TIMEOUT') ||
+          errorMessage.includes('too many clients') ||
+          errorMessage.includes('connection')
+        ) {
+          this.isDatabaseLoggingDisabled = true;
+          // Re-enable after 5 minutes
+          setTimeout(() => {
+            this.isDatabaseLoggingDisabled = false;
+          }, 300000);
+        }
+        // Return cached user if available (stale is better than nothing)
+        if (this.cachedSystemUser) {
+          return this.cachedSystemUser;
+        }
+        return null;
+      } finally {
+        // Clear the mutex after query completes (success or failure)
+        this.systemUserQueryPromise = null;
+      }
+    })();
+
+    return this.systemUserQueryPromise;
   }
 
   private initMetricsBuffering() {
@@ -194,55 +313,79 @@ export class LoggingService {
       }
 
       // Intelligent database logging with noise filtering
+      // CRITICAL: Skip database logging for timeout/connection errors to prevent infinite loops
+      const isTimeoutOrConnectionError =
+        (message.includes('timeout') || message.includes('TIMEOUT') || message.includes('Query timeout') || message.includes('too many clients') || message.includes('connection')) &&
+        (context.includes('Database') || context.includes('HealthcareDatabaseClient'));
+
       const isNoisyLog = this.isNoisyLog(message, context, level);
 
-      if (!isNoisyLog) {
+      if (!isNoisyLog && !isTimeoutOrConnectionError) {
         try {
           // Enhanced database logging with better error handling
-          if (this.databaseService) {
-            // Use a system user or skip user-dependent operations
+          // CRITICAL: Skip database logging if we're in a recursive loop or connection pool is exhausted
+          // This prevents connection pool exhaustion from logging operations
+          if (this.databaseService && !this.isDatabaseLoggingDisabled) {
+            // Use cached system user to avoid querying database on every log
+            // This prevents connection pool exhaustion from logging operations
             try {
-              const systemUser = (await this.databaseService.executeHealthcareRead(async client => {
-                return (await (
-                  client['user'] as {
-                    findFirst: (args: {
-                      where: { email: string };
-                    }) => Promise<{ id: string } | null>;
-                  }
-                ).findFirst({
-                  where: { email: 'system@healthcare.local' },
-                })) as unknown as { id: string } | null;
-              })) as unknown as { id: string } | null;
+              const systemUser = await this.getCachedSystemUser();
 
               if (systemUser) {
-                await this.databaseService.executeHealthcareWrite(
-                  async client => {
-                    const auditLog = client['auditLog'] as {
-                      create: (args: { data: unknown }) => Promise<{ id: string }>;
-                    };
-                    return (await auditLog.create({
-                      data: {
-                        userId: systemUser.id,
-                        action: type as string,
-                        description: context,
-                        ipAddress: (metadata['ipAddress'] as string | null) || null,
-                        device: (metadata['userAgent'] as string | null) || null,
-                        clinicId: (metadata['clinicId'] as string | null) || null,
-                      },
-                    })) as unknown as { id: string };
-                  },
-                  {
-                    userId: systemUser.id,
-                    userRole: 'system',
-                    clinicId: (metadata['clinicId'] as string) || '',
-                    operation: `LOG_${type}`,
-                    resourceType: 'AUDIT_LOG',
-                    resourceId: 'pending',
-                    timestamp: new Date(),
-                  }
-                );
+                // Use a timeout to prevent database logging from blocking
+                await Promise.race([
+                  this.databaseService.executeHealthcareWrite(
+                    async client => {
+                      const auditLog = client['auditLog'] as {
+                        create: (args: { data: unknown }) => Promise<{ id: string }>;
+                      };
+                      return (await auditLog.create({
+                        data: {
+                          userId: systemUser.id,
+                          action: type as string,
+                          description: context,
+                          ipAddress: (metadata['ipAddress'] as string | null) || null,
+                          device: (metadata['userAgent'] as string | null) || null,
+                          clinicId: (metadata['clinicId'] as string | null) || null,
+                        },
+                      })) as unknown as { id: string };
+                    },
+                    {
+                      userId: systemUser.id,
+                      userRole: 'system',
+                      clinicId: (metadata['clinicId'] as string) || '',
+                      operation: `LOG_${type}`,
+                      resourceType: 'AUDIT_LOG',
+                      resourceId: 'pending',
+                      timestamp: new Date(),
+                    }
+                  ),
+                  new Promise<void>((_, reject) => {
+                    setTimeout(() => {
+                      reject(new Error('Database logging timeout'));
+                    }, 5000); // 5 second timeout for audit log writes
+                  }),
+                ]).catch(() => {
+                  // Silent fail for audit log creation - resilient logging for high scale
+                  // Audit log failures are non-critical and shouldn't break logging
+                });
               }
             } catch (_auditError) {
+              // If we get connection errors or timeout errors, disable database logging temporarily
+              const errorMessage = _auditError instanceof Error ? _auditError.message : String(_auditError);
+              if (
+                errorMessage.includes('too many clients') ||
+                errorMessage.includes('connection') ||
+                errorMessage.includes('timeout') ||
+                errorMessage.includes('TIMEOUT') ||
+                errorMessage.includes('Query timeout')
+              ) {
+                this.isDatabaseLoggingDisabled = true;
+                // Re-enable after 5 minutes (longer to prevent rapid re-triggering)
+                setTimeout(() => {
+                  this.isDatabaseLoggingDisabled = false;
+                }, 300000); // 5 minutes
+              }
               // Silent fail for audit log creation - resilient logging for high scale
               // Audit log failures are non-critical and shouldn't break logging
             }

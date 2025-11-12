@@ -9,7 +9,7 @@ export {
   IFrameworkAdapter,
   IFastifyFrameworkAdapter,
   FrameworkAdapterOptions,
-} from '@core/types/framework.adapter.interface';
+} from '@core/types/framework.types';
 export { FastifyFrameworkAdapter, createFrameworkAdapter } from './adapters/fastify.adapter';
 
 // Framework Wrappers

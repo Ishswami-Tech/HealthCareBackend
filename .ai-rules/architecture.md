@@ -292,7 +292,32 @@ export class UserService {
 
 ## 🔄 Event-Driven Architecture
 
-### **Event Service Pattern (MANDATORY)**
+### **Centralized EventService - Single Source of Truth (MANDATORY)**
+
+**EventService is the CENTRAL EVENT HUB for the entire application. All event emissions MUST go through EventService.**
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│              CENTRAL EVENT SYSTEM (Hub)                      │
+│         @infrastructure/events/EventService                  │
+│                                                              │
+│  Services emit events:                                       │
+│  await eventService.emit('ehr.lab_report.created', {...})   │
+└─────────────────────────────────────────────────────────────┘
+                        │
+                        │ Events emitted via EventEmitter2
+                        │
+        ┌───────────────┼───────────────┐
+        │               │               │
+        ▼               ▼               ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│   Socket     │ │  Unified     │ │   Other      │
+│   Listener   │ │ Communication│ │  Listeners   │
+│              │ │   Listener   │ │  (Audit,     │
+│              │ │              │ │   Analytics) │
+└──────────────┘ └──────────────┘ └──────────────┘
+```
 
 **ALWAYS use `EventService` from `@infrastructure/events` instead of direct `EventEmitter2` usage.**
 
@@ -350,16 +375,27 @@ export class NotificationService {
 ```
 
 **Key Benefits of EventService**:
+- ✅ **Single Source of Truth** - All event emissions go through EventService
 - ✅ Built on NestJS EventEmitter2 (compatible with @OnEvent decorators)
 - ✅ Circuit breaker protection via CircuitBreakerService
 - ✅ Rate limiting (1000 events/second per source)
 - ✅ HIPAA-compliant security logging
 - ✅ Event persistence in CacheService with TTL
-- ✅ Event buffering and batch processing
+- ✅ Event buffering and batch processing (50,000 events max buffer)
 - ✅ Comprehensive metrics and monitoring
 - ✅ PHI data validation for healthcare events
-- ✅ Simple API for basic use cases (emit, emitAsync, on, once, off)
+- ✅ Simple API for basic use cases (emit, emitAsync, on, once, off, onAny)
 - ✅ Enterprise API for advanced features (emitEnterprise, queryEvents, getEventMetrics)
+- ✅ Wildcard subscriptions via `onAny()` for listening to all events
+- ✅ Integration with CommunicationService for event-driven notifications
+- ✅ Integration with EventSocketBroadcaster for real-time WebSocket updates
+
+**Integration Points:**
+- ✅ All business services (users, auth, billing, ehr, appointments) use EventService
+- ✅ CommunicationService uses EventService to emit `communication.sent` events
+- ✅ Infrastructure services (cache, database, queue) use EventService
+- ✅ EventSocketBroadcaster uses `EventService.onAny()` to listen to all events
+- ✅ NotificationEventListener uses `@OnEvent('**')` to listen to all events
 
 ## 🗄️ Database Architecture
 
@@ -907,4 +943,10 @@ await this.loggingService.logBatch([
 
 **💡 These architectural patterns ensure scalable, maintainable, and testable code that follows SOLID principles and industry best practices.**
 
-**Last Updated**: December 2024
+**Last Updated**: January 2025
+
+## 📚 Additional Resources
+
+- **Event & Communication Integration**: See `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md` for detailed integration verification
+- **EventService Documentation**: See `src/libs/infrastructure/events/event.service.ts` for complete API documentation
+- **Communication Architecture**: See `src/libs/communication/communication.service.ts` for unified communication patterns

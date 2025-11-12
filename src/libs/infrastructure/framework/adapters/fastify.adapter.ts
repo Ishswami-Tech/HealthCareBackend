@@ -31,7 +31,7 @@ import {
   IFrameworkAdapter,
   IFastifyFrameworkAdapter,
   FrameworkAdapterOptions,
-} from '../../../core/types/framework.adapter.interface';
+} from '@core/types/framework.types';
 
 // Fastify-specific imports - all Fastify code should be here
 // Following AI rules: Fastify is the only allowed HTTP framework
