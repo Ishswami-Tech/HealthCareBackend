@@ -11,4 +11,4 @@ export type {
   CustomFastifyRequest,
   ErrorLog,
   ErrorResponse,
-} from '@core/types/filter.types';
+} from '@core/types/infrastructure.types';

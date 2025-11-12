@@ -3,10 +3,10 @@ import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { EmailService } from '@communication/messaging/email/email.service';
-import { WhatsAppService } from '@communication/messaging/whatsapp/whatsapp.service';
-import { PushNotificationService } from '@communication/messaging/push/push.service';
-import { SocketService } from '@communication/socket/socket.service';
+import { EmailService } from '@communication/channels/email/email.service';
+import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
+import { PushNotificationService } from '@communication/channels/push/push.service';
+import { SocketService } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailTemplate } from '@core/types';
 import type {

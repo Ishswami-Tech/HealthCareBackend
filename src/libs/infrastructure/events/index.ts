@@ -5,8 +5,11 @@ export * from './event.service';
 // Import EventService for helper function
 import { EventService } from './event.service';
 
-// Helper function to get EventService token for forwardRef (avoids type resolution issues)
-// This should be used when injecting EventService with forwardRef to prevent circular dependency type errors
+/**
+ * @deprecated Use `forwardRef(() => EventService)` directly instead.
+ * This helper function is no longer needed - you can use `@Inject(forwardRef(() => EventService))` just like other services.
+ * Kept for backward compatibility only.
+ */
 export function getEventServiceToken(): typeof EventService {
   return EventService;
 }

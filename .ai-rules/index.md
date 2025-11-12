@@ -58,8 +58,10 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DatabaseService } from '@infrastructure/database'; // ✅ Use DatabaseService (NOT PrismaService)
 import { RedisService } from '@infrastructure/cache';
 import { QueueService } from '@infrastructure/queue';
-import { EventService } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2)
+import { EventService } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2) - CENTRALIZED EVENT HUB
 import { EventCategory, EventPriority } from '@core/types';
+import { getEventServiceToken } from '@infrastructure/events'; // For forwardRef injection
+import { type IEventService, isEventService } from '@core/types'; // Type guards for EventService
 
 // 3. Internal imports - Core layer
 import { JwtAuthGuard } from '@core/guards';
@@ -322,9 +324,12 @@ import { RedisService } from '@infrastructure/cache';
 import { UserService } from '../../../services/users/user.service';
 ```
 
-### **Event Service Usage Pattern (MANDATORY)**
+### **Event Service Usage Pattern (MANDATORY) - CENTRALIZED EVENT HUB**
+
+**EventService is the SINGLE SOURCE OF TRUTH for all event emissions in the application.**
+
 ```typescript
-// ✅ DO - Use EventService for all event emissions
+// ✅ DO - Use EventService for all event emissions (direct injection)
 import { EventService } from "@infrastructure/events";
 import { EventCategory, EventPriority } from "@core/types";
 
@@ -335,7 +340,7 @@ export class UserService {
   async createUser(data: CreateUserDto): Promise<User> {
     const user = await this.databaseService.createUserSafe(data);
 
-    // Emit enterprise-grade event
+    // Emit enterprise-grade event via centralized EventService
     await this.eventService.emitEnterprise('user.created', {
       eventId: `user-created-${user.id}`,
       eventType: 'user.created',
@@ -353,9 +358,45 @@ export class UserService {
   }
 }
 
+// ✅ DO - Use EventService with forwardRef (for circular dependencies)
+import { Inject, forwardRef } from '@nestjs/common';
+import { getEventServiceToken } from '@infrastructure/events';
+import { type IEventService, isEventService } from '@core/types';
+
+@Injectable()
+export class MyService {
+  private typedEventService?: IEventService;
+
+  constructor(
+    @Inject(forwardRef(getEventServiceToken))
+    private readonly eventService: unknown
+  ) {
+    // Type guard ensures type safety
+    if (!isEventService(this.eventService)) {
+      throw new Error('EventService is not available or invalid');
+    }
+    this.typedEventService = this.eventService;
+  }
+
+  async someMethod() {
+    if (this.typedEventService) {
+      await this.typedEventService.emitEnterprise('event.name', {
+        eventId: `event-${Date.now()}`,
+        eventType: 'event.name',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'MyService',
+        version: '1.0.0',
+        payload: { data: 'value' }
+      });
+    }
+  }
+}
+
 // ❌ DON'T - Never use EventEmitter2 directly
 import { EventEmitter2 } from "@nestjs/event-emitter";
-this.eventEmitter.emit('user.created', { user }); // Missing: circuit breaker, rate limiting, persistence, HIPAA compliance
+this.eventEmitter.emit('user.created', { user }); // FORBIDDEN - Missing: circuit breaker, rate limiting, persistence, HIPAA compliance
 
 // ✅ DO - Use EventService simple API for basic events
 await this.eventService.emit('user.created', { userId: '123' });
@@ -368,7 +409,33 @@ await this.eventService.emitEnterprise('user.created', {
   priority: EventPriority.HIGH,
   payload: { userId: '123' }
 });
+
+// ✅ DO - Listen to all events via EventService.onAny()
+this.eventService.onAny((event, ...args) => {
+  // Handle any event emitted through EventService
+});
+
+// ✅ DO - Listen to specific events via EventService.on()
+this.eventService.on('user.created', (payload) => {
+  // Handle specific event
+});
 ```
+
+**Architecture Flow:**
+```
+Services → EventService.emit() → EventEmitter2 (internal) → Listeners (@OnEvent, EventService.onAny())
+```
+
+**Key Benefits:**
+- ✅ Single source of truth for all event emissions
+- ✅ Built on NestJS EventEmitter2 (compatible with @OnEvent decorators)
+- ✅ Circuit breaker protection via CircuitBreakerService
+- ✅ Rate limiting (1000 events/second per source)
+- ✅ HIPAA-compliant security logging
+- ✅ Event persistence in CacheService with TTL
+- ✅ Event buffering and batch processing
+- ✅ Comprehensive metrics and monitoring
+- ✅ PHI data validation for healthcare events
 
 ### **Database Usage Pattern (MANDATORY)**
 ```typescript
@@ -529,3 +596,29 @@ export class ApiController {
 **System Status**: ✅ Production-Ready | 🚀 Optimized for 1M+ concurrent users | 🏥 Supporting 200+ clinics
 
 **Last Updated**: January 2025
+
+## 🔄 Event-Driven Architecture Summary
+
+### **Centralized EventService Integration**
+
+The application uses a **centralized EventService** as the single source of truth for all event emissions:
+
+- **Location**: `src/libs/infrastructure/events/event.service.ts`
+- **Module**: `EventsModule` (imported in `AppModule`)
+- **Integration**: All services use EventService instead of direct EventEmitter2 usage
+- **Listeners**: Use `@OnEvent` decorators or `EventService.onAny()` to listen to events
+- **Communication**: EventService integrates with CommunicationService and EventSocketBroadcaster
+
+**Key Integration Points:**
+- ✅ All business services (users, auth, billing, ehr, appointments) emit events via EventService
+- ✅ CommunicationService emits `communication.sent` events via EventService
+- ✅ Infrastructure services (cache, database, queue) emit events via EventService
+- ✅ EventSocketBroadcaster uses `EventService.onAny()` to broadcast to WebSocket clients
+- ✅ NotificationEventListener uses `@OnEvent('**')` to listen to all events
+
+**Architecture Flow:**
+```
+Services → EventService.emit() → EventEmitter2 (internal) → Listeners (@OnEvent, EventService.onAny())
+```
+
+For detailed integration documentation, see: `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`

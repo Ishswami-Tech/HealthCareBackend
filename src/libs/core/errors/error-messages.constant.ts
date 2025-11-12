@@ -83,6 +83,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   // Database Errors
   [ErrorCode.DATABASE_CONNECTION_FAILED]: 'Database connection failed. Please try again later.',
   [ErrorCode.DATABASE_QUERY_FAILED]: 'Database query failed. Please try again.',
+  [ErrorCode.DATABASE_QUERY_TIMEOUT]:
+    'Database query timed out. The operation took too long to complete.',
   [ErrorCode.DATABASE_TRANSACTION_FAILED]: 'Database transaction failed. Please try again.',
   [ErrorCode.DATABASE_CONSTRAINT_VIOLATION]: 'Data constraint violation. Please check your input.',
   [ErrorCode.DATABASE_RECORD_NOT_FOUND]: 'Record not found in database.',

@@ -5,13 +5,8 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
 
-// Helper function to get EventService token for forwardRef (avoids type resolution issues)
-// This should be used when injecting EventService with forwardRef to prevent circular dependency type errors
-function getEventServiceToken(): typeof EventService {
-  return EventService;
-}
 import type { UserProfile } from '@core/types';
-import { isPrismaDatabaseError } from '@core/types/error.types';
+import { isPrismaDatabaseError } from '@core/types/infrastructure.types';
 import { Role } from '@core/types/enums.types';
 import type { User } from '@core/types/database.types';
 import { RbacService } from '@core/rbac/rbac.service';
@@ -77,7 +72,7 @@ export class UsersService {
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    @Inject(forwardRef(getEventServiceToken))
+    @Inject(forwardRef(() => EventService))
     eventService: unknown,
     private readonly rbacService: RbacService,
     private readonly authService: AuthService,

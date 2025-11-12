@@ -1,10 +1,18 @@
-import { Injectable } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { SocketService } from '@communication/socket/socket.service';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { SocketService } from '@communication/channels/socket/socket.service';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
+import { EventService } from '@infrastructure/events';
 // DeviceInfo type not used in this file
-import { LogType, LogLevel } from '@core/types';
+import {
+  LogType,
+  LogLevel,
+  type IEventService,
+  isEventService,
+  EventCategory,
+  EventPriority,
+} from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types/event.types';
 
 export interface ConsultationEvent {
   type:
@@ -65,13 +73,21 @@ export class VideoConsultationTracker {
   private readonly TRACKER_CACHE_TTL = 3600; // 1 hour
   private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
   private readonly CONNECTION_TIMEOUT = 60000; // 1 minute
+  private typedEventService?: IEventService;
 
   constructor(
-    private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService: unknown,
     private readonly socketService: SocketService,
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
+    // Type guard ensures type safety when using the service
+    if (!isEventService(this.eventService)) {
+      throw new Error('EventService is not available or invalid');
+    }
+    this.typedEventService = this.eventService;
     this.initializeEventListeners();
     this.startHeartbeatMonitoring();
   }
@@ -639,8 +655,26 @@ export class VideoConsultationTracker {
         socketEvent
       );
 
-      // Emit to event system
-      this.eventEmitter.emit('consultation.event', event);
+      // Emit to centralized event system via EventService
+      if (this.typedEventService) {
+        await this.typedEventService.emitEnterprise('consultation.event', {
+          eventId: `consultation_${event.appointmentId}_${Date.now()}`,
+          eventType: 'consultation.event',
+          category: EventCategory.SYSTEM,
+          priority: EventPriority.NORMAL,
+          timestamp: new Date().toISOString(),
+          source: 'VideoConsultationTracker',
+          version: '1.0.0',
+          payload: {
+            type: event.type,
+            appointmentId: event.appointmentId,
+            userId: event.userId,
+            userRole: event.userRole,
+            timestamp: event.timestamp.toISOString(),
+            data: event.data,
+          },
+        } as EnterpriseEventPayload);
+      }
 
       // Log for audit trail
       await this.loggingService.log(
@@ -671,15 +705,22 @@ export class VideoConsultationTracker {
 
   /**
    * Initialize event listeners
+   * Uses EventService to listen to socket connection events
    */
   private initializeEventListeners(): void {
-    // Listen for socket connection events
-    this.eventEmitter.on('socket.user.connected', (data: { userId: string }) => {
+    if (!this.typedEventService) {
+      return;
+    }
+
+    // Listen for socket connection events via EventService
+    this.typedEventService.on('socket.user.connected', (...args: unknown[]) => {
+      const data = args[0] as { userId: string };
       // Update user's last seen for active consultations
       void this.updateUserLastSeen(data.userId);
     });
 
-    this.eventEmitter.on('socket.user.disconnected', (data: { userId: string }) => {
+    this.typedEventService.on('socket.user.disconnected', (...args: unknown[]) => {
+      const data = args[0] as { userId: string };
       // Handle user disconnection for active consultations
       void this.handleUserDisconnection(data.userId);
     });

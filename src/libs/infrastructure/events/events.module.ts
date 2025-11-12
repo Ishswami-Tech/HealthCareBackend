@@ -12,18 +12,48 @@ import { EventService } from './event.service';
 // LoggingService and CacheService are injected using @Inject(forwardRef(...)) in EventService
 
 /**
- * Events Module
+ * Events Module - Centralized Event System
+ *
+ * **THIS IS THE CENTRAL EVENT HUB FOR THE ENTIRE APPLICATION**
+ * All event emissions MUST go through EventService. No direct EventEmitter2 usage.
  *
  * Provides enterprise-grade event-driven architecture built on top of NestJS EventEmitter2.
+ * EventService acts as the single source of truth for all event emissions in the application.
  *
- * Features:
+ * **Architecture:**
+ * ```
+ * ┌─────────────────────────────────────────────────────────────┐
+ * │              CENTRAL EVENT SYSTEM (Hub)                      │
+ * │         @infrastructure/events/EventService                  │
+ * │                                                              │
+ * │  Services emit events:                                       │
+ * │  await eventService.emit('ehr.lab_report.created', {...})   │
+ * └─────────────────────────────────────────────────────────────┘
+ *                        │
+ *                        │ Events emitted via EventEmitter2
+ *                        │
+ *        ┌───────────────┼───────────────┐
+ *        │               │               │
+ *        ▼               ▼               ▼
+ * ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+ * │   Socket     │ │  Unified     │ │   Other      │
+ * │   Listener   │ │ Communication│ │  Listeners   │
+ * │              │ │   Listener   │ │  (Audit,     │
+ * │              │ │              │ │   Analytics) │
+ * └──────────────┘ └──────────────┘ └──────────────┘
+ * ```
+ *
+ * **Features:**
  * - EventService: Consolidated event service with both simple and enterprise-grade APIs
  *   - Simple API: emit(), emitAsync(), on(), once(), off(), removeAllListeners(), getEvents(), clearEvents()
  *   - Enterprise API: emitEnterprise() with circuit breaker, rate limiting, and HIPAA compliance
+ *   - Wildcard subscriptions: onAny() for listening to all events
  * - Built on NestJS EventEmitter2 for compatibility with @OnEvent decorators
  * - Integrated with LoggingService, CircuitBreakerService, and CacheService for persistence
+ * - Rate limiting, circuit breaking, event buffering, and performance monitoring
+ * - HIPAA-compliant event handling with PHI data protection
  *
- * Usage:
+ * **Usage:**
  * ```typescript
  * import { EventService } from '@infrastructure/events';
  *
@@ -40,7 +70,17 @@ import { EventService } from './event.service';
  *   priority: EventPriority.HIGH,
  *   payload: { userId: '123' }
  * });
+ *
+ * // Listen to all events
+ * this.eventService.onAny((event, ...args) => {
+ *   console.log('Event emitted:', event, args);
+ * });
  * ```
+ *
+ * **Important:**
+ * - DO NOT use EventEmitter2 directly - always use EventService
+ * - All event emissions must go through EventService for consistency, monitoring, and compliance
+ * - EventService ensures rate limiting, circuit breaking, and HIPAA compliance
  */
 @Module({
   imports: [

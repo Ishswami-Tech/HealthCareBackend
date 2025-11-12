@@ -1,8 +1,15 @@
-import { Module } from '@nestjs/common';
-import { EmailModule } from '@communication/messaging/email/email.module';
-import { WhatsAppModule } from '@communication/messaging/whatsapp/whatsapp.module';
-import { PushModule } from '@communication/messaging/push/push.module';
-import { SocketModule } from '@communication/socket/socket.module';
+import { Module, forwardRef } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { EmailModule } from '@communication/channels/email/email.module';
+import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
+import { PushModule } from '@communication/channels/push/push.module';
+import { SocketModule } from '@communication/channels/socket/socket.module';
+import { ChatModule } from '@communication/channels/chat/chat.module';
+import { NotificationModule } from '@services/notification/notification.module';
+import { ListenersModule } from '@communication/listeners/listeners.module';
+import { EventsModule } from '@infrastructure/events';
+import { CacheModule } from '@infrastructure/cache';
+import { CommunicationService } from './communication.service';
 
 /**
  * Unified Communication Module
@@ -13,9 +20,15 @@ import { SocketModule } from '@communication/socket/socket.module';
  * - WhatsApp Business API integration
  * - Push notifications (Firebase, SNS)
  * - Real-time WebSocket communication
+ * - Notification orchestration service
+ * - Event-driven communication listeners
  *
  * @module CommunicationModule
  * @description Centralized module for all communication services
+ *
+ * Architecture:
+ * - Central Event System (@infrastructure/events) → Event Listeners → Communication Services
+ * - Services emit events → Listeners react → Communication services deliver
  *
  * @example
  * ```typescript
@@ -27,7 +40,28 @@ import { SocketModule } from '@communication/socket/socket.module';
  * ```
  */
 @Module({
-  imports: [EmailModule, WhatsAppModule, PushModule, SocketModule],
-  exports: [EmailModule, WhatsAppModule, PushModule, SocketModule],
+  imports: [
+    EventEmitterModule, // Required for EventEmitter2 injection
+    EmailModule, // Email services (SMTP, SES, templates, queue)
+    WhatsAppModule, // WhatsApp Business API
+    PushModule, // Push notifications (Firebase, SNS)
+    SocketModule, // Real-time WebSocket communication
+    ChatModule, // Chat backup and synchronization
+    NotificationModule, // REST API endpoints in @services/notification (for external API access)
+    ListenersModule, // Event-driven communication listeners
+    forwardRef(() => EventsModule), // Central event system
+    forwardRef(() => CacheModule), // Cache for rate limiting and preferences
+  ],
+  providers: [CommunicationService],
+  exports: [
+    EmailModule,
+    WhatsAppModule,
+    PushModule,
+    SocketModule,
+    ChatModule,
+    NotificationModule,
+    ListenersModule,
+    CommunicationService, // Unified communication service
+  ],
 })
 export class CommunicationModule {}

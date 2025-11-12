@@ -1,5 +1,7 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { EventsModule } from '@infrastructure/events';
+import { LoggingModule } from '@infrastructure/logging';
 import { QueueMonitoringService } from './queue-monitoring.service';
 
 /**
@@ -9,7 +11,11 @@ import { QueueMonitoringService } from './queue-monitoring.service';
  * Includes real-time metrics, health checks, and performance analytics.
  */
 @Module({
-  imports: [EventEmitterModule],
+  imports: [
+    EventEmitterModule, // Required for @OnEvent decorators
+    forwardRef(() => EventsModule), // Central event system
+    LoggingModule,
+  ],
   providers: [QueueMonitoringService],
   exports: [QueueMonitoringService],
 })

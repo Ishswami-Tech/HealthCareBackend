@@ -22,7 +22,7 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 
 // Internal imports - Types
 import type { UnifiedCacheOptions, CacheInvalidationOptions } from '@core/types';
-import type { CustomFastifyRequest } from '@core/types/filter.types';
+import type { CustomFastifyRequest } from '@core/types/infrastructure.types';
 
 // Internal imports - Local
 import { CACHE_KEY, CACHE_INVALIDATE_KEY } from '@infrastructure/cache/decorators/cache.decorator';

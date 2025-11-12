@@ -1,19 +1,49 @@
 /**
  * ===================================================================
- * A++ ENTERPRISE EVENT SERVICE FOR 1M+ USERS
+ * CENTRALIZED EVENT SERVICE - SINGLE SOURCE OF TRUTH
+ * A++ Enterprise Event System for 1M+ Users
  * Healthcare-focused Event-Driven Architecture with HIPAA Compliance
  * ===================================================================
  *
- * Consolidated event service providing both simple and enterprise-grade event capabilities.
- * This service replaces both EventService and EnterpriseEventService.
+ * **THIS IS THE CENTRAL EVENT HUB FOR THE ENTIRE APPLICATION**
+ * All event emissions MUST go through this service. No direct EventEmitter2 usage.
  *
- * Features:
+ * This service acts as the single source of truth for all event emissions in the application.
+ * It provides a unified, robust, and enterprise-grade event system built on top of NestJS EventEmitter2.
+ *
+ * **Architecture:**
+ * ```
+ * ┌─────────────────────────────────────────────────────────────┐
+ * │              CENTRAL EVENT SYSTEM (Hub)                      │
+ * │         @infrastructure/events/EventService                  │
+ * │                                                              │
+ * │  Services emit events:                                       │
+ * │  await eventService.emit('ehr.lab_report.created', {...})   │
+ * └─────────────────────────────────────────────────────────────┘
+ *                        │
+ *                        │ Events emitted via EventEmitter2
+ *                        │
+ *        ┌───────────────┼───────────────┐
+ *        │               │               │
+ *        ▼               ▼               ▼
+ * ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+ * │   Socket     │ │  Unified     │ │   Other      │
+ * │   Listener   │ │ Communication│ │  Listeners   │
+ * │              │ │   Listener   │ │  (Audit,     │
+ * │              │ │              │ │   Analytics) │
+ * └──────────────┘ └──────────────┘ └──────────────┘
+ * ```
+ *
+ * **Features:**
  * - Simple API: emit(), emitAsync(), on(), once(), off(), removeAllListeners(), getEvents(), clearEvents()
  * - Enterprise API: emitEnterprise() with full payload structure, circuit breaker, rate limiting, HIPAA compliance
+ * - Wildcard subscriptions: onAny() for listening to all events
  * - Built on NestJS EventEmitter2 for compatibility with @OnEvent decorators
  * - Integrated with LoggingService, CircuitBreakerService, and CacheService
+ * - Rate limiting, circuit breaking, event buffering, and performance monitoring
+ * - HIPAA-compliant event handling with PHI data protection
  *
- * @example
+ * **Usage:**
  * ```typescript
  * // Simple API
  * await eventService.emit('user.created', { userId: '123' });
@@ -26,7 +56,17 @@
  *   priority: EventPriority.HIGH,
  *   payload: { userId: '123' }
  * });
+ *
+ * // Listen to all events
+ * eventService.onAny((event, ...args) => {
+ *   console.log('Event emitted:', event, args);
+ * });
  * ```
+ *
+ * **Important:**
+ * - DO NOT use EventEmitter2 directly - always use EventService
+ * - All event emissions must go through EventService for consistency, monitoring, and compliance
+ * - EventService ensures rate limiting, circuit breaking, and HIPAA compliance
  */
 
 // External imports
@@ -423,6 +463,30 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
    */
   removeAllListeners(event?: string): void {
     this.eventEmitter.removeAllListeners(event);
+  }
+
+  /**
+   * Subscribe to all events (wildcard listener)
+   * This method allows listening to all events emitted through EventService
+   * Useful for services that need to react to any event (e.g., socket broadcasting, audit logging)
+   * @param listener - Event listener function that receives (event, ...args)
+   * @example
+   * ```typescript
+   * eventService.onAny((event, ...args) => {
+   *   console.log('Event emitted:', event, args);
+   * });
+   * ```
+   */
+  onAny(listener: (event: string | string[], ...args: unknown[]) => void): void {
+    const emitterWithOnAny = this.eventEmitter as EventEmitter2 & {
+      onAny: (listener: (event: string | string[], ...args: unknown[]) => void) => void;
+    };
+    if (emitterWithOnAny.onAny && typeof emitterWithOnAny.onAny === 'function') {
+      emitterWithOnAny.onAny(listener);
+    } else {
+      // Fallback: Subscribe to wildcard pattern if onAny is not available
+      this.eventEmitter.on('**', listener);
+    }
   }
 
   // ===== ENTERPRISE API METHODS =====

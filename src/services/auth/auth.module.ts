@@ -10,7 +10,7 @@ import { EventsModule } from '@infrastructure/events';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { SessionModule } from '@core/session/session.module';
 import { GuardsModule } from '@core/guards/guards.module';
-import { EmailModule } from '@communication/messaging/email/email.module';
+import { EmailModule } from '@communication/channels/email/email.module';
 import { LoggingModule } from '@infrastructure/logging';
 
 // Cache interceptor

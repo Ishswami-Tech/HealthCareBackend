@@ -19,8 +19,8 @@ import { cpus, totalmem, freemem } from 'node:os';
 import { QueueService } from '@infrastructure/queue';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { SocketService } from '@communication/socket';
-import { EmailService } from '@communication/messaging/email';
+import { SocketService } from '@communication/channels/socket';
+import { EmailService } from '@communication/channels/email';
 import { HealthcareErrorsService } from '@core/errors';
 
 /**

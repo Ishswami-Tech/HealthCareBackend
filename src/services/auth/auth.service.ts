@@ -7,7 +7,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { HealthcareErrorsService } from '@core/errors';
 import { LogType, LogLevel } from '@core/types';
-import { EmailService } from '@communication/messaging/email/email.service';
+import { EmailService } from '@communication/channels/email/email.service';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { RbacService } from '@core/rbac/rbac.service';
 import { JwtAuthService } from './core/jwt.service';

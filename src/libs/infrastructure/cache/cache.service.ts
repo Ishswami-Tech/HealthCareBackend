@@ -8,12 +8,20 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // Internal imports - Infrastructure
 import { RedisService } from '@infrastructure/cache/redis/redis.service';
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
+import { EventService } from '@infrastructure/events';
+import {
+  LogType,
+  LogLevel,
+  type IEventService,
+  isEventService,
+  EventCategory,
+  EventPriority,
+} from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types/event.types';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -151,12 +159,20 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     PHI_DATA: 'phi_data', // Protected Health Information
   };
 
+  private typedEventService?: IEventService;
+
   constructor(
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
     private readonly redisService: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService: unknown,
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {
+    // Type guard ensures type safety when using the service
+    if (isEventService(this.eventService)) {
+      this.typedEventService = this.eventService;
+    }
     // Helper function to safely get config values with fallback to process.env
     // ConfigService is global, but we add try-catch for robustness
     const getConfig = <T>(key: string, defaultValue: T): T => {
@@ -259,17 +275,29 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         'CacheService',
         {}
       );
-      this.eventEmitter.emit('cache.service.initialized', {
-        timestamp: new Date(),
-        features: {
-          sharding: this.config.shardingEnabled,
-          loadBalancing: this.config.loadBalancingEnabled,
-          adaptiveCaching: this.config.adaptiveCachingEnabled,
-          predictiveCaching: this.config.predictiveCachingEnabled,
-          compression: this.config.enableCompression,
-          encryption: this.config.encryptionEnabled,
-        },
-      });
+      // Emit initialization event via centralized EventService
+      if (this.typedEventService) {
+        void this.typedEventService.emitEnterprise('cache.service.initialized', {
+          eventId: `cache_init_${Date.now()}`,
+          eventType: 'cache.service.initialized',
+          category: EventCategory.CACHE,
+          priority: EventPriority.NORMAL,
+          timestamp: new Date().toISOString(),
+          source: 'CacheService',
+          version: '1.0.0',
+          payload: {
+            timestamp: new Date().toISOString(),
+            features: {
+              sharding: this.config.shardingEnabled,
+              loadBalancing: this.config.loadBalancingEnabled,
+              adaptiveCaching: this.config.adaptiveCachingEnabled,
+              predictiveCaching: this.config.predictiveCachingEnabled,
+              compression: this.config.enableCompression,
+              encryption: this.config.encryptionEnabled,
+            },
+          },
+        } as EnterpriseEventPayload);
+      }
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -670,8 +698,19 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       errorRate: totalRequests > 0 ? (failedRequests / totalRequests) * 100 : 0,
     };
 
-    // Emit metrics event
-    this.eventEmitter.emit('cache.performance.metrics', this.performanceMetrics);
+    // Emit metrics event via centralized EventService
+    if (this.typedEventService) {
+      void this.typedEventService.emitEnterprise('cache.performance.metrics', {
+        eventId: `cache_metrics_${Date.now()}`,
+        eventType: 'cache.performance.metrics',
+        category: EventCategory.CACHE,
+        priority: EventPriority.LOW,
+        timestamp: new Date().toISOString(),
+        source: 'CacheService',
+        version: '1.0.0',
+        payload: this.performanceMetrics,
+      } as EnterpriseEventPayload);
+    }
   }
 
   private adjustAdaptiveTTL(): void {
@@ -819,8 +858,19 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       this.auditLog = this.auditLog.slice(-10000);
     }
 
-    // Emit audit event
-    this.eventEmitter.emit('cache.audit.event', auditEntry);
+    // Emit audit event via centralized EventService
+    if (this.typedEventService) {
+      void this.typedEventService.emitEnterprise('cache.audit.event', {
+        eventId: `cache_audit_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        eventType: 'cache.audit.event',
+        category: EventCategory.AUDIT,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'CacheService',
+        version: '1.0.0',
+        payload: auditEntry,
+      } as EnterpriseEventPayload);
+    }
   }
 
   /**
@@ -1522,34 +1572,164 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // Basic cache operations - delegate to RedisService
+  // Basic cache operations - delegate to RedisService with graceful error handling
   async get<T>(key: string): Promise<T | null> {
-    return this.redisService.get<T>(key);
+    try {
+      return await this.redisService.get<T>(key);
+    } catch (error) {
+      // CRITICAL: Graceful degradation - return null (cache miss) instead of throwing
+      // This allows application to continue without cache
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        // Only log if circuit breaker is not open (reduces log spam)
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache get operation failed - returning null (cache miss)',
+          'CacheService',
+          {
+            key,
+            error: errorMessage,
+          }
+        );
+      }
+      return null; // Return null as cache miss - allows graceful degradation
+    }
   }
 
   async set<T>(key: string, value: T, ttl?: number): Promise<void> {
-    return this.redisService.set(key, value, ttl);
+    try {
+      await this.redisService.set(key, value, ttl);
+    } catch (error) {
+      // CRITICAL: Graceful degradation - silently fail instead of throwing
+      // This prevents cache failures from breaking the application
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        // Only log if circuit breaker is not open (reduces log spam)
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache set operation failed - continuing without cache',
+          'CacheService',
+          {
+            key,
+            error: errorMessage,
+          }
+        );
+      }
+      // Don't throw - allow graceful degradation
+    }
   }
 
   async del(...keys: string[]): Promise<void> {
-    return this.redisService.del(...keys);
+    try {
+      await this.redisService.del(...keys);
+    } catch (error) {
+      // CRITICAL: Graceful degradation - silently fail instead of throwing
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache delete operation failed - continuing without cache',
+          'CacheService',
+          {
+            keys,
+            error: errorMessage,
+          }
+        );
+      }
+      // Don't throw - allow graceful degradation
+    }
   }
 
   async invalidateCache(key: string): Promise<boolean> {
-    return this.redisService.invalidateCache(key);
+    try {
+      return await this.redisService.invalidateCache(key);
+    } catch (error) {
+      // Graceful degradation - return false instead of throwing
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache invalidation failed',
+          'CacheService',
+          {
+            key,
+            error: errorMessage,
+          }
+        );
+      }
+      return false; // Return false to indicate failure, but don't throw
+    }
   }
 
   async invalidateCacheByTag(tag: string): Promise<number> {
-    return this.redisService.invalidateCacheByTag(tag);
+    try {
+      return await this.redisService.invalidateCacheByTag(tag);
+    } catch (error) {
+      // Graceful degradation - return 0 instead of throwing
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache invalidation by tag failed',
+          'CacheService',
+          {
+            tag,
+            error: errorMessage,
+          }
+        );
+      }
+      return 0; // Return 0 to indicate no keys invalidated, but don't throw
+    }
   }
 
-  // Additional Redis operations needed by other services
+  // Additional cache operations needed by other services
   async invalidateByPattern(pattern: string): Promise<number> {
-    return this.redisService.invalidateCacheByPattern(pattern);
+    try {
+      return await this.redisService.invalidateCacheByPattern(pattern);
+    } catch (error) {
+      // Graceful degradation - return 0 instead of throwing
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache invalidation by pattern failed',
+          'CacheService',
+          {
+            pattern,
+            error: errorMessage,
+          }
+        );
+      }
+      return 0;
+    }
   }
 
   async delPattern(pattern: string): Promise<number> {
-    return this.redisService.invalidateCacheByPattern(pattern);
+    try {
+      return await this.redisService.invalidateCacheByPattern(pattern);
+    } catch (error) {
+      // Graceful degradation - return 0 instead of throwing
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache delete by pattern failed',
+          'CacheService',
+          {
+            pattern,
+            error: errorMessage,
+          }
+        );
+      }
+      return 0;
+    }
   }
 
   // List operations
@@ -1641,7 +1821,28 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       clinicSpecific?: boolean; // Clinic-specific data
     } = {}
   ): Promise<T> {
-    return this.redisService.cache(key, fetchFn, options);
+    try {
+      return await this.redisService.cache(key, fetchFn, options);
+    } catch (error) {
+      // CRITICAL: Graceful degradation - fall back to direct fetch when cache fails
+      // This ensures application continues to work even when cache is unavailable
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache operation failed - falling back to direct fetch',
+          'CacheService',
+          {
+            key,
+            error: errorMessage,
+          }
+        );
+      }
+      // Fall back to direct fetch - ensures application continues to work
+      // If fetch fails, let the error propagate (it's not a cache error)
+      return await fetchFn();
+    }
   }
 
   // ===== RATE LIMITING METHODS =====
@@ -1655,7 +1856,26 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       bypassDev?: boolean; // Override development mode bypass
     } = {}
   ): Promise<boolean> {
-    return this.redisService.isRateLimited(key, limit, windowSeconds, options);
+    try {
+      return await this.redisService.isRateLimited(key, limit, windowSeconds, options);
+    } catch (error) {
+      // CRITICAL: Graceful degradation - fail open (return false) when cache is down
+      // This prevents rate limiting from blocking requests when cache is unavailable
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Rate limit check failed - failing open (allowing request)',
+          'CacheService',
+          {
+            key,
+            error: errorMessage,
+          }
+        );
+      }
+      return false; // Fail open - allow request when cache is unavailable
+    }
   }
 
   async getRateLimit(
@@ -1668,7 +1888,31 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     total: number;
     used: number;
   }> {
-    return this.redisService.getRateLimit(key, limit, windowSeconds);
+    try {
+      return await this.redisService.getRateLimit(key, limit, windowSeconds);
+    } catch (error) {
+      // Graceful degradation - return default values when cache is down
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('circuit breaker')) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Rate limit get failed - returning default values',
+          'CacheService',
+          {
+            key,
+            error: errorMessage,
+          }
+        );
+      }
+      // Return default values indicating no rate limit when cache is unavailable
+      return {
+        remaining: limit || 999999,
+        reset: 0,
+        total: limit || 999999,
+        used: 0,
+      };
+    }
   }
 
   async clearRateLimit(key: string): Promise<void> {

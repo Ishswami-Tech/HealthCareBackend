@@ -2,10 +2,14 @@ import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from
 import { FastifyReply } from 'fastify';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import type { RequestHeaders, ErrorLog, CustomFastifyRequest } from '@core/types/filter.types';
+import type {
+  RequestHeaders,
+  ErrorLog,
+  CustomFastifyRequest,
+} from '@core/types/infrastructure.types';
 
 // Export CustomFastifyRequest for use in other modules
-export type { CustomFastifyRequest } from '@core/types/filter.types';
+export type { CustomFastifyRequest } from '@core/types/infrastructure.types';
 
 /**
  * Global HTTP Exception Filter for Healthcare Applications

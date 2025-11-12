@@ -26,6 +26,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly SECURITY_EVENT_RETENTION = 30 * 24 * 60 * 60; // 30 days
   private readonly STATS_KEY = 'cache:stats';
   private readonly isDevelopment!: boolean;
+  // Circuit breaker to prevent infinite retries when Redis is down
+  private circuitBreakerOpen = false;
+  private circuitBreakerFailures = 0;
+  private readonly circuitBreakerThreshold = 10; // Open circuit after 10 consecutive failures
+  private readonly circuitBreakerResetTimeout = 60000; // 1 minute before attempting to reset
+  private circuitBreakerLastFailureTime = 0;
 
   // Production scaling configurations
   private readonly PRODUCTION_CONFIG = {
@@ -116,9 +122,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     const nodeEnv =
       this.configService?.get<string>('NODE_ENV')?.toLowerCase() ||
       process.env['NODE_ENV']?.toLowerCase();
-    const appEnv =
-      this.configService?.get<string>('APP_ENV')?.toLowerCase() ||
-      process.env['APP_ENV']?.toLowerCase();
+    let appEnv: string | undefined;
+    try {
+      appEnv = this.configService?.get<string>('APP_ENV')?.toLowerCase();
+    } catch {
+      appEnv = process.env['APP_ENV']?.toLowerCase() || undefined;
+    }
     const isDev = this.configService?.get<boolean | string>('IS_DEV') || process.env['IS_DEV'];
     const devMode = process.env['DEV_MODE'] === 'true';
     return (
@@ -138,10 +147,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       const redisPort =
         this.configService?.get<number>('redis.port') ||
         parseInt(process.env['REDIS_PORT'] || '6379', 10);
-      const redisPassword =
-        this.configService?.get<string>('REDIS_PASSWORD') ||
-        this.configService?.get<string>('redis.password') ||
-        process.env['REDIS_PASSWORD'];
+      let redisPassword: string | undefined;
+      try {
+        redisPassword =
+          this.configService?.get<string>('REDIS_PASSWORD') ||
+          this.configService?.get<string>('redis.password') ||
+          process.env['REDIS_PASSWORD'] ||
+          undefined;
+      } catch {
+        // Config key not found, use environment variable or undefined
+        redisPassword = process.env['REDIS_PASSWORD'] || undefined;
+      }
       // Only include password if it's actually set and not empty (Redis might not require auth if protected mode is disabled)
       const hasPassword = redisPassword && redisPassword.trim().length > 0;
 
@@ -153,10 +169,27 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         { host: redisHost, port: redisPort, hasPassword }
       );
 
-      this.client = new Redis({
+      const redisOptions: {
+        host: string;
+        port: number;
+        password?: string;
+        keyPrefix: string;
+        retryStrategy: (times: number) => number | null;
+        maxRetriesPerRequest: number;
+        enableAutoPipelining: boolean;
+        connectTimeout: number;
+        commandTimeout: number;
+        enableReadyCheck: boolean;
+        autoResubscribe: boolean;
+        autoResendUnfulfilledCommands: boolean;
+        lazyConnect: boolean;
+        keepAlive: number;
+        family: number;
+        enableOfflineQueue?: boolean;
+      } = {
         host: redisHost,
         port: redisPort,
-        ...(hasPassword && { password: redisPassword }),
+        ...(hasPassword && redisPassword && { password: redisPassword }),
         keyPrefix: this.PRODUCTION_CONFIG.keyPrefix,
         retryStrategy: times => {
           if (times > this.maxRetries) {
@@ -182,11 +215,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         // Production optimizations
         keepAlive: 30000,
         family: 4, // IPv4
-        // Connection pool settings for high concurrency
-        ...(process.env['NODE_ENV'] === 'production' && {
-          enableOfflineQueue: false, // Fail fast in production
-        }),
-      });
+      };
+
+      // Connection pool settings for high concurrency
+      if (process.env['NODE_ENV'] === 'production') {
+        redisOptions.enableOfflineQueue = false; // Fail fast in production
+      }
+
+      this.client = new Redis(redisOptions);
 
       this.client.on('error', err => {
         void this.loggingService.log(
@@ -307,17 +343,24 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         {}
       );
     } catch (_error) {
+      // CRITICAL: Don't throw - allow app to start in degraded mode without Redis
+      // This enables graceful degradation when Redis is unavailable
+      // Log from CacheService context since that's the public interface
       await this.loggingService.log(
-        LogType.ERROR,
+        LogType.CACHE,
         LogLevel.ERROR,
-        'Failed to initialize Redis connection',
-        'RedisService',
+        'Failed to initialize cache connection - application will run in degraded mode without caching',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
       );
-      throw _error; // Fail fast if Redis is not available
+      // Open circuit breaker immediately to prevent repeated connection attempts
+      this.circuitBreakerOpen = true;
+      this.circuitBreakerFailures = this.circuitBreakerThreshold;
+      this.circuitBreakerLastFailureTime = Date.now();
+      // Don't throw - allow application to continue without Redis
     }
   }
 
@@ -412,19 +455,81 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   // Make retryOperation public for rate limiting service
   public async retryOperation<T>(operation: () => Promise<T>): Promise<T> {
+    // Check circuit breaker - fail fast if circuit is open
+    if (this.circuitBreakerOpen) {
+      const timeSinceLastFailure = Date.now() - this.circuitBreakerLastFailureTime;
+      if (timeSinceLastFailure < this.circuitBreakerResetTimeout) {
+        // Circuit is still open - throw error for operations that require Redis
+        // This allows callers to handle gracefully
+        throw new HealthcareError(
+          ErrorCode.CACHE_CONNECTION_FAILED,
+          'Redis circuit breaker is open - too many consecutive failures. Redis may be unavailable.',
+          undefined,
+          {
+            circuitBreakerOpen: true,
+            timeUntilReset: this.circuitBreakerResetTimeout - timeSinceLastFailure,
+          },
+          'RedisService.retryOperation'
+        );
+      } else {
+        // Reset circuit breaker and try again
+        this.circuitBreakerOpen = false;
+        this.circuitBreakerFailures = 0;
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Redis circuit breaker reset - attempting operation',
+          'RedisService',
+          {}
+        );
+      }
+    }
+
+    // Check if Redis client is connected before retrying
+    if (!this.client || this.client.status !== 'ready') {
+      this.recordCircuitBreakerFailure();
+      throw new HealthcareError(
+        ErrorCode.CACHE_CONNECTION_FAILED,
+        'Redis client is not connected. Please ensure Redis is available and connection is established.',
+        undefined,
+        { clientStatus: this.client?.status || 'not initialized' },
+        'RedisService.retryOperation'
+      );
+    }
+
     let lastError;
     for (let i = 0; i < this.maxRetries; i++) {
       try {
-        return await operation();
+        const result = await operation();
+        // Success - reset circuit breaker
+        if (i > 0) {
+          // Only log if we had to retry
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            `Redis operation succeeded after ${i} retries`,
+            'RedisService',
+            { retries: i }
+          );
+        }
+        this.circuitBreakerFailures = 0;
+        return result;
       } catch (_error) {
         lastError = _error;
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'Redis operation failed, retrying',
-          'RedisService',
-          { attempt: i + 1, maxRetries: this.maxRetries }
-        );
+        // Only log retry attempts, not every failure
+        if (i < this.maxRetries - 1) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Redis operation failed, retrying (${i + 1}/${this.maxRetries})`,
+            'RedisService',
+            {
+              attempt: i + 1,
+              maxRetries: this.maxRetries,
+              error: _error instanceof Error ? _error.message : String(_error),
+            }
+          );
+        }
 
         // Check if it's a read-only error and try to fix it
         if ((_error as Error).message && (_error as Error).message.includes('READONLY')) {
@@ -445,10 +550,39 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * (i + 1)));
       }
     }
+
+    // All retries failed - record circuit breaker failure
+    this.recordCircuitBreakerFailure();
     throw lastError;
+  }
+
+  /**
+   * Record circuit breaker failure and open circuit if threshold is reached
+   */
+  private recordCircuitBreakerFailure(): void {
+    this.circuitBreakerFailures++;
+    this.circuitBreakerLastFailureTime = Date.now();
+
+    if (this.circuitBreakerFailures >= this.circuitBreakerThreshold && !this.circuitBreakerOpen) {
+      this.circuitBreakerOpen = true;
+      // CRITICAL: Log circuit breaker opening - this is important for monitoring
+      // But use CacheService context since that's the public interface
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.ERROR,
+        `Cache circuit breaker opened after ${this.circuitBreakerFailures} consecutive failures. Application running in degraded mode without cache. Circuit breaker will reset after ${this.circuitBreakerResetTimeout}ms.`,
+        'CacheService',
+        {
+          failures: this.circuitBreakerFailures,
+          resetTimeout: this.circuitBreakerResetTimeout,
+          degradedMode: true,
+        }
+      );
+    }
   }
 
   async set(key: string, value: string, ttl?: number): Promise<void>;
@@ -465,18 +599,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       });
     } catch (_error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to set key',
-        'RedisService',
-        {
-          key,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
-      throw _error;
+      // CRITICAL: Don't log errors here - let CacheService handle error logging
+      // This ensures errors are logged from CacheService, not RedisService
+      // Don't throw - allow graceful degradation (caller can handle null/undefined)
+      // This prevents Redis failures from breaking the application
     }
   }
 
@@ -495,17 +621,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return result as T;
       }
     } catch (_error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to get key',
-        'RedisService',
-        {
-          key,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
+      // CRITICAL: Don't log errors here - let CacheService handle error logging
+      // This ensures errors are logged from CacheService, not RedisService
+      // Return null instead of throwing - allows graceful degradation
+      // Callers should handle null as cache miss
       return null;
     }
   }

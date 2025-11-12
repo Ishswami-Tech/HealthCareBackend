@@ -21,7 +21,7 @@ import {
   UpdateInvoiceDto,
 } from './dto/billing.dto';
 import { InvoicePDFService } from './invoice-pdf.service';
-import { WhatsAppService } from '@communication/messaging/whatsapp/whatsapp.service';
+import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 
 // Import centralized types
 import type {

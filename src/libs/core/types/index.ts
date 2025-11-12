@@ -99,14 +99,11 @@ export * from './session.types';
 // Guard Types (centralized guard types for authentication and authorization)
 export * from './guard.types';
 
-// Filter Types (centralized filter types for error handling)
-export * from './filter.types';
+// Infrastructure Types (consolidated: includes error handling and HTTP filter types)
+export * from './infrastructure.types';
 
 // Clinic Types (centralized clinic-related types)
 export * from './clinic.types';
-
-// Error Types (centralized error handling types)
-export * from './error.types';
 
 // Appointment Types (centralized appointment-related types)
 // Exclude duplicates that are also in common.types and queue.types
@@ -164,6 +161,9 @@ export {
 // Notification Types (centralized notification-related types)
 export * from './notification.types';
 
+// Communication Types (unified communication service types)
+export * from './communication.types';
+
 // EHR Types (centralized EHR-related types)
 export * from './ehr.types';
 
@@ -202,5 +202,5 @@ export type {
 // Re-export utility types from constants (they're defined there)
 export type { RedisPrefixKey, RedisPrefixValue, EnvVarName } from '@config/constants';
 
-// Framework Types (framework wrapper types)
+// Framework Types (consolidated: includes framework wrapper types and adapter interfaces)
 export * from './framework.types';

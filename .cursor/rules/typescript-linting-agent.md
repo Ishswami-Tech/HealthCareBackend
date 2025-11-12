@@ -39,7 +39,7 @@ import { PrismaService } from '@infrastructure/database';
 import { LoggingService } from '@logging';
 import { CreateUserDto } from '@dtos';
 import type { RequestContext } from '@types';
-import { EventService } from '@events';
+import { EventService, getEventServiceToken } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2)
 import { QueueService } from '@queue';
 import { CacheService } from '@cache';
 
@@ -57,7 +57,7 @@ import { UserService } from '../../../services/users/user.service';
 - **Configuration MUST import from `@config`** - Use enhanced ConfigService, NOT `@nestjs/config`
 - Logging MUST import from `@logging/*`.
 - Cache MUST import from `@cache/*`.
-- Events MUST import from `@events/*`.
+- Events MUST import from `@infrastructure/events` (EventService is the centralized event hub).
 - Queue MUST import from `@queue/*`.
 - Core domain modules import from `@core/*`.
 - Communication modules import from `@communication/*`.
@@ -68,7 +68,7 @@ import type { Appointment } from '@types';
 import { ConfigService } from '@config'; // Enhanced type-safe ConfigService
 import { LoggingService } from '@logging';
 import { CacheService } from '@cache';
-import { EventService } from '@events';
+import { EventService, getEventServiceToken } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2)
 import { QueueService } from '@queue';
 
 // ❌ Incorrect
@@ -101,7 +101,7 @@ export class UserService {
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly sessionService: SessionService,
     private readonly rbacService: RbacService
   ) {}
@@ -124,10 +124,21 @@ export class UserService {
         }
       });
 
-      // 3. Event emission
-      this.eventEmitter.emit('user.created', {
-        user,
-        context: requestContext
+      // 3. Event emission via centralized EventService (single source of truth)
+      await this.eventService.emitEnterprise('user.created', {
+        eventId: `user-created-${user.id}`,
+        eventType: 'user.created',
+        category: EventCategory.USER_ACTIVITY,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'UserService',
+        version: '1.0.0',
+        userId: user.id,
+        clinicId: requestContext?.clinicId,
+        payload: {
+          user,
+          context: requestContext
+        }
       });
 
       // 4. Caching
@@ -272,7 +283,7 @@ export class UserService {
     private readonly userRepository: UserRepository,
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly configService: ConfigService
   ) {}
 }
@@ -381,8 +392,15 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 
 ### **Infrastructure Aliases Compliance**
 - [ ] Cache imports resolve from `@cache/*`
-- [ ] Events imports resolve from `@events/*`
+- [ ] Events imports resolve from `@infrastructure/events` (EventService is the single source of truth)
 - [ ] Queue imports resolve from `@queue/*`
+
+### **EventService Compliance**
+- [ ] EventService used for all event emissions (NOT EventEmitter2)
+- [ ] forwardRef with getEventServiceToken() used for circular dependencies
+- [ ] Type guards (isEventService) used when injecting EventService with forwardRef
+- [ ] EventService.onAny() used for wildcard event subscriptions
+- [ ] @OnEvent decorators work correctly (EventService emits through EventEmitter2 internally)
 
 ## 🎯 Code Quality Metrics
 
@@ -458,6 +476,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - **ZERO TOLERANCE** for relative imports
 - **ZERO TOLERANCE** for console.log
 - **ZERO TOLERANCE** for Express usage
+- **ZERO TOLERANCE** for direct EventEmitter2 usage (use EventService instead)
 - **ZERO TOLERANCE** for missing error handling
 - **ZERO TOLERANCE** for missing input validation
 - **ZERO TOLERANCE** for missing RBAC checks
@@ -474,9 +493,22 @@ When reviewing or generating code:
 6. **Always implement RBAC** - Guards and permission checks
 7. **Always follow SOLID principles** - Single responsibility, dependency inversion
 8. **Always use Fastify** - Never suggest Express
-9. **Always implement clinic isolation** - Multi-tenant data separation
-10. **Always add audit logging** - HIPAA compliance requirements
+9. **Always use EventService** - Never use EventEmitter2 directly (EventService is the single source of truth)
+10. **Always implement clinic isolation** - Multi-tenant data separation
+11. **Always add audit logging** - HIPAA compliance requirements
 
 Remember: This is a production healthcare system handling sensitive patient data. Code quality, security, and compliance are non-negotiable.
+
+## 🔄 EventService Integration
+
+**EventService is the CENTRALIZED EVENT HUB and single source of truth for all event emissions.**
+
+- All services MUST use EventService (NOT EventEmitter2 directly)
+- Use `getEventServiceToken()` with `forwardRef()` for circular dependencies
+- Use type guards (`isEventService`) when injecting with forwardRef
+- Use `EventService.onAny()` for wildcard event subscriptions
+- `@OnEvent` decorators work correctly (EventService emits through EventEmitter2 internally)
+
+For detailed integration documentation, see: `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`
 
 **Last Updated**: January 2025

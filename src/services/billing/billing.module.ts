@@ -9,7 +9,7 @@ import { EventsModule } from '@infrastructure/events/events.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
-import { WhatsAppModule } from '@communication/messaging/whatsapp/whatsapp.module';
+import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 
 @Module({

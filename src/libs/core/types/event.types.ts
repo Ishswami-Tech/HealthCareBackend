@@ -315,6 +315,19 @@ export interface IEventService {
       timeout?: number;
     }
   ): Promise<EventResult>;
+
+  /**
+   * Subscribe to a specific event
+   * @param event - Event name
+   * @param listener - Event listener function
+   */
+  on(event: string, listener: (...args: unknown[]) => void): void;
+
+  /**
+   * Subscribe to all events (wildcard listener)
+   * @param listener - Event listener function that receives (event, ...args)
+   */
+  onAny(listener: (event: string | string[], ...args: unknown[]) => void): void;
 }
 
 /**
@@ -330,6 +343,8 @@ export function isEventService(service: unknown): service is IEventService {
   return (
     typeof (service as IEventService).emit === 'function' &&
     typeof (service as IEventService).emitAsync === 'function' &&
-    typeof (service as IEventService).emitEnterprise === 'function'
+    typeof (service as IEventService).emitEnterprise === 'function' &&
+    typeof (service as IEventService).on === 'function' &&
+    typeof (service as IEventService).onAny === 'function'
   );
 }

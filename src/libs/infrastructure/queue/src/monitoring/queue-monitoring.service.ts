@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { EventService } from '@infrastructure/events';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -8,7 +8,15 @@ import { LoggingService } from '@infrastructure/logging';
 import type { ExtendedQueueMetrics, QueueAlert, QueuePerformanceReport } from '@core/types';
 
 // Internal imports - Core
-import { LogType, LogLevel } from '@core/types';
+import {
+  LogType,
+  LogLevel,
+  type IEventService,
+  isEventService,
+  EventCategory,
+  EventPriority,
+} from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types/event.types';
 
 /**
  * Enterprise Queue Monitoring Service
@@ -21,6 +29,7 @@ export class QueueMonitoringService {
   private metrics = new Map<string, ExtendedQueueMetrics>();
   private alerts = new Map<string, QueueAlert>();
   private performanceHistory: ExtendedQueueMetrics[] = [];
+  private typedEventService?: IEventService;
   private readonly ALERT_THRESHOLDS = {
     errorRate: 5, // 5%
     throughput: 10, // 10 jobs per minute
@@ -30,9 +39,16 @@ export class QueueMonitoringService {
   };
 
   constructor(
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
-    private readonly eventEmitter: EventEmitter2
+
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService: unknown
   ) {
+    // Type guard ensures type safety when using the service
+    if (isEventService(this.eventService)) {
+      this.typedEventService = this.eventService;
+    }
     this.startHealthMonitoring();
   }
 
@@ -57,12 +73,23 @@ export class QueueMonitoringService {
       // Check for alerts
       void this.checkAlerts(updatedMetrics);
 
-      // Emit metrics update event
-      void this.eventEmitter.emitAsync('queue.metrics.updated', {
-        queueName,
-        domain,
-        metrics: updatedMetrics,
-      });
+      // Emit metrics update event via centralized EventService
+      if (this.typedEventService) {
+        void this.typedEventService.emitEnterprise('queue.metrics.updated', {
+          eventId: `queue_metrics_${queueName}_${Date.now()}`,
+          eventType: 'queue.metrics.updated',
+          category: EventCategory.QUEUE,
+          priority: EventPriority.LOW,
+          timestamp: new Date().toISOString(),
+          source: 'QueueMonitoringService',
+          version: '1.0.0',
+          payload: {
+            queueName,
+            domain,
+            metrics: updatedMetrics,
+          },
+        } as EnterpriseEventPayload);
+      }
 
       void this.loggingService.log(
         LogType.QUEUE,
@@ -137,11 +164,23 @@ export class QueueMonitoringService {
     alert.resolvedAt = new Date();
     this.alerts.set(alertId, alert);
 
-    void this.eventEmitter.emitAsync('queue.alert.resolved', {
-      alertId,
-      queueName: alert.queueName,
-      alert,
-    });
+    // Emit alert resolved event via centralized EventService
+    if (this.typedEventService) {
+      void this.typedEventService.emitEnterprise('queue.alert.resolved', {
+        eventId: `queue_alert_resolved_${alertId}_${Date.now()}`,
+        eventType: 'queue.alert.resolved',
+        category: EventCategory.QUEUE,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'QueueMonitoringService',
+        version: '1.0.0',
+        payload: {
+          alertId,
+          queueName: alert.queueName,
+          alert,
+        },
+      } as EnterpriseEventPayload);
+    }
 
     void this.loggingService.log(
       LogType.QUEUE,
@@ -193,10 +232,22 @@ export class QueueMonitoringService {
         recommendations,
       };
 
-      await this.eventEmitter.emitAsync('queue.report.generated', {
-        period,
-        report,
-      });
+      // Emit report generated event via centralized EventService
+      if (this.typedEventService) {
+        await this.typedEventService.emitEnterprise('queue.report.generated', {
+          eventId: `queue_report_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+          eventType: 'queue.report.generated',
+          category: EventCategory.QUEUE,
+          priority: EventPriority.NORMAL,
+          timestamp: new Date().toISOString(),
+          source: 'QueueMonitoringService',
+          version: '1.0.0',
+          payload: {
+            period,
+            report,
+          },
+        } as EnterpriseEventPayload);
+      }
 
       void this.loggingService.log(
         LogType.QUEUE,
@@ -280,12 +331,24 @@ export class QueueMonitoringService {
           const updatedMetrics = { ...metrics, health };
           this.metrics.set(queueName, updatedMetrics);
 
-          void this.eventEmitter.emitAsync('queue.health.changed', {
-            queueName,
-            oldHealth: metrics.health,
-            newHealth: health,
-            metrics: updatedMetrics,
-          });
+          // Emit health changed event via centralized EventService
+          if (this.typedEventService) {
+            void this.typedEventService.emitEnterprise('queue.health.changed', {
+              eventId: `queue_health_${queueName}_${Date.now()}`,
+              eventType: 'queue.health.changed',
+              category: EventCategory.QUEUE,
+              priority: EventPriority.HIGH,
+              timestamp: new Date().toISOString(),
+              source: 'QueueMonitoringService',
+              version: '1.0.0',
+              payload: {
+                queueName,
+                oldHealth: metrics.health,
+                newHealth: health,
+                metrics: updatedMetrics,
+              },
+            } as EnterpriseEventPayload);
+          }
 
           void this.loggingService.log(
             LogType.QUEUE,
@@ -386,7 +449,19 @@ export class QueueMonitoringService {
     // Add new alerts
     for (const alert of alerts) {
       this.alerts.set(alert.id, alert);
-      void this.eventEmitter.emitAsync('queue.alert.created', { alert });
+      // Emit alert created event via centralized EventService
+      if (this.typedEventService) {
+        void this.typedEventService.emitEnterprise('queue.alert.created', {
+          eventId: `queue_alert_${alert.id}_${Date.now()}`,
+          eventType: 'queue.alert.created',
+          category: EventCategory.QUEUE,
+          priority: alert.severity === 'critical' ? EventPriority.CRITICAL : EventPriority.HIGH,
+          timestamp: new Date().toISOString(),
+          source: 'QueueMonitoringService',
+          version: '1.0.0',
+          payload: { alert },
+        } as EnterpriseEventPayload);
+      }
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.WARN,

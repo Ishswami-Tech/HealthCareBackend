@@ -1,5 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { EventService } from '@infrastructure/events';
 import type {
   TimeSlot,
   ConflictResolutionOptions,
@@ -9,6 +9,8 @@ import type {
   ResolutionAction,
   AppointmentRequest,
 } from '@core/types/appointment.types';
+import { type IEventService, isEventService, EventCategory, EventPriority } from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types/event.types';
 
 // Re-export for backward compatibility
 export type {
@@ -24,6 +26,7 @@ export type {
 @Injectable()
 export class ConflictResolutionService {
   private readonly logger = new Logger(ConflictResolutionService.name);
+  private typedEventService?: IEventService;
 
   private defaultOptions: ConflictResolutionOptions = {
     allowOverlap: false,
@@ -43,7 +46,16 @@ export class ConflictResolutionService {
     },
   };
 
-  constructor(private eventEmitter: EventEmitter2) {}
+  constructor(
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService: unknown
+  ) {
+    // Type guard ensures type safety when using the service
+    if (!isEventService(this.eventService)) {
+      throw new Error('EventService is not available or invalid');
+    }
+    this.typedEventService = this.eventService;
+  }
 
   async resolveSchedulingConflict(
     request: AppointmentRequest,
@@ -140,14 +152,25 @@ export class ConflictResolutionService {
       ((result as { meta?: unknown }).meta as Record<string, unknown>)['processingTimeMs'] =
         Date.now() - startTime;
 
-      // Emit resolution event for monitoring
-      await this.eventEmitter.emitAsync('appointment.conflict-resolved', {
-        request,
-        result,
-        processingTime: ((result as { meta?: unknown }).meta as Record<string, unknown>)[
-          'processingTimeMs'
-        ],
-      });
+      // Emit resolution event for monitoring via EventService
+      if (this.typedEventService) {
+        await this.typedEventService.emitEnterprise('appointment.conflict-resolved', {
+          eventId: `conflict_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+          eventType: 'appointment.conflict-resolved',
+          category: EventCategory.APPOINTMENT,
+          priority: EventPriority.HIGH,
+          timestamp: new Date().toISOString(),
+          source: 'ConflictResolutionService',
+          version: '1.0.0',
+          payload: {
+            request,
+            result,
+            processingTime: ((result as { meta?: unknown }).meta as Record<string, unknown>)[
+              'processingTimeMs'
+            ],
+          },
+        } as EnterpriseEventPayload);
+      }
 
       this.logger.log(
         `✅ Conflict resolution complete: ${result.resolution.strategy} (${String(((result as { meta?: unknown }).meta as Record<string, unknown>)['processingTimeMs'])}ms)`

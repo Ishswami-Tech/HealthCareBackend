@@ -53,7 +53,8 @@ import { PrismaService } from '@infrastructure/database';
 import { LoggingService } from '@logging';
 import { CreateUserDto } from '@dtos';
 import type { RequestContext } from '@types';
-import { EventsService } from '@events';
+import { EventService, getEventServiceToken } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2) - CENTRALIZED EVENT HUB
+import { type IEventService, isEventService } from '@core/types'; // Type guards for EventService
 import { QueueService } from '@queue';
 import { RedisService } from '@cache';
 
@@ -69,7 +70,7 @@ import { UserService } from '../../../services/users/user.service';
 ### **Alias Usage (MANDATORY)**
 - Logging imports MUST resolve from `@logging/*`.
 - Cache imports MUST resolve from `@cache/*`.
-- Events imports MUST resolve from `@events/*`.
+- Events imports MUST resolve from `@infrastructure/events` (EventService is the centralized event hub).
 - Queue imports MUST resolve from `@queue/*`.
 - Core imports from `@core/*`; Communication imports from `@communication/*`.
 
@@ -90,7 +91,7 @@ export class UserService {
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly sessionService: SessionService,
     private readonly rbacService: RbacService
   ) {}
@@ -113,10 +114,21 @@ export class UserService {
         }
       });
 
-      // 3. Event emission
-      this.eventEmitter.emit('user.created', {
-        user,
-        context: requestContext
+      // 3. Event emission via centralized EventService (single source of truth)
+      await this.eventService.emitEnterprise('user.created', {
+        eventId: `user-created-${user.id}`,
+        eventType: 'user.created',
+        category: EventCategory.USER_ACTIVITY,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'UserService',
+        version: '1.0.0',
+        userId: user.id,
+        clinicId: requestContext?.clinicId,
+        payload: {
+          user,
+          context: requestContext
+        }
       });
 
       // 4. Caching
@@ -253,9 +265,29 @@ export class UserService {
     private readonly userRepository: UserRepository,
     private readonly logger: LoggingService,
     private readonly cache: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly configService: ConfigService
   ) {}
+}
+
+// For circular dependencies, use forwardRef with type guards
+import { Inject, forwardRef } from '@nestjs/common';
+import { getEventServiceToken } from '@infrastructure/events';
+import { type IEventService, isEventService } from '@core/types';
+
+@Injectable()
+export class MyService {
+  private typedEventService?: IEventService;
+
+  constructor(
+    @Inject(forwardRef(getEventServiceToken))
+    private readonly eventService: unknown
+  ) {
+    if (!isEventService(this.eventService)) {
+      throw new Error('EventService is not available or invalid');
+    }
+    this.typedEventService = this.eventService;
+  }
 }
 ```
 
@@ -285,6 +317,10 @@ async create(@Body() data: any) { } // No DTO validation
 
 // Don't use Express
 import { NestExpressApplication } from '@nestjs/platform-express';
+
+// Don't use EventEmitter2 directly
+import { EventEmitter2 } from '@nestjs/event-emitter';
+this.eventEmitter.emit('user.created', { user }); // FORBIDDEN - Use EventService instead
 ```
 
 ### **✅ Correct Patterns**
@@ -318,6 +354,19 @@ async create(@Body() createUserDto: CreateUserDto) { }
 
 // Use Fastify
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
+
+// Use EventService for events (NOT EventEmitter2)
+import { EventService } from '@infrastructure/events';
+await this.eventService.emitEnterprise('user.created', {
+  eventId: `user-created-${user.id}`,
+  eventType: 'user.created',
+  category: EventCategory.USER_ACTIVITY,
+  priority: EventPriority.HIGH,
+  timestamp: new Date().toISOString(),
+  source: 'UserService',
+  version: '1.0.0',
+  payload: { user }
+});
 ```
 
 ## 🔍 Code Review Checklist
@@ -333,7 +382,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - [ ] SOLID principles followed
 - [ ] Single responsibility per class
 - [ ] Dependency injection used
-- [ ] Event-driven patterns implemented
+- [ ] Event-driven patterns implemented (EventService as single source of truth)
 - [ ] Repository pattern used
 
 ### **Security Compliance**
@@ -355,6 +404,13 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - [ ] Structured logging with context
 - [ ] HIPAA-compliant audit trails
 - [ ] Error logging with stack traces
+
+### **EventService Compliance**
+- [ ] EventService used for all event emissions (NOT EventEmitter2)
+- [ ] forwardRef with getEventServiceToken() used for circular dependencies
+- [ ] Type guards (isEventService) used when injecting EventService with forwardRef
+- [ ] EventService.onAny() used for wildcard event subscriptions
+- [ ] @OnEvent decorators work correctly (EventService emits through EventEmitter2 internally)
 
 ## 🎯 Code Quality Metrics
 
@@ -442,8 +498,9 @@ When reviewing or generating code:
 6. **Always implement RBAC** - Guards and permission checks
 7. **Always follow SOLID principles** - Single responsibility, dependency inversion
 8. **Always use Fastify** - Never suggest Express
-9. **Always implement clinic isolation** - Multi-tenant data separation
-10. **Always add audit logging** - HIPAA compliance requirements
+9. **Always use EventService** - Never use EventEmitter2 directly (EventService is the centralized event hub and single source of truth)
+10. **Always implement clinic isolation** - Multi-tenant data separation
+11. **Always add audit logging** - HIPAA compliance requirements
 
 ## 🚨 Critical Rules
 
@@ -451,6 +508,7 @@ When reviewing or generating code:
 - **ZERO TOLERANCE** for relative imports
 - **ZERO TOLERANCE** for console.log
 - **ZERO TOLERANCE** for Express usage
+- **ZERO TOLERANCE** for direct EventEmitter2 usage (use EventService instead - it's the single source of truth)
 - **ZERO TOLERANCE** for missing error handling
 - **ZERO TOLERANCE** for missing input validation
 - **ZERO TOLERANCE** for missing RBAC checks

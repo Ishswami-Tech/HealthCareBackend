@@ -349,7 +349,9 @@ export class MiddlewareManager {
       });
 
       app.setGlobalPrefix(prefixConfig.prefix, exclude ? { exclude } : undefined);
-      this.logger.log(`Global prefix configured: ${prefixConfig.prefix}`);
+      this.logger.log(
+        `Global prefix configured: ${prefixConfig.prefix}${exclude ? ` (excluded: ${exclude.map(e => (typeof e === 'string' ? e : `${e.path} [${e.method}]`)).join(', ')})` : ''}`
+      );
     } catch (error) {
       const errorMessage = `Failed to configure global prefix: ${
         error instanceof Error ? error.message : 'Unknown error'

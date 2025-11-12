@@ -194,16 +194,20 @@ export class ProcessErrorHandlersService {
     process.on('unhandledRejection', (reason, promise) => {
       void (async () => {
         try {
-          await this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'Unhandled Rejection',
-            'Process',
-            {
-              reason: reason instanceof Error ? reason.stack : reason,
-              promise: promise,
-            }
-          );
+          if (this.loggingService) {
+            await this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'Unhandled Rejection',
+              'Process',
+              {
+                reason: reason instanceof Error ? reason.stack : reason,
+                promise: promise,
+              }
+            );
+          } else {
+            console.error('Unhandled Rejection (LoggingService not available):', reason);
+          }
         } catch (logError) {
           console.error('Failed to log unhandled rejection:', logError);
           console.error('Original rejection:', reason);

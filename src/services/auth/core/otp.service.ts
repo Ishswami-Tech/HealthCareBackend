@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RedisService } from '@infrastructure/cache/redis/redis.service';
-import { EmailService } from '@communication/messaging/email/email.service';
+import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config';
 import { EmailTemplate } from '@core/types/common.types';
 
