@@ -78,9 +78,9 @@ async function setupWebSocketAdapter(
   logger: Logger,
   loggingService: LoggingService | undefined
 ): Promise<IoAdapter | null> {
-  try {
-    const { createAdapter } = await import('@socket.io/redis-adapter');
-    const { createClient } = await import('redis');
+    try {
+      const { createAdapter } = await import('@socket.io/redis-adapter');
+      const { createClient } = await import('redis');
 
     // Redis client configuration
     const redisHost =
@@ -89,236 +89,236 @@ async function setupWebSocketAdapter(
       configService?.get<string>('REDIS_PORT') || process.env['REDIS_PORT'] || '6379';
     const redisPassword =
       configService?.get<string>('REDIS_PASSWORD') || process.env['REDIS_PASSWORD'];
-    const redisConfig = {
-      url: `redis://${String(redisHost).trim()}:${String(redisPort).trim()}`,
+      const redisConfig = {
+        url: `redis://${String(redisHost).trim()}:${String(redisPort).trim()}`,
       ...(redisPassword && redisPassword.trim() && { password: redisPassword }),
-      retryStrategy: (times: number) => {
-        const maxRetries = 5;
-        if (times > maxRetries) {
-          logger.error(`Redis connection failed after ${maxRetries} retries`);
+        retryStrategy: (times: number) => {
+          const maxRetries = 5;
+          if (times > maxRetries) {
+            logger.error(`Redis connection failed after ${maxRetries} retries`);
           return null;
-        }
-        const maxDelay = 3000;
-        const delay = Math.min(times * 100, maxDelay);
-        logger.log(`Redis reconnection attempt ${times}, delay: ${delay}ms`);
-        return delay;
-      },
-    };
+          }
+          const maxDelay = 3000;
+          const delay = Math.min(times * 100, maxDelay);
+          logger.log(`Redis reconnection attempt ${times}, delay: ${delay}ms`);
+          return delay;
+        },
+      };
 
-    try {
-      pubClient = createClient(redisConfig) as unknown as RedisClient;
+      try {
+        pubClient = createClient(redisConfig) as unknown as RedisClient;
       subClient = (pubClient as unknown as { duplicate: () => unknown }).duplicate() as RedisClient;
 
-      const handleRedisError = async (client: string, err: Error) => {
-        try {
-          await loggingService?.log(
-            LogType.ERROR,
-            AppLogLevel.ERROR,
-            `Redis ${client} Client Error: ${err.message}`,
-            'Redis',
-            { client, _error: err.message, stack: err.stack }
-          );
+        const handleRedisError = async (client: string, err: Error) => {
+          try {
+            await loggingService?.log(
+              LogType.ERROR,
+              AppLogLevel.ERROR,
+              `Redis ${client} Client Error: ${err.message}`,
+              'Redis',
+              { client, _error: err.message, stack: err.stack }
+            );
         } catch {
-          originalConsole.error(`Redis ${client} Client Error:`, err);
-        }
-      };
+            originalConsole.error(`Redis ${client} Client Error:`, err);
+          }
+        };
 
-      const handleRedisConnect = async (client: string) => {
-        try {
-          await loggingService?.log(
-            LogType.SYSTEM,
-            AppLogLevel.INFO,
-            `Redis ${client} Client Connected`,
-            'Redis',
-            { client }
-          );
+        const handleRedisConnect = async (client: string) => {
+          try {
+            await loggingService?.log(
+              LogType.SYSTEM,
+              AppLogLevel.INFO,
+              `Redis ${client} Client Connected`,
+              'Redis',
+              { client }
+            );
         } catch {
           originalConsole.warn(`Redis ${client} Client Connected`);
-        }
-      };
-
-      if (pubClient) {
-        pubClient.on('error', (err: unknown) => {
-          void handleRedisError('Pub', err as Error);
-        });
-        pubClient.on('connect', () => {
-          void handleRedisConnect('Pub');
-        });
-      }
-      if (subClient) {
-        subClient.on('error', (err: unknown) => {
-          void handleRedisError('Sub', err as Error);
-        });
-        subClient.on('connect', () => {
-          void handleRedisConnect('Sub');
-        });
-      }
-
-      const connectWithTimeout = async (client: RedisClient, name: string) => {
-        return Promise.race([
-          client.connect(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`${name} client connection timeout`)), 10000)
-          ),
-        ]);
-      };
-
-      if (pubClient && subClient) {
-        await Promise.all([
-          connectWithTimeout(pubClient, 'Pub'),
-          connectWithTimeout(subClient, 'Sub'),
-        ]);
-      }
-
-      class CustomIoAdapter extends IoAdapter {
-        private adapterConstructor: ReturnType<typeof createAdapter>;
-
-        constructor(app: INestApplication) {
-          super(app);
-          if (!pubClient || !subClient) {
-            throw new Error('Redis clients must be initialized before creating adapter');
           }
-          this.adapterConstructor = createAdapter(pubClient, subClient);
+        };
+
+        if (pubClient) {
+          pubClient.on('error', (err: unknown) => {
+            void handleRedisError('Pub', err as Error);
+          });
+          pubClient.on('connect', () => {
+            void handleRedisConnect('Pub');
+          });
+        }
+        if (subClient) {
+          subClient.on('error', (err: unknown) => {
+            void handleRedisError('Sub', err as Error);
+          });
+          subClient.on('connect', () => {
+            void handleRedisConnect('Sub');
+          });
         }
 
-        createIOServer(port: number, options?: Record<string, unknown>): unknown {
+        const connectWithTimeout = async (client: RedisClient, name: string) => {
+          return Promise.race([
+            client.connect(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`${name} client connection timeout`)), 10000)
+            ),
+          ]);
+        };
+
+        if (pubClient && subClient) {
+          await Promise.all([
+            connectWithTimeout(pubClient, 'Pub'),
+            connectWithTimeout(subClient, 'Sub'),
+          ]);
+        }
+
+        class CustomIoAdapter extends IoAdapter {
+          private adapterConstructor: ReturnType<typeof createAdapter>;
+
+          constructor(app: INestApplication) {
+            super(app);
+            if (!pubClient || !subClient) {
+              throw new Error('Redis clients must be initialized before creating adapter');
+            }
+            this.adapterConstructor = createAdapter(pubClient, subClient);
+          }
+
+          createIOServer(port: number, options?: Record<string, unknown>): unknown {
           // Use same CORS configuration as SecurityConfigService for consistency (DRY principle)
           const corsOrigin =
             configService?.get<string>('CORS_ORIGIN') || process.env['CORS_ORIGIN'] || '*';
           const corsOrigins =
             corsOrigin === '*' ? '*' : corsOrigin.split(',').map((o: string) => o.trim());
 
-          const serverRaw: unknown = super.createIOServer(port, {
-            ...(options || {}),
-            cors: {
+            const serverRaw: unknown = super.createIOServer(port, {
+              ...(options || {}),
+              cors: {
               origin: corsOrigins,
-              methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-              credentials: true,
-              allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-            },
-            path: '/socket.io',
-            serveClient: true,
-            transports: ['websocket', 'polling'],
-            allowEIO3: true,
-            pingTimeout: 60000,
-            pingInterval: 25000,
-            connectTimeout: 45000,
-            maxHttpBufferSize: 1e6,
-            allowUpgrades: true,
-            cookie: false,
-          });
-          const server = serverRaw as {
-            adapter?: (adapter: unknown) => void;
-            of?: (path: string) => {
-              on?: (event: string, handler: (socket: SocketConnection) => void) => void;
-            } | null;
-          };
-
-          const serverWithAdapter = server;
-          if (serverWithAdapter && typeof serverWithAdapter.adapter === 'function') {
-            serverWithAdapter.adapter(this.adapterConstructor);
-          }
-
-          const healthNamespace = server.of?.('/health');
-          if (healthNamespace && typeof healthNamespace.on === 'function') {
-            healthNamespace.on('connection', (socket: SocketConnection) => {
-              socket.emit('health', {
-                status: 'healthy',
-                timestamp: new Date(),
-                environment: process.env['NODE_ENV'],
-              });
+                methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+                credentials: true,
+                allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+              },
+              path: '/socket.io',
+              serveClient: true,
+              transports: ['websocket', 'polling'],
+              allowEIO3: true,
+              pingTimeout: 60000,
+              pingInterval: 25000,
+              connectTimeout: 45000,
+              maxHttpBufferSize: 1e6,
+              allowUpgrades: true,
+              cookie: false,
             });
-          }
+            const server = serverRaw as {
+              adapter?: (adapter: unknown) => void;
+              of?: (path: string) => {
+                on?: (event: string, handler: (socket: SocketConnection) => void) => void;
+              } | null;
+            };
 
-          const testNamespace = server.of?.('/test');
-          if (testNamespace && typeof testNamespace.on === 'function') {
-            testNamespace.on('connection', (socket: SocketConnection) => {
-              logger.log('Client connected to test namespace');
+            const serverWithAdapter = server;
+            if (serverWithAdapter && typeof serverWithAdapter.adapter === 'function') {
+              serverWithAdapter.adapter(this.adapterConstructor);
+            }
 
-              let heartbeat: NodeJS.Timeout;
-
-              const startHeartbeat = () => {
-                socket.emit('welcome', {
-                  message: 'Connected to WebSocket server',
-                  timestamp: new Date().toISOString(),
+            const healthNamespace = server.of?.('/health');
+            if (healthNamespace && typeof healthNamespace.on === 'function') {
+              healthNamespace.on('connection', (socket: SocketConnection) => {
+                socket.emit('health', {
+                  status: 'healthy',
+                  timestamp: new Date(),
                   environment: process.env['NODE_ENV'],
                 });
+              });
+            }
 
-                heartbeat = setInterval(() => {
-                  socket.emit('heartbeat', {
+            const testNamespace = server.of?.('/test');
+            if (testNamespace && typeof testNamespace.on === 'function') {
+              testNamespace.on('connection', (socket: SocketConnection) => {
+                logger.log('Client connected to test namespace');
+
+                let heartbeat: NodeJS.Timeout;
+
+                const startHeartbeat = () => {
+                  socket.emit('welcome', {
+                    message: 'Connected to WebSocket server',
                     timestamp: new Date().toISOString(),
+                    environment: process.env['NODE_ENV'],
                   });
+
+                  heartbeat = setInterval(() => {
+                    socket.emit('heartbeat', {
+                      timestamp: new Date().toISOString(),
+                    });
                 }, 30000);
-              };
+                };
 
-              startHeartbeat();
+                startHeartbeat();
 
-              socket.on('disconnect', () => {
-                clearInterval(heartbeat);
-                logger.log('Client disconnected from test namespace');
+                socket.on('disconnect', () => {
+                  clearInterval(heartbeat);
+                  logger.log('Client disconnected from test namespace');
+                });
+
+                socket.on('message', (data: unknown) => {
+                  try {
+                    socket.emit('echo', {
+                      original: data,
+                      timestamp: new Date().toISOString(),
+                      processed: true,
+                    });
+                  } catch (_error) {
+                    logger.error('Error processing socket message:', _error);
+                    socket.emit('_error', {
+                      message: 'Failed to process message',
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                });
+
+                socket.on('error', (_error: unknown) => {
+                  logger.error('Socket _error:', _error);
+                  clearInterval(heartbeat);
+                });
               });
+            }
 
-              socket.on('message', (data: unknown) => {
-                try {
-                  socket.emit('echo', {
-                    original: data,
-                    timestamp: new Date().toISOString(),
-                    processed: true,
-                  });
-                } catch (_error) {
-                  logger.error('Error processing socket message:', _error);
-                  socket.emit('_error', {
-                    message: 'Failed to process message',
-                    timestamp: new Date().toISOString(),
-                  });
-                }
-              });
-
-              socket.on('error', (_error: unknown) => {
-                logger.error('Socket _error:', _error);
-                clearInterval(heartbeat);
-              });
-            });
+            return server;
           }
-
-          return server;
         }
-      }
 
       const adapter = new CustomIoAdapter(app);
       app.useWebSocketAdapter(adapter);
 
-      logger.log('WebSocket adapter configured successfully');
+        logger.log('WebSocket adapter configured successfully');
 
-      await loggingService?.log(
-        LogType.SYSTEM,
-        AppLogLevel.INFO,
-        'WebSocket adapter configured successfully',
-        'WebSocket'
-      );
+        await loggingService?.log(
+          LogType.SYSTEM,
+          AppLogLevel.INFO,
+          'WebSocket adapter configured successfully',
+          'WebSocket'
+        );
 
       return adapter;
-    } catch (redisError) {
-      logger.warn('Failed to initialize Redis adapter:', redisError);
+      } catch (redisError) {
+        logger.warn('Failed to initialize Redis adapter:', redisError);
+        await loggingService?.log(
+          LogType.ERROR,
+          AppLogLevel.WARN,
+          'Continuing without Redis adapter',
+          'WebSocket'
+        );
+      return null;
+      }
+    } catch (_error) {
       await loggingService?.log(
         LogType.ERROR,
-        AppLogLevel.WARN,
-        'Continuing without Redis adapter',
-        'WebSocket'
+        AppLogLevel.ERROR,
+        `WebSocket adapter initialization failed: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
+        'WebSocket',
+        {
+          _error: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
-      return null;
-    }
-  } catch (_error) {
-    await loggingService?.log(
-      LogType.ERROR,
-      AppLogLevel.ERROR,
-      `WebSocket adapter initialization failed: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
-      'WebSocket',
-      {
-        _error: _error instanceof Error ? _error.stack : 'No stack trace available',
-      }
-    );
-    logger.warn('Continuing without WebSocket support');
+      logger.warn('Continuing without WebSocket support');
     return null;
   }
 }
@@ -562,6 +562,13 @@ async function bootstrap() {
         'health',
         'metrics',
         'docs',
+        'queue-dashboard',
+        'logger',
+        'socket-test',
+        'email',
+        'redis-ui',
+        'prisma',
+        'pgadmin',
       ],
       enableShutdownHooks: true,
     };
@@ -720,7 +727,7 @@ async function bootstrap() {
       }
 
       // Setup graceful shutdown handlers using GracefulShutdownService
-      if (app) {
+                if (app) {
         // Service is properly typed, so method calls are type-safe
         gracefulShutdownService.setupShutdownHandlers(
           app,

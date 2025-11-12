@@ -590,6 +590,7 @@ export class CommunicationService implements OnModuleInit {
 
   /**
    * Send push notification
+   * PushNotificationService handles FCM primary and SNS fallback internally
    */
   private async sendPush(
     request: CommunicationRequest,
@@ -606,48 +607,27 @@ export class CommunicationService implements OnModuleInit {
         };
       }
 
-      const result = await this.pushService.sendToDevice(recipient.deviceToken, {
-        title: request.title,
-        body: request.body,
-        ...(request.data && { data: request.data as Record<string, string> }),
-      });
+      // PushNotificationService handles FCM primary and SNS fallback automatically
+      const result = await this.pushService.sendToDevice(
+        recipient.deviceToken,
+        {
+          title: request.title,
+          body: request.body,
+          ...(request.data && { data: request.data as Record<string, string> }),
+        },
+        recipient.userId
+      );
 
-      if (result.success && result.messageId) {
-        return {
-          channel: 'push',
-          success: true,
-          messageId: result.messageId,
-          timestamp,
-        };
-      }
-
-      // Try SNS backup
-      try {
-        const snsResult = await this.snsBackupService.sendPushNotification(
-          recipient.deviceToken,
-          {
-            title: request.title,
-            body: request.body,
-            ...(request.data && { data: request.data as Record<string, string> }),
-          },
-          'android'
-        );
-
-        return {
-          channel: 'push',
-          success: snsResult.success,
-          ...(snsResult.messageId && { messageId: snsResult.messageId }),
-          ...(snsResult.success ? {} : { error: snsResult.error || 'Unknown error' }),
-          timestamp,
-        };
-      } catch (snsError) {
-        return {
-          channel: 'push',
-          success: false,
-          error: snsError instanceof Error ? snsError.message : 'Unknown error',
-          timestamp,
-        };
-      }
+      return {
+        channel: 'push',
+        success: result.success,
+        ...(result.messageId && { messageId: result.messageId }),
+        ...(result.success
+          ? {}
+          : { error: result.error || 'Unknown error' }),
+        timestamp,
+        ...(result.provider && { metadata: { provider: result.provider, usedFallback: result.usedFallback } }),
+      };
     } catch (error) {
       return {
         channel: 'push',

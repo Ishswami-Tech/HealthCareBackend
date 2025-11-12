@@ -88,3 +88,6 @@ bin/
 # test-startup.sh
 # test-local-start.sh
 # quick-test.sh
+.env.development
+.env.test.local
+.env.production

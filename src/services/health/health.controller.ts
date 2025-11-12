@@ -379,7 +379,7 @@ export class HealthController {
     }
   }
 
-  @Get('/api-health')
+  @Get('/api')
   @Public()
   async apiHealth(@Res() res: FastifyReply) {
     try {
@@ -465,9 +465,12 @@ export class HealthController {
     }
   }
 
-  @Get('/api')
+  @Get('/api-health')
   @Public()
-  async apiStatus(@Res() res: FastifyReply) {
+  async apiHealthAlias(@Res() res: FastifyReply) {
+    // Alias for /api endpoint for backward compatibility
+    return this.apiHealth(res);
+  }
     try {
       return res.send({
         status: 'ok',

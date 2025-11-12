@@ -13,6 +13,30 @@ class SendTestEmailDto {
 export class EmailController {
   constructor(private readonly emailService: EmailService) {}
 
+  @Get('status')
+  @ApiOperation({ summary: 'Get email service status' })
+  @ApiResponse({ status: 200, description: 'Email service status' })
+  async getEmailStatus() {
+    try {
+      const isHealthy = this.emailService.isHealthy();
+      return {
+        status: isHealthy ? 'healthy' : 'unhealthy',
+        service: 'Email Service',
+        timestamp: new Date().toISOString(),
+        details: isHealthy
+          ? 'Email service is operational'
+          : 'Email service is experiencing issues',
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        service: 'Email Service',
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
   @Get('test')
   @ApiOperation({ summary: 'Send a test email with default template' })
   @ApiResponse({ status: 200, description: 'Test email sent successfully' })

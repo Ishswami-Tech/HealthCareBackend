@@ -1,8 +1,10 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
 import * as admin from 'firebase-admin';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
+import { DeviceTokenService } from '@communication/channels/push/device-token.service';
 
 /**
  * Push notification data interface
@@ -32,10 +34,21 @@ export interface PushNotificationResult {
   readonly failureCount?: number;
   /** Error message if operation failed */
   readonly error?: string;
+  /** Provider used for delivery (fcm or sns) */
+  readonly provider?: 'fcm' | 'sns';
+  /** Whether fallback was used */
+  readonly usedFallback?: boolean;
 }
 
 /**
- * Push notification service using Firebase Cloud Messaging
+ * Push notification service using Firebase Cloud Messaging (Primary)
+ * with AWS SNS as backup provider
+ *
+ * Architecture:
+ * - FCM (Firebase Cloud Messaging) as primary provider (free, reliable)
+ * - AWS SNS as backup provider (HIPAA-compliant, high availability)
+ * - Automatic fallback: If FCM fails, retry with SNS
+ * - Platform detection: Automatically detects iOS/Android for SNS
  *
  * @class PushNotificationService
  * @implements {OnModuleInit}
@@ -44,15 +57,27 @@ export interface PushNotificationResult {
 export class PushNotificationService implements OnModuleInit {
   private firebaseApp: admin.app.App | null = null;
   private isInitialized = false;
+  private snsBackupService?: SNSBackupService;
+  private deviceTokenService?: DeviceTokenService;
 
   /**
    * Creates an instance of PushNotificationService
    * @param configService - Configuration service for environment variables
+   * @param loggingService - Logging service for HIPAA-compliant logging
+   * @param snsBackupService - Optional SNS backup service (injected via forwardRef to avoid circular dependency)
+   * @param deviceTokenService - Optional device token service for platform detection
    */
   constructor(
     private readonly configService: ConfigService,
-    private readonly loggingService: LoggingService
-  ) {}
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => SNSBackupService))
+    snsBackupService?: SNSBackupService,
+    @Inject(forwardRef(() => DeviceTokenService))
+    deviceTokenService?: DeviceTokenService
+  ) {
+    this.snsBackupService = snsBackupService;
+    this.deviceTokenService = deviceTokenService;
+  }
 
   /**
    * Initializes Firebase on module startup
@@ -125,22 +150,91 @@ export class PushNotificationService implements OnModuleInit {
 
   /**
    * Sends push notification to a single device
+   * Uses FCM as primary, falls back to SNS if FCM fails
    * @param deviceToken - Firebase device token
    * @param notification - Notification data
+   * @param userId - Optional user ID for platform detection
    * @returns Promise resolving to notification result
    */
   async sendToDevice(
     deviceToken: string,
+    notification: PushNotificationData,
+    userId?: string
+  ): Promise<PushNotificationResult> {
+    // Try FCM first (primary provider)
+    const fcmResult = await this.sendViaFCM(deviceToken, notification);
+
+    // If FCM succeeded, return immediately
+    if (fcmResult.success) {
+      return {
+        ...fcmResult,
+        provider: 'fcm',
+        usedFallback: false,
+      };
+    }
+
+    // FCM failed, try SNS backup
+    void this.loggingService.log(
+      LogType.NOTIFICATION,
+      LogLevel.WARN,
+      'FCM push notification failed, attempting SNS backup',
+      'PushNotificationService',
+      {
+        deviceToken: this.maskToken(deviceToken),
+        title: notification.title,
+        fcmError: fcmResult.error,
+        userId,
+      }
+    );
+
+    const snsResult = await this.sendViaSNS(deviceToken, notification, userId);
+
+    if (snsResult.success) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Push notification sent successfully via SNS backup',
+        'PushNotificationService',
+        {
+          deviceToken: this.maskToken(deviceToken),
+          title: notification.title,
+          messageId: snsResult.messageId,
+          userId,
+        }
+      );
+    } else {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.ERROR,
+        'Both FCM and SNS failed to send push notification',
+        'PushNotificationService',
+        {
+          deviceToken: this.maskToken(deviceToken),
+          title: notification.title,
+          fcmError: fcmResult.error,
+          snsError: snsResult.error,
+          userId,
+        }
+      );
+    }
+
+    return {
+      ...snsResult,
+      provider: 'sns',
+      usedFallback: true,
+    };
+  }
+
+  /**
+   * Sends push notification via FCM (primary provider)
+   * @private
+   */
+  private async sendViaFCM(
+    deviceToken: string,
     notification: PushNotificationData
   ): Promise<PushNotificationResult> {
     if (!this.isInitialized || !this.firebaseApp) {
-      void this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.WARN,
-        'Push notification service is not initialized, skipping notification',
-        'PushNotificationService'
-      );
-      return { success: false, error: 'Service not initialized' };
+      return { success: false, error: 'FCM service not initialized' };
     }
 
     try {
@@ -172,7 +266,7 @@ export class PushNotificationService implements OnModuleInit {
       void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.INFO,
-        'Push notification sent successfully',
+        'Push notification sent successfully via FCM',
         'PushNotificationService',
         {
           messageId: response,
@@ -186,7 +280,7 @@ export class PushNotificationService implements OnModuleInit {
       void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.ERROR,
-        'Failed to send push notification',
+        'Failed to send push notification via FCM',
         'PushNotificationService',
         {
           error: error instanceof Error ? error.message : 'Unknown error',
@@ -196,6 +290,57 @@ export class PushNotificationService implements OnModuleInit {
         }
       );
 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * Sends push notification via SNS (backup provider)
+   * Automatically detects platform (iOS/Android) from device token service
+   * @private
+   */
+  private async sendViaSNS(
+    deviceToken: string,
+    notification: PushNotificationData,
+    userId?: string
+  ): Promise<PushNotificationResult> {
+    // Check if SNS backup service is available
+    if (!this.snsBackupService || !this.snsBackupService.isHealthy()) {
+      return {
+        success: false,
+        error: 'SNS backup service not available',
+      };
+    }
+
+    // Detect platform from device token service if available
+    let platform: 'ios' | 'android' = 'android'; // Default to Android
+
+    if (this.deviceTokenService && userId) {
+      const userTokens = this.deviceTokenService.getUserTokens(userId);
+      const tokenData = userTokens.find(token => token.token === deviceToken);
+      if (tokenData) {
+        platform = tokenData.platform === 'ios' ? 'ios' : 'android';
+      }
+    }
+
+    // If platform still not detected, try heuristic (iOS tokens are typically longer)
+    // This is a fallback - proper detection should come from DeviceTokenService
+    if (platform === 'android' && deviceToken.length > 100) {
+      platform = 'ios';
+    }
+
+    try {
+      const result = await this.snsBackupService.sendPushNotification(
+        deviceToken,
+        notification,
+        platform
+      );
+
+      return result;
+    } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -280,10 +425,46 @@ export class PushNotificationService implements OnModuleInit {
         });
       }
 
+      // If some failed, try SNS backup for failed tokens
+      if (response.failureCount > 0 && this.snsBackupService?.isHealthy()) {
+        const failedTokens: string[] = [];
+        response.responses.forEach((resp, idx: number) => {
+          if (!resp.success && deviceTokens[idx]) {
+            failedTokens.push(deviceTokens[idx] || '');
+          }
+        });
+
+        // Retry failed tokens with SNS
+        for (const failedToken of failedTokens) {
+          try {
+            const snsResult = await this.sendViaSNS(failedToken, notification);
+            if (snsResult.success) {
+              // Update counts
+              response.successCount++;
+              response.failureCount--;
+            }
+          } catch (error) {
+            // Log but don't fail - individual token failures are expected
+            void this.loggingService.log(
+              LogType.NOTIFICATION,
+              LogLevel.DEBUG,
+              'SNS fallback failed for individual token',
+              'PushNotificationService',
+              {
+                deviceToken: this.maskToken(failedToken),
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }
+            );
+          }
+        }
+      }
+
       return {
         success: response.successCount > 0,
         successCount: response.successCount,
         failureCount: response.failureCount,
+        provider: response.failureCount === 0 ? 'fcm' : 'fcm', // Mixed if fallback used
+        usedFallback: response.failureCount < deviceTokens.length - response.successCount,
       };
     } catch (error) {
       void this.loggingService.log(

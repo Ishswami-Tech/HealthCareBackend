@@ -29,4 +29,9 @@ import { SNSBackupService } from '@communication/channels/push/sns-backup.servic
   providers: [PushNotificationService, DeviceTokenService, SNSBackupService],
   exports: [PushNotificationService, DeviceTokenService, SNSBackupService],
 })
-export class PushModule {}
+export class PushModule {
+  // Note: Using forwardRef to handle circular dependency between
+  // PushNotificationService and SNSBackupService
+  // PushNotificationService needs SNSBackupService for fallback
+  // Both are provided in the same module, so NestJS handles injection automatically
+}
