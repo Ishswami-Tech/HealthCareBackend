@@ -46,7 +46,7 @@ import type {
 // import { RolesGuard } from '@libs/core/guards/roles.guard';
 // import { Roles } from '@libs/core/decorators/roles.decorator';
 
-@ApiTags('Notifications')
+@ApiTags('notifications')
 @Controller('notifications')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 // @UseGuards(JwtAuthGuard) // Uncomment when authentication is needed

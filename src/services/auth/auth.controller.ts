@@ -45,7 +45,7 @@ import {
   InvalidatePatientCache,
 } from '@infrastructure/cache/decorators/cache.decorator';
 
-@ApiTags('Authentication')
+@ApiTags('auth')
 @Controller('auth')
 @ApiBearerAuth()
 @ApiSecurity('bearer')

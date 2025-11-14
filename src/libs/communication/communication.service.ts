@@ -622,11 +622,11 @@ export class CommunicationService implements OnModuleInit {
         channel: 'push',
         success: result.success,
         ...(result.messageId && { messageId: result.messageId }),
-        ...(result.success
-          ? {}
-          : { error: result.error || 'Unknown error' }),
+        ...(result.success ? {} : { error: result.error || 'Unknown error' }),
         timestamp,
-        ...(result.provider && { metadata: { provider: result.provider, usedFallback: result.usedFallback } }),
+        ...(result.provider && {
+          metadata: { provider: result.provider, usedFallback: result.usedFallback },
+        }),
       };
     } catch (error) {
       return {

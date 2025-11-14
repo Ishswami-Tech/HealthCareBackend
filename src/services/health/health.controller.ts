@@ -6,7 +6,7 @@ import { Public } from '@core/decorators/public.decorator';
 import { FastifyReply } from 'fastify';
 import { HealthcareErrorsService } from '@core/errors';
 
-@ApiTags('Health')
+@ApiTags('health')
 @Controller('health')
 export class HealthController {
   constructor(
@@ -470,23 +470,6 @@ export class HealthController {
   async apiHealthAlias(@Res() res: FastifyReply) {
     // Alias for /api endpoint for backward compatibility
     return this.apiHealth(res);
-  }
-    try {
-      return res.send({
-        status: 'ok',
-        message: 'API is running',
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      // Log any error that occurs in this simple endpoint
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      return res.status(200).send({
-        status: 'ok',
-        message: 'API is running',
-        timestamp: new Date().toISOString(),
-        debug: errorMsg,
-      });
-    }
   }
 
   @Get('/favicon.ico')

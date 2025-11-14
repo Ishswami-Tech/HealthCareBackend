@@ -9,7 +9,7 @@ import { EventsModule } from '@infrastructure/events';
 // LoggingModule is @Global() - no need to import it
 import { CacheController } from '@infrastructure/cache/controllers/cache.controller';
 import { CacheService } from '@infrastructure/cache/cache.service';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 import { HealthcareCacheInterceptor } from '@infrastructure/cache/interceptors/healthcare-cache.interceptor';
 
 /**
@@ -38,11 +38,13 @@ import { HealthcareCacheInterceptor } from '@infrastructure/cache/interceptors/h
     EventEmitterModule,
     // Central event system - must be imported for EventService
     forwardRef(() => EventsModule),
+    // Import RedisModule to get RedisService (don't provide it directly to avoid duplicate instances)
+    RedisModule,
   ],
   controllers: [CacheController],
   providers: [
     // Core services
-    RedisService,
+    // RedisService is provided by RedisModule - don't provide it here to avoid duplicate instances
     CacheService,
 
     // Global interceptor

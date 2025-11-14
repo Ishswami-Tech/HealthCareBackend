@@ -75,7 +75,7 @@ import type {
 // Local aliases for controller use
 type AppointmentWithRelations = AppointmentWithRelationsController;
 
-@ApiTags('Appointments')
+@ApiTags('appointments')
 @Controller('appointments')
 @ApiBearerAuth()
 @ApiSecurity('session-id')

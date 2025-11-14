@@ -32,13 +32,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly circuitBreakerThreshold = 10; // Open circuit after 10 consecutive failures
   private readonly circuitBreakerResetTimeout = 60000; // 1 minute before attempting to reset
   private circuitBreakerLastFailureTime = 0;
+  // Reconnection lock to prevent multiple simultaneous reconnection attempts
+  private isReconnecting = false;
+  private lastReconnectionAttempt = 0;
+  private readonly RECONNECTION_COOLDOWN = 5000; // 5 seconds between reconnection attempts
 
   // Production scaling configurations
   private readonly PRODUCTION_CONFIG = {
     maxMemoryPolicy: 'allkeys-lru',
     maxConnections: parseInt(process.env['REDIS_MAX_CONNECTIONS'] || '100', 10),
-    connectionTimeout: 5000,
-    commandTimeout: 3000,
+    connectionTimeout: 15000, // Increased to 15 seconds for better reliability in Docker
+    commandTimeout: 5000, // Increased to 5 seconds
     retryOnFailover: true,
     enableAutoPipelining: true,
     maxRetriesPerRequest: 3,
@@ -112,10 +116,42 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       LogType.SYSTEM,
       LogLevel.INFO,
       `Running in ${this.isDevelopment ? 'development' : 'production'} mode`,
-      'RedisService',
+      'CacheService',
       { environment: this.isDevelopment ? 'development' : 'production' }
     );
     this.initializeClient();
+
+    // CRITICAL: Connect immediately - don't wait for lifecycle hooks
+    // This ensures Redis connects as soon as the service is instantiated
+    // Use setImmediate to allow constructor to complete first
+    setImmediate(() => {
+      // Always attempt connection - onModuleInit will handle if already connected
+      void this.loggingService
+        .log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Constructor: Initiating cache connection immediately',
+          'CacheService',
+          {}
+        )
+        .catch(() => {
+          // Ignore logging errors - connection is more important
+        });
+      void this.onModuleInit().catch(error => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        void this.loggingService
+          .log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            `Constructor: Failed to connect cache: ${errorMessage}`,
+            'CacheService',
+            { error: errorMessage, stack: error instanceof Error ? error.stack : undefined }
+          )
+          .catch(() => {
+            // Ignore logging errors
+          });
+      });
+    });
   }
 
   private isDevEnvironment(): boolean {
@@ -142,8 +178,23 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   private initializeClient(): void {
     try {
+      // Determine default host based on environment
+      // In Docker, use 'redis' (service name), locally use 'localhost'
+      // Check multiple indicators that we're in Docker:
+      // 1. DOCKER_ENV environment variable
+      // 2. KUBERNETES_SERVICE_HOST (Kubernetes)
+      // 3. Containerized environment (/.dockerenv file exists - but we can't check files here)
+      // 4. REDIS_HOST is explicitly set (likely in Docker Compose)
+      const isDocker =
+        process.env['DOCKER_ENV'] === 'true' ||
+        process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
+        process.env['REDIS_HOST'] === 'redis' ||
+        process.env['REDIS_HOST'] !== undefined; // If REDIS_HOST is set, we're likely in Docker
+
+      const defaultHost = isDocker ? 'redis' : 'localhost';
+
       const redisHost =
-        this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
+        this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || defaultHost;
       const redisPort =
         this.configService?.get<number>('redis.port') ||
         parseInt(process.env['REDIS_PORT'] || '6379', 10);
@@ -164,8 +215,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Initializing Redis client',
-        'RedisService',
+        'Initializing cache client',
+        'CacheService',
         { host: redisHost, port: redisPort, hasPassword }
       );
 
@@ -197,7 +248,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
               LogType.ERROR,
               LogLevel.ERROR,
               'Max reconnection attempts reached',
-              'RedisService',
+              'CacheService',
               { maxRetries: this.maxRetries }
             );
             return null; // stop retrying
@@ -229,7 +280,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.ERROR,
           LogLevel.ERROR,
           'Redis Client Error',
-          'RedisService',
+          'CacheService',
           {
             error: err instanceof Error ? err.message : String(err),
             stack: err instanceof Error ? err.stack : undefined,
@@ -241,7 +292,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.SYSTEM,
             LogLevel.WARN,
             'Redis in read-only mode, attempting to fix',
-            'RedisService',
+            'CacheService',
             {}
           );
           this.resetReadOnlyMode().catch(resetError => {
@@ -249,7 +300,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
               LogType.ERROR,
               LogLevel.ERROR,
               'Failed to reset read-only mode',
-              'RedisService',
+              'CacheService',
               {
                 error: resetError instanceof Error ? resetError.message : String(resetError),
                 stack: resetError instanceof Error ? resetError.stack : undefined,
@@ -260,12 +311,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.client.on('connect', () => {
+        const currentHost = this.client.options.host || redisHost;
+        const currentPort = this.client.options.port || redisPort;
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'Successfully connected to Redis',
-          'RedisService',
-          {}
+          `Redis connected to ${currentHost}:${currentPort}`,
+          'CacheService',
+          { host: currentHost, port: currentPort }
         );
         // Check read-only status on connect
         this.checkAndResetReadOnlyMode().catch(err => {
@@ -273,7 +326,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.ERROR,
             LogLevel.ERROR,
             'Failed to check read-only status on connect',
-            'RedisService',
+            'CacheService',
             {
               error: err instanceof Error ? err.message : String(err),
               stack: err instanceof Error ? err.stack : undefined,
@@ -286,8 +339,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'Redis client is ready',
-          'RedisService',
+          'Cache client is ready',
+          'CacheService',
           {}
         );
       });
@@ -297,7 +350,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.SYSTEM,
           LogLevel.WARN,
           'Reconnecting to Redis',
-          'RedisService',
+          'CacheService',
           {}
         );
       });
@@ -307,7 +360,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.SYSTEM,
           LogLevel.WARN,
           'Redis connection ended',
-          'RedisService',
+          'CacheService',
           {}
         );
       });
@@ -316,7 +369,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to initialize Redis client',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -327,33 +380,264 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
+    // Log that onModuleInit is being called (don't await - don't block on logging)
+    void this.loggingService
+      .log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'CacheService onModuleInit called - START',
+        'CacheService',
+        {}
+      )
+      .catch(() => {
+        // Ignore logging errors - connection is more important
+      });
+
     try {
-      // Ensure connection is established
-      await this.client.connect();
-      await this.ping();
+      // Check if already connected to avoid duplicate connection attempts
+      if (this.client && this.client.status === 'ready') {
+        void this.loggingService
+          .log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Cache already connected, skipping connection attempt',
+            'CacheService',
+            {}
+          )
+          .catch(() => {
+            // Ignore logging errors
+          });
+        return;
+      }
+
+      // Check if Redis is enabled before attempting connection
+      const configEnabled = this.configService?.get<boolean>('redis.enabled');
+      const envEnabled = process.env['REDIS_ENABLED'] !== 'false';
+      const isRedisEnabled = configEnabled ?? envEnabled;
+
+      // In development mode, Redis might be disabled - check config
+      const isDevelopment =
+        this.configService?.get<string>('NODE_ENV') === 'development' ||
+        process.env['NODE_ENV'] === 'development';
+
+      // Log debug info to understand why Redis might be disabled
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Cache enabled check: configService=${configEnabled}, env=${process.env['REDIS_ENABLED']}, final=${isRedisEnabled}`,
+        'CacheService',
+        {
+          configEnabled,
+          envEnabled,
+          isRedisEnabled,
+          redisEnabledEnv: process.env['REDIS_ENABLED'],
+          mode: isDevelopment ? 'development' : 'production',
+        }
+      );
+
+      if (!isRedisEnabled) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Cache is disabled - application will run without caching',
+          'CacheService',
+          {
+            reason: 'REDIS_ENABLED is false or Redis is disabled in configuration',
+            configEnabled,
+            envEnabled,
+            redisEnabledEnv: process.env['REDIS_ENABLED'],
+            mode: isDevelopment ? 'development' : 'production',
+          }
+        );
+        // Open circuit breaker to prevent connection attempts
+        this.circuitBreakerOpen = true;
+        this.circuitBreakerFailures = this.circuitBreakerThreshold;
+        this.circuitBreakerLastFailureTime = Date.now();
+        return; // Exit early - don't attempt connection
+      }
+
+      // Determine default host based on environment (same logic as initializeClient)
+      const isDocker =
+        process.env['DOCKER_ENV'] === 'true' ||
+        process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
+        process.env['REDIS_HOST'] === 'redis' ||
+        process.env['REDIS_HOST'] !== undefined;
+      const defaultHost = isDocker ? 'redis' : 'localhost';
+
+      const redisHost =
+        this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || defaultHost;
+      const redisPort =
+        this.configService?.get<number>('redis.port') ||
+        parseInt(process.env['REDIS_PORT'] || '6379', 10);
+
+      // Log connection attempt (don't await - don't block)
+      void this.loggingService
+        .log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Starting cache connection attempt to ${redisHost}:${redisPort}`,
+          'CacheService',
+          { host: redisHost, port: redisPort, isDocker, defaultHost }
+        )
+        .catch(() => {
+          // Ignore logging errors
+        });
+
+      // Retry connection with exponential backoff (up to 3 attempts)
+      const maxInitialRetries = 3;
+      let lastError: Error | undefined;
+      let connected = false;
+
+      for (let attempt = 1; attempt <= maxInitialRetries; attempt++) {
+        try {
+          // Ensure client is initialized
+          if (!this.client) {
+            this.initializeClient();
+          }
+
+          // Check if already connected
+          if (this.client && this.client.status === 'ready') {
+            connected = true;
+            break;
+          }
+
+          // Wait before retry (exponential backoff: 1s, 2s, 4s)
+          if (attempt > 1) {
+            const waitTime = Math.min(1000 * Math.pow(2, attempt - 2), 5000);
+            await this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.INFO,
+              `Retrying Redis connection (attempt ${attempt}/${maxInitialRetries}) after ${waitTime}ms`,
+              'CacheService',
+              { host: redisHost, port: redisPort, attempt }
+            );
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+          }
+
+          // Attempt connection with longer timeout for initial connection
+          await Promise.race([
+            this.client.connect(),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error('Connection timeout after 15 seconds')),
+                15000 // 15 second timeout for initial connection
+              )
+            ),
+          ]);
+
+          // Verify connection with ping
+          const pingResult = await Promise.race([
+            this.ping(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Ping timeout')), 5000)
+            ),
+          ]);
+
+          if (pingResult === 'PONG') {
+            connected = true;
+            break;
+          }
+        } catch (connectError) {
+          lastError =
+            connectError instanceof Error ? connectError : new Error(String(connectError));
+          const errorMessage =
+            connectError instanceof Error ? connectError.message : String(connectError);
+
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Redis connection attempt ${attempt}/${maxInitialRetries} failed: ${errorMessage}`,
+            'CacheService',
+            {
+              host: redisHost,
+              port: redisPort,
+              attempt,
+              maxRetries: maxInitialRetries,
+              error: errorMessage,
+            }
+          );
+
+          // If this is the last attempt, we'll handle it in the outer catch
+          if (attempt === maxInitialRetries) {
+            throw connectError;
+          }
+        }
+      }
+
+      if (!connected) {
+        throw lastError || new Error('Failed to connect to Redis after all retry attempts');
+      }
 
       // Check and reset read-only mode if needed
       await this.checkAndResetReadOnlyMode();
 
+      // Log successful connection
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Redis connection initialized',
-        'RedisService',
-        {}
+        `✓ Cache connected to ${redisHost}:${redisPort}`,
+        'CacheService',
+        { host: redisHost, port: redisPort }
       );
     } catch (_error) {
+      // Determine default host based on environment (same logic as initializeClient)
+      const isDocker =
+        process.env['DOCKER_ENV'] === 'true' ||
+        process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
+        process.env['REDIS_HOST'] === 'redis' ||
+        process.env['REDIS_HOST'] !== undefined;
+      const defaultHost = isDocker ? 'redis' : 'localhost';
+
+      const redisHost =
+        this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || defaultHost;
+      const redisPort =
+        this.configService?.get<number>('redis.port') ||
+        parseInt(process.env['REDIS_PORT'] || '6379', 10);
+
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const errorCode = (_error as { code?: string })?.code || 'UNKNOWN';
+
+      console.error(
+        `[RedisService] ✗ Failed to initialize Redis connection: ${errorMessage} (${errorCode})`
+      );
+      console.error(
+        `[RedisService] Stack:`,
+        _error instanceof Error ? _error.stack : 'No stack trace'
+      );
+
       // CRITICAL: Don't throw - allow app to start in degraded mode without Redis
       // This enables graceful degradation when Redis is unavailable
       // Log from CacheService context since that's the public interface
       await this.loggingService.log(
         LogType.CACHE,
-        LogLevel.ERROR,
-        'Failed to initialize cache connection - application will run in degraded mode without caching',
+        LogLevel.WARN,
+        `Failed to initialize cache connection to ${redisHost}:${redisPort} - application will run in degraded mode without caching. Error: ${errorMessage} (${errorCode})`,
         'CacheService',
         {
-          error: _error instanceof Error ? _error.message : String(_error),
+          error: errorMessage,
+          errorCode,
+          host: redisHost,
+          port: redisPort,
+          environment: {
+            REDIS_HOST: process.env['REDIS_HOST'],
+            REDIS_PORT: process.env['REDIS_PORT'],
+            DOCKER_ENV: process.env['DOCKER_ENV'],
+            NODE_ENV: process.env['NODE_ENV'],
+            isDocker,
+            defaultHost,
+          },
           stack: _error instanceof Error ? _error.stack : undefined,
+          troubleshooting: {
+            message: 'Please ensure Redis is running and accessible',
+            docker: 'If using Docker, ensure Redis container is running: docker ps | grep redis',
+            dockerNetwork:
+              'If in Docker, verify network connectivity: docker exec healthcare-api ping -c 1 redis',
+            local: 'If running locally, ensure Redis is installed and running: redis-cli ping',
+            connection: `Check connection: redis-cli -h ${redisHost} -p ${redisPort} ping`,
+            disable: this.isDevelopment
+              ? 'To disable Redis in development, set REDIS_ENABLED=false'
+              : undefined,
+          },
         }
       );
       // Open circuit breaker immediately to prevent repeated connection attempts
@@ -383,7 +667,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.SYSTEM,
         LogLevel.INFO,
         'Applied production memory optimizations',
-        'RedisService',
+        'CacheService',
         {}
       );
     }
@@ -400,7 +684,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.SYSTEM,
           LogLevel.WARN,
           'Redis is in read-only mode, attempting to reset',
-          'RedisService',
+          'CacheService',
           {}
         );
         return await this.resetReadOnlyMode();
@@ -412,7 +696,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to check Redis read-only status',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -434,7 +718,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.SYSTEM,
         LogLevel.INFO,
         'Successfully reset Redis read-only mode',
-        'RedisService',
+        'CacheService',
         {}
       );
       return true;
@@ -443,7 +727,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to reset Redis read-only mode',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -453,8 +737,86 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Ensure Redis is connected before operations
+   * This is called automatically by retryOperation, but can be called manually
+   */
+  private async ensureConnected(): Promise<void> {
+    // If client doesn't exist, initialize it
+    if (!this.client) {
+      this.initializeClient();
+    }
+
+    // If not connected, try to connect
+    const status = this.client?.status as string;
+    if (status !== 'ready') {
+      // Try to connect if not in a transitional state
+      const transitionalStates = ['connecting', 'connect', 'wait', 'reconnecting'];
+      if (!transitionalStates.includes(status)) {
+        try {
+          await this.client.connect();
+          await this.ping();
+          // Connection successful, reset circuit breaker
+          this.circuitBreakerOpen = false;
+          this.circuitBreakerFailures = 0;
+          const currentHost =
+            this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
+          const currentPort =
+            this.configService?.get<number>('redis.port') ||
+            parseInt(process.env['REDIS_PORT'] || '6379', 10);
+          void this.loggingService
+            .log(
+              LogType.SYSTEM,
+              LogLevel.INFO,
+              `Redis connected to ${currentHost}:${currentPort}`,
+              'CacheService',
+              { host: currentHost, port: currentPort }
+            )
+            .catch(() => {
+              // Ignore logging errors
+            });
+        } catch (connectError) {
+          // Connection failed, will be handled by retryOperation
+          const errorMessage =
+            connectError instanceof Error ? connectError.message : String(connectError);
+          void this.loggingService
+            .log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              `Failed to connect Redis on first use: ${errorMessage}`,
+              'CacheService',
+              { error: errorMessage }
+            )
+            .catch(() => {
+              // Ignore logging errors
+            });
+        }
+      }
+    }
+  }
+
   // Make retryOperation public for rate limiting service
   public async retryOperation<T>(operation: () => Promise<T>): Promise<T> {
+    // Check if Redis client is ready before attempting operation
+    // This prevents circuit breaker from opening during initialization
+    const clientStatus = this.client?.status as string;
+    if (!this.client || clientStatus !== 'ready') {
+      // Redis is not ready - don't count as failure, just throw error
+      // This allows callers to handle gracefully without opening circuit breaker
+      throw new HealthcareError(
+        ErrorCode.CACHE_CONNECTION_FAILED,
+        'Redis is not ready yet - please wait for connection to be established',
+        undefined,
+        {
+          redisReady: false,
+          clientStatus: clientStatus || 'not initialized',
+        },
+        'RedisService.retryOperation'
+      );
+    }
+
+    // Ensure connection before attempting operation
+    await this.ensureConnected();
     // Check circuit breaker - fail fast if circuit is open
     if (this.circuitBreakerOpen) {
       const timeSinceLastFailure = Date.now() - this.circuitBreakerLastFailureTime;
@@ -472,29 +834,100 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           'RedisService.retryOperation'
         );
       } else {
-        // Reset circuit breaker and try again
+        // Reset circuit breaker and attempt to reconnect
         this.circuitBreakerOpen = false;
         this.circuitBreakerFailures = 0;
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'Redis circuit breaker reset - attempting operation',
-          'RedisService',
+          'Redis circuit breaker reset - attempting to reconnect',
+          'CacheService',
           {}
         );
+
+        // Attempt to reconnect if client is not ready
+        await this.attemptReconnection();
       }
     }
 
-    // Check if Redis client is connected before retrying
-    if (!this.client || this.client.status !== 'ready') {
-      this.recordCircuitBreakerFailure();
-      throw new HealthcareError(
-        ErrorCode.CACHE_CONNECTION_FAILED,
-        'Redis client is not connected. Please ensure Redis is available and connection is established.',
-        undefined,
-        { clientStatus: this.client?.status || 'not initialized' },
-        'RedisService.retryOperation'
-      );
+    // Check if Redis client is connected before retrying (clientStatus already checked above)
+    if (!this.client || (this.client?.status as string) !== 'ready') {
+      // If client doesn't exist, initialize it
+      if (!this.client) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Redis client not initialized, initializing now',
+          'CacheService',
+          {}
+        );
+        this.initializeClient();
+      }
+
+      // Only attempt reconnection if not in a transitional state
+      // Transitional states mean Redis is already handling the connection
+      const transitionalStates = ['connecting', 'connect', 'wait', 'reconnecting'];
+      if (!transitionalStates.includes(clientStatus)) {
+        // Attempt to reconnect before failing
+        await this.attemptReconnection();
+      } else {
+        // Wait a bit for transitional state to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      // Check again after reconnection attempt or wait
+      const finalStatus = this.client?.status as string;
+      if (!this.client || finalStatus !== 'ready') {
+        // If still not ready, try one more time to connect
+        if (finalStatus === 'end' || finalStatus === 'close' || !finalStatus) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Redis client status is '${finalStatus}', attempting direct connection`,
+            'CacheService',
+            { status: finalStatus }
+          );
+          try {
+            await this.client.connect();
+            await this.ping();
+            // Connection successful, reset circuit breaker
+            this.circuitBreakerOpen = false;
+            this.circuitBreakerFailures = 0;
+            // Connection is now ready, continue with the operation
+            // Break out of the check and proceed to execute the operation
+          } catch (connectError) {
+            // Connection failed, continue to error handling
+            const errorMessage =
+              connectError instanceof Error ? connectError.message : String(connectError);
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              `Direct connection attempt failed: ${errorMessage}`,
+              'CacheService',
+              { error: errorMessage, status: finalStatus }
+            );
+          }
+        }
+
+        this.recordCircuitBreakerFailure();
+        const redisHost =
+          this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
+        const redisPort =
+          this.configService?.get<number>('redis.port') ||
+          parseInt(process.env['REDIS_PORT'] || '6379', 10);
+
+        throw new HealthcareError(
+          ErrorCode.CACHE_CONNECTION_FAILED,
+          `Redis client is not connected to ${redisHost}:${redisPort}. Please ensure Redis is available and connection is established.`,
+          undefined,
+          {
+            clientStatus: this.client?.status || 'not initialized',
+            host: redisHost,
+            port: redisPort,
+          },
+          'RedisService.retryOperation'
+        );
+      }
     }
 
     let lastError;
@@ -508,7 +941,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.SYSTEM,
             LogLevel.INFO,
             `Redis operation succeeded after ${i} retries`,
-            'RedisService',
+            'CacheService',
             { retries: i }
           );
         }
@@ -522,7 +955,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.SYSTEM,
             LogLevel.WARN,
             `Redis operation failed, retrying (${i + 1}/${this.maxRetries})`,
-            'RedisService',
+            'CacheService',
             {
               attempt: i + 1,
               maxRetries: this.maxRetries,
@@ -541,7 +974,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
               LogType.ERROR,
               LogLevel.ERROR,
               'Failed to reset read-only mode during retry',
-              'RedisService',
+              'CacheService',
               {
                 error: resetError instanceof Error ? resetError.message : String(resetError),
                 stack: resetError instanceof Error ? resetError.stack : undefined,
@@ -562,8 +995,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record circuit breaker failure and open circuit if threshold is reached
+   * Only records failures when Redis client is ready (not during initialization)
    */
   private recordCircuitBreakerFailure(): void {
+    // Don't count failures if Redis is not ready yet (during initialization)
+    // This prevents circuit breaker from opening during startup
+    const clientStatus = this.client?.status as string;
+    if (!this.client || clientStatus !== 'ready') {
+      // Redis is not ready - don't count as failure
+      return;
+    }
+
     this.circuitBreakerFailures++;
     this.circuitBreakerLastFailureTime = Date.now();
 
@@ -582,6 +1024,121 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           degradedMode: true,
         }
       );
+    }
+  }
+
+  /**
+   * Attempt to reconnect to Redis if connection is lost
+   * Prevents multiple simultaneous reconnection attempts
+   */
+  private async attemptReconnection(): Promise<boolean> {
+    try {
+      if (!this.client) {
+        // Client was never initialized, reinitialize it
+        this.initializeClient();
+      }
+
+      // Check current connection status
+      const status = this.client.status as string;
+
+      // Already connected - no need to reconnect
+      if (status === 'ready') {
+        return true;
+      }
+
+      // Transitional states - Redis is already connecting, just wait
+      // These states mean Redis is handling the connection, don't interfere
+      const transitionalStates = ['connecting', 'connect', 'wait', 'reconnecting'];
+      if (transitionalStates.includes(status)) {
+        // Wait a bit for connection to complete, then check status
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return this.client.status === 'ready';
+      }
+
+      // Check if we're already attempting to reconnect
+      const now = Date.now();
+      if (this.isReconnecting) {
+        // Wait for existing reconnection attempt to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return this.client.status === 'ready';
+      }
+
+      // Check cooldown period to prevent rapid reconnection attempts
+      if (now - this.lastReconnectionAttempt < this.RECONNECTION_COOLDOWN) {
+        // Too soon since last attempt, just check current status
+        return this.client.status === 'ready';
+      }
+
+      // Only attempt reconnection if status is clearly disconnected
+      // Disconnected states: 'end', 'close', 'error', or undefined
+      const disconnectedStates = ['end', 'close', 'error'];
+      if (!disconnectedStates.includes(status) && status !== undefined) {
+        // Unknown state, don't attempt reconnection
+        return false;
+      }
+
+      // Set reconnection lock
+      this.isReconnecting = true;
+      this.lastReconnectionAttempt = now;
+
+      try {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Attempting to reconnect to Redis (current status: ${status})`,
+          'CacheService',
+          { status }
+        );
+
+        await this.client.connect();
+        await this.ping();
+
+        const reconnectHost =
+          this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
+        const reconnectPort =
+          this.configService?.get<number>('redis.port') ||
+          parseInt(process.env['REDIS_PORT'] || '6379', 10);
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Redis connected to ${reconnectHost}:${reconnectPort}`,
+          'CacheService',
+          { host: reconnectHost, port: reconnectPort }
+        );
+
+        // Reset circuit breaker on successful reconnection
+        this.circuitBreakerFailures = 0;
+        this.circuitBreakerOpen = false;
+        return true;
+      } catch (connectError) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          'Failed to reconnect to Redis',
+          'CacheService',
+          {
+            error: connectError instanceof Error ? connectError.message : String(connectError),
+            status: this.client.status,
+          }
+        );
+        return false;
+      } finally {
+        // Always release reconnection lock
+        this.isReconnecting = false;
+      }
+    } catch (error) {
+      this.isReconnecting = false;
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error during reconnection attempt',
+        'CacheService',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return false;
     }
   }
 
@@ -645,7 +1202,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async ping(): Promise<string> {
-    return this.retryOperation(() => this.client.ping());
+    // Direct ping without retryOperation to avoid circular dependency
+    // This is used during connection verification
+    if (!this.client) {
+      throw new Error('Redis client not initialized');
+    }
+    if (this.client.status !== 'ready') {
+      throw new Error(`Redis client not ready, status: ${this.client.status}`);
+    }
+    return this.client.ping();
   }
 
   async healthCheck(): Promise<boolean> {
@@ -657,7 +1222,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Redis health check failed',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -694,7 +1259,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get Redis debug info',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -805,7 +1370,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       LogType.SECURITY,
       LogLevel.DEBUG,
       'Security event tracked',
-      'RedisService',
+      'CacheService',
       { eventType, identifier }
     );
   }
@@ -843,7 +1408,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       LogType.CACHE,
       LogLevel.WARN,
       'Clearing all cache',
-      'RedisService',
+      'CacheService',
       {}
     );
 
@@ -883,7 +1448,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.CACHE,
         LogLevel.DEBUG,
         'Cleared keys from cache',
-        'RedisService',
+        'CacheService',
         { deletedCount }
       );
       return deletedCount;
@@ -892,7 +1457,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Error clearing all cache',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -1014,7 +1579,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Rate limiting error',
-        'RedisService',
+        'CacheService',
         {
           key,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1084,7 +1649,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Error getting rate limit',
-        'RedisService',
+        'CacheService',
         {
           key,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1107,7 +1672,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.CACHE,
         LogLevel.DEBUG,
         'Rate limit cleared',
-        'RedisService',
+        'CacheService',
         { key }
       );
     } catch (_error) {
@@ -1115,7 +1680,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Error clearing rate limit',
-        'RedisService',
+        'CacheService',
         {
           key,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1132,7 +1697,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       LogType.SYSTEM,
       LogLevel.INFO,
       'Updated rate limits',
-      'RedisService',
+      'CacheService',
       { type, config: JSON.stringify(config) }
     );
     return Promise.resolve();
@@ -1234,7 +1799,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Redis health check failed',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -1256,7 +1821,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       LogType.CACHE,
       LogLevel.INFO,
       'Clearing cache with pattern',
-      'RedisService',
+      'CacheService',
       { pattern: pattern || 'ALL' }
     );
 
@@ -1289,7 +1854,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.CACHE,
         LogLevel.DEBUG,
         'Cleared keys matching pattern',
-        'RedisService',
+        'CacheService',
         { deletedCount, pattern }
       );
       return deletedCount;
@@ -1298,7 +1863,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Error clearing cache with pattern',
-        'RedisService',
+        'CacheService',
         {
           pattern,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1386,7 +1951,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.CACHE,
             LogLevel.DEBUG,
             'Skipping lock acquisition for low priority operation',
-            'RedisService',
+            'CacheService',
             { key }
           );
         } else {
@@ -1432,7 +1997,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.CACHE,
             LogLevel.DEBUG,
             'Skipping background revalidation for low priority cache',
-            'RedisService',
+            'CacheService',
             { key }
           );
         } else {
@@ -1449,7 +2014,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
                   LogType.ERROR,
                   LogLevel.ERROR,
                   'Background revalidation failed',
-                  'RedisService',
+                  'CacheService',
                   {
                     key,
                     error: err instanceof Error ? err.message : String(err),
@@ -1464,7 +2029,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // Return cached data immediately
       return compress ? await this.getDecompressed<T>(cachedData) : (JSON.parse(cachedData) as T);
     } catch (_error) {
-      void this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Cache error', 'RedisService', {
+      void this.loggingService.log(LogType.ERROR, LogLevel.ERROR, 'Cache error', 'CacheService', {
         key,
         error: _error instanceof Error ? _error.message : String(_error),
         stack: _error instanceof Error ? _error.stack : undefined,
@@ -1478,7 +2043,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.ERROR,
           LogLevel.ERROR,
           'Fallback fetch also failed',
-          'RedisService',
+          'CacheService',
           {
             key,
             error: fetchError instanceof Error ? fetchError.message : String(fetchError),
@@ -1503,7 +2068,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.CACHE,
         LogLevel.DEBUG,
         'Invalidated cache for key',
-        'RedisService',
+        'CacheService',
         { key }
       );
       return true;
@@ -1512,7 +2077,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to invalidate cache for key',
-        'RedisService',
+        'CacheService',
         {
           key,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1552,7 +2117,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.CACHE,
         LogLevel.DEBUG,
         'Invalidated keys matching pattern',
-        'RedisService',
+        'CacheService',
         { invalidatedCount, pattern }
       );
       return invalidatedCount;
@@ -1561,7 +2126,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to invalidate cache by pattern',
-        'RedisService',
+        'CacheService',
         {
           pattern,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1607,7 +2172,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.CACHE,
         LogLevel.DEBUG,
         'Invalidated keys with tag',
-        'RedisService',
+        'CacheService',
         { invalidatedCount, tag }
       );
       return invalidatedCount;
@@ -1616,7 +2181,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to invalidate cache by tag',
-        'RedisService',
+        'CacheService',
         {
           tag,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1656,7 +2221,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to add key to tags',
-        'RedisService',
+        'CacheService',
         {
           key,
           tags: tags.join(', '),
@@ -1687,7 +2252,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.CACHE,
           LogLevel.DEBUG,
           'Extended TTL due to high system load',
-          'RedisService',
+          'CacheService',
           { key }
         );
         return;
@@ -1720,7 +2285,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.CACHE,
         LogLevel.DEBUG,
         'Background revalidation completed',
-        'RedisService',
+        'CacheService',
         { key }
       );
     } catch (_error) {
@@ -1728,7 +2293,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Background revalidation failed',
-        'RedisService',
+        'CacheService',
         {
           key,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1762,7 +2327,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       LogType.SYSTEM,
       LogLevel.WARN,
       'cacheWithSWR is deprecated, please use cache() instead',
-      'RedisService',
+      'CacheService',
       {}
     );
     return this.cache(key, fetchFn, {
@@ -1803,7 +2368,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Error checking Redis load',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -1836,7 +2401,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Error compressing data',
-        'RedisService',
+        'CacheService',
         {
           key,
           error: _error instanceof Error ? _error.message : String(_error),
@@ -1868,7 +2433,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         LogType.ERROR,
         LogLevel.ERROR,
         'Error decompressing data',
-        'RedisService',
+        'CacheService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -1909,7 +2474,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
               LogType.CACHE,
               LogLevel.WARN,
               'Skipping cache storage: data could not be serialized properly',
-              'RedisService',
+              'CacheService',
               { key }
             );
           }
@@ -1918,7 +2483,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.CACHE,
             LogLevel.WARN,
             'Failed to serialize data for caching',
-            'RedisService',
+            'CacheService',
             {
               key,
               error: _error instanceof Error ? _error.message : String(_error),
@@ -1941,7 +2506,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.CACHE,
           LogLevel.WARN,
           'Failed to parse cached data',
-          'RedisService',
+          'CacheService',
           {
             key,
             error: _error instanceof Error ? _error.message : String(_error),
@@ -1969,7 +2534,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.CACHE,
             LogLevel.WARN,
             'Skipping cache storage: data could not be serialized properly',
-            'RedisService',
+            'CacheService',
             { key }
           );
         }
@@ -1978,7 +2543,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           LogType.CACHE,
           LogLevel.WARN,
           'Failed to serialize data for caching',
-          'RedisService',
+          'CacheService',
           {
             key,
             error: _error instanceof Error ? _error.message : String(_error),

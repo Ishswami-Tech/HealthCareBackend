@@ -583,6 +583,43 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   // ===== ENTERPRISE-GRADE CORE METHODS =====
 
   private async executeWithCircuitBreaker<T>(operation: () => Promise<T>): Promise<T> {
+    // Check if Redis is ready before attempting operations
+    // This prevents circuit breaker from opening when Redis is still connecting
+    if (this.redisService && typeof (this.redisService as { ping?: () => Promise<string> }).ping === 'function') {
+      try {
+        await Promise.race([
+          (this.redisService as { ping: () => Promise<string> }).ping(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Redis ping timeout')), 1000)),
+        ]);
+        // Redis is ready - reset circuit breaker if it was open
+        if (this.circuitBreaker.isOpen) {
+          this.circuitBreaker.isOpen = false;
+          this.circuitBreaker.failureCount = 0;
+          this.circuitBreaker.failures = 0;
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'CacheService circuit breaker reset - Redis is now ready',
+            'CacheService',
+            {}
+          );
+        }
+      } catch {
+        // Redis is not ready - don't attempt operation, but don't count as failure
+        // This prevents circuit breaker from opening during Redis initialization
+        throw new HealthcareError(
+          ErrorCode.CACHE_OPERATION_FAILED,
+          'Redis is not ready yet - cache service temporarily unavailable',
+          HttpStatus.SERVICE_UNAVAILABLE,
+          {
+            circuitBreakerState: this.circuitBreaker,
+            redisReady: false,
+          },
+          'CacheService.executeWithCircuitBreaker'
+        );
+      }
+    }
+
     if (this.circuitBreaker.isOpen) {
       const nextAttemptTime =
         this.circuitBreaker.nextAttemptTime || this.circuitBreaker.nextAttempt?.getTime() || 0;
@@ -1745,6 +1782,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.redisService.rPush(key, value);
   }
 
+  async lTrim(key: string, start: number, stop: number): Promise<string> {
+    return this.redisService.lTrim(key, start, stop);
+  }
+
   // Key operations
   async keys(pattern: string): Promise<string[]> {
     return this.redisService.keys(pattern);
@@ -1821,13 +1862,36 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       clinicSpecific?: boolean; // Clinic-specific data
     } = {}
   ): Promise<T> {
+    // Check if Redis is ready before attempting cache operation
+    // This prevents circuit breaker from opening during Redis initialization
+    if (this.redisService && typeof (this.redisService as { ping?: () => Promise<string> }).ping === 'function') {
+      try {
+        await Promise.race([
+          (this.redisService as { ping: () => Promise<string> }).ping(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Redis ping timeout')), 1000)),
+        ]);
+        // Redis is ready - reset circuit breaker if it was open
+        if (this.circuitBreaker.isOpen) {
+          this.circuitBreaker.isOpen = false;
+          this.circuitBreaker.failureCount = 0;
+          this.circuitBreaker.failures = 0;
+        }
+      } catch {
+        // Redis is not ready - fall back to direct fetch without counting as failure
+        // This prevents circuit breaker from opening during Redis initialization
+        return await fetchFn();
+      }
+    }
+
     try {
       return await this.redisService.cache(key, fetchFn, options);
     } catch (error) {
       // CRITICAL: Graceful degradation - fall back to direct fetch when cache fails
       // This ensures application continues to work even when cache is unavailable
       const errorMessage = error instanceof Error ? error.message : String(error);
-      if (!errorMessage.includes('circuit breaker')) {
+      // Don't count "Redis not ready" errors as circuit breaker failures
+      const isRedisNotReady = errorMessage.includes('not ready') || errorMessage.includes('Redis is not ready');
+      if (!errorMessage.includes('circuit breaker') && !isRedisNotReady) {
         void this.loggingService.log(
           LogType.CACHE,
           LogLevel.WARN,

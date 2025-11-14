@@ -148,7 +148,10 @@ export class LoggingService {
     this.systemUserQueryPromise = (async (): Promise<{ id: string } | null> => {
       try {
         // Double-check cache after acquiring mutex (another thread might have set it)
-        if (this.cachedSystemUser && Date.now() - this.systemUserCacheTime < this.systemUserCacheTTL) {
+        if (
+          this.cachedSystemUser &&
+          Date.now() - this.systemUserCacheTime < this.systemUserCacheTTL
+        ) {
           return this.cachedSystemUser;
         }
 
@@ -156,7 +159,7 @@ export class LoggingService {
         if (!this.databaseService) {
           return null;
         }
-        const systemUser = await Promise.race([
+        const systemUser = (await Promise.race([
           this.databaseService.executeHealthcareRead(async client => {
             // Use findUnique if email is unique, otherwise findFirst
             const userDelegate = client['user'] as {
@@ -189,7 +192,7 @@ export class LoggingService {
               reject(new Error('System user fetch timeout'));
             }, 3000); // 3 second timeout
           }),
-        ]) as { id: string } | null;
+        ])) as { id: string } | null;
 
         if (systemUser) {
           this.cachedSystemUser = systemUser;
@@ -318,7 +321,11 @@ export class LoggingService {
       // Intelligent database logging with noise filtering
       // CRITICAL: Skip database logging for timeout/connection errors to prevent infinite loops
       const isTimeoutOrConnectionError =
-        (message.includes('timeout') || message.includes('TIMEOUT') || message.includes('Query timeout') || message.includes('too many clients') || message.includes('connection')) &&
+        (message.includes('timeout') ||
+          message.includes('TIMEOUT') ||
+          message.includes('Query timeout') ||
+          message.includes('too many clients') ||
+          message.includes('connection')) &&
         (context.includes('Database') || context.includes('HealthcareDatabaseClient'));
 
       const isNoisyLog = this.isNoisyLog(message, context, level);
@@ -375,7 +382,8 @@ export class LoggingService {
               }
             } catch (_auditError) {
               // If we get connection errors or timeout errors, disable database logging temporarily
-              const errorMessage = _auditError instanceof Error ? _auditError.message : String(_auditError);
+              const errorMessage =
+                _auditError instanceof Error ? _auditError.message : String(_auditError);
               if (
                 errorMessage.includes('too many clients') ||
                 errorMessage.includes('connection') ||

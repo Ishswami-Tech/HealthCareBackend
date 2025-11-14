@@ -18,6 +18,9 @@ interface ServiceInfo {
   category: string;
   credentials?: string;
   devOnly?: boolean;
+  port?: number;
+  status?: string;
+  metrics?: Record<string, unknown>;
 }
 
 interface DashboardLogEntry {
@@ -55,6 +58,19 @@ interface DashboardData {
     lastChecked: string;
     metrics: Record<string, unknown>;
   }>;
+  clusterInfo?:
+    | {
+        isPrimary: boolean;
+        isWorker: boolean;
+        workerId: string | number | undefined;
+        instanceId: string;
+        nodeName: string;
+        hostname: string;
+        cpuCount: number;
+        totalWorkers?: number;
+        activeWorkers?: number;
+      }
+    | undefined;
 }
 
 @ApiTags('root')
@@ -304,135 +320,129 @@ export class AppController {
         };
       }
 
-      // Map health data to service status format with defensive null checks
+      // Extract health services data once - reuse for all status checks
       const healthServices =
         (healthData && 'services' in healthData ? healthData.services : {}) || {};
-      const healthStatus = {
-        api: {
-          status:
-            (healthServices.api as ServiceHealth | undefined)?.status === 'healthy' ? 'up' : 'down',
-        },
-        redis: {
-          status:
-            (healthServices.redis as ServiceHealth | undefined)?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        database: {
-          status:
-            (healthServices.database as ServiceHealth | undefined)?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        queues: {
-          status:
-            (healthServices.queues as ServiceHealth | undefined)?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        logger: {
-          status:
-            (healthServices.logger as ServiceHealth | undefined)?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        socket: {
-          status:
-            (healthServices.socket as ServiceHealth | undefined)?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        email: {
-          status:
-            (healthServices.email as ServiceHealth | undefined)?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        prismaStudio: {
-          status:
-            (healthServices as { prismaStudio?: ServiceHealth }).prismaStudio?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        redisCommander: {
-          status:
-            (healthServices as { redisCommander?: ServiceHealth }).redisCommander?.status ===
-            'healthy'
-              ? 'up'
-              : 'down',
-        },
-        pgAdmin: {
-          status:
-            (healthServices as { pgAdmin?: ServiceHealth }).pgAdmin?.status === 'healthy'
-              ? 'up'
-              : 'down',
-        },
-        lastUpdated: new Date(),
-      };
 
       // Check if services are running
-      const isApiRunning = healthStatus.api.status === 'up';
-      const isRedisRunning = healthStatus.redis.status === 'up';
-      const isDatabaseRunning = healthStatus.database.status === 'up';
-      const isQueueRunning = healthStatus.queues.status === 'up';
-      const isLoggerRunning = healthStatus.logger.status === 'up';
-      const isSocketRunning = healthStatus.socket.status === 'up';
-      const isEmailRunning = healthStatus.email.status === 'up';
-      const isPrismaStudioRunning = healthStatus.prismaStudio.status === 'up';
-      const isRedisCommanderRunning = healthStatus.redisCommander.status === 'up';
-      const isPgAdminRunning = healthStatus.pgAdmin.status === 'up';
+      // API is always considered running if we can serve the dashboard
+      const isApiRunning = true; // API is running if we can serve this page
 
-      // Define all services
+      // Extract individual service statuses for real-time checks
+      const queueHealth = healthServices.queues as ServiceHealth | undefined;
+      const loggerHealth = healthServices.logger as ServiceHealth | undefined;
+      const socketStatus = (healthServices.socket as ServiceHealth | undefined)?.status;
+      const emailStatus = (healthServices.email as ServiceHealth | undefined)?.status;
+      const prismaStudioStatus = (healthServices as { prismaStudio?: ServiceHealth }).prismaStudio
+        ?.status;
+      const redisCommanderStatus = (healthServices as { redisCommander?: ServiceHealth })
+        .redisCommander?.status;
+      const pgAdminStatus = (healthServices as { pgAdmin?: ServiceHealth }).pgAdmin?.status;
+
+      // Extract real-time metrics for all services
+      const basePort =
+        this.configService?.get<number | string>('PORT') ||
+        process.env['PORT'] ||
+        process.env['VIRTUAL_PORT'] ||
+        8088;
+      const queueMetrics =
+        (queueHealth && 'metrics' in queueHealth ? queueHealth.metrics : {}) || {};
+      const loggerMetrics =
+        (loggerHealth && 'metrics' in loggerHealth ? loggerHealth.metrics : {}) || {};
+      const socketHealth = healthServices.socket as ServiceHealth | undefined;
+      const socketMetrics =
+        (socketHealth && 'metrics' in socketHealth ? socketHealth.metrics : {}) || {};
+      const emailHealth = healthServices.email as ServiceHealth | undefined;
+      const emailMetrics =
+        (emailHealth && 'metrics' in emailHealth ? emailHealth.metrics : {}) || {};
+      const queuePort = (queueMetrics['port'] as number | string | undefined) || basePort;
+      const loggerPort = (loggerMetrics['port'] as number | string | undefined) || basePort;
+      const activeQueues = queueMetrics['activeQueues'] as number | undefined;
+      const queueStatuses = queueMetrics['queueStatuses'] as Record<string, unknown> | undefined;
+
+      // Real-time status based on actual health checks - no assumptions
+      // Since we're already serving this dashboard, API is clearly running
+      const isQueueRunning = queueHealth?.status === 'healthy';
+      const isLoggerRunning = loggerHealth?.status === 'healthy';
+      const isSocketRunning = socketStatus === 'healthy';
+      const isEmailRunning = emailStatus === 'healthy';
+      const isPrismaStudioRunning = prismaStudioStatus === 'healthy';
+      const isRedisCommanderRunning = redisCommanderStatus === 'healthy';
+      const isPgAdminRunning = pgAdminStatus === 'healthy';
+
+      // Define all services with real-time status based on actual health checks
+      // Services are active if their health check passes (API is already running since we're serving this page)
       const allServices: ServiceInfo[] = [
         {
           name: 'API Documentation',
           description: 'Swagger API documentation and testing interface.',
           url: `${baseUrl}${this.configService?.get<string>('SWAGGER_URL', '/docs') || process.env['SWAGGER_URL'] || '/docs'}`,
-          active: isApiRunning,
+          active: isApiRunning, // API is running if we can serve this page
           category: 'Documentation',
         },
         {
           name: 'Queue Dashboard',
-          description: 'Queue management and monitoring dashboard.',
+          description: `Queue management and monitoring dashboard. Port: ${String(queuePort)}${activeQueues !== undefined ? ` | Active Queues: ${activeQueues}` : ''}`,
           url: `${baseUrl}${this.configService?.get<string>('BULL_BOARD_URL', '/queue-dashboard') || process.env['BULL_BOARD_URL'] || '/queue-dashboard'}`,
-          active: isQueueRunning,
+          active: isQueueRunning, // Active if queue health check passes
           category: 'Monitoring',
+          port: Number(queuePort),
+          status: queueHealth?.details || (isQueueRunning ? 'Running' : 'Inactive'),
+          metrics: {
+            activeQueues,
+            queueStatuses,
+          },
         },
         {
           name: 'Logger',
-          description: 'Application logs and monitoring interface.',
+          description: `Application logs and monitoring interface. Port: ${String(loggerPort)}`,
           url: `${baseUrl}/logger`,
-          active: isLoggerRunning,
+          active: isLoggerRunning, // Active if logger health check passes
           category: 'Monitoring',
+          port: Number(loggerPort),
+          status: loggerHealth?.details || (isLoggerRunning ? 'Running' : 'Inactive'),
+          metrics: loggerMetrics,
         },
         {
           name: 'WebSocket',
-          description: 'WebSocket endpoint for real-time communication.',
+          description: `WebSocket endpoint for real-time communication. Port: ${String(basePort)}`,
           url: `${baseUrl}/socket-test`,
-          active: isSocketRunning,
+          active: isSocketRunning, // Active if socket health check passes
           category: 'API',
+          port: Number(basePort),
+          status:
+            (healthServices.socket as ServiceHealth | undefined)?.details ||
+            (isSocketRunning ? 'Running' : 'Inactive'),
+          metrics: socketMetrics,
         },
         {
           name: 'Email Service',
-          description: 'Email sending and template management.',
-          url: `${baseUrl}/email/status`,
-          active: isEmailRunning,
+          description: `Email sending and template management. Port: ${String(basePort)}`,
+          url: `${baseUrl}${this.configService?.get<string>('API_PREFIX', '/api/v1') || process.env['API_PREFIX'] || '/api/v1'}/email/status`,
+          active: isEmailRunning, // Active if email health check passes
           category: 'Services',
+          port: Number(basePort),
+          status:
+            (healthServices.email as ServiceHealth | undefined)?.details ||
+            (isEmailRunning ? 'Running' : 'Inactive'),
+          metrics: emailMetrics,
         },
       ];
 
-      // Add development-only services
+      // Add development-only services with real-time status
+      // Use actual exposed ports from Docker configuration
       if (!isProduction || isRedisCommanderRunning) {
         allServices.push({
           name: 'Redis Commander',
           description: 'Redis database management interface.',
-          url: isProduction
-            ? `${this.configService?.get<string>('REDIS_COMMANDER_URL', '/redis-ui') || process.env['REDIS_COMMANDER_URL'] || '/redis-ui'}`
-            : `${baseUrl}/redis-ui`,
-          active: isRedisRunning && isRedisCommanderRunning,
+          url:
+            this.configService?.get<string>('REDIS_COMMANDER_URL') ||
+            process.env['REDIS_COMMANDER_URL'] ||
+            'http://localhost:8082',
+          active: isRedisCommanderRunning, // Active if Redis Commander health check passes
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
-          devOnly: !isRedisCommanderRunning,
+          devOnly: !isProduction,
         });
       }
 
@@ -440,12 +450,13 @@ export class AppController {
         allServices.push({
           name: 'Prisma Studio',
           description: 'PostgreSQL database management through Prisma.',
-          url: isProduction
-            ? `${this.configService?.get<string>('PRISMA_STUDIO_URL', '/prisma') || process.env['PRISMA_STUDIO_URL'] || '/prisma'}`
-            : `${baseUrl}/prisma`,
-          active: isDatabaseRunning && isPrismaStudioRunning,
+          url:
+            this.configService?.get<string>('PRISMA_STUDIO_URL') ||
+            process.env['PRISMA_STUDIO_URL'] ||
+            'http://localhost:5555',
+          active: isPrismaStudioRunning, // Active if Prisma Studio health check passes
           category: 'Database',
-          devOnly: !isPrismaStudioRunning,
+          devOnly: !isProduction,
         });
       }
 
@@ -453,13 +464,14 @@ export class AppController {
         allServices.push({
           name: 'pgAdmin',
           description: 'PostgreSQL database management interface.',
-          url: isProduction
-            ? `${this.configService?.get('PGADMIN_URL', '/pgadmin')}`
-            : `${baseUrl}/pgadmin`,
-          active: isDatabaseRunning && isPgAdminRunning,
+          url:
+            this.configService?.get<string>('PGADMIN_URL') ||
+            process.env['PGADMIN_URL'] ||
+            'http://localhost:5050',
+          active: isPgAdminRunning, // Active if pgAdmin health check passes
           category: 'Database',
           credentials: 'Email: admin@admin.com, Password: admin',
-          devOnly: !isPgAdminRunning,
+          devOnly: !isProduction,
         });
       }
 
@@ -495,6 +507,8 @@ export class AppController {
         services: servicesData
           ? Object.entries(servicesData).map(([name, service]) => {
               const serviceData = service as ServiceHealth;
+              const serviceMetrics =
+                serviceData && 'metrics' in serviceData ? serviceData.metrics : {};
               return {
                 id: name.toLowerCase(),
                 name: name.charAt(0).toUpperCase() + name.slice(1),
@@ -507,10 +521,17 @@ export class AppController {
                     ? 'Service is responding normally'
                     : 'Service is experiencing issues'),
                 lastChecked: serviceData.lastChecked || new Date().toLocaleString(),
-                metrics: {},
+                metrics: serviceMetrics || {},
               };
             })
           : [],
+        clusterInfo:
+          healthData &&
+          'processInfo' in healthData &&
+          healthData.processInfo &&
+          'cluster' in healthData.processInfo
+            ? (healthData.processInfo.cluster as DashboardData['clusterInfo'])
+            : undefined,
       };
 
       // Only fetch logs in development mode
@@ -775,9 +796,9 @@ export class AppController {
                 socket.on('echo', (data) => {
                     addMessage('Echo: ' + JSON.stringify(data.original), 'received');
                 });
-            } catch (_e) {
+            } catch (e) {
                 updateStatus('disconnected', 'Error');
-                addMessage('Error: ' + e.message, 'received');
+                addMessage('Error: ' + (e instanceof Error ? e.message : String(e)), 'received');
             }
         });
         
@@ -877,7 +898,14 @@ export class AppController {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="10">
     <title>${title}</title>
+    <script>
+        // Auto-refresh dashboard every 10 seconds for real-time updates
+        setTimeout(function() {
+            location.reload();
+        }, 10000);
+    </script>
     <style>
         /* Base styles */
         * {
@@ -1275,13 +1303,53 @@ export class AppController {
                         <div class="service-card-header">
                             <div class="service-header-content">
                                 <div class="service-status-indicator ${service.active ? 'indicator-healthy' : 'indicator-unhealthy'}"></div>
-                                <h3 class="service-title">${service.name}</h3>
+                                <h3 class="service-title">${service.name}${service.port ? ` <span style="font-size: 0.8em; color: #666; font-weight: normal;">(Port: ${service.port})</span>` : ''}</h3>
                             </div>
                             <span class="status-badge ${service.active ? 'status-active' : 'status-inactive'}">
                                 ${service.active ? 'Active' : 'Inactive'}
                             </span>
                         </div>
                         <p class="service-description">${service.description}</p>
+                        ${
+                          service.status
+                            ? `<div class="service-status-detail" style="margin-top: 8px; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 0.9em; color: #495057;">
+                            <strong>Status:</strong> ${service.status}
+                        </div>`
+                            : ''
+                        }
+                        ${
+                          service.metrics && Object.keys(service.metrics).length > 0
+                            ? `
+                        <div class="service-metrics" style="margin-top: 8px; padding: 8px; background: #e9ecef; border-radius: 4px; font-size: 0.85em;">
+                            ${
+                              service.name === 'Queue Dashboard' &&
+                              service.metrics['activeQueues'] !== undefined
+                                ? `
+                            <div><strong>Active Queues:</strong> ${typeof service.metrics['activeQueues'] === 'number' ? service.metrics['activeQueues'] : typeof service.metrics['activeQueues'] === 'string' ? service.metrics['activeQueues'] : '0'}</div>
+                            ${
+                              service.metrics['queueStatuses'] &&
+                              typeof service.metrics['queueStatuses'] === 'object' &&
+                              service.metrics['queueStatuses'] !== null
+                                ? `
+                            <div style="margin-top: 4px;"><strong>Queue Names:</strong> ${Object.keys(service.metrics['queueStatuses'] as Record<string, unknown>).join(', ') || 'None'}</div>
+                            `
+                                : ''
+                            }
+                            `
+                                : ''
+                            }
+                            ${
+                              service.name === 'Logger' && service.metrics['serviceName']
+                                ? `
+                            <div><strong>Service:</strong> ${typeof service.metrics['serviceName'] === 'string' ? service.metrics['serviceName'] : typeof service.metrics['serviceName'] === 'number' ? String(service.metrics['serviceName']) : 'Unknown'}</div>
+                            ${service.metrics['url'] ? `<div style="margin-top: 4px;"><strong>URL:</strong> ${typeof service.metrics['url'] === 'string' ? service.metrics['url'] : typeof service.metrics['url'] === 'number' ? String(service.metrics['url']) : ''}</div>` : ''}
+                            `
+                                : ''
+                            }
+                        </div>
+                        `
+                            : ''
+                        }
                         <div class="service-footer">
                             <a href="${service.url}" 
                                target="_blank" 
@@ -1305,6 +1373,79 @@ export class AppController {
                   .join('')}
             </div>
         </section>
+
+        <!-- Cluster Information Section -->
+        ${
+          healthData.clusterInfo
+            ? `
+        <section class="cluster-section" style="margin-top: 2rem; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); padding: 1.5rem;">
+            <h2 class="section-title">Cluster & Node Information</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Process Type</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.isPrimary ? 'Primary (Master)' : healthData.clusterInfo.isWorker ? 'Worker' : 'Standalone'}
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Worker ID</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.workerId !== undefined ? healthData.clusterInfo.workerId : 'N/A'}
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Instance ID</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.instanceId}
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Node Name</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.nodeName}
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Hostname</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.hostname}
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">CPU Cores</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.cpuCount}
+                    </div>
+                </div>
+                ${
+                  healthData.clusterInfo.totalWorkers !== undefined
+                    ? `
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Total Workers</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.totalWorkers}
+                    </div>
+                </div>
+                `
+                    : ''
+                }
+                ${
+                  healthData.clusterInfo.activeWorkers !== undefined
+                    ? `
+                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Active Workers</div>
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
+                        ${healthData.clusterInfo.activeWorkers}
+                    </div>
+                </div>
+                `
+                    : ''
+                }
+            </div>
+        </section>
+        `
+            : ''
+        }
 
         <!-- Health Dashboard Section -->
         <section class="health-dashboard">
@@ -1347,16 +1488,16 @@ export class AppController {
                                 <h3 class="service-title">${service.name}</h3>
                             </div>
                             <span class="health-status-text ${service.isHealthy ? 'status-text-healthy' : 'status-text-unhealthy'}">
-                                ${service.status}
+                                ${service.isHealthy ? 'Active' : 'Inactive'}
                             </span>
                         </div>
                         <p style="color: #64748b; margin: 0.5rem 0;">${service.details}</p>
-                        <div class="health-metrics">
-                            <div class="metric">
-                                <span class="metric-label">Response Time</span>
-                                <span class="metric-value">${service.responseTime} ms</span>
-                            </div>
-                            ${Object.entries(service.metrics || {})
+                        ${
+                          service.metrics && Object.keys(service.metrics).length > 0
+                            ? `
+                        <div style="margin-top: 0.5rem; padding: 0.5rem; background: #f8f9fa; border-radius: 4px; font-size: 0.85em;">
+                            ${Object.entries(service.metrics)
+                              .filter(([key]) => !['port', 'url', 'dashboardUrl'].includes(key))
                               .map(([key, value]: [string, unknown]) => {
                                 let displayValue = 'N/A';
                                 if (value !== null && value !== undefined) {
@@ -1365,9 +1506,15 @@ export class AppController {
                                     !Array.isArray(value) &&
                                     value.constructor === Object
                                   ) {
-                                    displayValue = JSON.stringify(value);
+                                    // For objects like queueStatuses, show count or summary
+                                    const objKeys = Object.keys(value);
+                                    if (objKeys.length > 0) {
+                                      displayValue = `${objKeys.length} item(s)`;
+                                    } else {
+                                      displayValue = 'Empty';
+                                    }
                                   } else if (Array.isArray(value)) {
-                                    displayValue = JSON.stringify(value);
+                                    displayValue = `${value.length} item(s)`;
                                   } else if (
                                     typeof value === 'string' ||
                                     typeof value === 'number' ||
@@ -1379,13 +1526,65 @@ export class AppController {
                                   }
                                 }
                                 return `
+                                <div style="display: inline-block; margin-right: 1rem; margin-bottom: 0.25rem;">
+                                    <strong>${key}:</strong> ${displayValue}
+                                </div>
+                                `;
+                              })
+                              .join('')}
+                        </div>
+                        `
+                            : ''
+                        }
+                        <div class="health-metrics">
                                 <div class="metric">
-                                    <span class="metric-label">${key}</span>
+                                <span class="metric-label">Status</span>
+                                <span class="metric-value ${service.isHealthy ? 'status-text-healthy' : 'status-text-unhealthy'}">
+                                    ${service.isHealthy ? 'Active' : 'Inactive'}
+                                </span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Response Time</span>
+                                <span class="metric-value">${service.responseTime} ms</span>
+                            </div>
+                            ${
+                              service.metrics && Object.keys(service.metrics).length > 0
+                                ? Object.entries(service.metrics)
+                                    .filter(([key]) => {
+                                      // Show important metrics, skip complex objects
+                                      const importantKeys = [
+                                        'port',
+                                        'activeQueues',
+                                        'connectedClients',
+                                        'usedMemory',
+                                        'totalKeys',
+                                        'activeConnections',
+                                      ];
+                                      return importantKeys.includes(key);
+                                    })
+                                    .map(([key, value]: [string, unknown]) => {
+                                      let displayValue = 'N/A';
+                                      if (value !== null && value !== undefined) {
+                                        if (
+                                          typeof value === 'string' ||
+                                          typeof value === 'number' ||
+                                          typeof value === 'boolean'
+                                        ) {
+                                          displayValue = String(value);
+                                        } else {
+                                          displayValue = 'N/A';
+                                        }
+                                      }
+                                      return `
+                                <div class="metric">
+                                    <span class="metric-label">${key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1')}</span>
                                     <span class="metric-value">${displayValue}</span>
                                 </div>
                             `;
                               })
-                              .join('')}
+                                    .join('')
+                                : ''
+                            }
                             <div class="metric">
                                 <span class="metric-label">Last Checked</span>
                                 <span class="metric-value">${formatDateTime(service.lastChecked)}</span>

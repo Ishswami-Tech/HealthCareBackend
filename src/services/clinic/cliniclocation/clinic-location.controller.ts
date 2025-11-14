@@ -31,7 +31,7 @@ import type {
   ClinicLocationResponseDto,
 } from '@core/types/clinic.types';
 
-@ApiTags('Clinic Locations')
+@ApiTags('clinic locations')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 @UseGuards(JwtAuthGuard, RolesGuard)

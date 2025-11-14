@@ -9,7 +9,7 @@ import { LoggingService } from '@infrastructure/logging';
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
 
-@ApiTags('Logging')
+@ApiTags('logging')
 @Controller('logger')
 export class LoggingController {
   constructor(

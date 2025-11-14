@@ -75,8 +75,13 @@ export class PushNotificationService implements OnModuleInit {
     @Inject(forwardRef(() => DeviceTokenService))
     deviceTokenService?: DeviceTokenService
   ) {
-    this.snsBackupService = snsBackupService;
-    this.deviceTokenService = deviceTokenService;
+    // Only assign if value is defined to satisfy exactOptionalPropertyTypes
+    if (snsBackupService !== undefined) {
+      this.snsBackupService = snsBackupService;
+    }
+    if (deviceTokenService !== undefined) {
+      this.deviceTokenService = deviceTokenService;
+    }
   }
 
   /**

@@ -6,7 +6,7 @@ import { PluginHealthService } from './health/plugin-health.service';
 import type { PluginOperationResult, BasePlugin } from '@core/types';
 import type { PluginConfig } from './config/plugin-config.service';
 
-@ApiTags('Appointment Plugins')
+@ApiTags('appointment plugins')
 @Controller('api/appointments/plugins')
 @ApiBearerAuth()
 @ApiSecurity('session-id')

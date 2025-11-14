@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -101,7 +101,7 @@ export class JwtAuthGuard implements CanActivate {
    * @param reflector - NestJS reflector for metadata access
    * @param jwtService - JWT service for token verification
    * @param jwtAuthService - Enhanced JWT authentication service
-   * @param redisService - Redis service for session and cache management
+   * @param cacheService - Cache service for session and cache management
    * @param rateLimitService - Rate limiting service for security
    * @param loggingService - Logging service for audit trails
    */
@@ -109,7 +109,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly jwtService: JwtService,
     private readonly jwtAuthService: JwtAuthService,
-    private readonly redisService: RedisService,
+    private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService
   ) {}
 
@@ -155,7 +155,7 @@ export class JwtAuthGuard implements CanActivate {
       // TODO: Enable rate limiting in production
       /*
       // Check rate limits (enabled for production security)
-      if (!this.redisService.isDevelopmentMode()) {
+      if (!this.cacheService.isDevelopmentMode()) {
         const rateLimitResult = await this.rateLimitService.isRateLimited(
           `${clientIp}:${path}`,
           'auth'
@@ -179,7 +179,7 @@ export class JwtAuthGuard implements CanActivate {
       // TODO: Enable lockout protection in production
       /*
       // Check for time-based lockout (enabled for production security)
-      if (!this.redisService.isDevelopmentMode()) {
+      if (!this.cacheService.isDevelopmentMode()) {
         const lockoutStatus = await this.checkLockoutStatus(clientIp);
         if (lockoutStatus.isLocked) {
           throw new HttpException(
@@ -348,7 +348,7 @@ export class JwtAuthGuard implements CanActivate {
     if (payload && payload.jti) {
       try {
         const blacklistKey = `jwt:blacklist:${payload.jti}`;
-        const isBlacklisted = await this.redisService.get(blacklistKey);
+        const isBlacklisted = await this.cacheService.get<string>(blacklistKey);
         if (isBlacklisted) {
           void logger.log(
             LogType.AUTH,
@@ -380,10 +380,10 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   /**
-   * Get session data from Redis and parse it
+   * Get session data from cache and parse it
    */
   private async getSessionData(sessionKey: string): Promise<SessionData | null> {
-    const session = await this.redisService.get(sessionKey);
+    const session = await this.cacheService.get<string>(sessionKey);
     if (!session) {
       return null;
     }
@@ -460,14 +460,14 @@ export class JwtAuthGuard implements CanActivate {
       void logger.log(
         LogType.AUTH,
         LogLevel.WARN,
-        'Session validation failed: Session not found in Redis',
+        'Session validation failed: Session not found in cache',
         'JwtAuthGuard',
         { userId, sessionId, sessionKey }
       );
       throw new UnauthorizedException('Invalid session');
     }
 
-    void logger.log(LogType.AUTH, LogLevel.DEBUG, 'Session found in Redis', 'JwtAuthGuard', {
+    void logger.log(LogType.AUTH, LogLevel.DEBUG, 'Session found in cache', 'JwtAuthGuard', {
       userId,
       sessionId,
     });
@@ -540,7 +540,7 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private async checkConcurrentSessions(userId: string): Promise<void> {
-    const activeSessions = await this.redisService.sMembers(`user:${userId}:sessions`);
+    const activeSessions = await this.cacheService.sMembers(`user:${userId}:sessions`);
     if (activeSessions.length >= this.MAX_CONCURRENT_SESSIONS) {
       await this.trackSecurityEvent(userId, 'MAX_SESSIONS_REACHED', {
         activeSessionCount: activeSessions.length,
@@ -572,7 +572,7 @@ export class JwtAuthGuard implements CanActivate {
         },
       };
 
-      await this.redisService.set(
+      await this.cacheService.set(
         `session:${userId}:${sessionData.sessionId}`,
         JSON.stringify(updatedSession),
         3600 // Keep session alive for another hour
@@ -608,13 +608,18 @@ export class JwtAuthGuard implements CanActivate {
         details,
       };
 
-      await this.redisService.rPush(`security:events:${identifier}`, JSON.stringify(event));
+      await this.cacheService.rPush(`security:events:${identifier}`, JSON.stringify(event));
 
-      // Trim old events
-      await this.redisService.lTrim(`security:events:${identifier}`, -1000, -1);
+      // Trim old events (keep last 1000 events)
+      const eventKey = `security:events:${identifier}`;
+      // Type assertion needed due to ESLint type inference limitation
+      const cacheService = this.cacheService as CacheService & {
+        lTrim: (key: string, start: number, stop: number) => Promise<string>;
+      };
+      await cacheService.lTrim(eventKey, -1000, -1);
 
       // Set expiry for events list
-      await this.redisService.expire(
+      await this.cacheService.expire(
         `security:events:${identifier}`,
         this.SECURITY_EVENT_RETENTION
       );
@@ -655,7 +660,7 @@ export class JwtAuthGuard implements CanActivate {
   private async checkLockoutStatus(identifier: string): Promise<LockoutStatus> {
     const lockoutKey = `auth:lockout:${identifier}`;
 
-    const lockoutData = await this.redisService.get(lockoutKey);
+    const lockoutData = await this.cacheService.get<string>(lockoutKey);
 
     if (lockoutData) {
       const { lockedUntil } = JSON.parse(lockoutData) as {
@@ -667,7 +672,7 @@ export class JwtAuthGuard implements CanActivate {
         return { isLocked: true, remainingMinutes };
       }
       // Lockout expired, clear it
-      await this.redisService.del(lockoutKey);
+      await this.cacheService.del(lockoutKey);
     }
 
     return { isLocked: false, remainingMinutes: 0 };
@@ -677,8 +682,8 @@ export class JwtAuthGuard implements CanActivate {
     const attemptsKey = `auth:attempts:${identifier}`;
     const lockoutKey = `auth:lockout:${identifier}`;
 
-    const attempts = await this.redisService.get(attemptsKey);
-    const currentAttempts = attempts ? parseInt(attempts) : 0;
+    const attempts = await this.cacheService.get<string>(attemptsKey);
+    const currentAttempts = attempts ? parseInt(attempts, 10) : 0;
     const newAttempts = currentAttempts + 1;
 
     if (newAttempts >= this.MAX_ATTEMPTS) {
@@ -690,7 +695,7 @@ export class JwtAuthGuard implements CanActivate {
       const lockedUntil = Date.now() + lockoutMinutes * 60 * 1000;
 
       // Set lockout with progressive duration
-      await this.redisService.set(
+      await this.cacheService.set(
         lockoutKey,
         JSON.stringify({
           lockedUntil,
@@ -708,14 +713,14 @@ export class JwtAuthGuard implements CanActivate {
       });
     } else {
       // Update attempts count
-      await this.redisService.set(attemptsKey, newAttempts.toString(), this.ATTEMPT_WINDOW);
+      await this.cacheService.set(attemptsKey, newAttempts.toString(), this.ATTEMPT_WINDOW);
     }
   }
 
   private async resetFailedAttempts(identifier: string): Promise<void> {
     const attemptsKey = `auth:attempts:${identifier}`;
     const lockoutKey = `auth:lockout:${identifier}`;
-    await Promise.all([this.redisService.del(attemptsKey), this.redisService.del(lockoutKey)]);
+    await Promise.all([this.cacheService.del(attemptsKey), this.cacheService.del(lockoutKey)]);
   }
 
   private validateSecurityHeaders(request: FastifyRequestWithUser): void {
