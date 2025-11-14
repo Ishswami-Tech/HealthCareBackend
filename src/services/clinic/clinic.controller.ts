@@ -46,7 +46,7 @@ import { Public } from '@core/decorators/public.decorator';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 
-@ApiTags('Clinics')
+@ApiTags('clinic')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 @ApiHeader({

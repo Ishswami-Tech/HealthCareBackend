@@ -29,6 +29,8 @@ export interface ServiceHealth {
   readonly responseTime: number;
   /** Timestamp of last health check */
   readonly lastChecked: string;
+  /** Optional service-specific metrics */
+  readonly metrics?: Record<string, unknown>;
 }
 
 /**
@@ -143,6 +145,17 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
     ppid: number;
     platform: string;
     versions: Record<string, string>;
+    cluster?: {
+      isPrimary: boolean;
+      isWorker: boolean;
+      workerId: string | number | undefined;
+      instanceId: string;
+      nodeName: string;
+      hostname: string;
+      cpuCount: number;
+      totalWorkers?: number;
+      activeWorkers?: number;
+    };
   };
   memory: {
     heapUsed: number;

@@ -57,9 +57,9 @@ export default registerAs('redis', (): RedisConfig => {
     port: parseRedisInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
     ttl: parseRedisInteger(process.env['REDIS_TTL'], DEFAULT_CONFIG.REDIS_TTL, 1),
     prefix: process.env['REDIS_PREFIX'] ?? 'healthcare:',
-    // Add development mode flag to make Redis optional
-    enabled:
-      process.env['REDIS_ENABLED'] !== 'false' && process.env[ENV_VARS.NODE_ENV] !== 'development',
+    // Respect REDIS_ENABLED explicitly - if set to 'false', disable it
+    // Otherwise, enable it (default to true in all environments)
+    enabled: process.env['REDIS_ENABLED'] !== 'false',
     development: process.env[ENV_VARS.NODE_ENV] === 'development',
   };
 

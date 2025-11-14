@@ -44,5 +44,6 @@
       "@config": ["src/config"],
       "@config/*": ["src/config/*"]
     }
-  }
+  },
+  "exclude": ["node_modules", "dist", "prisma.config.js"]
 }

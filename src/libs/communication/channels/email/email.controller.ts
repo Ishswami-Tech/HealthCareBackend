@@ -8,7 +8,7 @@ class SendTestEmailDto {
   template?: EmailTemplate;
 }
 
-@ApiTags('Email')
+@ApiTags('email')
 @Controller('email')
 export class EmailController {
   constructor(private readonly emailService: EmailService) {}
@@ -16,7 +16,7 @@ export class EmailController {
   @Get('status')
   @ApiOperation({ summary: 'Get email service status' })
   @ApiResponse({ status: 200, description: 'Email service status' })
-  async getEmailStatus() {
+  getEmailStatus() {
     try {
       const isHealthy = this.emailService.isHealthy();
       return {
