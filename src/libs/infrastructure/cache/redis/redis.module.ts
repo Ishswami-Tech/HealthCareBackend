@@ -1,15 +1,33 @@
 // External imports
-import { Module, Global } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { Module, Global, OnModuleInit } from '@nestjs/common';
 
 // Internal imports - Infrastructure
-import { LoggingModule } from '@infrastructure/logging';
+// ConfigModule is @Global() - no need to import it explicitly
+// LoggingModule is @Global() - no need to import it explicitly
 import { RedisService } from '@infrastructure/cache/redis/redis.service';
 
 @Global()
 @Module({
-  imports: [ConfigModule, LoggingModule],
+  imports: [
+    // ConfigModule and LoggingModule are @Global() - they're available everywhere
+    // No need to import them explicitly
+  ],
   providers: [RedisService],
   exports: [RedisService],
 })
-export class RedisModule {}
+export class RedisModule implements OnModuleInit {
+  // Force eager initialization by injecting RedisService in the module
+  constructor(private readonly redisService: RedisService) {
+    // This ensures RedisService is instantiated when the module is loaded
+    // which will trigger onModuleInit lifecycle hook
+  }
+
+  async onModuleInit(): Promise<void> {
+    // Explicitly trigger RedisService.onModuleInit by calling it
+    // This ensures the connection is established even if NestJS lifecycle hooks
+    // don't fire in the expected order
+    if (this.redisService && typeof (this.redisService as { onModuleInit?: () => Promise<void> }).onModuleInit === 'function') {
+      await (this.redisService as { onModuleInit: () => Promise<void> }).onModuleInit();
+    }
+  }
+}
