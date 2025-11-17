@@ -28,4 +28,38 @@ export * from './validation.decorator';
 
 // Performance and security decorators
 export * from './rate-limit.decorator';
-export * from './cache.decorator';
+// Export cache decorators but exclude ClinicId to avoid conflict with clinic.decorator
+export {
+  Cache,
+  PHICache,
+  PatientCache,
+  DoctorCache,
+  AppointmentCache,
+  EmergencyCache,
+  MedicalHistoryCache,
+  PrescriptionCache,
+  LabResultsCache,
+  ShortCache,
+  LongCache,
+  UserCache,
+  NoCache,
+  InvalidateCache,
+  InvalidatePatientCache,
+  InvalidateAppointmentCache,
+  InvalidateClinicCache,
+  PatientId,
+  DoctorId,
+  AppointmentId,
+  HealthcareIds,
+  CacheConditions,
+  HealthcareKeyGenerators,
+  RedisCache,
+  HealthcareCache,
+  InvalidateHealthcareCache,
+  // Export ClinicId from cache.decorator as CacheClinicId to avoid conflict
+  ClinicId as CacheClinicId,
+  // Export cache metadata keys
+  CACHE_KEY,
+  CACHE_INVALIDATE_KEY,
+  PHI_CACHE_KEY,
+} from './cache.decorator';

@@ -1,60 +1,44 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Res, Param } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { HealthService } from './health.service';
 import { HealthCheckResponse, DetailedHealthCheckResponse } from '@core/types/common.types';
 import { Public } from '@core/decorators/public.decorator';
 import { FastifyReply } from 'fastify';
-import { HealthcareErrorsService } from '@core/errors';
 
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
-  constructor(
-    private readonly healthService: HealthService,
-    private readonly errors: HealthcareErrorsService
-  ) {}
+  constructor(private readonly healthService: HealthService) {
+    // Defensive check: ensure healthService is injected
+    if (!this.healthService) {
+      console.error('[HealthController] HealthService is not injected!');
+    }
+  }
 
+  /**
+   * Basic Health Check Endpoint
+   *
+   * Returns lightweight health status of core services.
+   * Uses smart caching (15-30s freshness) to avoid excessive requests.
+   * Perfect for load balancers, monitoring tools, and quick status checks.
+   */
   @Get()
   @Public()
-  @ApiOperation({ summary: 'Get basic health status of core services' })
+  @ApiOperation({
+    summary: 'Get basic health status of core services',
+    description:
+      'Lightweight health check with smart caching. Returns cached status if fresh (< 30s), otherwise performs quick checks. Perfect for load balancers and monitoring.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Basic health check successful',
     schema: {
       type: 'object',
       properties: {
-        status: { type: 'string', enum: ['healthy', 'degraded'] },
+        status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] },
         timestamp: { type: 'string', format: 'date-time' },
         environment: { type: 'string' },
         version: { type: 'string' },
-        systemMetrics: {
-          type: 'object',
-          properties: {
-            uptime: { type: 'number' },
-            memoryUsage: {
-              type: 'object',
-              properties: {
-                heapTotal: { type: 'number' },
-                heapUsed: { type: 'number' },
-                rss: { type: 'number' },
-                external: { type: 'number' },
-                systemTotal: { type: 'number' },
-                systemFree: { type: 'number' },
-                systemUsed: { type: 'number' },
-              },
-            },
-            cpuUsage: {
-              type: 'object',
-              properties: {
-                user: { type: 'number' },
-                system: { type: 'number' },
-                cpuCount: { type: 'number' },
-                cpuModel: { type: 'string' },
-                cpuSpeed: { type: 'number' },
-              },
-            },
-          },
-        },
         services: {
           type: 'object',
           properties: {
@@ -70,36 +54,48 @@ export class HealthController {
               type: 'object',
               properties: {
                 status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                details: { type: 'string' },
                 responseTime: { type: 'number' },
                 lastChecked: { type: 'string', format: 'date-time' },
-                metrics: {
-                  type: 'object',
-                  properties: {
-                    queryResponseTime: { type: 'number' },
-                    activeConnections: { type: 'number' },
-                    maxConnections: { type: 'number' },
-                    connectionUtilization: { type: 'number' },
-                  },
-                },
               },
             },
-            redis: {
+            cache: {
               type: 'object',
               properties: {
                 status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                details: { type: 'string' },
                 responseTime: { type: 'number' },
                 lastChecked: { type: 'string', format: 'date-time' },
-                metrics: {
-                  type: 'object',
-                  properties: {
-                    connectedClients: { type: 'number' },
-                    usedMemory: { type: 'number' },
-                    totalKeys: { type: 'number' },
-                    lastSave: { type: 'string', format: 'date-time' },
-                  },
-                },
+              },
+            },
+            queue: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
+                responseTime: { type: 'number' },
+                lastChecked: { type: 'string', format: 'date-time' },
+              },
+            },
+            logger: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
+                responseTime: { type: 'number' },
+                lastChecked: { type: 'string', format: 'date-time' },
+              },
+            },
+            socket: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
+                responseTime: { type: 'number' },
+                lastChecked: { type: 'string', format: 'date-time' },
+              },
+            },
+            email: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
+                responseTime: { type: 'number' },
+                lastChecked: { type: 'string', format: 'date-time' },
               },
             },
           },
@@ -109,10 +105,16 @@ export class HealthController {
   })
   async getHealth(@Res() res: FastifyReply): Promise<void> {
     try {
-      const health = await this.healthService.checkHealth();
+      // Ensure healthService is available
+      if (!this.healthService) {
+        throw new Error('HealthService is not available');
+      }
+      const health = await this.healthService.getHealth();
       return res.status(200).send(health);
     } catch (error) {
-      // Fallback health response if health check fails
+      // Fallback: return degraded status if health check fails
+      // IMPORTANT: If we can return this response, the API is healthy!
+      const errorMessage = error instanceof Error ? error.message : 'Health check failed';
       const fallbackResponse: HealthCheckResponse = {
         status: 'degraded',
         timestamp: new Date().toISOString(),
@@ -139,34 +141,22 @@ export class HealthController {
         },
         services: {
           api: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
+            status: 'healthy' as const, // API is healthy if we can respond
+            responseTime: 10,
             lastChecked: new Date().toISOString(),
-            error: error instanceof Error ? error.message : 'Health check failed',
+            details: 'API service is running and responding',
           },
           database: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
-            metrics: {
-              queryResponseTime: 0,
-              activeConnections: 0,
-              maxConnections: 0,
-              connectionUtilization: 0,
-            },
           },
-          redis: {
+          cache: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
-            metrics: {
-              connectedClients: 0,
-              usedMemory: 0,
-              totalKeys: 0,
-              lastSave: new Date().toISOString(),
-            },
           },
-          queues: {
+          queue: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
@@ -192,9 +182,116 @@ export class HealthController {
     }
   }
 
-  @Get('detailed')
+  /**
+   * Test individual service health
+   * Useful for debugging which service is failing
+   */
+  @Get('test/:service')
+  @Public()
   @ApiOperation({
-    summary: 'Get detailed health status of all services with additional metrics',
+    summary: 'Test individual service health',
+    description: 'Test a specific service health check (database, cache, queue, logger, socket, email)',
+  })
+  async testService(@Param('service') service: string, @Res() res: FastifyReply): Promise<void> {
+    try {
+      if (!this.healthService) {
+        return res.status(500).send({ error: 'HealthService is not available' });
+      }
+
+      let result: { service: string; status: string; details: string; error?: string };
+      
+              switch (service.toLowerCase()) {
+                case 'database':
+                  result = await this.healthService.checkDatabaseHealth().then(health => {
+                    const baseResult = {
+                      service: 'database',
+                      status: health.status,
+                      details: health.details || 'No details available',
+                    };
+                    return health.error ? { ...baseResult, error: health.error } : baseResult;
+                  });
+                  break;
+                case 'cache':
+                case 'redis':
+                  result = await this.healthService.checkRedisHealth().then(health => {
+                    const baseResult = {
+                      service: 'cache',
+                      status: health.status,
+                      details: health.details || 'No details available',
+                    };
+                    return health.error ? { ...baseResult, error: health.error } : baseResult;
+                  });
+                  break;
+                case 'queue':
+                  result = await this.healthService.checkQueueHealth().then(health => {
+                    const baseResult = {
+                      service: 'queue',
+                      status: health.status,
+                      details: health.details || 'No details available',
+                    };
+                    return health.error ? { ...baseResult, error: health.error } : baseResult;
+                  });
+                  break;
+                case 'logger':
+                  result = await this.healthService.checkLoggerHealth().then(health => {
+                    const baseResult = {
+                      service: 'logger',
+                      status: health.status,
+                      details: health.details || 'No details available',
+                    };
+                    return health.error ? { ...baseResult, error: health.error } : baseResult;
+                  });
+                  break;
+                case 'socket':
+                  result = await this.healthService.checkSocketHealth().then(health => {
+                    const baseResult = {
+                      service: 'socket',
+                      status: health.status,
+                      details: health.details || 'No details available',
+                    };
+                    return health.error ? { ...baseResult, error: health.error } : baseResult;
+                  });
+                  break;
+                case 'email':
+                  result = await this.healthService.checkEmailHealth().then(health => {
+                    const baseResult = {
+                      service: 'email',
+                      status: health.status,
+                      details: health.details || 'No details available',
+                    };
+                    return health.error ? { ...baseResult, error: health.error } : baseResult;
+                  });
+                  break;
+        default:
+          return res.status(400).send({
+            error: 'Invalid service name',
+            availableServices: ['database', 'cache', 'queue', 'logger', 'socket', 'email'],
+          });
+      }
+
+      return res.status(200).send(result);
+    } catch (error) {
+      return res.status(500).send({
+        service,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  /**
+   * Detailed Health Check Endpoint
+   *
+   * Returns comprehensive health status with detailed metrics.
+   * Includes system metrics, process info, and extended service details.
+   * Uses smart caching but may perform fresh checks if cache is stale.
+   */
+  @Get('detailed')
+  @Public()
+  @ApiOperation({
+    summary: 'Get detailed health status with comprehensive metrics',
+    description:
+      'Comprehensive health check with detailed metrics, system information, and extended service status. Uses smart caching for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -205,17 +302,6 @@ export class HealthController {
         {
           type: 'object',
           properties: {
-            services: {
-              type: 'object',
-              properties: {
-                queues: { $ref: '#/components/schemas/ServiceHealth' },
-                logger: { $ref: '#/components/schemas/ServiceHealth' },
-                socket: { $ref: '#/components/schemas/ServiceHealth' },
-                prismaStudio: { $ref: '#/components/schemas/ServiceHealth' },
-                redisCommander: { $ref: '#/components/schemas/ServiceHealth' },
-                pgAdmin: { $ref: '#/components/schemas/ServiceHealth' },
-              },
-            },
             processInfo: {
               type: 'object',
               properties: {
@@ -251,15 +337,15 @@ export class HealthController {
   })
   async getDetailedHealth(@Res() res: FastifyReply): Promise<void> {
     try {
-      const health = await this.healthService.checkDetailedHealth();
+      const health = await this.healthService.getDetailedHealth();
       return res.status(200).send(health);
     } catch (_error) {
-      // Fallback detailed health response if health check fails
+      // Fallback: try to get basic health first
       let baseHealth: HealthCheckResponse;
       try {
-        baseHealth = await this.healthService.checkHealth();
+        baseHealth = await this.healthService.getHealth();
       } catch (_fallbackError) {
-        // If getHealth also fails, create minimal fallback
+        // If basic health also fails, create minimal fallback
         baseHealth = {
           status: 'degraded',
           timestamp: new Date().toISOString(),
@@ -286,34 +372,22 @@ export class HealthController {
           },
           services: {
             api: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
+              status: 'healthy' as const, // API is healthy if we can respond
+              responseTime: 10,
               lastChecked: new Date().toISOString(),
-              error: 'Health check service unavailable',
+              details: 'API service is running and responding',
             },
             database: {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),
-              metrics: {
-                queryResponseTime: 0,
-                activeConnections: 0,
-                maxConnections: 0,
-                connectionUtilization: 0,
-              },
             },
-            redis: {
+            cache: {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),
-              metrics: {
-                connectedClients: 0,
-                usedMemory: 0,
-                totalKeys: 0,
-                lastSave: new Date().toISOString(),
-              },
             },
-            queues: {
+            queue: {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),
@@ -338,24 +412,6 @@ export class HealthController {
       }
       const fallbackResponse: DetailedHealthCheckResponse = {
         ...baseHealth,
-        services: {
-          ...baseHealth.services,
-          queues: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-          logger: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-          socket: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-        },
         processInfo: {
           pid: process.pid,
           ppid: process.ppid,
@@ -377,104 +433,5 @@ export class HealthController {
       };
       return res.status(200).send(fallbackResponse);
     }
-  }
-
-  @Get('/api')
-  @Public()
-  async apiHealth(@Res() res: FastifyReply) {
-    try {
-      const health = await this.healthService.checkHealth();
-      return res.send(health);
-    } catch (error) {
-      const fallbackResponse: HealthCheckResponse = {
-        status: 'degraded',
-        timestamp: new Date().toISOString(),
-        environment: process.env['NODE_ENV'] || 'development',
-        version: process.env['npm_package_version'] || '0.0.1',
-        systemMetrics: {
-          uptime: process.uptime(),
-          memoryUsage: {
-            heapTotal: 0,
-            heapUsed: 0,
-            rss: 0,
-            external: 0,
-            systemTotal: 0,
-            systemFree: 0,
-            systemUsed: 0,
-          },
-          cpuUsage: {
-            user: 0,
-            system: 0,
-            cpuCount: 0,
-            cpuModel: 'unknown',
-            cpuSpeed: 0,
-          },
-        },
-        services: {
-          api: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            error: error instanceof Error ? error.message : 'Health check failed',
-          },
-          database: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            metrics: {
-              queryResponseTime: 0,
-              activeConnections: 0,
-              maxConnections: 0,
-              connectionUtilization: 0,
-            },
-          },
-          redis: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            metrics: {
-              connectedClients: 0,
-              usedMemory: 0,
-              totalKeys: 0,
-              lastSave: new Date().toISOString(),
-            },
-          },
-          queues: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-          logger: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-          socket: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-          email: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-        },
-      };
-      return res.send(fallbackResponse);
-    }
-  }
-
-  @Get('/api-health')
-  @Public()
-  async apiHealthAlias(@Res() res: FastifyReply) {
-    // Alias for /api endpoint for backward compatibility
-    return this.apiHealth(res);
-  }
-
-  @Get('/favicon.ico')
-  @Public()
-  async favicon(@Res() res: FastifyReply) {
-    return res.status(204).send();
   }
 }

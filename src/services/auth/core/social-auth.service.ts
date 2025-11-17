@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailService } from '@communication/channels/email/email.service';
@@ -12,7 +12,7 @@ export class SocialAuthService {
   private readonly providers: Map<string, SocialAuthProvider> = new Map();
 
   constructor(
-    private readonly configService: ConfigService,
+    @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly emailService: EmailService
   ) {
@@ -26,7 +26,7 @@ export class SocialAuthService {
     // Helper to safely get config values with fallback
     const getConfig = (key: string, defaultValue = ''): string => {
       try {
-        return this.configService.get<string>(key, defaultValue);
+        return this.configService?.get<string>(key, defaultValue) || process.env[key] || defaultValue;
       } catch {
         return process.env[key] || defaultValue;
       }

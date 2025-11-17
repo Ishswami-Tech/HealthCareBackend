@@ -1547,15 +1547,23 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
             return Promise.resolve({ processed: true, timestamp: new Date() });
           },
           {
-            connection: {
-              host:
-                this.configService?.get<string>('REDIS_HOST') ||
-                process.env['REDIS_HOST'] ||
-                'localhost',
-              port:
-                this.configService?.get<number>('REDIS_PORT') ||
-                parseInt(process.env['REDIS_PORT'] || '6379', 10),
-            },
+            connection: (() => {
+              // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
+              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+              const useDragonfly = cacheProvider === 'dragonfly';
+              
+              const cacheHost = useDragonfly
+                ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
+                : (process.env['REDIS_HOST'] || 'localhost');
+              const cachePort = useDragonfly
+                ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+                : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+              
+              return {
+                host: cacheHost,
+                port: cachePort,
+              };
+            })(),
             concurrency: 5,
           }
         );

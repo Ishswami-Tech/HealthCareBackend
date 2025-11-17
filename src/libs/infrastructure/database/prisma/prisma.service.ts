@@ -222,7 +222,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly payment!: PaymentDelegate;
   readonly $transaction!: TransactionDelegate['$transaction'];
   private static connectionCount = 0;
-  private static readonly MAX_CONNECTIONS = 500; // Optimized for 10M+ users (increased from 200)
+  private static readonly MAX_CONNECTIONS = 50; // Reduced to prevent connection pool exhaustion (matches connection_limit in DATABASE_URL)
   private static readonly CONNECTION_TIMEOUT = 5000; // 5 seconds timeout for connections
   private static readonly QUERY_TIMEOUT = 30000; // 30 seconds query timeout
   private static readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Failures before circuit opens
@@ -234,6 +234,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   // Dedicated PrismaClient instance for health checks
   // Uses a separate connection pool to avoid interfering with regular operations
   private static healthCheckPrismaClient: PrismaClient | null = null;
+  private static prismaDebugSanitized = false;
   private static circuitBreakerFailures = 0;
   private static circuitBreakerLastFailure = 0;
   private static isCircuitOpen = false;
@@ -243,6 +244,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * This ensures PrismaClient is loaded after prisma generate completes
    */
   private static async loadPrismaClient(): Promise<typeof PrismaClient> {
+    PrismaService.sanitizePrismaDebugNamespaces();
     try {
       // Dynamic import to get fresh PrismaClient
       const prismaModule = await import('@prisma/client');
@@ -257,6 +259,39 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         'PrismaService.loadPrismaClient'
       );
     }
+  }
+
+  private static sanitizePrismaDebugNamespaces(): void {
+    if (PrismaService.prismaDebugSanitized) {
+      return;
+    }
+    const debugEnv = process.env.DEBUG;
+    if (!debugEnv) {
+      PrismaService.prismaDebugSanitized = true;
+      return;
+    }
+    const namespaces = debugEnv
+      .split(',')
+      .map(ns => ns.trim())
+      .filter(ns => ns.length > 0);
+    if (namespaces.length === 0) {
+      delete process.env.DEBUG;
+      PrismaService.prismaDebugSanitized = true;
+      return;
+    }
+    const filtered = namespaces.filter(
+      ns => !ns.toLowerCase().startsWith('prisma') && !ns.toLowerCase().startsWith('engine')
+    );
+    if (filtered.length === namespaces.length) {
+      PrismaService.prismaDebugSanitized = true;
+      return;
+    }
+    if (filtered.length === 0) {
+      delete process.env.DEBUG;
+    } else {
+      process.env.DEBUG = filtered.join(',');
+    }
+    PrismaService.prismaDebugSanitized = true;
   }
 
   /**
@@ -480,11 +515,15 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       { emit: 'stdout' as const, level: 'error' as const },
       { emit: 'stdout' as const, level: 'warn' as const },
     ];
+    // Check if query logging is enabled via environment variable
+    const enableQueryLogging = process.env['QUERY_LOGGING'] === 'true' || process.env['PRISMA_QUERY_LOG'] === 'true';
+    
     const developmentLogConfig: LogConfig[] = [
       { emit: 'stdout' as const, level: 'error' as const },
       { emit: 'stdout' as const, level: 'warn' as const },
       { emit: 'stdout' as const, level: 'info' as const },
-      { emit: 'stdout' as const, level: 'query' as const },
+      // Query logging disabled by default to reduce log noise - enable via QUERY_LOGGING=true env var if needed
+      ...(enableQueryLogging ? [{ emit: 'stdout' as const, level: 'query' as const }] : []),
     ];
     const logConfiguration: LogConfig[] = isProduction ? productionLogConfig : developmentLogConfig;
 

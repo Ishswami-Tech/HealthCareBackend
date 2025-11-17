@@ -141,6 +141,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CACHE_KEY_NOT_FOUND]: 'Cache key not found.',
   [ErrorCode.CACHE_INVALIDATION_FAILED]: 'Cache invalidation failed. Please try again.',
   [ErrorCode.CACHE_CONFIGURATION_ERROR]: 'Cache configuration error. Please contact support.',
+  [ErrorCode.CACHE_TIMEOUT]: 'Cache operation timed out. Please try again.',
+  [ErrorCode.CACHE_SERIALIZATION_ERROR]: 'Cache serialization error. Please try again.',
 
   // Event Errors
   [ErrorCode.EVENT_EMISSION_FAILED]: 'Event emission failed. Please try again.',

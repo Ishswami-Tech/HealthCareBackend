@@ -1,0 +1,105 @@
+# Dragonfly Deployment - High-performance Redis-compatible cache
+# Dragonfly is 26x faster than Redis and uses less memory
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonfly
+  namespace: healthcare-backend
+  labels:
+    app: dragonfly
+    component: cache
+spec:
+  replicas: 1  # Dragonfly is single-instance but highly performant
+  selector:
+    matchLabels:
+      app: dragonfly
+      component: cache
+  template:
+    metadata:
+      labels:
+        app: dragonfly
+        component: cache
+    spec:
+      containers:
+      - name: dragonfly
+        image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+        args:
+          - --alsologtostderr
+          - --cache_mode=false
+          - --maxmemory=4gb
+          - --proactor_threads=8
+          - --logtostderr
+        ports:
+        - containerPort: 6379
+          name: client
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: dragonfly-storage
+          mountPath: /data
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - redis-cli -p 6379 ping || exit 1
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - redis-cli -p 6379 ping || exit 1
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: dragonfly-storage
+        persistentVolumeClaim:
+          claimName: dragonfly-storage
+---
+# Service for Dragonfly
+apiVersion: v1
+kind: Service
+metadata:
+  name: dragonfly
+  namespace: healthcare-backend
+  labels:
+    app: dragonfly
+    component: cache
+spec:
+  type: ClusterIP
+  selector:
+    app: dragonfly
+    component: cache
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: client
+---
+# PersistentVolumeClaim for Dragonfly
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dragonfly-storage
+  namespace: healthcare-backend
+  labels:
+    app: dragonfly
+    component: cache
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard  # Adjust based on your cluster
+

@@ -3,7 +3,7 @@ import { ConfigModule } from '@config';
 import { JwtModule } from '@nestjs/jwt';
 import { SessionManagementService } from './session-management.service';
 import { DatabaseModule } from '@infrastructure/database';
-import { RedisModule } from '@infrastructure/cache/redis/redis.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 
 /**
@@ -21,7 +21,7 @@ import { LoggingModule } from '@infrastructure/logging';
  * ```
  */
 @Module({
-  imports: [ConfigModule, JwtModule, DatabaseModule, RedisModule, LoggingModule],
+  imports: [ConfigModule, JwtModule, DatabaseModule, CacheModule, LoggingModule],
   providers: [SessionManagementService],
   exports: [SessionManagementService],
 })

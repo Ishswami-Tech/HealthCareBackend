@@ -52,6 +52,12 @@ spec:
             secretKeyRef:
               name: healthcare-secrets
               key: database-url
+        - name: CACHE_PROVIDER
+          value: "dragonfly"
+        - name: DRAGONFLY_HOST
+          value: "dragonfly"
+        - name: DRAGONFLY_PORT
+          value: "6379"
         - name: REDIS_HOST
           value: "redis"
         - name: REDIS_PORT

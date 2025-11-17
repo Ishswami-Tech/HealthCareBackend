@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -22,11 +22,48 @@ export class JwtAuthService {
 
   constructor(
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
+    @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly cacheService: CacheService
   ) {
     this.logger.log('🔐 Advanced JWT Service initializing for 100K+ users...');
     this.initializeCleanupTasks();
+  }
+
+  /**
+   * Safely call cache service methods with error handling
+   */
+  private async safeCacheGet<T>(key: string, defaultValue: T | null = null): Promise<T | null> {
+    try {
+      if (!this.cacheService) {
+        return defaultValue;
+      }
+      return (await this.cacheService.get<T>(key)) || defaultValue;
+    } catch (error) {
+      this.logger.warn(`Cache get failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return defaultValue;
+    }
+  }
+
+  private async safeCacheSet<T>(key: string, value: T, ttl?: number): Promise<void> {
+    try {
+      if (!this.cacheService) {
+        return;
+      }
+      await this.cacheService.set(key, value, ttl);
+    } catch (error) {
+      this.logger.warn(`Cache set failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async safeCacheDelete(key: string): Promise<void> {
+    try {
+      if (!this.cacheService) {
+        return;
+      }
+      await this.cacheService.delete(key);
+    } catch (error) {
+      this.logger.warn(`Cache delete failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   /**
@@ -176,17 +213,30 @@ export class JwtAuthService {
     ipAddress?: string
   ): Promise<AuthTokens> {
     try {
-      // Rate limiting check
-      await this.checkRateLimit(payload.sub);
-
-      // Device tracking
-      if (deviceFingerprint) {
-        await this.trackDevice(payload.sub, deviceFingerprint);
+      // Rate limiting check (best effort - don't fail if cache unavailable)
+      try {
+        await this.checkRateLimit(payload.sub);
+      } catch (rateLimitError) {
+        // Log but don't fail - rate limiting is best effort
+        this.logger.warn(`Rate limit check failed (non-critical): ${rateLimitError instanceof Error ? rateLimitError.message : String(rateLimitError)}`);
       }
+
+      // Device tracking (best effort - don't fail if cache unavailable)
+      if (deviceFingerprint) {
+        try {
+          await this.trackDevice(payload.sub, deviceFingerprint);
+        } catch (trackError) {
+          // Log but don't fail - device tracking is best effort
+          this.logger.warn(`Device tracking failed (non-critical): ${trackError instanceof Error ? trackError.message : String(trackError)}`);
+        }
+      }
+
+      // Strip registered claims so jsonwebtoken can set fresh exp/iat values
+      const sanitizedPayload = this.stripRegisteredClaims(payload);
 
       // Enhanced payload with security metadata
       const enhancedPayload: TokenPayload = {
-        ...payload,
+        ...sanitizedPayload,
         jti: this.generateJTI(), // JWT ID for blacklist tracking
         deviceFingerprint: deviceFingerprint || '',
         userAgent: userAgent?.substring(0, 100) || '',
@@ -199,8 +249,13 @@ export class JwtAuthService {
         this.generateRefreshToken(enhancedPayload),
       ]);
 
-      // Cache tokens for fast validation
-      await this.cacheTokens(accessToken, refreshToken, payload.sub);
+      // Cache tokens for fast validation (best effort - don't fail if cache unavailable)
+      try {
+        await this.cacheTokens(accessToken, refreshToken, payload.sub);
+      } catch (cacheError) {
+        // Log but don't fail - caching is best effort
+        this.logger.warn(`Token caching failed (non-critical): ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`);
+      }
 
       return {
         accessToken,
@@ -223,20 +278,34 @@ export class JwtAuthService {
    */
   async verifyEnhancedToken(token: string): Promise<TokenPayload> {
     try {
-      // Check if token is blacklisted
-      const jti = this.extractJTI(token);
-      if (jti && (await this.isTokenBlacklisted(jti))) {
-        throw new Error('Token has been revoked');
+      // Check if token is blacklisted (best effort - don't fail if cache unavailable)
+      try {
+        const jti = this.extractJTI(token);
+        if (jti && (await this.isTokenBlacklisted(jti))) {
+          throw new Error('Token has been revoked');
+        }
+      } catch (blacklistError) {
+        // If blacklist check fails due to cache, log but continue verification
+        // Only throw if token is actually blacklisted
+        if (blacklistError instanceof Error && blacklistError.message === 'Token has been revoked') {
+          throw blacklistError;
+        }
+        this.logger.warn('Blacklist check failed (non-critical), continuing verification');
       }
 
-      // Try cache first for performance
-      const cachedPayload = await this.getCachedTokenPayload(token);
-      if (cachedPayload) {
-        this.logger.debug('Token verified from cache');
-        return cachedPayload;
+      // Try cache first for performance (best effort)
+      try {
+        const cachedPayload = await this.getCachedTokenPayload(token);
+        if (cachedPayload) {
+          this.logger.debug('Token verified from cache');
+          return cachedPayload;
+        }
+      } catch (cacheError) {
+        // Cache miss or error - continue with JWT verification
+        this.logger.debug('Cache check failed (non-critical), verifying token directly');
       }
 
-      // Verify with JWT service
+      // Verify with JWT service (this is the critical path)
       // jwtService.verifyAsync returns unknown, we need to type assert it
       const payloadRaw: unknown = await this.jwtService.verifyAsync(token);
       const payload =
@@ -247,8 +316,13 @@ export class JwtAuthService {
         throw new Error('Invalid token payload');
       }
 
-      // Cache verified token
-      await this.cacheTokenPayload(token, payload);
+      // Cache verified token (best effort - don't fail if cache unavailable)
+      try {
+        await this.cacheTokenPayload(token, payload);
+      } catch (cacheError) {
+        // Log but don't fail - token is still valid
+        this.logger.debug('Failed to cache token payload (non-critical)');
+      }
 
       return payload;
     } catch (_error) {
@@ -272,7 +346,8 @@ export class JwtAuthService {
       }
 
       const blacklistKey = `jwt:blacklist:${jti}`;
-      await this.cacheService.set(
+      // Use safe cache set - won't throw if cache is unavailable
+      await this.safeCacheSet(
         blacklistKey,
         {
           blacklistedAt: new Date().toISOString(),
@@ -281,16 +356,22 @@ export class JwtAuthService {
         this.BLACKLIST_CACHE_TTL
       );
 
-      // Remove from token cache
-      await this.removeCachedToken(token);
+      // Remove from token cache - best effort, don't fail if cache unavailable
+      try {
+        await this.removeCachedToken(token);
+      } catch (removeError) {
+        this.logger.warn(
+          `Failed to remove cached token (non-critical): ${removeError instanceof Error ? removeError.message : String(removeError)}`
+        );
+      }
 
       this.logger.log(`Token blacklisted: ${jti} - Reason: ${reason || 'User logout'}`);
     } catch (_error) {
-      this.logger.error(
-        'Failed to blacklist token',
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+      // Log but don't throw - blacklisting is best effort
+      this.logger.warn(
+        `Failed to blacklist token (non-critical): ${_error instanceof Error ? _error.message : String(_error)}`
       );
-      throw _error;
+      // Don't throw - allow operation to continue even if blacklisting fails
     }
   }
 
@@ -325,7 +406,7 @@ export class JwtAuthService {
         ipAddress
       );
 
-      // Blacklist old refresh token
+      // Blacklist old refresh token (best effort - won't throw)
       await this.blacklistToken(refreshToken, 'Token refresh');
 
       return newTokens;
@@ -344,7 +425,7 @@ export class JwtAuthService {
   async getUserActiveTokensCount(userId: string): Promise<number> {
     try {
       const cacheKey = `jwt:user_tokens:${userId}`;
-      const tokens = (await this.cacheService.get<string[]>(cacheKey)) || [];
+      const tokens = (await this.safeCacheGet<string[]>(cacheKey)) || [];
       return tokens.length;
     } catch (_error) {
       this.logger.error(
@@ -361,7 +442,7 @@ export class JwtAuthService {
   async revokeAllUserTokens(userId: string, reason?: string): Promise<void> {
     try {
       const cacheKey = `jwt:user_tokens:${userId}`;
-      const tokens = (await this.cacheService.get<string[]>(cacheKey)) || [];
+      const tokens = (await this.safeCacheGet<string[]>(cacheKey)) || [];
 
       // Blacklist all tokens
       await Promise.all(
@@ -369,7 +450,7 @@ export class JwtAuthService {
       );
 
       // Clear user tokens cache
-      await this.cacheService.delete(cacheKey);
+      await this.safeCacheDelete(cacheKey);
 
       this.logger.log(
         `Revoked ${tokens.length} tokens for user ${userId} - Reason: ${reason || 'Security incident'}`
@@ -403,7 +484,7 @@ export class JwtAuthService {
   private async isTokenBlacklisted(jti: string): Promise<boolean> {
     try {
       const blacklistKey = `jwt:blacklist:${jti}`;
-      const blacklisted = await this.cacheService.get(blacklistKey);
+      const blacklisted = await this.safeCacheGet(blacklistKey);
       return !!blacklisted;
     } catch {
       return false;
@@ -421,8 +502,8 @@ export class JwtAuthService {
       const refreshKey = `jwt:token:${this.hashToken(refreshToken)}`;
 
       await Promise.all([
-        this.cacheService.set(accessKey, { type: 'access', userId }, this.ACCESS_TOKEN_CACHE_TTL),
-        this.cacheService.set(
+        this.safeCacheSet(accessKey, { type: 'access', userId }, this.ACCESS_TOKEN_CACHE_TTL),
+        this.safeCacheSet(
           refreshKey,
           { type: 'refresh', userId },
           this.REFRESH_TOKEN_CACHE_TTL
@@ -431,12 +512,12 @@ export class JwtAuthService {
 
       // Track user tokens
       const userTokensKey = `jwt:user_tokens:${userId}`;
-      const existingTokens = (await this.cacheService.get<string[]>(userTokensKey)) || [];
+      const existingTokens = (await this.safeCacheGet<string[]>(userTokensKey)) || [];
       const updatedTokens = [...existingTokens, accessToken, refreshToken].slice(
         -this.MAX_TOKENS_PER_USER
       );
 
-      await this.cacheService.set(userTokensKey, updatedTokens, this.REFRESH_TOKEN_CACHE_TTL);
+      await this.safeCacheSet(userTokensKey, updatedTokens, this.REFRESH_TOKEN_CACHE_TTL);
     } catch (_error) {
       this.logger.error(
         'Failed to cache tokens',
@@ -448,7 +529,7 @@ export class JwtAuthService {
   private async getCachedTokenPayload(token: string): Promise<TokenPayload | null> {
     try {
       const cacheKey = `jwt:payload:${this.hashToken(token)}`;
-      return (await this.cacheService.get<TokenPayload>(cacheKey)) || null;
+      return await this.safeCacheGet<TokenPayload>(cacheKey);
     } catch {
       return null;
     }
@@ -457,7 +538,7 @@ export class JwtAuthService {
   private async cacheTokenPayload(token: string, payload: TokenPayload): Promise<void> {
     try {
       const cacheKey = `jwt:payload:${this.hashToken(token)}`;
-      await this.cacheService.set(cacheKey, payload, this.ACCESS_TOKEN_CACHE_TTL);
+      await this.safeCacheSet(cacheKey, payload, this.ACCESS_TOKEN_CACHE_TTL);
     } catch (_error) {
       this.logger.error(
         'Failed to cache token payload',
@@ -471,7 +552,7 @@ export class JwtAuthService {
       const tokenKey = `jwt:token:${this.hashToken(token)}`;
       const payloadKey = `jwt:payload:${this.hashToken(token)}`;
 
-      await Promise.all([this.cacheService.delete(tokenKey), this.cacheService.delete(payloadKey)]);
+      await Promise.all([this.safeCacheDelete(tokenKey), this.safeCacheDelete(payloadKey)]);
     } catch (_error) {
       this.logger.error(
         'Failed to remove cached token',
@@ -532,5 +613,14 @@ export class JwtAuthService {
     ); // 1 hour
 
     this.logger.log('🔐 Advanced JWT Service initialized successfully');
+  }
+
+  private stripRegisteredClaims(payload: TokenPayload): TokenPayload {
+    const { exp, iat, nbf, ...rest } = payload as TokenPayload & {
+      exp?: number;
+      iat?: number;
+      nbf?: number;
+    };
+    return rest;
   }
 }

@@ -25,9 +25,20 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
+      # Cache Provider Configuration (Dragonfly is default)
+      CACHE_PROVIDER: dragonfly
+      
+      # Redis Configuration (for Redis provider)
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      
+      # Dragonfly Configuration (default provider)
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_KEY_PREFIX: "healthcare:"
+      
       TRUST_PROXY: 1
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       HOST: 0.0.0.0
@@ -68,9 +79,12 @@ services:
     extra_hosts:
       - "api:172.18.0.5"
       - "postgres:172.18.0.2"
+      - "dragonfly:172.18.0.4"
       - "redis:172.18.0.3"
     depends_on:
       postgres:
+        condition: service_healthy
+      dragonfly:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -144,6 +158,51 @@ services:
       - "app.healthcheck=enabled"
       - "app.persist=true"
 
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: latest-dragonfly
+    hostname: dragonfly
+    command: >
+      --alsologtostderr
+      --cache_mode=false
+      --maxmemory=4gb
+      --proactor_threads=8
+      --logtostderr
+    ports:
+      - "6380:6379"
+    volumes:
+      - dragonfly_data:/data
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.4
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
+    restart: unless-stopped
+    sysctls:
+      net.core.somaxconn: 1024
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+    labels:
+      - "com.docker.compose.service=dragonfly"
+      - "app.component=cache"
+      - "app.type=dragonfly"
+      - "app.healthcheck=enabled"
+
   redis:
     image: redis:7-alpine
     container_name: latest-redis
@@ -189,6 +248,8 @@ services:
       target: production
     container_name: latest-worker
     depends_on:
+      dragonfly:
+        condition: service_healthy
       redis:
         condition: service_healthy
       postgres:
@@ -196,6 +257,9 @@ services:
     environment:
       NODE_ENV: production
       SERVICE_NAME: worker
+      CACHE_PROVIDER: dragonfly
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
@@ -204,6 +268,8 @@ services:
 volumes:
   postgres_data:
     name: latest_postgres_data
+  dragonfly_data:
+    name: latest_dragonfly_data
   redis_data:
     name: latest_redis_data
 

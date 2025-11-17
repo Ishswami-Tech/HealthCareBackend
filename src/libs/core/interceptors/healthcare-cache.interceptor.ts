@@ -24,20 +24,22 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 import type { UnifiedCacheOptions, CacheInvalidationOptions } from '@core/types';
 import type { CustomFastifyRequest } from '@core/types/infrastructure.types';
 
-// Internal imports - Local
-import { CACHE_KEY, CACHE_INVALIDATE_KEY } from '@infrastructure/cache/decorators/cache.decorator';
+// Internal imports - Core
+import { CACHE_KEY, CACHE_INVALIDATE_KEY } from '@core/decorators';
 
 @Injectable()
 export class HealthcareCacheInterceptor implements NestInterceptor {
   constructor(
-    private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
     private readonly reflector: Reflector,
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
-    const cacheOptions = this.reflector.get<UnifiedCacheOptions>(CACHE_KEY, context.getHandler());
-    const invalidationOptions = this.reflector.get<CacheInvalidationOptions>(
+    try {
+      // Safely get cache options from reflector
+      const cacheOptions = this.reflector?.get<UnifiedCacheOptions>(CACHE_KEY, context.getHandler());
+      const invalidationOptions = this.reflector?.get<CacheInvalidationOptions>(
       CACHE_INVALIDATE_KEY,
       context.getHandler()
     );
@@ -62,6 +64,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
     // Default behavior
     return next.handle();
+    } catch (error) {
+      // If interceptor fails, log and proceed without caching
+      void this.loggingService?.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error in cache interceptor, proceeding without cache',
+        'HealthcareCacheInterceptor',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return next.handle();
+    }
   }
 
   private async handleCacheRead(
@@ -270,6 +286,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
   private async getCachedValue(cacheKey: string, options: UnifiedCacheOptions): Promise<unknown> {
     try {
+      // Check if cache service is available
+      if (!this.cacheService) {
+        void this.loggingService?.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache service not available, skipping cache retrieval',
+          'HealthcareCacheInterceptor',
+          { cacheKey }
+        );
+        return null;
+      }
+
+      // Safely call cache service methods with error handling
+    try {
       // Route to appropriate cache method based on healthcare data type
       if (options.patientSpecific) {
         // This would use the healthcare cache service with patient-specific logic
@@ -295,8 +325,22 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       // Standard cache retrieval
       const cachedValue = await this.cacheService.get(cacheKey);
       return cachedValue ? JSON.parse(cachedValue as string) : null;
+      } catch (cacheError) {
+        // Cache service might not be fully initialized yet
+        void this.loggingService?.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache service error during retrieval, proceeding without cache',
+          'HealthcareCacheInterceptor',
+          {
+            cacheKey,
+            error: cacheError instanceof Error ? cacheError.message : 'Unknown error',
+          }
+        );
+        return null;
+      }
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Error retrieving cached value',
@@ -317,6 +361,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     options: UnifiedCacheOptions,
     context: ExecutionContext
   ): Promise<void> {
+    try {
+      // Check if cache service is available
+      if (!this.cacheService) {
+        void this.loggingService?.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache service not available, skipping cache set',
+          'HealthcareCacheInterceptor',
+          { cacheKey }
+        );
+        return;
+      }
+
+      // Safely call cache service methods with error handling
     try {
       const ttl = this.calculateTTL(options, context);
       const serializedValue = JSON.stringify(value);
@@ -358,6 +416,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         'HealthcareCacheInterceptor',
         { cacheKey, ttl: ttlValue }
       );
+      } catch (cacheError) {
+        // Cache service might not be fully initialized yet
+        void this.loggingService?.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache service error during set, proceeding without cache',
+          'HealthcareCacheInterceptor',
+          {
+            cacheKey,
+            error: cacheError instanceof Error ? cacheError.message : 'Unknown error',
+          }
+        );
+        // Don't throw - allow request to proceed without caching
+      }
     } catch (error) {
       const ttlValueForError = options.ttl ?? 1800;
       await this.loggingService.log(
@@ -381,6 +453,18 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     options: CacheInvalidationOptions
   ): Promise<void> {
     try {
+      // Check if cache service is available
+      if (!this.cacheService) {
+        void this.loggingService?.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Cache service not available, skipping cache invalidation',
+          'HealthcareCacheInterceptor',
+          {}
+        );
+        return;
+      }
+
       const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
 
       // Execute custom invalidation logic if provided

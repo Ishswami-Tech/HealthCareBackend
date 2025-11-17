@@ -19,6 +19,7 @@ import { CommunicationModule } from '@communication/communication.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
 import { ResilienceModule } from '@core/resilience';
+import { ErrorsModule } from '@core/errors';
 import { SecurityModule } from '@security/security.module';
 import { EventsModule } from '@infrastructure/events';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
@@ -46,8 +47,9 @@ import { EventsModule } from '@infrastructure/events';
     LoggingModule,
     // Central event system - must be loaded early for event-driven architecture
     EventsModule,
-    // Resilience and security modules
+    // Resilience, errors, and security modules
     ResilienceModule,
+    ErrorsModule, // Provides CacheErrorHandler and HealthcareErrorsService globally
     SecurityModule,
     // Auth and user management
     AuthModule,

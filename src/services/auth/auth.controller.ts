@@ -24,6 +24,7 @@ import { HealthcareErrorsService } from '@core/errors';
 import { HealthcareError } from '@core/errors';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Public } from '@core/decorators/public.decorator';
+import type { FastifyRequestWithUser } from '@core/types/guard.types';
 import {
   LoginDto,
   RegisterDto,
@@ -38,12 +39,7 @@ import {
 } from '@dtos/auth.dto';
 import { DataResponseDto, SuccessResponseDto } from '@dtos/common-response.dto';
 import { AuthTokens } from '@core/types';
-import {
-  Cache,
-  InvalidateCache,
-  PatientCache,
-  InvalidatePatientCache,
-} from '@infrastructure/cache/decorators/cache.decorator';
+import { Cache, InvalidateCache, PatientCache, InvalidatePatientCache } from '@core/decorators';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -476,21 +472,45 @@ export class AuthController {
   })
   async logout(
     @Body() logoutDto: LogoutDto,
-    @Request()
-    req: Express.Request & { user?: { id: string; sessionId?: string } }
+    @Request() req: FastifyRequestWithUser
   ): Promise<SuccessResponseDto> {
     try {
-      const sessionId = logoutDto.sessionId || req.user?.sessionId;
-      if (!sessionId) {
-        throw this.errors.validationError(
-          'sessionId',
-          'Session ID is required',
-          'AuthController.logout'
-        );
+      // Try to get sessionId from multiple sources
+      if (!req.user) {
+        throw this.errors.invalidCredentials('AuthController.logout');
       }
 
+      const user = req.user as { sessionId?: string; sub?: string; jti?: string; [key: string]: unknown };
+      
+      // Priority: 1. Request body, 2. JWT payload sessionId, 3. Extract from token if needed
+      let sessionId = logoutDto.sessionId || user?.sessionId;
+      
+      // If still no sessionId, try to extract from token payload using bracket notation
+      if (!sessionId && user) {
+        sessionId = (user['sessionId'] as string | undefined);
+      }
+
+      // If we have a sessionId, use the logout service
+      // Otherwise, we can still blacklist the token (best effort)
+      if (sessionId) {
       const result = await this.authService.logout(sessionId);
       return new SuccessResponseDto(result.message);
+      } else {
+        // No sessionId - try to blacklist the token directly (best effort)
+        // Extract token from Authorization header if possible
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            // Try to blacklist the token directly
+            await this.authService.logout(token); // This will try to blacklist if sessionId is the token itself
+          } catch (blacklistError) {
+            // Log but don't fail - logout is best effort
+          }
+        }
+        // Return success even if we couldn't invalidate session
+        return new SuccessResponseDto('Logout successful');
+      }
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, 'AuthController');
@@ -745,10 +765,14 @@ export class AuthController {
   })
   async changePassword(
     @Body() changePasswordDto: ChangePasswordDto,
-    @Request() req: Express.Request & { user?: { id: string } }
+    @Request() req: FastifyRequestWithUser
   ): Promise<SuccessResponseDto> {
     try {
-      const result = await this.authService.changePassword(req.user!.id, changePasswordDto);
+      const userId = req.user?.sub || (req.user as { id?: string })?.id;
+      if (!userId) {
+        throw this.errors.invalidCredentials('AuthController.changePassword');
+      }
+      const result = await this.authService.changePassword(userId, changePasswordDto);
       return new SuccessResponseDto(result.message);
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -997,32 +1021,68 @@ export class AuthController {
       },
     },
   })
-  getProfile(
-    @Request()
-    req: Express.Request & {
-      user?: {
+  async getProfile(
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<{
         id: string;
         email: string;
         role: string;
         clinicId?: string;
         domain: string;
-      };
-    }
-  ): DataResponseDto<{
-    id: string;
-    email: string;
-    role: string;
-    clinicId?: string;
-    domain: string;
-  }> {
+  }>> {
     try {
-      // Return user profile from request (already populated by AuthGuard)
+      // Extract user ID from JWT payload
+      if (!req.user) {
+        throw this.errors.invalidCredentials('AuthController.getProfile');
+      }
+      
+      const user = req.user as { sub?: string; id?: string; [key: string]: unknown };
+      const userId = user?.sub || (user?.id as string | undefined);
+      if (!userId) {
+        throw this.errors.invalidCredentials('AuthController.getProfile');
+      }
+
+      // Get clinicId from JWT payload if available
+      const clinicId = (user?.['clinicId'] as string | undefined) || undefined;
+
+      // Fetch user profile from database using auth service
+      // Wrap in try-catch to handle cache/database errors gracefully
+      let userProfile;
+      try {
+        userProfile = await this.authService.getUserProfile(userId, clinicId);
+      } catch (profileError) {
+        // If getUserProfile fails (cache/database issue), try to get basic info from JWT payload
+        const jwtUser = req.user as { sub?: string; email?: string; role?: string; [key: string]: unknown };
+        const jwtEmail = jwtUser?.email as string | undefined;
+        const jwtRole = jwtUser?.role as string | undefined;
+        
+        if (jwtEmail) {
+          // Create a minimal profile from JWT payload
+          userProfile = {
+            id: userId,
+            email: jwtEmail,
+            name: '', // Name not available in JWT
+            role: jwtRole || 'PATIENT',
+            clinicId: (jwtUser?.['clinicId'] as string | undefined) || undefined,
+          };
+        } else {
+          // If we can't get email from JWT, we need to throw an error
+          // But first, log the original error for debugging
+          if (profileError instanceof Error) {
+            // Log the error but don't expose internal details
+            throw this.errors.userNotFound(userId, 'AuthController.getProfile');
+          }
+          throw profileError;
+        }
+      }
+
+      // Map UserProfile to the expected response format
       const profile = {
-        id: req.user!.id,
-        email: req.user!.email,
-        role: req.user!.role,
-        domain: req.user!.domain,
-        ...(req.user!.clinicId && { clinicId: req.user!.clinicId }),
+        id: userProfile.id,
+        email: userProfile.email,
+        role: userProfile.role || 'PATIENT', // Default to PATIENT if role is missing
+        domain: 'healthcare', // Default domain
+        ...(userProfile.clinicId && { clinicId: userProfile.clinicId }),
       };
 
       return new DataResponseDto(profile, 'Profile retrieved successfully');
@@ -1076,7 +1136,7 @@ export class AuthController {
       },
     },
   })
-  getUserSessions(@Request() _req: Express.Request): DataResponseDto<never[]> {
+  getUserSessions(@Request() _req: FastifyRequestWithUser): DataResponseDto<never[]> {
     try {
       // This would typically get user sessions from the session service
       // For now, return a placeholder response

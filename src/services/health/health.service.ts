@@ -7,7 +7,7 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService, DatabaseHealthStatus } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import {
   HealthCheckResponse,
@@ -36,27 +36,25 @@ import * as os from 'os';
 @Injectable()
 export class HealthService implements OnModuleInit, OnModuleDestroy {
   private readonly SYSTEM_TENANT_ID = 'system-health-check';
-  private lastDatabaseCheck: number = 0;
-  private lastRedisCheck: number = 0;
-  private lastQueueCheck: number = 0;
-  private lastSocketCheck: number = 0;
-  private lastEmailCheck: number = 0;
 
-  private readonly DB_CHECK_INTERVAL = 5000; // 5 seconds minimum between actual DB checks (reduced for real-time)
-  private readonly BACKGROUND_CHECK_INTERVAL = 10000; // 10 seconds background monitoring (reduced for real-time)
+  // Smart caching configuration - optimized for real-time status (15-30s freshness)
+  private readonly CACHE_FRESHNESS_MS = 20000; // 20 seconds - cache is considered fresh
+  private readonly MAX_CACHE_AGE_MS = 30000; // 30 seconds - max age before forcing refresh
+  private readonly BACKGROUND_CHECK_INTERVAL = 20000; // 20 seconds - background monitoring interval
+  private readonly DB_CHECK_INTERVAL = 10000; // 10 seconds - DB connection monitoring interval
 
   // Cached health status - updated by background monitoring
   private cachedHealthStatus: HealthCheckResponse | null = null;
+  private cachedHealthTimestamp: number = 0;
   private healthStatusLock = false;
   private backgroundMonitoringInterval: NodeJS.Timeout | null = null;
+  private databaseMonitoringInterval: NodeJS.Timeout | null = null;
 
-  // Individual service status cache
-  private databaseStatus: 'healthy' | 'unhealthy' = 'healthy';
-  private redisStatus: 'healthy' | 'unhealthy' = 'healthy';
-  private queueStatus: 'healthy' | 'unhealthy' = 'healthy';
-  private loggerStatus: 'healthy' | 'unhealthy' = 'healthy';
-  private socketStatus: 'healthy' | 'unhealthy' = 'healthy';
-  private emailStatus: 'healthy' | 'unhealthy' = 'healthy';
+  // Individual service status cache with timestamps
+  private serviceStatusCache = new Map<
+    string,
+    { status: 'healthy' | 'unhealthy'; timestamp: number; details?: string }
+  >();
 
   constructor(
     @Optional() private readonly databaseService?: DatabaseService,
@@ -80,6 +78,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     // Start background health monitoring
     this.startBackgroundMonitoring();
+    // Start continuous database connection monitoring
+    this.startDatabaseMonitoring();
   }
 
   /**
@@ -90,25 +90,94 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       clearInterval(this.backgroundMonitoringInterval);
       this.backgroundMonitoringInterval = null;
     }
+    if (this.databaseMonitoringInterval) {
+      clearInterval(this.databaseMonitoringInterval);
+      this.databaseMonitoringInterval = null;
+    }
   }
 
   /**
    * Start background health monitoring
-   * Updates cached health status independently of API requests
+   * Updates cached health status independently of API requests every 20 seconds
    */
   private startBackgroundMonitoring() {
     // Initial health check
     void this.updateCachedHealthStatus();
 
-    // Set up periodic background monitoring
+    // Set up periodic background monitoring (every 20 seconds)
     this.backgroundMonitoringInterval = setInterval(() => {
       void this.updateCachedHealthStatus();
     }, this.BACKGROUND_CHECK_INTERVAL);
   }
 
   /**
+   * Start continuous database connection monitoring
+   * Monitors database connection health every 10 seconds
+   */
+  private startDatabaseMonitoring() {
+    // Initial database check
+    void this.monitorDatabaseConnection();
+
+    // Set up periodic database monitoring (every 10 seconds)
+    this.databaseMonitoringInterval = setInterval(() => {
+      void this.monitorDatabaseConnection();
+    }, this.DB_CHECK_INTERVAL);
+  }
+
+  /**
+   * Monitor database connection continuously
+   * Updates database status cache without blocking
+   */
+  private async monitorDatabaseConnection(): Promise<void> {
+    try {
+      if (!this.databaseService || typeof this.databaseService.getHealthStatus !== 'function') {
+        this.serviceStatusCache.set('database', {
+          status: 'unhealthy',
+          timestamp: Date.now(),
+          details: 'Database service is not available',
+        });
+        return;
+      }
+
+      const healthStatus = await Promise.race([
+        this.databaseService.getHealthStatus(),
+        new Promise<{
+          isHealthy: boolean;
+          avgResponseTime: number;
+          errors?: string[];
+          lastHealthCheck: Date;
+        }>(resolve => {
+          setTimeout(() => {
+            resolve({
+              isHealthy: false,
+              avgResponseTime: -1,
+              errors: ['Health check timeout'],
+              lastHealthCheck: new Date(),
+            });
+          }, 5000);
+        }),
+      ]);
+
+      this.serviceStatusCache.set('database', {
+        status: healthStatus.isHealthy ? 'healthy' : 'unhealthy',
+        timestamp: Date.now(),
+        details: healthStatus.isHealthy
+          ? 'PostgreSQL connected'
+          : healthStatus.errors?.[0] || 'Database connection failed',
+      });
+    } catch (_error) {
+      this.serviceStatusCache.set('database', {
+        status: 'unhealthy',
+        timestamp: Date.now(),
+        details: 'Database monitoring error',
+      });
+    }
+  }
+
+  /**
    * Update cached health status in background
    * This method never throws - it gracefully handles all errors
+   * Uses lightweight checks to avoid slowing down the system
    */
   private async updateCachedHealthStatus(): Promise<void> {
     // Prevent concurrent updates
@@ -118,8 +187,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.healthStatusLock = true;
-      const healthStatus = await this.checkHealth();
+      const healthStatus = await this.performHealthCheck();
       this.cachedHealthStatus = healthStatus;
+      this.cachedHealthTimestamp = Date.now();
     } catch (error) {
       // Silently handle errors - don't let background monitoring fail
       // Health status will be checked on-demand if cache is unavailable
@@ -257,22 +327,219 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     return this.performHealthCheck();
   }
 
-  async checkHealth(): Promise<HealthCheckResponse> {
-    // Always perform fresh health checks for real-time responses
-    // Cache is only used for background monitoring, not for API responses
-    const result = await this.performHealthCheck();
-    // Update cache in background for monitoring, but return fresh result
-    this.cachedHealthStatus = result;
-    return result;
+  /**
+   * Get health status with smart caching
+   * Returns cached data if fresh (< 20s), otherwise performs fresh checks
+   * Ensures real-time status (15-30s freshness) without excessive requests
+   * Always uses real-time data from background monitoring
+   */
+  async getHealth(): Promise<HealthCheckResponse> {
+    try {
+      const now = Date.now();
+      const cacheAge = now - this.cachedHealthTimestamp;
+
+      // Return cached data if fresh (< 20 seconds) - this is updated by background monitoring
+      // Background monitoring ensures data is always fresh (updated every 20 seconds)
+      if (this.cachedHealthStatus && cacheAge < this.CACHE_FRESHNESS_MS && !this.healthStatusLock) {
+        // Use cached data - it's fresh and updated by background monitoring
+        // Ensure cached data has real system metrics
+        if (
+          this.cachedHealthStatus.systemMetrics.memoryUsage.heapTotal === 0 &&
+          this.cachedHealthStatus.systemMetrics.memoryUsage.heapUsed === 0
+        ) {
+          // Cached data has zero metrics, refresh it
+          this.cachedHealthStatus.systemMetrics = this.getSystemMetrics();
+        }
+        return this.cachedHealthStatus;
+      }
+
+      if (
+        this.cachedHealthStatus &&
+        this.cachedHealthStatus.status === 'degraded' &&
+        !this.healthStatusLock
+      ) {
+        const refreshed = await this.performHealthCheck();
+        this.cachedHealthStatus = refreshed;
+        this.cachedHealthTimestamp = Date.now();
+        return refreshed;
+      }
+
+      // If cache is stale (> 30 seconds) or doesn't exist, perform fresh check
+      if (!this.cachedHealthStatus || cacheAge > this.MAX_CACHE_AGE_MS) {
+        // Perform fresh check if not already in progress
+        if (!this.healthStatusLock) {
+          // Update cache in background (non-blocking)
+          void this.updateCachedHealthStatus();
+        }
+        // Return cached data if available (even if slightly stale), otherwise perform fresh check
+        if (this.cachedHealthStatus) {
+          // Ensure cached data has real system metrics
+          if (
+            this.cachedHealthStatus.systemMetrics.memoryUsage.heapTotal === 0 &&
+            this.cachedHealthStatus.systemMetrics.memoryUsage.heapUsed === 0
+          ) {
+            this.cachedHealthStatus.systemMetrics = this.getSystemMetrics();
+          }
+          return this.cachedHealthStatus;
+        }
+      }
+
+      // Perform fresh health check if cache is unavailable
+      // This ensures real-time status is always returned
+      return await this.performHealthCheck();
+    } catch (error) {
+      // If getHealth itself fails, try to perform a basic health check
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[HealthService] getHealth failed, attempting basic health check:', errorMessage);
+      try {
+        return await this.performHealthCheck();
+      } catch (fallbackError) {
+        // Last resort: return minimal health response with real system metrics
+        const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
+        console.error('[HealthService] performHealthCheck also failed:', fallbackErrorMessage);
+        const minimalResponse = this.getMinimalHealthResponse();
+        // Ensure minimal response has real system metrics
+        try {
+          minimalResponse.systemMetrics = this.getSystemMetrics();
+        } catch {
+          // If getSystemMetrics fails, try direct calls
+          try {
+            const memoryUsage = process.memoryUsage();
+            const cpuInfo = cpus();
+            const totalMemory = totalmem();
+            const freeMemory = freemem();
+            minimalResponse.systemMetrics = {
+              uptime: process.uptime(),
+              memoryUsage: {
+                heapTotal: memoryUsage.heapTotal,
+                heapUsed: memoryUsage.heapUsed,
+                rss: memoryUsage.rss,
+                external: memoryUsage.external,
+                systemTotal: totalMemory,
+                systemFree: freeMemory,
+                systemUsed: totalMemory - freeMemory,
+              },
+              cpuUsage: {
+                user: process.cpuUsage().user,
+                system: process.cpuUsage().system,
+                cpuCount: cpuInfo.length,
+                cpuModel: cpuInfo[0]?.model || 'unknown',
+                cpuSpeed: cpuInfo[0]?.speed || 0,
+              },
+            };
+          } catch {
+            // Keep default zeros if all else fails
+          }
+        }
+        return minimalResponse;
+      }
+    }
+  }
+
+  /**
+   * Get minimal health response when all else fails
+   * This ensures we always return a valid response
+   */
+  private getMinimalHealthResponse(): HealthCheckResponse {
+    const memoryUsage = process.memoryUsage();
+    const cpuInfo = cpus();
+    const totalMemory = totalmem();
+    const freeMemory = freemem();
+
+    return {
+      status: 'degraded',
+      timestamp: new Date().toISOString(),
+      environment: process.env['NODE_ENV'] || 'development',
+      version: process.env['npm_package_version'] || '0.0.1',
+      systemMetrics: {
+        uptime: process.uptime(),
+        memoryUsage: {
+          heapTotal: memoryUsage.heapTotal,
+          heapUsed: memoryUsage.heapUsed,
+          rss: memoryUsage.rss,
+          external: memoryUsage.external,
+          systemTotal: totalMemory,
+          systemFree: freeMemory,
+          systemUsed: totalMemory - freeMemory,
+        },
+        cpuUsage: {
+          user: process.cpuUsage().user,
+          system: process.cpuUsage().system,
+          cpuCount: cpuInfo.length,
+          cpuModel: cpuInfo[0]?.model || 'unknown',
+          cpuSpeed: cpuInfo[0]?.speed || 0,
+        },
+      },
+      services: {
+        api: {
+          status: 'healthy',
+          responseTime: 10,
+          lastChecked: new Date().toISOString(),
+          details: 'API service is running and responding',
+        },
+        database: {
+          status: 'unhealthy' as const,
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+          details: 'Health check service unavailable - cannot determine status',
+        },
+        cache: {
+          status: 'unhealthy' as const,
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+          details: 'Health check service unavailable - cannot determine status',
+        },
+        queue: {
+          status: 'unhealthy' as const,
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+          details: 'Health check service unavailable - cannot determine status',
+        },
+        logger: {
+          status: 'unhealthy' as const,
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+          details: 'Health check service unavailable - cannot determine status',
+        },
+        socket: {
+          status: 'unhealthy' as const,
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+          details: 'Health check service unavailable - cannot determine status',
+        },
+        email: {
+          status: 'unhealthy' as const,
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+          details: 'Health check service unavailable - cannot determine status',
+        },
+      },
+    };
   }
 
   /**
    * Perform actual health checks (no caching) - always fresh
    */
   private async performHealthCheck(): Promise<HealthCheckResponse> {
-    try {
-      const startTime = performance.now();
+    const startTime = performance.now();
 
+    try {
+      // Defensive check: ensure all required services are available before proceeding
+      // This prevents "Cannot read properties of undefined" errors
+      // Note: config is optional, so we only check if NODE_ENV is also missing
+      if (!this.config && !process.env['NODE_ENV']) {
+        // This is not a fatal error - we can still proceed with defaults
+        // Just log a warning
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Configuration service is not available, using environment variables',
+            'HealthService.performHealthCheck',
+            {}
+          );
+        }
+      }
       // Safely get environment - handle case where config is undefined
       let environment = 'development';
       try {
@@ -287,56 +554,144 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         environment = process.env['NODE_ENV'] || 'development';
       }
 
-      // Check all services in parallel with timeout protection
+      // Use cached database status if available and fresh (< 15 seconds old)
+      // This avoids blocking on database checks while still showing real-time status
+      let dbHealth: ServiceHealth;
+      const cachedDbStatus = this.serviceStatusCache.get('database');
+      const now = Date.now();
+      const dbCacheAge = cachedDbStatus ? now - cachedDbStatus.timestamp : Infinity;
+      
+      if (cachedDbStatus && dbCacheAge < 15000) {
+        // Use cached database status (updated every 10 seconds by background monitoring)
+        dbHealth = {
+          status: cachedDbStatus.status,
+          details: cachedDbStatus.details || 'Database connection status',
+          responseTime: 0,
+          lastChecked: new Date(cachedDbStatus.timestamp).toISOString(),
+        };
+      } else {
+        // Cache is stale or unavailable - perform fresh check
+        const dbCheckResult = await Promise.race([
+          (async () => {
+            try {
+              return await this.checkDatabaseHealth();
+            } catch (error) {
+              return {
+                status: 'unhealthy' as const,
+                details: error instanceof Error ? error.message : 'Database health check failed',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+            }
+          })(),
+          new Promise<ServiceHealth>(resolve =>
+            setTimeout(
+              () =>
+                resolve({
+                  status: 'unhealthy',
+                  details: 'Database health check timeout',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                }),
+              5000
+            )
+          ),
+        ]);
+        dbHealth = dbCheckResult;
+      }
+
+      // Check all other services in parallel with timeout protection
       // Each check has its own timeout and error handling
+      // Wrap each check in a try-catch to prevent undefined method calls
+      // Use Promise.allSettled to ensure all checks complete even if some fail
       const healthCheckResults = await Promise.allSettled([
-          Promise.race([
-            this.checkDatabaseHealth(),
-            new Promise<ServiceHealth>(resolve =>
-              setTimeout(
-                () =>
-                  resolve({
-                    status: 'unhealthy',
-                    details: 'Database health check timeout',
-                    responseTime: 0,
-                    lastChecked: new Date().toISOString(),
-                  }),
-                5000
-              )
-            ),
-          ]),
-          Promise.race([
-            this.checkRedisHealth(),
-            new Promise<ServiceHealth>(resolve =>
-              setTimeout(
-                () =>
-                  resolve({
-                    status: 'unhealthy',
-                    details: 'Redis health check timeout',
-                    responseTime: 0,
-                    lastChecked: new Date().toISOString(),
-                  }),
-                3000
-              )
-            ),
-          ]),
-          Promise.race([
-            this.checkQueueHealth(),
-            new Promise<ServiceHealth>(resolve =>
-              setTimeout(
-                () =>
-                  resolve({
-                    status: 'unhealthy',
-                    details: 'Queue health check timeout',
-                    responseTime: 0,
-                    lastChecked: new Date().toISOString(),
-                  }),
-                3000
-              )
-            ),
-          ]),
+        // Redis/Cache health check
         Promise.race([
-          this.checkLoggerHealth(),
+          (async (): Promise<ServiceHealth> => {
+            try {
+              return await this.checkRedisHealth();
+            } catch (error) {
+              console.error('[HealthService] Redis health check error:', error);
+              return {
+                status: 'unhealthy' as const,
+                details: error instanceof Error ? error.message : 'Redis health check failed',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+            }
+          })(),
+          new Promise<ServiceHealth>(resolve =>
+            setTimeout(
+              () =>
+                resolve({
+                  status: 'unhealthy',
+                  details: 'Redis health check timeout',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                }),
+              3000
+            )
+          ),
+        ]).catch((error): ServiceHealth => {
+          console.error('[HealthService] Redis health check promise rejected:', error);
+          return {
+            status: 'unhealthy',
+            details: error instanceof Error ? error.message : 'Redis health check failed',
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          };
+        }),
+        // Queue health check
+        Promise.race([
+          (async (): Promise<ServiceHealth> => {
+            try {
+              return await this.checkQueueHealth();
+            } catch (error) {
+              console.error('[HealthService] Queue health check error:', error);
+              return {
+                status: 'unhealthy' as const,
+                details: error instanceof Error ? error.message : 'Queue health check failed',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+            }
+          })(),
+          new Promise<ServiceHealth>(resolve =>
+            setTimeout(
+              () =>
+                resolve({
+                  status: 'unhealthy',
+                  details: 'Queue health check timeout',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                }),
+              3000
+            )
+          ),
+        ]).catch((error): ServiceHealth => {
+          console.error('[HealthService] Queue health check promise rejected:', error);
+          return {
+            status: 'unhealthy',
+            details: error instanceof Error ? error.message : 'Queue health check failed',
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          };
+        }),
+        // Logger health check
+        Promise.race([
+          (async (): Promise<ServiceHealth> => {
+            try {
+              return await this.checkLoggerHealth();
+            } catch (error) {
+              console.error('[HealthService] Logger health check error:', error);
+              return {
+                status: 'unhealthy' as const,
+                details: error instanceof Error ? error.message : 'Logger health check failed',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+            }
+          })(),
           new Promise<ServiceHealth>(resolve =>
             setTimeout(
               () =>
@@ -349,24 +704,66 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               2000
             )
           ),
-        ]),
-          Promise.race([
-            this.checkSocketHealth(),
-            new Promise<ServiceHealth>(resolve =>
-              setTimeout(
-                () =>
-                  resolve({
-                    status: 'unhealthy',
-                    details: 'Socket health check timeout',
-                    responseTime: 0,
-                    lastChecked: new Date().toISOString(),
-                  }),
-                2000
-              )
-            ),
-          ]),
+        ]).catch((error): ServiceHealth => {
+          console.error('[HealthService] Logger health check promise rejected:', error);
+          return {
+            status: 'unhealthy',
+            details: error instanceof Error ? error.message : 'Logger health check failed',
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          };
+        }),
+        // Socket health check
         Promise.race([
-          this.checkEmailHealth(),
+          (async (): Promise<ServiceHealth> => {
+            try {
+              return await this.checkSocketHealth();
+            } catch (error) {
+              console.error('[HealthService] Socket health check error:', error);
+              return {
+                status: 'unhealthy' as const,
+                details: error instanceof Error ? error.message : 'Socket health check failed',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+            }
+          })(),
+          new Promise<ServiceHealth>(resolve =>
+            setTimeout(
+              () =>
+                resolve({
+                  status: 'unhealthy',
+                  details: 'Socket health check timeout',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                }),
+              2000
+            )
+          ),
+        ]).catch((error): ServiceHealth => {
+          console.error('[HealthService] Socket health check promise rejected:', error);
+          return {
+            status: 'unhealthy',
+            details: error instanceof Error ? error.message : 'Socket health check failed',
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          };
+        }),
+        // Email health check
+        Promise.race([
+          (async (): Promise<ServiceHealth> => {
+            try {
+              return await this.checkEmailHealth();
+            } catch (error) {
+              console.error('[HealthService] Email health check error:', error);
+              return {
+                status: 'unhealthy' as const,
+                details: error instanceof Error ? error.message : 'Email health check failed',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+            }
+          })(),
           new Promise<ServiceHealth>(resolve =>
             setTimeout(
               () =>
@@ -379,163 +776,346 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               2000
             )
           ),
-        ]),
+        ]).catch((error): ServiceHealth => {
+          console.error('[HealthService] Email health check promise rejected:', error);
+          return {
+            status: 'unhealthy',
+            details: error instanceof Error ? error.message : 'Email health check failed',
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+          };
+        }),
       ]);
 
       // Extract health check results from Promise.allSettled
-      const dbHealth =
-        healthCheckResults[0]?.status === 'fulfilled'
-          ? healthCheckResults[0].value
-              : {
-                  status: 'unhealthy' as const,
-                  error:
-                healthCheckResults[0]?.reason instanceof Error
-                  ? healthCheckResults[0].reason.message
-                  : 'Database check failed',
-                  responseTime: 0,
-                  lastChecked: new Date().toISOString(),
-            };
-      const redisHealth =
-        healthCheckResults[1]?.status === 'fulfilled'
-          ? healthCheckResults[1].value
-          : {
-              status: 'unhealthy' as const,
-              error:
-                healthCheckResults[1]?.reason instanceof Error
-                  ? healthCheckResults[1].reason.message
-                  : 'Redis check failed',
-              responseTime: 0,
-              lastChecked: new Date().toISOString(),
-            };
-      const queueHealth =
-        healthCheckResults[2]?.status === 'fulfilled'
-          ? healthCheckResults[2].value
-          : {
-              status: 'unhealthy' as const,
-              error:
-                healthCheckResults[2]?.reason instanceof Error
-                  ? healthCheckResults[2].reason.message
-                  : 'Queue check failed',
-              responseTime: 0,
-              lastChecked: new Date().toISOString(),
-            };
-      const loggerHealth =
-        healthCheckResults[3]?.status === 'fulfilled'
-          ? healthCheckResults[3].value
-          : {
-              status: 'unhealthy' as const,
-              error:
-                healthCheckResults[3]?.reason instanceof Error
-                  ? healthCheckResults[3].reason.message
-                  : 'Logger check failed',
-              responseTime: 0,
-              lastChecked: new Date().toISOString(),
-            };
-      const socketHealth =
-        healthCheckResults[4]?.status === 'fulfilled'
-          ? healthCheckResults[4].value
-          : {
-              status: 'unhealthy' as const,
-              error:
-                healthCheckResults[4]?.reason instanceof Error
-                  ? healthCheckResults[4].reason.message
-                  : 'Socket check failed',
-              responseTime: 0,
-              lastChecked: new Date().toISOString(),
-            };
-      const emailHealth =
-        healthCheckResults[5]?.status === 'fulfilled'
-          ? healthCheckResults[5].value
-          : {
-              status: 'unhealthy' as const,
-              error:
-                healthCheckResults[5]?.reason instanceof Error
-                  ? healthCheckResults[5].reason.message
-                  : 'Email check failed',
-              responseTime: 0,
-              lastChecked: new Date().toISOString(),
-            };
+      // dbHealth is already set above from cache or fresh check
+      // Each result should already be a ServiceHealth object (never throws due to .catch())
+      // Safely extract each result with proper error handling
+      let redisHealth: ServiceHealth;
+      try {
+        redisHealth =
+          healthCheckResults[0]?.status === 'fulfilled'
+            ? healthCheckResults[0].value
+            : {
+                status: 'unhealthy' as const,
+                details:
+                  healthCheckResults[0]?.reason instanceof Error
+                    ? healthCheckResults[0].reason.message
+                    : 'Redis check failed - no result returned',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+      } catch (error) {
+        console.error('[HealthService] Error extracting Redis health:', error);
+        redisHealth = {
+          status: 'unhealthy' as const,
+          details: error instanceof Error ? error.message : 'Redis check extraction failed',
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        };
+      }
+
+      let queueHealth: ServiceHealth;
+      try {
+        queueHealth =
+          healthCheckResults[1]?.status === 'fulfilled'
+            ? healthCheckResults[1].value
+            : {
+                status: 'unhealthy' as const,
+                details:
+                  healthCheckResults[1]?.reason instanceof Error
+                    ? healthCheckResults[1].reason.message
+                    : 'Queue check failed - no result returned',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+      } catch (error) {
+        console.error('[HealthService] Error extracting Queue health:', error);
+        queueHealth = {
+          status: 'unhealthy' as const,
+          details: error instanceof Error ? error.message : 'Queue check extraction failed',
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        };
+      }
+
+      let loggerHealth: ServiceHealth;
+      try {
+        loggerHealth =
+          healthCheckResults[2]?.status === 'fulfilled'
+            ? healthCheckResults[2].value
+            : {
+                status: 'unhealthy' as const,
+                details:
+                  healthCheckResults[2]?.reason instanceof Error
+                    ? healthCheckResults[2].reason.message
+                    : 'Logger check failed - no result returned',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+      } catch (error) {
+        console.error('[HealthService] Error extracting Logger health:', error);
+        loggerHealth = {
+          status: 'unhealthy' as const,
+          details: error instanceof Error ? error.message : 'Logger check extraction failed',
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        };
+      }
+
+      let socketHealth: ServiceHealth;
+      try {
+        socketHealth =
+          healthCheckResults[3]?.status === 'fulfilled'
+            ? healthCheckResults[3].value
+            : {
+                status: 'unhealthy' as const,
+                details:
+                  healthCheckResults[3]?.reason instanceof Error
+                    ? healthCheckResults[3].reason.message
+                    : 'Socket check failed - no result returned',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+      } catch (error) {
+        console.error('[HealthService] Error extracting Socket health:', error);
+        socketHealth = {
+          status: 'unhealthy' as const,
+          details: error instanceof Error ? error.message : 'Socket check extraction failed',
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        };
+      }
+
+      let emailHealth: ServiceHealth;
+      try {
+        emailHealth =
+          healthCheckResults[4]?.status === 'fulfilled'
+            ? healthCheckResults[4].value
+            : {
+                status: 'unhealthy' as const,
+                details:
+                  healthCheckResults[4]?.reason instanceof Error
+                    ? healthCheckResults[4].reason.message
+                    : 'Email check failed - no result returned',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+              };
+      } catch (error) {
+        console.error('[HealthService] Error extracting Email health:', error);
+        emailHealth = {
+          status: 'unhealthy' as const,
+          details: error instanceof Error ? error.message : 'Email check extraction failed',
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+        };
+      }
+
+      // Safely get system metrics - always try to get real values
+      let systemMetrics;
+      try {
+        systemMetrics = this.getSystemMetrics();
+        // Validate that we got real values (not all zeros)
+        if (
+          systemMetrics.memoryUsage.heapTotal === 0 &&
+          systemMetrics.memoryUsage.heapUsed === 0 &&
+          systemMetrics.memoryUsage.rss === 0
+        ) {
+          // If all zeros, try again with direct process calls
+          const memoryUsage = process.memoryUsage();
+          const cpuInfo = cpus();
+          const totalMemory = totalmem();
+          const freeMemory = freemem();
+          systemMetrics = {
+            uptime: process.uptime(),
+            memoryUsage: {
+              heapTotal: memoryUsage.heapTotal,
+              heapUsed: memoryUsage.heapUsed,
+              rss: memoryUsage.rss,
+              external: memoryUsage.external,
+              systemTotal: totalMemory,
+              systemFree: freeMemory,
+              systemUsed: totalMemory - freeMemory,
+            },
+            cpuUsage: {
+              user: process.cpuUsage().user,
+              system: process.cpuUsage().system,
+              cpuCount: cpuInfo.length,
+              cpuModel: cpuInfo[0]?.model || 'unknown',
+              cpuSpeed: cpuInfo[0]?.speed || 0,
+            },
+          };
+        }
+      } catch (_metricsError) {
+        // If getSystemMetrics fails, try direct process calls as fallback
+        try {
+          const memoryUsage = process.memoryUsage();
+          const cpuInfo = cpus();
+          const totalMemory = totalmem();
+          const freeMemory = freemem();
+          systemMetrics = {
+            uptime: process.uptime(),
+            memoryUsage: {
+              heapTotal: memoryUsage.heapTotal,
+              heapUsed: memoryUsage.heapUsed,
+              rss: memoryUsage.rss,
+              external: memoryUsage.external,
+              systemTotal: totalMemory,
+              systemFree: freeMemory,
+              systemUsed: totalMemory - freeMemory,
+            },
+            cpuUsage: {
+              user: process.cpuUsage().user,
+              system: process.cpuUsage().system,
+              cpuCount: cpuInfo.length,
+              cpuModel: cpuInfo[0]?.model || 'unknown',
+              cpuSpeed: cpuInfo[0]?.speed || 0,
+            },
+          };
+        } catch {
+          // Last resort: use minimal fallback values
+          systemMetrics = {
+            uptime: process.uptime(),
+            memoryUsage: {
+              heapTotal: 0,
+              heapUsed: 0,
+              rss: 0,
+              external: 0,
+              systemTotal: 0,
+              systemFree: 0,
+              systemUsed: 0,
+            },
+            cpuUsage: {
+              user: 0,
+              system: 0,
+              cpuCount: 0,
+              cpuModel: 'unknown',
+              cpuSpeed: 0,
+            },
+          };
+        }
+      }
+
+      const isDevEnvironment = environment === 'development';
+
+      const normalizedQueueHealth = this.normalizeOptionalServiceHealth(queueHealth, {
+        serviceName: 'Queue',
+        isOptional: !this.queueService,
+        isDevMode: isDevEnvironment,
+      });
+
+      const normalizedLoggerHealth = this.normalizeOptionalServiceHealth(loggerHealth, {
+        serviceName: 'Logger',
+        isOptional: !this.loggingService,
+        isDevMode: isDevEnvironment,
+      });
+
+      const normalizedSocketHealth = this.normalizeOptionalServiceHealth(socketHealth, {
+        serviceName: 'WebSocket',
+        isOptional: !this.socketService,
+        isDevMode: isDevEnvironment,
+      });
+
+      const normalizedEmailHealth = this.normalizeOptionalServiceHealth(emailHealth, {
+        serviceName: 'Email',
+        isOptional: !this.emailService,
+        isDevMode: isDevEnvironment,
+      });
 
       const result: HealthCheckResponse = {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         environment,
         version: process.env['npm_package_version'] || '0.0.1',
-        systemMetrics: this.getSystemMetrics(),
+        systemMetrics,
         services: {
           api: {
             status: 'healthy',
             responseTime: Math.round(performance.now() - startTime),
             lastChecked: new Date().toISOString(),
+            details: 'API service is running',
           },
           database: {
             status: dbHealth.status,
             responseTime: dbHealth.responseTime || 0,
             lastChecked: dbHealth.lastChecked || new Date().toISOString(),
-            metrics: {
-              queryResponseTime: dbHealth.responseTime || 0,
-              activeConnections: 1,
-              maxConnections: 100,
-              connectionUtilization: 1,
-            },
+            details: dbHealth.details || dbHealth.error || 'Database status unknown',
+            ...(dbHealth.error && { error: dbHealth.error }),
           },
-          redis: {
+          cache: {
             status: redisHealth.status,
             responseTime: redisHealth.responseTime || 0,
             lastChecked: redisHealth.lastChecked || new Date().toISOString(),
-            metrics: await this.getRedisMetrics().catch(() => ({
-              connectedClients: 0,
-              usedMemory: 0,
-              totalKeys: 0,
-              lastSave: new Date().toISOString(),
-            })),
+            details: redisHealth.details || redisHealth.error || 'Cache status unknown',
+            ...(redisHealth.error && { error: redisHealth.error }),
           },
-          queues: {
-            ...queueHealth,
-            metrics: {
-              ...(queueHealth &&
-              'metrics' in queueHealth &&
-              queueHealth.metrics &&
-              typeof queueHealth.metrics === 'object'
-                ? queueHealth.metrics
-                : {}),
-              port:
-                this.config?.get<number | string>('PORT') ||
-                process.env['PORT'] ||
-                process.env['VIRTUAL_PORT'] ||
-                8088,
-              dashboardUrl: `${this.config?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:8088'}/queue-dashboard`,
-            },
+          queue: {
+            status: normalizedQueueHealth.status,
+            responseTime: normalizedQueueHealth.responseTime || 0,
+            lastChecked: normalizedQueueHealth.lastChecked || new Date().toISOString(),
+            details:
+              normalizedQueueHealth.details ||
+              normalizedQueueHealth.error ||
+              'Queue status unknown',
+            ...(normalizedQueueHealth.error && { error: normalizedQueueHealth.error }),
           },
           logger: {
-            ...loggerHealth,
-            metrics: {
-              ...(loggerHealth &&
-              'metrics' in loggerHealth &&
-              loggerHealth.metrics &&
-              typeof loggerHealth.metrics === 'object'
-                ? loggerHealth.metrics
-                : {}),
-              port:
-                this.config?.get<number | string>('PORT') ||
-                process.env['PORT'] ||
-                process.env['VIRTUAL_PORT'] ||
-                8088,
-              url: `${this.config?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:8088'}/logger`,
-            },
+            status: normalizedLoggerHealth.status,
+            responseTime: normalizedLoggerHealth.responseTime || 0,
+            lastChecked: normalizedLoggerHealth.lastChecked || new Date().toISOString(),
+            details:
+              normalizedLoggerHealth.details ||
+              normalizedLoggerHealth.error ||
+              'Logger status unknown',
+            ...(normalizedLoggerHealth.error && { error: normalizedLoggerHealth.error }),
           },
-          socket: socketHealth,
-          email: emailHealth,
+          socket: {
+            status: normalizedSocketHealth.status,
+            responseTime: normalizedSocketHealth.responseTime || 0,
+            lastChecked: normalizedSocketHealth.lastChecked || new Date().toISOString(),
+            details:
+              normalizedSocketHealth.details ||
+              normalizedSocketHealth.error ||
+              'Socket status unknown',
+            ...(normalizedSocketHealth.error && { error: normalizedSocketHealth.error }),
+          },
+          email: {
+            status: normalizedEmailHealth.status,
+            responseTime: normalizedEmailHealth.responseTime || 0,
+            lastChecked: normalizedEmailHealth.lastChecked || new Date().toISOString(),
+            details:
+              normalizedEmailHealth.details ||
+              normalizedEmailHealth.error ||
+              'Email status unknown',
+            ...(normalizedEmailHealth.error && { error: normalizedEmailHealth.error }),
+          },
         },
       };
 
       // Update overall status if any core service is unhealthy
-      if (
-        [dbHealth, redisHealth, queueHealth, loggerHealth, socketHealth, emailHealth].some(
-          service => service?.status === 'unhealthy'
-        )
-      ) {
-        result.status = 'degraded';
+      // Safely check each service status to prevent undefined access errors
+      const criticalServices = [dbHealth, redisHealth];
+      const hasCriticalUnhealthy = criticalServices.some(
+        service =>
+          service &&
+          typeof service === 'object' &&
+          'status' in service &&
+          service.status === 'unhealthy'
+      );
+      const optionalServices = [
+        normalizedQueueHealth,
+        normalizedLoggerHealth,
+        normalizedSocketHealth,
+        normalizedEmailHealth,
+      ];
+      const optionalDegraded = optionalServices.some(service =>
+        this.isOptionalServiceDegraded(service, isDevEnvironment)
+      );
+
+      result.status = hasCriticalUnhealthy || optionalDegraded ? 'degraded' : 'healthy';
+
+      if (hasCriticalUnhealthy) {
+        return await this.reverifyCriticalServices(result, optionalDegraded);
       }
 
       return result;
@@ -543,6 +1123,15 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Comprehensive error handling - return degraded status if anything fails
       // Never throw - always return a valid health response
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+
+      // Log detailed error information for debugging
+      // Use console.error as fallback since loggingService might not be available
+      console.error('[HealthService] Health check failed:', errorMessage);
+      if (errorStack) {
+        console.error('[HealthService] Stack trace:', errorStack);
+      }
+      
       if (this.loggingService) {
         void this.loggingService.log(
           LogType.ERROR,
@@ -551,14 +1140,340 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           'HealthService',
           {
             error: errorMessage,
+            stack: errorStack,
+            errorType: error?.constructor?.name || typeof error,
+            // Log which service might be causing the issue
+            services: {
+              databaseService: !!this.databaseService,
+              cacheService: !!this.cacheService,
+              queueService: !!this.queueService,
+              loggingService: !!this.loggingService,
+              socketService: !!this.socketService,
+              emailService: !!this.emailService,
+              config: !!this.config,
+            },
+          }
+        ).catch(() => {
+          // Ignore logging errors
+        });
+      }
+
+      // Try to get system metrics safely - always try to get real values
+      // Use direct process calls first to ensure we always get real values
+      let systemMetrics;
+      try {
+        // Always use direct process calls to ensure real values
+        const memoryUsage = process.memoryUsage();
+        const cpuInfo = cpus();
+        const totalMemory = totalmem();
+        const freeMemory = freemem();
+        
+        systemMetrics = {
+          uptime: process.uptime(),
+          memoryUsage: {
+            heapTotal: memoryUsage.heapTotal || 0,
+            heapUsed: memoryUsage.heapUsed || 0,
+            rss: memoryUsage.rss || 0,
+            external: memoryUsage.external || 0,
+            systemTotal: totalMemory || 0,
+            systemFree: freeMemory || 0,
+            systemUsed: (totalMemory || 0) - (freeMemory || 0),
+          },
+          cpuUsage: {
+            user: process.cpuUsage().user || 0,
+            system: process.cpuUsage().system || 0,
+            cpuCount: cpuInfo.length || 0,
+            cpuModel: cpuInfo[0]?.model || 'unknown',
+            cpuSpeed: cpuInfo[0]?.speed || 0,
+          },
+        };
+        
+        // Validate that we got real values (not all zeros)
+        // If all zeros, try getSystemMetrics as fallback
+        if (
+          systemMetrics.memoryUsage.heapTotal === 0 &&
+          systemMetrics.memoryUsage.heapUsed === 0 &&
+          systemMetrics.memoryUsage.rss === 0
+        ) {
+          try {
+            systemMetrics = this.getSystemMetrics();
+          } catch {
+            // If getSystemMetrics also fails, keep the direct call values
+          }
+        }
+      } catch (_metricsError) {
+        // If direct calls fail, try getSystemMetrics
+        try {
+          systemMetrics = this.getSystemMetrics();
+        } catch {
+          // Last resort: use minimal fallback values with at least uptime
+          systemMetrics = {
+            uptime: process.uptime(),
+            memoryUsage: {
+              heapTotal: 0,
+              heapUsed: 0,
+              rss: 0,
+              external: 0,
+              systemTotal: 0,
+              systemFree: 0,
+              systemUsed: 0,
+            },
+            cpuUsage: {
+              user: 0,
+              system: 0,
+              cpuCount: 0,
+              cpuModel: 'unknown',
+              cpuSpeed: 0,
+            },
+          };
+        }
+      }
+
+      // Return degraded health response
+      // IMPORTANT: If we can return this response, the API is healthy!
+      // The error is from other services, not the API itself
+      return {
+        status: 'degraded',
+        timestamp: new Date().toISOString(),
+        environment: process.env['NODE_ENV'] || 'development',
+        version: process.env['npm_package_version'] || '0.0.1',
+        systemMetrics,
+        services: {
+          api: {
+            status: 'healthy' as const, // API is healthy if we can respond
+            responseTime: 10, // Small response time
+            lastChecked: new Date().toISOString(),
+            details: 'API service is running and responding',
+          },
+          database: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: `Health check failed: ${errorMessage}. Database service may not be initialized.`,
+          },
+          cache: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: `Health check failed: ${errorMessage}. Cache service may not be initialized.`,
+          },
+          queue: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: `Health check failed: ${errorMessage}. Queue service may not be initialized.`,
+          },
+          logger: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: `Health check failed: ${errorMessage}. Logger service may not be initialized.`,
+          },
+          socket: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: `Health check failed: ${errorMessage}. Socket service may not be initialized.`,
+          },
+          email: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: `Health check failed: ${errorMessage}. Email service may not be initialized.`,
+          },
+        },
+      };
+    }
+  }
+
+  private async reverifyCriticalServices(
+    result: HealthCheckResponse,
+    optionalDegraded: boolean
+  ): Promise<HealthCheckResponse> {
+    try {
+      const [dbVerification, cacheVerification] = await Promise.all([
+        this.verifyDatabaseConnection(),
+        this.verifyCacheConnection(),
+      ]);
+
+      let dbHealthy = false;
+      if (dbVerification?.isHealthy && result.services?.database) {
+        dbHealthy = true;
+        result.services.database = {
+          status: 'healthy',
+          responseTime: dbVerification.avgResponseTime,
+          lastChecked: new Date().toISOString(),
+          details: 'PostgreSQL connection verified after retry',
+        };
+      }
+
+      let cacheHealthy = false;
+      if (cacheVerification && result.services?.cache) {
+        cacheHealthy = true;
+        result.services.cache = {
+          status: 'healthy',
+          responseTime: 1,
+          lastChecked: new Date().toISOString(),
+          details: 'Cache connection verified after retry',
+        };
+      }
+
+      if (dbHealthy && cacheHealthy && !optionalDegraded) {
+        result.status = 'healthy';
+      }
+
+      return result;
+    } catch {
+      return result;
+    }
+  }
+
+  private async verifyDatabaseConnection(): Promise<DatabaseHealthStatus | null> {
+    if (!this.databaseService || typeof this.databaseService.getHealthStatus !== 'function') {
+      return null;
+    }
+    try {
+      return await this.databaseService.getHealthStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  private async verifyCacheConnection(): Promise<boolean> {
+    if (!this.cacheService) {
+      return false;
+    }
+    try {
+      if (typeof this.cacheService.healthCheck === 'function') {
+        const isHealthy = await this.cacheService.healthCheck();
+        if (isHealthy) {
+          return true;
+        }
+      }
+      if (typeof this.cacheService.ping === 'function') {
+        await this.cacheService.ping();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get detailed health status with smart caching
+   * Returns cached data if fresh, otherwise performs comprehensive checks
+   */
+  async getDetailedHealth(): Promise<DetailedHealthCheckResponse> {
+    try {
+      // Always run fresh health checks for dashboard - real-time updates
+      const baseHealth = await this.performHealthCheck();
+      const memoryUsage = process.memoryUsage();
+      const cpuUsage = process.cpuUsage();
+
+      // Safely get environment - handle case where config is undefined
+      let isDevMode = false;
+      try {
+        // Defensive: handle case where this.config is undefined or null
+        let env = process.env['NODE_ENV'] || 'development';
+        if (this.config && typeof this.config.get === 'function') {
+          env = this.config.get('NODE_ENV') || env;
+        }
+        isDevMode = env === 'development';
+      } catch (_error) {
+        isDevMode = (process.env['NODE_ENV'] || 'development') === 'development';
+      }
+
+      // Safely access baseHealth.services - handle case where baseHealth or services might be undefined
+      const services = baseHealth?.services || {};
+
+      // Use actual health check results from baseHealth, don't override them
+      const result: DetailedHealthCheckResponse = {
+        ...baseHealth,
+        services: {
+          ...services,
+          // Keep the actual health check results - don't override with hardcoded values
+          // queues, logger, socket, and email are already in baseHealth.services from checkHealth()
+        },
+        processInfo: {
+          pid: process.pid,
+          ppid: process.ppid,
+          platform: process.platform,
+          versions: Object.fromEntries(
+            Object.entries(process.versions).filter(([, value]) => value !== undefined)
+          ) as Record<string, string>,
+          cluster: this.getClusterInfo(),
+        },
+        memory: {
+          heapUsed: memoryUsage.heapUsed,
+          heapTotal: memoryUsage.heapTotal,
+          external: memoryUsage.external,
+          arrayBuffers: memoryUsage.arrayBuffers,
+        },
+        cpu: {
+          user: cpuUsage.user,
+          system: cpuUsage.system,
+        },
+      };
+
+      // Add development-only services with real HTTP checks
+      if (isDevMode) {
+        const [prismaStudioHealth, redisCommanderHealth, pgAdminHealth] = await Promise.allSettled([
+          this.checkExternalService('Prisma Studio', 'http://localhost:5555', 2000),
+          this.checkExternalService('Redis Commander', 'http://localhost:8082', 2000),
+          this.checkExternalService('pgAdmin', 'http://localhost:5050', 2000),
+        ]);
+
+        result.services.prismaStudio =
+          prismaStudioHealth.status === 'fulfilled'
+            ? prismaStudioHealth.value
+            : {
+                status: 'unhealthy' as const,
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: 'Prisma Studio is not accessible',
+              };
+
+        result.services.redisCommander =
+          redisCommanderHealth.status === 'fulfilled'
+            ? redisCommanderHealth.value
+            : {
+                status: 'unhealthy' as const,
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: 'Redis Commander is not accessible',
+              };
+
+        result.services.pgAdmin =
+          pgAdminHealth.status === 'fulfilled'
+            ? pgAdminHealth.value
+            : {
+                status: 'unhealthy' as const,
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: 'pgAdmin is not accessible',
+              };
+      }
+
+      return result;
+    } catch (error) {
+      // If checkDetailedHealth fails, return a basic health response
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Detailed health check failed: ${errorMessage}`,
+          'HealthService',
+          {
+            error: errorMessage,
             stack: error instanceof Error ? error.stack : undefined,
           }
         );
       }
-
-      // Return degraded health response
-      return {
-        status: 'degraded',
+      // Return a basic health response by calling performHealthCheck
+      const baseHealth = await this.performHealthCheck().catch(() => ({
+        status: 'degraded' as const,
         timestamp: new Date().toISOString(),
         environment: process.env['NODE_ENV'] || 'development',
         version: process.env['npm_package_version'] || '0.0.1',
@@ -583,168 +1498,89 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         },
         services: {
           api: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
+            status: 'healthy' as const, // API is healthy if we can respond
+            responseTime: 10, // Small response time
             lastChecked: new Date().toISOString(),
-            error: errorMessage,
+            details: 'API service is running and responding',
           },
           database: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
-            metrics: {
-              queryResponseTime: 0,
-              activeConnections: 0,
-              maxConnections: 0,
-              connectionUtilization: 0,
-            },
+            details: 'Health check service unavailable - cannot determine status',
           },
-          redis: {
+          cache: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
-            metrics: {
-              connectedClients: 0,
-              usedMemory: 0,
-              totalKeys: 0,
-              lastSave: new Date().toISOString(),
-            },
+            details: 'Health check service unavailable - cannot determine status',
           },
-          queues: {
+          queue: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
+            details: 'Health check service unavailable - cannot determine status',
           },
           logger: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
+            details: 'Health check service unavailable - cannot determine status',
           },
           socket: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
+            details: 'Health check service unavailable - cannot determine status',
           },
           email: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
+            details: 'Health check service unavailable - cannot determine status',
           },
+        },
+      }));
+      return {
+        ...baseHealth,
+        processInfo: {
+          pid: process.pid,
+          ppid: process.ppid,
+          platform: process.platform,
+          versions: {},
+          cluster: this.getClusterInfo(),
+        },
+        memory: {
+          heapUsed: 0,
+          heapTotal: 0,
+          external: 0,
+          arrayBuffers: 0,
+        },
+        cpu: {
+          user: 0,
+          system: 0,
         },
       };
     }
   }
 
-  async checkDetailedHealth(): Promise<DetailedHealthCheckResponse> {
-    // Always run fresh health checks for dashboard - real-time updates
-    const baseHealth = await this.performHealthCheck();
-    const memoryUsage = process.memoryUsage();
-    const cpuUsage = process.cpuUsage();
-
-    // Safely get environment - handle case where config is undefined
-    let isDevMode = false;
-    try {
-      // Defensive: handle case where this.config is undefined or null
-      let env = process.env['NODE_ENV'] || 'development';
-      if (this.config && typeof this.config.get === 'function') {
-        env = this.config.get('NODE_ENV') || env;
-      }
-      isDevMode = env === 'development';
-    } catch (_error) {
-      isDevMode = (process.env['NODE_ENV'] || 'development') === 'development';
-    }
-
-    // Use actual health check results from baseHealth, don't override them
-    const result: DetailedHealthCheckResponse = {
-      ...baseHealth,
-      services: {
-        ...baseHealth.services,
-        // Keep the actual health check results - don't override with hardcoded values
-        // queues, logger, socket, and email are already in baseHealth.services from checkHealth()
-      },
-      processInfo: {
-        pid: process.pid,
-        ppid: process.ppid,
-        platform: process.platform,
-        versions: Object.fromEntries(
-          Object.entries(process.versions).filter(([, value]) => value !== undefined)
-        ) as Record<string, string>,
-        cluster: this.getClusterInfo(),
-      },
-      memory: {
-        heapUsed: memoryUsage.heapUsed,
-        heapTotal: memoryUsage.heapTotal,
-        external: memoryUsage.external,
-        arrayBuffers: memoryUsage.arrayBuffers,
-      },
-      cpu: {
-        user: cpuUsage.user,
-        system: cpuUsage.system,
-      },
-    };
-
-    // Add development-only services with real HTTP checks
-    if (isDevMode) {
-      const [prismaStudioHealth, redisCommanderHealth, pgAdminHealth] = await Promise.allSettled([
-        this.checkExternalService('Prisma Studio', 'http://localhost:5555', 2000),
-        this.checkExternalService('Redis Commander', 'http://localhost:8082', 2000),
-        this.checkExternalService('pgAdmin', 'http://localhost:5050', 2000),
-      ]);
-
-      result.services.prismaStudio =
-        prismaStudioHealth.status === 'fulfilled'
-          ? prismaStudioHealth.value
-          : {
-              status: 'unhealthy' as const,
-        responseTime: 0,
-        lastChecked: new Date().toISOString(),
-              details: 'Prisma Studio is not accessible',
-      };
-
-      result.services.redisCommander =
-        redisCommanderHealth.status === 'fulfilled'
-          ? redisCommanderHealth.value
-          : {
-              status: 'unhealthy' as const,
-        responseTime: 0,
-        lastChecked: new Date().toISOString(),
-              details: 'Redis Commander is not accessible',
-      };
-
-      result.services.pgAdmin =
-        pgAdminHealth.status === 'fulfilled'
-          ? pgAdminHealth.value
-          : {
-              status: 'unhealthy' as const,
-        responseTime: 0,
-        lastChecked: new Date().toISOString(),
-              details: 'pgAdmin is not accessible',
-      };
-    }
-
-    return result;
-  }
-
-  private async checkDatabaseHealth(): Promise<ServiceHealth> {
-    const now = Date.now();
+  async checkDatabaseHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
 
-    // Use cached status if checked recently
-    if (now - this.lastDatabaseCheck < this.DB_CHECK_INTERVAL) {
+    // Use cached status from continuous monitoring if available and fresh (< 15s)
+    const cachedDbStatus = this.serviceStatusCache.get('database');
+    if (cachedDbStatus && Date.now() - cachedDbStatus.timestamp < 15000) {
       return {
-        status: this.databaseStatus,
-        details:
-          this.databaseStatus === 'healthy' ? 'PostgreSQL connected' : 'Database connection failed',
-        responseTime: 0,
-        lastChecked: new Date().toISOString(),
+        status: cachedDbStatus.status,
+        details: cachedDbStatus.details || 'Database status from continuous monitoring',
+        responseTime: Math.round(performance.now() - startTime),
+        lastChecked: new Date(cachedDbStatus.timestamp).toISOString(),
       };
     }
 
     try {
       // Safely check database health - handle case where databaseService might not be fully initialized
       if (!this.databaseService || typeof this.databaseService.getHealthStatus !== 'function') {
-        this.databaseStatus = 'unhealthy';
-        this.lastDatabaseCheck = now;
         return {
           status: 'unhealthy',
           details: 'Database service is not available',
@@ -777,8 +1613,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
       // Check if database is healthy based on health status
       if (!healthStatus.isHealthy) {
-        this.databaseStatus = 'unhealthy';
-        this.lastDatabaseCheck = now;
         return {
           status: 'unhealthy',
           details: healthStatus.errors?.[0] || 'Database connection failed',
@@ -786,9 +1620,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           lastChecked: healthStatus.lastHealthCheck.toISOString(),
         };
       }
-
-      this.databaseStatus = 'healthy';
-      this.lastDatabaseCheck = now;
 
       return {
         status: 'healthy',
@@ -806,8 +1637,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           { error: _error instanceof Error ? _error.stack : String(_error) }
         );
       }
-      this.databaseStatus = 'unhealthy';
-      this.lastDatabaseCheck = now;
 
       return {
         status: 'unhealthy',
@@ -818,7 +1647,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async checkRedisHealth(): Promise<ServiceHealth> {
+  async checkRedisHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
       // First, try to check via CacheService (preferred method)
@@ -963,8 +1792,20 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const { promisify } = await import('util');
       const execAsync = promisify(exec);
 
-      const redisHost = this.config?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
-      const redisPort = this.config?.get<number>('redis.port') || parseInt(process.env['REDIS_PORT'] || '6379', 10);
+      // Check for Dragonfly first (default), then Redis
+      const cacheProvider =
+        this.config?.get<string>('CACHE_PROVIDER')?.toLowerCase() ||
+        process.env['CACHE_PROVIDER']?.toLowerCase() ||
+        'dragonfly';
+      
+      const isDragonfly = cacheProvider === 'dragonfly';
+      // Use process.env directly to avoid configService defaults to localhost
+      const redisHost = isDragonfly
+        ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
+        : (process.env['REDIS_HOST'] || 'redis');
+      const redisPort = isDragonfly
+        ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+        : parseInt(process.env['REDIS_PORT'] || '6379', 10);
 
       try {
         const { stdout } = await Promise.race([
@@ -1049,7 +1890,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async checkQueueHealth(): Promise<ServiceHealth> {
+  async checkQueueHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
       // First check if queue dashboard HTTP endpoint is accessible
@@ -1138,8 +1979,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         };
       }
 
-      // Check if the method exists
-      if (typeof this.queueService.getLocationQueueStats !== 'function') {
+      // Check if the method exists and queueService is defined
+      if (!this.queueService || typeof this.queueService.getLocationQueueStats !== 'function') {
         // Service exists but method not available - still consider healthy if service exists
         return {
           status: 'healthy',
@@ -1152,6 +1993,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Get queue stats using the queue service - wrap in try-catch to handle internal config errors
       // Use Promise.resolve with comprehensive error handling
       try {
+        // Defensive check: ensure queueService is still defined
+        if (!this.queueService) {
+          throw new Error('Queue service is not available');
+        }
         // Wrap in Promise.resolve to catch any synchronous errors
         const statsPromise = Promise.resolve(
           this.queueService.getLocationQueueStats('system', 'clinic')
@@ -1193,7 +2038,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         if (!stats) {
           // Service exists but stats unavailable - still consider healthy
           if (httpCheckPassed) {
-          return {
+            return {
               status: 'healthy',
               details: 'Queue dashboard is accessible (stats unavailable)',
               responseTime: Math.round(performance.now() - startTime),
@@ -1227,7 +2072,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
         // If internal check passes, return healthy
         if (isHealthy) {
-        return {
+          return {
             status: 'healthy',
             details: `Queue service is running. Completed jobs: ${queueStats.stats.completedCount}, Waiting jobs: ${queueStats.stats.totalWaiting}`,
             responseTime: Math.round(performance.now() - startTime),
@@ -1274,7 +2119,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
         // If HTTP endpoint is accessible, still mark as healthy even if internal check failed
         if (httpCheckPassed) {
-        return {
+          return {
             status: 'healthy',
             details: 'Queue dashboard is accessible (internal service check failed)',
             responseTime: Math.round(performance.now() - startTime),
@@ -1345,7 +2190,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async checkLoggerHealth(): Promise<ServiceHealth> {
+  async checkLoggerHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
       // First check if logger service is available internally
@@ -1373,17 +2218,17 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           // Accept any response status < 500 as endpoint exists (even 404 means service is responding)
           if (httpCheck.status < 500) {
-        return {
-          status: 'healthy',
+            return {
+              status: 'healthy',
               details: 'Logging service is available and accessible',
-          responseTime: Math.round(performance.now() - startTime),
-          lastChecked: new Date().toISOString(),
+              responseTime: Math.round(performance.now() - startTime),
+              lastChecked: new Date().toISOString(),
               metrics: {
                 port: Number(loggerPort),
                 url: `${loggerBaseUrl}/logger`,
                 serviceName: this.loggingService?.constructor?.name || 'LoggingService',
               },
-        };
+            };
           }
         } catch (_httpError) {
           // HTTP check failed, but service exists so it's still healthy
@@ -1415,24 +2260,24 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         ]);
 
         if (httpCheck.status < 500) {
-      return {
+          return {
             status: 'healthy',
             details: 'Logging service endpoint is accessible',
-        responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+            responseTime: Math.round(performance.now() - startTime),
+            lastChecked: new Date().toISOString(),
             metrics: {
               port: Number(loggerPort),
               url: `${loggerBaseUrl}/logger`,
             },
-      };
-    }
+          };
+        }
       } catch (_httpError) {
         // HTTP check also failed
       }
 
       // Both service and HTTP check failed - mark as unhealthy
-        return {
-          status: 'unhealthy',
+      return {
+        status: 'unhealthy',
         details: 'Logging service is not available',
         responseTime: Math.round(performance.now() - startTime),
         lastChecked: new Date().toISOString(),
@@ -1447,16 +2292,16 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           lastChecked: new Date().toISOString(),
         };
       }
-        return {
-          status: 'unhealthy',
+      return {
+        status: 'unhealthy',
         error: _error instanceof Error ? _error.message : 'Unknown error',
-          responseTime: Math.round(performance.now() - startTime),
-          lastChecked: new Date().toISOString(),
-        };
-      }
+        responseTime: Math.round(performance.now() - startTime),
+        lastChecked: new Date().toISOString(),
+      };
+    }
   }
 
-  private async checkSocketHealth(): Promise<ServiceHealth> {
+  async checkSocketHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
       // Check if WebSocket server is initialized and responding
@@ -1468,13 +2313,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         if (isInitialized && server) {
           // Service is initialized - try HTTP check for verification, but service is healthy
 
-      // Get connected clients count with timeout
-      const connectedSocketsPromise = server.allSockets();
-      const timeoutPromise = new Promise<Set<string>>(resolve => {
-        setTimeout(() => resolve(new Set()), 2000);
-      });
-      const connectedSockets = await Promise.race([connectedSocketsPromise, timeoutPromise]);
-      const connectedCount = connectedSockets.size;
+          // Get connected clients count with timeout
+          const connectedSocketsPromise = server.allSockets();
+          const timeoutPromise = new Promise<Set<string>>(resolve => {
+            setTimeout(() => resolve(new Set()), 2000);
+          });
+          const connectedSockets = await Promise.race([connectedSocketsPromise, timeoutPromise]);
+          const connectedCount = connectedSockets.size;
 
           // Also verify HTTP endpoint is accessible (optional verification)
           try {
@@ -1494,12 +2339,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             // HTTP check failed, but service is initialized so it's still healthy
           }
 
-      return {
-        status: 'healthy',
-        details: `WebSocket server is running with ${connectedCount} connected clients`,
-        responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
-      };
+          return {
+            status: 'healthy',
+            details: `WebSocket server is running with ${connectedCount} connected clients`,
+            responseTime: Math.round(performance.now() - startTime),
+            lastChecked: new Date().toISOString(),
+          };
         }
       }
 
@@ -1532,17 +2377,17 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       try {
         return await this.checkInternalEndpoint('/socket-test', 'WebSocket', 3000);
       } catch (_httpError) {
-      return {
-        status: 'unhealthy',
-        error: _error instanceof Error ? _error.message : 'Unknown error',
-        responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
-      };
+        return {
+          status: 'unhealthy',
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+          responseTime: Math.round(performance.now() - startTime),
+          lastChecked: new Date().toISOString(),
+        };
       }
     }
   }
 
-  private async checkEmailHealth(): Promise<ServiceHealth> {
+  async checkEmailHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
       // Safely check email health - handle case where emailService might not be fully initialized
@@ -1603,12 +2448,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           // Accept any status < 500 as endpoint exists (even 404/401 means service is responding)
           if (httpCheck.status < 500) {
-        return {
+            return {
               status: 'healthy',
               details: 'Email service is configured and accessible',
-          responseTime: Math.round(performance.now() - startTime),
-          lastChecked: new Date().toISOString(),
-        };
+              responseTime: Math.round(performance.now() - startTime),
+              lastChecked: new Date().toISOString(),
+            };
           }
         } catch (_httpError) {
           // HTTP check failed, fall back to internal check
@@ -1640,6 +2485,45 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         lastChecked: new Date().toISOString(),
       };
     }
+  }
+
+  private normalizeOptionalServiceHealth(
+    health: ServiceHealth,
+    options: { serviceName: string; isOptional: boolean; isDevMode: boolean }
+  ): ServiceHealth {
+    if (!options.isOptional) {
+      return health;
+    }
+
+    if (health.status === 'unhealthy') {
+      return {
+        ...health,
+        status: 'healthy',
+        details: `${options.serviceName} service not configured${
+          options.isDevMode ? ' in development environment' : ''
+        }. Skipping health check.`,
+        responseTime: health.responseTime || 0,
+      };
+    }
+
+    return health;
+  }
+
+  private isOptionalServiceDegraded(health: ServiceHealth, isDevMode: boolean): boolean {
+    if (health.status !== 'unhealthy') {
+      return false;
+    }
+
+    const detail = (health.details || '').toLowerCase();
+    if (detail.includes('not available') || detail.includes('not configured')) {
+      return false;
+    }
+
+    if (isDevMode && detail.includes('development')) {
+      return false;
+    }
+
+    return true;
   }
 
   /**

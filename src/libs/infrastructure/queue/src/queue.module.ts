@@ -72,40 +72,54 @@ export class QueueModule {
     let queueNames: string[];
     let redisConfig: unknown;
 
+    // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
+    const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+    const useDragonfly = cacheProvider === 'dragonfly';
+    
+    const defaultCacheHost = useDragonfly
+      ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
+      : (process.env['REDIS_HOST'] || 'localhost');
+    const defaultCachePort = useDragonfly
+      ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+      : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+    const defaultCachePassword = useDragonfly
+      ? process.env['DRAGONFLY_PASSWORD']
+      : process.env['REDIS_PASSWORD'];
+    
     if (serviceName === 'clinic') {
       queueNames = clinicQueues;
       // Fashion-specific Redis configuration
-      const redisPassword = process.env['REDIS_PASSWORD'];
+      const redisPassword = defaultCachePassword || process.env['REDIS_PASSWORD'];
       const hasPassword = redisPassword && redisPassword.trim().length > 0;
       redisConfig = {
-        host: process.env['REDIS_HOST'] || 'localhost',
-        port: parseInt(process.env['REDIS_PORT'] || '6379'),
+        host: process.env['CLINIC_REDIS_HOST'] || defaultCacheHost,
+        port: parseInt(process.env['CLINIC_REDIS_PORT'] || String(defaultCachePort), 10),
         ...(hasPassword && { password: redisPassword }),
-        db: parseInt(process.env['REDIS_DB'] || '2'), // Database for queue operations
+        db: parseInt(process.env['REDIS_DB'] || '2', 10), // Database for queue operations
       };
     } else if (serviceName === 'worker') {
       // Worker processes ALL queues from both services
       queueNames = [...clinicQueues, ...clinicQueues];
       // Worker uses default Redis configuration
-      const redisPassword = process.env['REDIS_PASSWORD'];
+      const redisPassword = defaultCachePassword || process.env['REDIS_PASSWORD'];
       const hasPassword = redisPassword && redisPassword.trim().length > 0;
       redisConfig = {
-        host: process.env['REDIS_HOST'] || 'localhost',
-        port: parseInt(process.env['REDIS_PORT'] || '6379'),
+        host: defaultCacheHost,
+        port: defaultCachePort,
         ...(hasPassword && { password: redisPassword }),
-        db: parseInt(process.env['REDIS_DB'] || '1'),
+        db: parseInt(process.env['REDIS_DB'] || '1', 10),
       };
     } else {
       // Default to clinic queues (including 'clinic' service)
       queueNames = clinicQueues;
       // Clinic-specific Redis configuration
-      const redisPassword = process.env['CLINIC_REDIS_PASSWORD'] || process.env['REDIS_PASSWORD'];
+      const redisPassword = process.env['CLINIC_REDIS_PASSWORD'] || defaultCachePassword || process.env['REDIS_PASSWORD'];
       const hasPassword = redisPassword && redisPassword.trim().length > 0;
       redisConfig = {
-        host: process.env['CLINIC_REDIS_HOST'] || process.env['REDIS_HOST'] || 'localhost',
-        port: parseInt(process.env['CLINIC_REDIS_PORT'] || process.env['REDIS_PORT'] || '6379'),
+        host: process.env['CLINIC_REDIS_HOST'] || defaultCacheHost,
+        port: parseInt(process.env['CLINIC_REDIS_PORT'] || String(defaultCachePort), 10),
         ...(hasPassword && { password: redisPassword }),
-        db: parseInt(process.env['CLINIC_REDIS_DB'] || '1'), // Separate DB for clinic
+        db: parseInt(process.env['CLINIC_REDIS_DB'] || '1', 10), // Separate DB for clinic
       };
     }
 

@@ -1,5 +1,6 @@
 import { Global, Module, forwardRef } from '@nestjs/common';
 import { HealthcareErrorsService } from './healthcare-errors.service';
+import { CacheErrorHandler } from './cache-error.handler';
 import { LoggingModule } from '@infrastructure/logging';
 
 /**
@@ -7,7 +8,7 @@ import { LoggingModule } from '@infrastructure/logging';
  * Provides centralized error handling across the entire application
  *
  * @module ErrorsModule
- * @description Global module that makes HealthcareErrorsService available throughout the application
+ * @description Global module that makes HealthcareErrorsService and CacheErrorHandler available throughout the application
  * Uses forwardRef() to resolve circular dependency with LoggingModule
  * @example
  * ```typescript
@@ -21,7 +22,7 @@ import { LoggingModule } from '@infrastructure/logging';
 @Global()
 @Module({
   imports: [forwardRef(() => LoggingModule)],
-  providers: [HealthcareErrorsService],
-  exports: [HealthcareErrorsService],
+  providers: [HealthcareErrorsService, CacheErrorHandler],
+  exports: [HealthcareErrorsService, CacheErrorHandler],
 })
 export class ErrorsModule {}

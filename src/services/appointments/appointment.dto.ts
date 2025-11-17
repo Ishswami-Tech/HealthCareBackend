@@ -742,7 +742,7 @@ export interface User {
   isVerified: boolean;
   phone?: string;
   avatar?: string;
-  lastLoginAt?: Date;
+  lastLogin?: Date;
 }
 
 export type DoctorWithUser = Doctor & {

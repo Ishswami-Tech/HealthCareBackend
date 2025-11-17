@@ -39,7 +39,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   // Production scaling configurations
   private readonly PRODUCTION_CONFIG = {
-    maxMemoryPolicy: 'allkeys-lru',
+    maxMemoryPolicy: 'noeviction',
     maxConnections: parseInt(process.env['REDIS_MAX_CONNECTIONS'] || '100', 10),
     connectionTimeout: 15000, // Increased to 15 seconds for better reliability in Docker
     commandTimeout: 5000, // Increased to 5 seconds
@@ -105,6 +105,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     PHI_DATA: 'phi_data', // Protected Health Information
   };
 
+  private readonly verboseLoggingEnabled: boolean;
+
   constructor(
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
@@ -112,31 +114,50 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   ) {
     // Check multiple environment variables to determine development mode
     this.isDevelopment = this.isDevEnvironment();
+    this.verboseLoggingEnabled =
+      process.env['ENABLE_CACHE_DEBUG'] === 'true' ||
+      process.env['CACHE_VERBOSE_LOGS'] === 'true';
+    if (this.verboseLoggingEnabled) {
     void this.loggingService.log(
       LogType.SYSTEM,
-      LogLevel.INFO,
+        LogLevel.DEBUG,
       `Running in ${this.isDevelopment ? 'development' : 'production'} mode`,
       'CacheService',
       { environment: this.isDevelopment ? 'development' : 'production' }
     );
+    }
     this.initializeClient();
 
     // CRITICAL: Connect immediately - don't wait for lifecycle hooks
     // This ensures Redis connects as soon as the service is instantiated
     // Use setImmediate to allow constructor to complete first
     setImmediate(() => {
+      // Check if Redis is the selected cache provider before attempting connection
+      const cacheProvider =
+        this.configService?.get<string>('CACHE_PROVIDER')?.toLowerCase() ||
+        process.env['CACHE_PROVIDER']?.toLowerCase() ||
+        'dragonfly'; // Default to Dragonfly
+
+      // Only attempt connection if Redis is the selected provider
+      if (cacheProvider !== 'redis') {
+        // Skip connection attempt - not using Redis
+        return;
+      }
+
       // Always attempt connection - onModuleInit will handle if already connected
+      if (this.verboseLoggingEnabled) {
       void this.loggingService
         .log(
           LogType.SYSTEM,
           LogLevel.INFO,
           'Constructor: Initiating cache connection immediately',
-          'CacheService',
+          'RedisService',
           {}
         )
         .catch(() => {
           // Ignore logging errors - connection is more important
         });
+      }
       void this.onModuleInit().catch(error => {
         const errorMessage = error instanceof Error ? error.message : String(error);
         void this.loggingService
@@ -144,7 +165,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             LogType.ERROR,
             LogLevel.ERROR,
             `Constructor: Failed to connect cache: ${errorMessage}`,
-            'CacheService',
+            'RedisService',
             { error: errorMessage, stack: error instanceof Error ? error.stack : undefined }
           )
           .catch(() => {
@@ -178,6 +199,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   private initializeClient(): void {
     try {
+      // IMPORTANT: This service should only be used when CACHE_PROVIDER=redis
+      // If CACHE_PROVIDER=dragonfly, this service should not initialize
+      const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+      if (cacheProvider !== 'redis') {
+        // Skip initialization if not using Redis
+        return;
+      }
+
       // Determine default host based on environment
       // In Docker, use 'redis' (service name), locally use 'localhost'
       // Check multiple indicators that we're in Docker:
@@ -193,11 +222,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       const defaultHost = isDocker ? 'redis' : 'localhost';
 
-      const redisHost =
-        this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || defaultHost;
-      const redisPort =
-        this.configService?.get<number>('redis.port') ||
-        parseInt(process.env['REDIS_PORT'] || '6379', 10);
+      // Use process.env directly to avoid configService defaults to localhost
+      const redisHost = process.env['REDIS_HOST'] || defaultHost;
+      const redisPort = parseInt(process.env['REDIS_PORT'] || '6379', 10);
       let redisPassword: string | undefined;
       try {
         redisPassword =
@@ -408,6 +435,24 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             // Ignore logging errors
           });
         return;
+      }
+
+      // Check if Redis is the selected cache provider before attempting connection
+      const cacheProvider =
+        this.configService?.get<string>('CACHE_PROVIDER')?.toLowerCase() ||
+        process.env['CACHE_PROVIDER']?.toLowerCase() ||
+        'dragonfly'; // Default to Dragonfly
+
+      // Only connect if Redis is the selected provider
+      if (cacheProvider !== 'redis') {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `RedisService skipped - using ${cacheProvider} as cache provider`,
+          'RedisService',
+          { cacheProvider }
+        );
+        return; // Don't connect if not using Redis
       }
 
       // Check if Redis is enabled before attempting connection
@@ -1191,6 +1236,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async del(...keys: string[]): Promise<void> {
     if (keys.length === 0) return;
     await this.retryOperation(() => this.client.del(...keys));
+  }
+
+  async exists(key: string): Promise<number> {
+    return this.retryOperation(() => this.client.exists(key));
   }
 
   async keys(pattern: string): Promise<string[]> {

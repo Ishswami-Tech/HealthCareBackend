@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { RedisService } from '@infrastructure/cache/redis/redis.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config';
@@ -14,13 +14,13 @@ export class OtpService {
   constructor(
     private readonly redis: RedisService,
     private readonly emailService: EmailService,
-    private readonly configService: ConfigService
+    @Inject(ConfigService) private readonly configService: ConfigService
   ) {
     // ConfigService is global, so it should always be available
     // Use process.env as fallback only if ConfigService.get fails
     const getConfig = <T>(key: string, defaultValue: T): T => {
       try {
-        return this.configService.get<T>(key, defaultValue);
+        return this.configService?.get<T>(key, defaultValue) || (process.env[key] as T | undefined) || defaultValue;
       } catch {
         // Fallback to process.env if ConfigService.get fails
         const envValue = process.env[key];
