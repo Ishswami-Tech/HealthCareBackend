@@ -111,7 +111,7 @@ export class AppController {
         if (!this.healthService) {
           throw new Error('HealthService is not available');
         }
-        const healthCheckPromise = this.healthService.checkDetailedHealth();
+        const healthCheckPromise = this.healthService.getDetailedHealth();
         const timeoutPromise = new Promise<DetailedHealthCheckResponse>(resolve => {
           setTimeout(() => {
             resolve({
@@ -148,25 +148,13 @@ export class AppController {
                   status: 'unhealthy' as const,
                   responseTime: 0,
                   lastChecked: new Date().toISOString(),
-                  metrics: {
-                    queryResponseTime: 0,
-                    activeConnections: 0,
-                    maxConnections: 0,
-                    connectionUtilization: 0,
-                  },
                 },
-                redis: {
+                cache: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
                   lastChecked: new Date().toISOString(),
-                  metrics: {
-                    connectedClients: 0,
-                    usedMemory: 0,
-                    totalKeys: 0,
-                    lastSave: new Date().toISOString(),
-                  },
                 },
-                queues: {
+                queue: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
                   lastChecked: new Date().toISOString(),
@@ -262,25 +250,13 @@ export class AppController {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),
-              metrics: {
-                queryResponseTime: 0,
-                activeConnections: 0,
-                maxConnections: 0,
-                connectionUtilization: 0,
-              },
             },
-            redis: {
+            cache: {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),
-              metrics: {
-                connectedClients: 0,
-                usedMemory: 0,
-                totalKeys: 0,
-                lastSave: new Date().toISOString(),
-              },
             },
-            queues: {
+            queue: {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),
@@ -329,7 +305,7 @@ export class AppController {
       const isApiRunning = true; // API is running if we can serve this page
 
       // Extract individual service statuses for real-time checks
-      const queueHealth = healthServices.queues as ServiceHealth | undefined;
+      const queueHealth = healthServices.queue as ServiceHealth | undefined;
       const loggerHealth = healthServices.logger as ServiceHealth | undefined;
       const socketStatus = (healthServices.socket as ServiceHealth | undefined)?.status;
       const emailStatus = (healthServices.email as ServiceHealth | undefined)?.status;
@@ -1581,7 +1557,7 @@ export class AppController {
                                     <span class="metric-value">${displayValue}</span>
                                 </div>
                             `;
-                              })
+                                    })
                                     .join('')
                                 : ''
                             }

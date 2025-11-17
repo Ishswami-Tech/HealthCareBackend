@@ -35,3 +35,6 @@ export { ErrorsModule } from './errors.module';
 
 // Re-export for convenience
 export { HealthcareErrorsService as Errors } from './healthcare-errors.service';
+
+// Cache error handler
+export { CacheErrorHandler, CacheErrorType } from './cache-error.handler';

@@ -148,25 +148,29 @@ export class SecurityConfigService {
     await adapter.registerRateLimit(app, {
       max: parseInt(process.env['RATE_LIMIT_MAX'] || '1000', 10),
       timeWindow: process.env['RATE_LIMIT_WINDOW'] || '1 minute',
-      redis:
-        this.configService?.get('REDIS_URL') || process.env['REDIS_URL']
-          ? {
-              host:
-                this.configService?.get<string>('REDIS_HOST') ||
-                process.env['REDIS_HOST'] ||
-                'localhost',
-              port:
-                this.configService?.get<number>('REDIS_PORT') ||
-                parseInt(process.env['REDIS_PORT'] || '6379', 10),
-              ...((
-                this.configService?.get<string>('REDIS_PASSWORD') || process.env['REDIS_PASSWORD']
-              )?.trim() && {
-                password: (
-                  this.configService?.get<string>('REDIS_PASSWORD') || process.env['REDIS_PASSWORD']
-                )?.trim(),
+      redis: (() => {
+        // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
+        const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+        const useDragonfly = cacheProvider === 'dragonfly';
+        
+        const cacheHost = useDragonfly
+          ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
+          : (process.env['REDIS_HOST'] || 'localhost');
+        const cachePort = useDragonfly
+          ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+          : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+        const cachePassword = useDragonfly
+          ? process.env['DRAGONFLY_PASSWORD']
+          : process.env['REDIS_PASSWORD'];
+        
+        return {
+          host: cacheHost,
+          port: cachePort,
+          ...(cachePassword?.trim() && {
+            password: cachePassword.trim(),
               }),
-            }
-          : undefined,
+        };
+      })(),
       keyGenerator: (request: Partial<AuthenticatedRequest>) => {
         const ip = request.ip || 'unknown';
         const userAgent = request.headers?.['user-agent'];

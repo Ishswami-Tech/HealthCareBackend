@@ -117,9 +117,9 @@ export interface HealthCheckResponse {
   systemMetrics: SystemMetrics;
   services: {
     api: ServiceHealth;
-    database: ServiceHealth & { metrics: DatabaseHealthMetrics };
-    redis: ServiceHealth & { metrics: RedisMetrics };
-    queues: ServiceHealth;
+    database: ServiceHealth;
+    cache: ServiceHealth;
+    queue: ServiceHealth;
     logger: ServiceHealth;
     socket: ServiceHealth;
     email: ServiceHealth;
@@ -130,9 +130,9 @@ export interface HealthCheckResponse {
 export interface DetailedHealthCheckResponse extends HealthCheckResponse {
   services: {
     api: ServiceHealth;
-    database: ServiceHealth & { metrics: DatabaseHealthMetrics };
-    redis: ServiceHealth & { metrics: RedisMetrics };
-    queues: ServiceHealth;
+    database: ServiceHealth;
+    cache: ServiceHealth;
+    queue: ServiceHealth;
     logger: ServiceHealth;
     socket: ServiceHealth;
     email: ServiceHealth;
@@ -174,9 +174,9 @@ export interface HealthCheckResult {
   timestamp: Date;
   services: {
     api: ServiceHealth;
-    database: ServiceHealth & { metrics?: DatabaseHealthMetrics };
-    redis: ServiceHealth & { metrics?: RedisMetrics };
-    queues: ServiceHealth;
+    database: ServiceHealth;
+    cache: ServiceHealth;
+    queue: ServiceHealth;
     logger: ServiceHealth;
     socket: ServiceHealth;
     email: ServiceHealth;

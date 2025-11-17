@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject } from '@nestjs/common';
 import { ConfigService } from '@config';
 import {
   EmailTemplate,
@@ -69,7 +69,7 @@ export class EmailService implements OnModuleInit {
    * @param configService - Configuration service for environment variables
    */
   constructor(
-    private readonly configService: ConfigService,
+    @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly loggingService: LoggingService
   ) {}
 

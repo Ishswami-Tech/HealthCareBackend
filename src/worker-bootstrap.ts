@@ -69,8 +69,20 @@ async function bootstrap() {
           'WorkerBootstrap',
           {
             serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
-            redisHost: configService.get<string>('REDIS_HOST', 'localhost'),
-            redisPort: configService.get<number>('REDIS_PORT', 6379),
+            redisHost: (() => {
+              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+              const useDragonfly = cacheProvider === 'dragonfly';
+              return useDragonfly
+                ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
+                : (process.env['REDIS_HOST'] || 'localhost');
+            })(),
+            redisPort: (() => {
+              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+              const useDragonfly = cacheProvider === 'dragonfly';
+              return useDragonfly
+                ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+                : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+            })(),
           }
         );
       }
@@ -80,8 +92,16 @@ async function bootstrap() {
       console.error(
         `🔄 Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
       );
+      const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+      const useDragonfly = cacheProvider === 'dragonfly';
+      const cacheHost = useDragonfly
+        ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
+        : (process.env['REDIS_HOST'] || 'localhost');
+      const cachePort = useDragonfly
+        ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+        : parseInt(process.env['REDIS_PORT'] || '6379', 10);
       console.error(
-        `📊 Redis Connection: ${configService.get<string>('REDIS_HOST', 'localhost')}:${configService.get<number>('REDIS_PORT', 6379)}`
+        `📊 ${useDragonfly ? 'Dragonfly' : 'Redis'} Connection: ${cacheHost}:${cachePort}`
       );
     }
 

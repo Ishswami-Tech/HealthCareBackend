@@ -17,6 +17,7 @@ resources:
   - worker-deployment.yaml
   - postgres-statefulset.yaml
   - redis-cluster.yaml
+  - dragonfly-deployment.yaml
   - init-job.yaml
   - ingress.yaml
   - pdb.yaml

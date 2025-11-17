@@ -99,11 +99,17 @@ export class LoggingService {
   // Cache system user to avoid querying database on every log (prevents connection pool exhaustion)
   private cachedSystemUser: { id: string } | null = null;
   private systemUserCacheTime = 0;
+  private systemUserCacheInitialized = false;
+  private disableSystemUserLookup = false;
+  private readonly configuredSystemUserId: string | null;
   private readonly systemUserCacheTTL = 3600000; // 1 hour cache
+  private readonly systemUserNegativeCacheTTL = 300000; // 5 minutes when missing
   // Flag to disable database logging when connection pool is exhausted
   private isDatabaseLoggingDisabled = false;
   // Mutex to prevent concurrent system user queries (race condition protection)
   private systemUserQueryPromise: Promise<{ id: string } | null> | null = null;
+  private static globalSystemUserLookupDisabled = false;
+  private static systemUserWarningLogged = false;
 
   constructor(
     @Optional()
@@ -113,6 +119,26 @@ export class LoggingService {
     private readonly redisService?: RedisService
   ) {
     this.serviceName = process.env['SERVICE_NAME'] || 'healthcare';
+    this.configuredSystemUserId =
+      process.env['LOGGING_SYSTEM_USER_ID'] ||
+      process.env['SYSTEM_USER_ID'] ||
+      null;
+    const disableLookupEnv =
+      process.env['LOGGING_DISABLE_SYSTEM_USER_LOOKUP'] === 'true' ||
+      process.env['DISABLE_SYSTEM_USER_LOOKUP'] === 'true' ||
+      (process.env['NODE_ENV'] !== 'production' &&
+        process.env['LOGGING_DISABLE_SYSTEM_USER_LOOKUP'] !== 'false');
+
+    if (disableLookupEnv) {
+      LoggingService.globalSystemUserLookupDisabled = true;
+      LoggingService.systemUserWarningLogged = true;
+      this.disableSystemUserLookup = true;
+      LoggingService.systemUserWarningLogged = true;
+    }
+
+    if (LoggingService.globalSystemUserLookupDisabled) {
+      this.disableSystemUserLookup = true;
+    }
     this.initMetricsBuffering();
   }
 
@@ -126,10 +152,34 @@ export class LoggingService {
       return null;
     }
 
-    const now = Date.now();
-    // Return cached user if still valid (CRITICAL: Check cache first to avoid unnecessary queries)
-    if (this.cachedSystemUser && now - this.systemUserCacheTime < this.systemUserCacheTTL) {
+    if (LoggingService.globalSystemUserLookupDisabled || this.disableSystemUserLookup) {
+      return null;
+    }
+
+    if (this.configuredSystemUserId) {
+      if (
+        !this.cachedSystemUser ||
+        this.cachedSystemUser.id !== this.configuredSystemUserId ||
+        !this.systemUserCacheInitialized
+      ) {
+        this.cachedSystemUser = { id: this.configuredSystemUserId };
+        this.systemUserCacheTime = Date.now();
+        this.systemUserCacheInitialized = true;
+      }
       return this.cachedSystemUser;
+    }
+
+    if (this.disableSystemUserLookup) {
+      return null;
+    }
+
+    const now = Date.now();
+    if (this.systemUserCacheInitialized) {
+      const ttl =
+        this.cachedSystemUser !== null ? this.systemUserCacheTTL : this.systemUserNegativeCacheTTL;
+      if (now - this.systemUserCacheTime < ttl) {
+      return this.cachedSystemUser;
+      }
     }
 
     // CRITICAL: If database logging is disabled, don't try to fetch (prevents loops)
@@ -148,44 +198,21 @@ export class LoggingService {
     this.systemUserQueryPromise = (async (): Promise<{ id: string } | null> => {
       try {
         // Double-check cache after acquiring mutex (another thread might have set it)
-        if (
-          this.cachedSystemUser &&
-          Date.now() - this.systemUserCacheTime < this.systemUserCacheTTL
-        ) {
+        if (this.systemUserCacheInitialized) {
+          const ttl =
+            this.cachedSystemUser !== null
+              ? this.systemUserCacheTTL
+              : this.systemUserNegativeCacheTTL;
+          if (Date.now() - this.systemUserCacheTime < ttl) {
           return this.cachedSystemUser;
         }
-
-        // Cache expired or not set - fetch from database with timeout
+        }
         if (!this.databaseService) {
           return null;
         }
         const systemUser = (await Promise.race([
-          this.databaseService.executeHealthcareRead(async client => {
-            // Use findUnique if email is unique, otherwise findFirst
-            const userDelegate = client['user'] as {
-              findUnique?: (args: {
-                where: { email: string };
-                select?: { id: boolean };
-              }) => Promise<{ id: string } | null>;
-              findFirst: (args: {
-                where: { email: string };
-                select?: { id: boolean };
-              }) => Promise<{ id: string } | null>;
-            };
-
-            // Prefer findUnique for better performance (uses unique index)
-            if (userDelegate.findUnique) {
-              return (await userDelegate.findUnique({
-                where: { email: 'system@healthcare.local' },
-                select: { id: true }, // Only select id to minimize data transfer
-              })) as unknown as { id: string } | null;
-            }
-
-            // Fallback to findFirst if findUnique is not available
-            return (await userDelegate.findFirst({
-              where: { email: 'system@healthcare.local' },
-              select: { id: true }, // Only select id to minimize data transfer
-            })) as unknown as { id: string } | null;
+          this.databaseService.findUserByEmailSafe('system@healthcare.local').then(user => {
+            return user ? { id: user.id } : null;
           }),
           new Promise<null>((_, reject) => {
             setTimeout(() => {
@@ -194,18 +221,23 @@ export class LoggingService {
           }),
         ])) as { id: string } | null;
 
-        if (systemUser) {
           this.cachedSystemUser = systemUser;
           this.systemUserCacheTime = Date.now();
-        } else {
-          // System user doesn't exist - cache null result for 5 minutes to prevent repeated queries
-          // This prevents infinite queries when system user is missing
-          this.cachedSystemUser = null;
-          this.systemUserCacheTime = Date.now() - (this.systemUserCacheTTL - 300000); // Cache null for 5 minutes
+        this.systemUserCacheInitialized = true;
+
+        if (!systemUser) {
+          this.disableSystemUserLookup = true;
+          LoggingService.globalSystemUserLookupDisabled = true;
+          if (!LoggingService.systemUserWarningLogged) {
+            LoggingService.systemUserWarningLogged = true;
+            console.warn(
+              '[LoggingService] System user account not found; audit DB logging disabled.'
+            );
+          }
         }
+
         return systemUser;
       } catch (error) {
-        // If fetch fails, disable database logging to prevent loops
         const errorMessage = error instanceof Error ? error.message : String(error);
         if (
           errorMessage.includes('timeout') ||
@@ -214,18 +246,18 @@ export class LoggingService {
           errorMessage.includes('connection')
         ) {
           this.isDatabaseLoggingDisabled = true;
-          // Re-enable after 5 minutes
           setTimeout(() => {
             this.isDatabaseLoggingDisabled = false;
           }, 300000);
         }
-        // Return cached user if available (stale is better than nothing)
-        if (this.cachedSystemUser) {
-          return this.cachedSystemUser;
-        }
+        // Cache null to avoid tight retry loops
+        this.cachedSystemUser = null;
+        this.systemUserCacheTime = Date.now();
+        this.systemUserCacheInitialized = true;
+        this.disableSystemUserLookup = true;
+        LoggingService.globalSystemUserLookupDisabled = true;
         return null;
       } finally {
-        // Clear the mutex after query completes (success or failure)
         this.systemUserQueryPromise = null;
       }
     })();
@@ -346,9 +378,8 @@ export class LoggingService {
                 await Promise.race([
                   this.databaseService.executeHealthcareWrite(
                     async client => {
-                      const auditLog = client['auditLog'] as {
-                        create: (args: { data: unknown }) => Promise<{ id: string }>;
-                      };
+                      // Access auditLog delegate using dot notation for consistency
+                      const auditLog = (client as { auditLog: { create: (args: { data: unknown }) => Promise<{ id: string }> } }).auditLog;
                       return (await auditLog.create({
                         data: {
                           userId: systemUser.id,
@@ -542,20 +573,8 @@ export class LoggingService {
       // Temporarily bypass database query due to schema migration issues
       try {
         const dbLogs = (await this.databaseService.executeHealthcareRead(async client => {
-          const auditLog = client['auditLog'] as {
-            findMany: (args: unknown) => Promise<
-              Array<{
-                id: string;
-                action: string;
-                description: string;
-                timestamp: Date;
-                userId: string;
-                ipAddress: string | null;
-                device: string | null;
-                clinicId: string | null;
-              }>
-            >;
-          };
+          // Access auditLog delegate using dot notation for consistency
+          const auditLog = (client as { auditLog: { findMany: (args: unknown) => Promise<Array<{ id: string; action: string; description: string; timestamp: Date; userId: string; ipAddress: string | null; device: string | null; clinicId: string | null }>> } }).auditLog;
           return (await auditLog.findMany({
             where: whereClause as PrismaDelegateArgs,
             orderBy: {

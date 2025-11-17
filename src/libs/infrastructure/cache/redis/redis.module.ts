@@ -23,11 +23,23 @@ export class RedisModule implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    // Explicitly trigger RedisService.onModuleInit by calling it
-    // This ensures the connection is established even if NestJS lifecycle hooks
-    // don't fire in the expected order
-    if (this.redisService && typeof (this.redisService as { onModuleInit?: () => Promise<void> }).onModuleInit === 'function') {
-      await (this.redisService as { onModuleInit: () => Promise<void> }).onModuleInit();
+    // Only initialize RedisService if Redis is the selected cache provider
+    // This prevents unnecessary connections when using Dragonfly or other providers
+    const cacheProvider =
+      process.env['CACHE_PROVIDER']?.toLowerCase() || 'dragonfly'; // Default to Dragonfly
+
+    if (cacheProvider === 'redis') {
+      // Explicitly trigger RedisService.onModuleInit by calling it
+      // This ensures the connection is established even if NestJS lifecycle hooks
+      // don't fire in the expected order
+      if (
+        this.redisService &&
+        typeof (this.redisService as { onModuleInit?: () => Promise<void> }).onModuleInit ===
+          'function'
+      ) {
+        await (this.redisService as { onModuleInit: () => Promise<void> }).onModuleInit();
+      }
     }
+    // If not using Redis, skip initialization to avoid unnecessary connections
   }
 }

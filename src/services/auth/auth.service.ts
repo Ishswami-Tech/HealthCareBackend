@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config';
 import { DatabaseService } from '@infrastructure/database';
@@ -36,7 +36,7 @@ export class AuthService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
+    @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly logging: LoggingService,
     private readonly eventService: EventService,
@@ -45,7 +45,12 @@ export class AuthService {
     private readonly sessionService: SessionManagementService,
     private readonly rbacService: RbacService,
     private readonly jwtAuthService: JwtAuthService
-  ) {}
+  ) {
+    // Defensive check: ensure configService is available
+    if (!this.configService) {
+      console.error('[AuthService] ConfigService is not injected!');
+    }
+  }
 
   // Comprehensive type-safe database operations
   async findUserByIdSafe(id: string) {
@@ -211,7 +216,6 @@ export class AuthService {
         ...(registerDto.role && { role: registerDto.role }),
         ...(registerDto.clinicId && { primaryClinicId: registerDto.clinicId }),
         ...(registerDto.googleId && { googleId: registerDto.googleId }),
-        isActive: true,
         isVerified: false,
       };
 
@@ -354,7 +358,7 @@ export class AuthService {
 
       // Update last login
       await this.databaseService.updateUserSafe(user.id, {
-        lastLoginAt: new Date(),
+        lastLogin: new Date(),
       });
 
       // Emit user login event
@@ -435,12 +439,41 @@ export class AuthService {
    */
   async logout(sessionId: string): Promise<{ success: boolean; message: string }> {
     try {
-      await this.sessionService.invalidateSession(sessionId);
+      // Try to invalidate session, but don't fail if cache is unavailable
+      try {
+        await this.sessionService.invalidateSession(sessionId);
+      } catch (sessionError) {
+        // Log but don't fail - session invalidation is best effort
+        await this.logging.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Session invalidation failed (non-critical): ${sessionId}`,
+          'AuthService.logout',
+          {
+            sessionId,
+            error: sessionError instanceof Error ? sessionError.message : String(sessionError),
+          }
+        );
+      }
 
-      // Emit user logout event
-      await this.eventService.emit('user.logged_out', {
-        sessionId,
-      });
+      // Try to emit logout event, but don't fail if event service is unavailable
+      try {
+        await this.eventService.emit('user.logged_out', {
+          sessionId,
+        });
+      } catch (eventError) {
+        // Log but don't fail - event emission is best effort
+        await this.logging.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Logout event emission failed (non-critical): ${sessionId}`,
+          'AuthService.logout',
+          {
+            sessionId,
+            error: eventError instanceof Error ? eventError.message : String(eventError),
+          }
+        );
+      }
 
       await this.logging.log(
         LogType.AUDIT,
@@ -504,7 +537,7 @@ export class AuthService {
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.get<string>('FRONTEND_URL')}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService?.get<string>('FRONTEND_URL') || process.env['FRONTEND_URL'] || 'http://localhost:3000'}/reset-password?token=${resetToken}`,
         },
       });
 
@@ -796,7 +829,7 @@ export class AuthService {
 
       // Update last login
       await this.databaseService.updateUserSafe(user.id, {
-        lastLoginAt: new Date(),
+        lastLogin: new Date(),
       });
 
       // Emit OTP login event

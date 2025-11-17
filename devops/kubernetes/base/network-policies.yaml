@@ -82,7 +82,16 @@ spec:
     ports:
     - protocol: TCP
       port: 5432
-  # Allow API to access Redis
+  # Allow API to access Dragonfly (default cache provider)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: dragonfly
+    ports:
+    - protocol: TCP
+      port: 6379
+  
+  # Allow API to access Redis (fallback/queue provider)
   - to:
     - podSelector:
         matchLabels:
@@ -192,6 +201,30 @@ spec:
     ports:
     - protocol: UDP
       port: 53
+
+# Dragonfly - Only allow API and Worker pods to connect
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: healthcare-backend
+  name: dragonfly-allow-api
+spec:
+  podSelector:
+    matchLabels:
+      app: dragonfly
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: healthcare-api
+    - podSelector:
+        matchLabels:
+          app: healthcare-worker
+    ports:
+    - protocol: TCP
+      port: 6379
 
 # Redis - Only allow API pods to connect
 apiVersion: networking.k8s.io/v1

@@ -1,7 +1,6 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@config';
-import { APP_INTERCEPTOR } from '@nestjs/core';
 
 // Core modules
 import { DatabaseModule } from '@infrastructure/database';
@@ -12,9 +11,6 @@ import { SessionModule } from '@core/session/session.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { EmailModule } from '@communication/channels/email/email.module';
 import { LoggingModule } from '@infrastructure/logging';
-
-// Cache interceptor
-import { HealthcareCacheInterceptor } from '@infrastructure/cache/interceptors/healthcare-cache.interceptor';
 
 // Auth services
 import { AuthService } from './auth.service';
@@ -31,12 +27,13 @@ import { SignOptions } from 'jsonwebtoken';
 
 @Module({
   imports: [
+    ConfigModule, // Ensure ConfigModule is imported for ConfigService availability
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService): JwtModuleOptions => {
-        const expiresIn: string = configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
+        const expiresIn: string = configService?.get<string>('JWT_ACCESS_EXPIRES_IN', process.env['JWT_ACCESS_EXPIRES_IN'] || '24h') || '24h';
         return {
-          secret: configService.get<string>('JWT_SECRET') || 'default-secret',
+          secret: configService?.get<string>('JWT_SECRET', process.env['JWT_SECRET'] || 'dev-jwt-secret-key') || 'dev-jwt-secret-key',
           signOptions: {
             expiresIn: expiresIn as SignOptions['expiresIn'],
           } as SignOptions,
@@ -63,12 +60,8 @@ import { SignOptions } from 'jsonwebtoken';
     OtpService,
     PasswordService,
     SocialAuthService,
-
-    // Healthcare cache interceptor
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: HealthcareCacheInterceptor,
-    },
+    // Note: HealthcareCacheInterceptor is provided globally by CacheModule
+    // No need to register it here to avoid duplicate instances
   ],
   exports: [AuthService, JwtAuthService, OtpService, PasswordService, SocialAuthService],
 })
