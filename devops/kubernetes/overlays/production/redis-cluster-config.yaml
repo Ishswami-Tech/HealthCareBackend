@@ -23,7 +23,7 @@ data:
     # Limits
     maxclients 20000
     maxmemory 4gb
-    maxmemory-policy allkeys-lru
+    maxmemory-policy noeviction
     # AOF
     appendonly yes
     appendfilename "appendonly.aof"

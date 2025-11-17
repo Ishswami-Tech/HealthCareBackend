@@ -1,6 +1,6 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
@@ -47,9 +47,9 @@ export class SessionManagementService implements OnModuleInit {
   private config!: SessionConfig;
 
   constructor(
-    private readonly redis: RedisService,
+    private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly configService: ConfigService,
+    @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService
   ) {}
@@ -100,9 +100,12 @@ export class SessionManagementService implements OnModuleInit {
    * @returns Created session data
    */
   async createSession(createSessionDto: CreateSessionDto): Promise<SessionData> {
+    // Ensure config is initialized - use default if not ready
+    const sessionTimeout = this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+    
     const sessionId = this.generateSessionId();
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + this.config.sessionTimeout * 1000);
+    const expiresAt = new Date(now.getTime() + sessionTimeout * 1000);
 
     const sessionData: SessionData = {
       sessionId,
@@ -171,7 +174,7 @@ export class SessionManagementService implements OnModuleInit {
   async getSession(sessionId: string): Promise<SessionData | null> {
     try {
       const sessionKey = this.getSessionKey(sessionId);
-      const sessionData = await this.redis.get<SessionData>(sessionKey);
+      const sessionData = await this.cacheService.get<SessionData>(sessionKey);
 
       if (!sessionData) {
         return null;
@@ -224,8 +227,10 @@ export class SessionManagementService implements OnModuleInit {
       session.lastActivity = now;
 
       // Extend session if configured
-      if (this.config.extendOnActivity) {
-        session.expiresAt = new Date(now.getTime() + this.config.sessionTimeout * 1000);
+      const extendOnActivity = this.config?.extendOnActivity ?? process.env['SESSION_EXTEND_ON_ACTIVITY'] !== 'false';
+      if (extendOnActivity) {
+        const sessionTimeout = this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+        session.expiresAt = new Date(now.getTime() + sessionTimeout * 1000);
       }
 
       if (metadata) {
@@ -277,12 +282,12 @@ export class SessionManagementService implements OnModuleInit {
         Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000)
       );
       if (ttl > 0) {
-        await this.redis.set(blacklistKey, '1', ttl);
+        await this.cacheService.set(blacklistKey, '1', ttl);
       }
 
       // Remove from session storage
       const sessionKey = this.getSessionKey(sessionId);
-      await this.redis.del(sessionKey);
+      await this.cacheService.del(sessionKey);
 
       // Remove from user sessions index
       await this.removeUserSession(session.userId, sessionId);
@@ -377,7 +382,7 @@ export class SessionManagementService implements OnModuleInit {
   async getUserSessions(userId: string): Promise<SessionData[]> {
     try {
       const userSessionsKey = `${this.USER_SESSIONS_PREFIX}${userId}`;
-      const sessionIds = await this.redis.sMembers(userSessionsKey);
+      const sessionIds = await this.cacheService.sMembers(userSessionsKey);
 
       if (!sessionIds || sessionIds.length === 0) {
         return [];
@@ -507,7 +512,8 @@ export class SessionManagementService implements OnModuleInit {
    * @returns Redis key string
    */
   private getSessionKey(sessionId: string): string {
-    if (this.config.distributed) {
+    const distributed = this.config?.distributed ?? process.env['SESSION_DISTRIBUTED'] !== 'false';
+    if (distributed) {
       const partition = this.getPartition(sessionId);
       return `${this.SESSION_PREFIX}${partition}:${sessionId}`;
     }
@@ -522,7 +528,8 @@ export class SessionManagementService implements OnModuleInit {
   private getPartition(sessionId: string): number {
     const hash = crypto.createHash('md5').update(sessionId).digest('hex');
     const hashInt = parseInt(hash.substring(0, 8), 16);
-    return hashInt % this.config.partitions;
+    const partitions = this.config?.partitions || parseInt(process.env['SESSION_PARTITIONS'] || '16', 10);
+    return hashInt % partitions;
   }
 
   /**
@@ -537,7 +544,7 @@ export class SessionManagementService implements OnModuleInit {
     );
 
     if (ttl > 0) {
-      await this.redis.set(sessionKey, sessionData, ttl);
+      await this.cacheService.set(sessionKey, sessionData, ttl);
     }
   }
 
@@ -548,9 +555,10 @@ export class SessionManagementService implements OnModuleInit {
    */
   private async addUserSession(userId: string, sessionId: string): Promise<void> {
     const userSessionsKey = `${this.USER_SESSIONS_PREFIX}${userId}`;
-    await this.redis.sAdd(userSessionsKey, sessionId);
+    await this.cacheService.sAdd(userSessionsKey, sessionId);
     // Set TTL on the set (max session timeout * 2 to account for cleanup)
-    await this.redis.expire(userSessionsKey, this.config.sessionTimeout * 2);
+    const sessionTimeout = this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+    await this.cacheService.expire(userSessionsKey, sessionTimeout * 2);
   }
 
   /**
@@ -560,7 +568,7 @@ export class SessionManagementService implements OnModuleInit {
    */
   private async removeUserSession(userId: string, sessionId: string): Promise<void> {
     const userSessionsKey = `${this.USER_SESSIONS_PREFIX}${userId}`;
-    await this.redis.sRem(userSessionsKey, sessionId);
+    await this.cacheService.sRem(userSessionsKey, sessionId);
   }
 
   /**
@@ -570,8 +578,9 @@ export class SessionManagementService implements OnModuleInit {
    */
   private async addClinicSession(clinicId: string, sessionId: string): Promise<void> {
     const clinicSessionsKey = `${this.CLINIC_SESSIONS_PREFIX}${clinicId}`;
-    await this.redis.sAdd(clinicSessionsKey, sessionId);
-    await this.redis.expire(clinicSessionsKey, this.config.sessionTimeout * 2);
+    await this.cacheService.sAdd(clinicSessionsKey, sessionId);
+    const sessionTimeout = this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+    await this.cacheService.expire(clinicSessionsKey, sessionTimeout * 2);
   }
 
   /**
@@ -581,7 +590,7 @@ export class SessionManagementService implements OnModuleInit {
    */
   private async removeClinicSession(clinicId: string, sessionId: string): Promise<void> {
     const clinicSessionsKey = `${this.CLINIC_SESSIONS_PREFIX}${clinicId}`;
-    await this.redis.sRem(clinicSessionsKey, sessionId);
+    await this.cacheService.sRem(clinicSessionsKey, sessionId);
   }
 
   /**
@@ -591,7 +600,7 @@ export class SessionManagementService implements OnModuleInit {
    */
   private async isSessionBlacklisted(sessionId: string): Promise<boolean> {
     const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
-    const value = await this.redis.get(blacklistKey);
+      const value = await this.cacheService.get(blacklistKey);
     return value !== null;
   }
 
@@ -602,14 +611,15 @@ export class SessionManagementService implements OnModuleInit {
   private async enforceSessionLimits(userId: string): Promise<void> {
     const sessions = await this.getUserSessions(userId);
 
-    if (sessions.length >= this.config.maxSessionsPerUser) {
+    const maxSessionsPerUser = this.config?.maxSessionsPerUser || parseInt(process.env['SESSION_MAX_PER_USER'] || '10', 10);
+    if (sessions.length >= maxSessionsPerUser) {
       // Sort by lastActivity (oldest first)
       sessions.sort((a, b) => a.lastActivity.getTime() - b.lastActivity.getTime());
 
       // Remove oldest sessions
       const sessionsToRemove = sessions.slice(
         0,
-        sessions.length - this.config.maxSessionsPerUser + 1
+        sessions.length - maxSessionsPerUser + 1
       );
 
       for (const session of sessionsToRemove) {

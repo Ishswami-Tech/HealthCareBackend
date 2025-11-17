@@ -118,14 +118,29 @@ import { CommunicationModule } from '@communication/communication.module';
     // TODO: Migrate appointment services to use BullMQ and standard queue constants from @infrastructure/queue
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService) => {
+        // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
+        const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+        const useDragonfly = cacheProvider === 'dragonfly';
+        
+        const cacheHost = useDragonfly
+          ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
+          : (process.env['REDIS_HOST'] || 'localhost');
+        const cachePort = useDragonfly
+          ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+          : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+        const cachePassword = useDragonfly
+          ? process.env['DRAGONFLY_PASSWORD']
+          : process.env['REDIS_PASSWORD'];
+        
+        return {
         redis: {
-          host: configService.get<string>('REDIS_HOST') || 'localhost',
-          port: configService.get<number>('REDIS_PORT') || 6379,
-          ...(configService.get<string>('REDIS_PASSWORD')?.trim() && {
-            password: configService.get<string>('REDIS_PASSWORD')?.trim(),
+            host: cacheHost,
+            port: cachePort,
+            ...(cachePassword?.trim() && {
+              password: cachePassword.trim(),
           }),
-          db: configService.get<number>('REDIS_DB', 0),
+            db: parseInt(process.env['REDIS_DB'] || '0', 10),
         },
         defaultJobOptions: {
           removeOnComplete: 1000,
@@ -137,7 +152,8 @@ import { CommunicationModule } from '@communication/communication.module';
           stalledInterval: 30000,
           maxStalledCount: 1,
         },
-      }),
+        };
+      },
       inject: [ConfigService],
     }),
     BullModule.registerQueue(

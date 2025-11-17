@@ -42,19 +42,33 @@ spec:
             secretKeyRef:
               name: healthcare-secrets
               key: postgres-password
-      # Wait for Redis to be ready
+      # Wait for Dragonfly to be ready (default cache provider)
+      - name: wait-for-dragonfly
+        image: redis:7-alpine
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for Dragonfly to be ready..."
+            until redis-cli -h dragonfly -p 6379 ping | grep -q PONG; do
+              echo "Dragonfly is not ready yet. Waiting..."
+              sleep 2
+            done
+            echo "Dragonfly is ready!"
+      
+      # Wait for Redis to be ready (fallback/queue provider)
       - name: wait-for-redis
         image: redis:7-alpine
         command:
-        - sh
-        - -c
-        - |
-          echo "Waiting for Redis to be ready..."
-          until redis-cli -h redis ping | grep -q PONG; do
-            echo "Redis is not ready yet. Waiting..."
-            sleep 2
-          done
-          echo "Redis is ready!"
+          - sh
+          - -c
+          - |
+            echo "Waiting for Redis to be ready..."
+            until redis-cli -h redis ping | grep -q PONG; do
+              echo "Redis is not ready yet. Waiting..."
+              sleep 2
+            done
+            echo "Redis is ready!"
       containers:
       - name: migration
         image: your-registry/healthcare-api:latest

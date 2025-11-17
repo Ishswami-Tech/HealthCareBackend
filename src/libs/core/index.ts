@@ -27,6 +27,9 @@ export * from './decorators/roles.decorator';
 // Filters
 export * from './filters/http-exception.filter';
 
+// Interceptors
+export * from './interceptors';
+
 // Guards
 export { ClinicGuard } from './guards/clinic.guard';
 export * from './guards/guards.module';

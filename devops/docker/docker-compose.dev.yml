@@ -24,13 +24,22 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=20
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
-      # Redis Configuration
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: 0
-      REDIS_TTL: 3600
-      REDIS_PREFIX: "healthcare:"
-      REDIS_ENABLED: "true"
+      # Cache Provider Configuration (Dragonfly is default)
+      CACHE_PROVIDER: dragonfly
+      
+      # Redis Configuration (for Redis provider) - Commented out, using Dragonfly
+      # REDIS_HOST: redis
+      # REDIS_PORT: 6379
+      # REDIS_DB: 0
+      # REDIS_TTL: 3600
+      # REDIS_PREFIX: "healthcare:"
+      # REDIS_ENABLED: "true"
+      
+      # Dragonfly Configuration (default provider - using instead of Redis)
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_KEY_PREFIX: "healthcare:"
       
       # JWT Configuration
       JWT_SECRET: dev-jwt-secret-key-change-in-production
@@ -88,8 +97,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      dragonfly:
         condition: service_healthy
+      # redis:
+      #   condition: service_healthy
     networks:
       - healthcare-network
     restart: unless-stopped
@@ -118,6 +129,30 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=4MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c max_worker_processes=4
+      -c max_parallel_workers_per_gather=2
+      -c max_parallel_workers=4
+      -c max_parallel_maintenance_workers=2
+      -c idle_in_transaction_session_timeout=30000
+      -c statement_timeout=30000
+      -c lock_timeout=10000
+      -c listen_addresses='*'
+      -c log_connections=on
+      -c log_disconnections=on
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -129,22 +164,53 @@ services:
       retries: 10
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    container_name: healthcare-redis
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: healthcare-dragonfly
     ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
+      - "6380:6379"
+    command: >
+      --alsologtostderr
+      --cache_mode=false
+      --maxmemory=2gb
+      --proactor_threads=4
     volumes:
-      - redis_data:/data
+      - dragonfly_data:/data
     networks:
       - healthcare-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  # Redis - Commented out, using Dragonfly instead
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: healthcare-redis
+  #   ports:
+  #     - "6379:6379"
+  #   command: redis-server --appendonly yes
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - healthcare-network
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
 
   redis-commander:
     image: ghcr.io/joeferner/redis-commander:latest
@@ -152,12 +218,14 @@ services:
     ports:
       - "8082:8081"
     environment:
-      - REDIS_HOSTS=local:redis:6379
+      - REDIS_HOSTS=dragonfly:dragonfly:6379
       - HTTP_USER=admin
       - HTTP_PASSWORD=admin
     depends_on:
-      redis:
+      dragonfly:
         condition: service_healthy
+      # redis:
+      #   condition: service_healthy
     networks:
       - healthcare-network
     restart: unless-stopped
@@ -183,6 +251,8 @@ services:
 volumes:
   postgres_data:
     name: healthcare_postgres_data
+  dragonfly_data:
+    name: healthcare_dragonfly_data
   redis_data:
     name: healthcare_redis_data
   pgadmin_data:

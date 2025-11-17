@@ -165,7 +165,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         complianceLevel: 'HIPAA',
         connectionTimeout: 30000,
         queryTimeout: 15000,
-        maxConnections: 500, // Optimized for 10M+ users (increased from 50)
+        maxConnections: 50, // Reduced to prevent connection pool exhaustion (matches connection_limit in DATABASE_URL)
         healthCheckInterval: 30000,
       } as HealthcareDatabaseConfig;
     }
@@ -546,11 +546,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         return await this.executeHealthcareRead<UserWithRelations | null>(async client => {
           // Use the client directly instead of calling prismaService.findUserByEmailSafe again
           // This avoids recursive calls and connection pool exhaustion
-          const userDelegate = (
-            client as unknown as {
-              user: { findUnique: (args: unknown) => Promise<UserWithRelations | null> };
-            }
-          )['user'];
+          // Access user delegate using dot notation - PrismaTransactionClient has user as a property
+          const userDelegate = (client as { user: { findUnique: (args: { where: { email: string }; include?: Record<string, unknown> }) => Promise<UserWithRelations | null> } }).user;
 
           // For 10M users: Only load relations if explicitly requested
           // Following .ai-rules: Use select to limit fields, use include with select for relations
@@ -562,8 +559,15 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
                 select: {
                   id: true,
                   userId: true,
-                  clinicId: true,
+                  specialization: true,
                   createdAt: true,
+                  // Include clinicId through DoctorClinic junction table
+                  clinics: {
+                    select: {
+                      clinicId: true,
+                    },
+                    take: 1, // Get first clinic (primary clinic)
+                  },
                 },
               };
             }
@@ -613,8 +617,15 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
               select: {
                 id: true,
                 userId: true,
-                clinicId: true,
+                specialization: true,
                 createdAt: true,
+                // Include clinicId through DoctorClinic junction table
+                clinics: {
+                  select: {
+                    clinicId: true,
+                  },
+                  take: 1, // Get first clinic (primary clinic)
+                },
               },
             };
             include['patient'] = {
@@ -717,8 +728,15 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
                 select: {
                   id: true,
                   userId: true,
-                  clinicId: true,
+                  specialization: true,
                   createdAt: true,
+                  // Include clinicId through DoctorClinic junction table
+                  clinics: {
+                    select: {
+                      clinicId: true,
+                    },
+                    take: 1, // Get first clinic (primary clinic)
+                  },
                 },
               };
             }
@@ -791,22 +809,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {
-    const result = await this.executeHealthcareWrite<UserWithRelations>(
-      async _client => {
+    // Use PrismaService directly outside transaction for now
+    // The transaction is handled at a higher level if needed
         const prismaService = this.getInternalPrismaClient();
         const result = await prismaService.createUserSafe(data);
-        return result;
-      },
-      {
-        userId: 'system',
-        userRole: 'system',
-        clinicId: '',
-        operation: 'CREATE_USER',
-        resourceType: 'USER',
-        resourceId: 'pending',
-        timestamp: new Date(),
-      }
-    );
 
     // Invalidate cache after creation
     if (result?.id) {
@@ -821,22 +827,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async updateUserSafe(id: string, data: UserUpdateInput): Promise<UserWithRelations> {
-    const result = await this.executeHealthcareWrite<UserWithRelations>(
-      async _client => {
+    // Call prismaService.updateUserSafe directly (not wrapped in executeHealthcareWrite)
+    // to avoid transaction client issues similar to createUserSafe
         const prismaService = this.getInternalPrismaClient();
         const result = await prismaService.updateUserSafe(id, data);
-        return result;
-      },
-      {
-        userId: 'system',
-        userRole: 'system',
-        clinicId: '',
-        operation: 'UPDATE_USER',
-        resourceType: 'USER',
-        resourceId: id,
-        timestamp: new Date(),
-      }
-    );
 
     // Invalidate cache after update
     await this.invalidateCache([`user:${id}`, 'users']);

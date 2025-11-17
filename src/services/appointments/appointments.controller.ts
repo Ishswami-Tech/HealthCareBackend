@@ -42,11 +42,7 @@ import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
-import {
-  Cache,
-  PatientCache,
-  InvalidatePatientCache,
-} from '@infrastructure/cache/decorators/cache.decorator';
+import { Cache, PatientCache, InvalidatePatientCache } from '@core/decorators';
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,

@@ -29,7 +29,7 @@ export type UserCreateInput = {
   profilePicture?: string;
   isActive?: boolean;
   isVerified?: boolean;
-  lastLoginAt?: Date;
+  lastLogin?: Date;
   role?: string;
   primaryClinicId?: string;
   googleId?: string;
@@ -55,7 +55,7 @@ export type UserUpdateInput = {
   profilePicture?: string;
   isActive?: boolean;
   isVerified?: boolean;
-  lastLoginAt?: Date;
+  lastLogin?: Date;
   role?: string;
   primaryClinicId?: string;
 };

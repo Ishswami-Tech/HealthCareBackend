@@ -30,10 +30,7 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { RbacService } from '@core/rbac/rbac.service';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
-import {
-  PatientCache,
-  InvalidatePatientCache,
-} from '@infrastructure/cache/decorators/cache.decorator';
+import { PatientCache, InvalidatePatientCache } from '@core/decorators';
 
 @ApiTags('user')
 @Controller('user')

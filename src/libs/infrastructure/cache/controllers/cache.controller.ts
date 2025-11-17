@@ -16,7 +16,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 
 // Internal imports - Core
@@ -33,14 +33,15 @@ import {
 } from '@core/types';
 
 /**
- * Controller for Redis cache management and monitoring.
+ * Controller for cache management and monitoring.
+ * Provider-agnostic: works with Redis, Dragonfly, or any cache provider.
  * Provides consolidated endpoints for cache operations with improved performance.
  */
 @ApiTags('cache')
 @Controller('cache')
 export class CacheController {
   constructor(
-    private readonly redis: RedisService,
+    private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {}
 
@@ -151,9 +152,9 @@ export class CacheController {
         { includeDebug }
       );
 
-      const [isHealthy, pingTime] = await this.redis.getHealthStatus();
-      const metrics = await this.redis.getCacheMetrics();
-      const stats = await this.redis.getCacheStats();
+      const [isHealthy, pingTime] = await this.cacheService.getHealthStatus();
+      const metrics = await this.cacheService.getCacheMetricsAsync();
+      const stats = await this.cacheService.getCacheStats();
 
       const response: {
         health: { status: string; ping: number };
@@ -170,7 +171,7 @@ export class CacheController {
       };
 
       if (includeDebug) {
-        response.debug = await this.redis.getCacheDebug();
+        response.debug = (await this.cacheService.getCacheDebug()) as Record<string, unknown>;
       }
 
       await this.loggingService.log(
@@ -268,11 +269,11 @@ export class CacheController {
       );
 
       const clearedCount = pattern
-        ? await this.redis.clearCache(pattern)
-        : await this.redis.clearAllCache();
+        ? await this.cacheService.clearCache(pattern)
+        : await this.cacheService.clearAllCache();
 
       if (resetStats) {
-        await this.redis.resetCacheStats();
+        await this.cacheService.resetCacheStats();
       }
 
       await this.loggingService.log(
@@ -379,7 +380,7 @@ export class CacheController {
       // Update rate limits if provided
       if (config.rateLimits) {
         for (const [type, limits] of Object.entries(config.rateLimits)) {
-          await this.redis.updateRateLimits(type, limits);
+          await this.cacheService.updateRateLimits(type, limits);
         }
       }
 
@@ -397,7 +398,7 @@ export class CacheController {
         success: true,
         message: 'Cache configuration updated',
         config: {
-          rateLimits: this.redis.getRateLimitConfig(),
+          rateLimits: this.cacheService.getRateLimitConfig(),
           // Other config properties would be returned here
         },
       };
@@ -497,21 +498,21 @@ export class CacheController {
       // Benchmark SET operations
       const setStart = Date.now();
       for (let i = 0; i < operations; i++) {
-        await this.redis.set(`benchmark:${i}`, payload, 60);
+        await this.cacheService.set(`benchmark:${i}`, payload, 60);
       }
       const setDuration = Date.now() - setStart;
 
       // Benchmark GET operations
       const getStart = Date.now();
       for (let i = 0; i < operations; i++) {
-        await this.redis.get(`benchmark:${i}`);
+        await this.cacheService.get(`benchmark:${i}`);
       }
       const getDuration = Date.now() - getStart;
 
       // Benchmark DEL operations
       const delStart = Date.now();
       for (let i = 0; i < operations; i++) {
-        await this.redis.del(`benchmark:${i}`);
+        await this.cacheService.del(`benchmark:${i}`);
       }
       const delDuration = Date.now() - delStart;
 

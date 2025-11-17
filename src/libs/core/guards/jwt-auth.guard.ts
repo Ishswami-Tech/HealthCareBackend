@@ -96,6 +96,33 @@ export class JwtAuthGuard implements CanActivate {
   private readonly SECURITY_EVENT_RETENTION = 30 * 24 * 60 * 60;
 
   /**
+   * Public routes that should bypass authentication exactly as-is
+   */
+  private readonly publicExactPaths = new Set<string>([
+    '/',
+    '/health',
+    '/health/check',
+    '/api/v1/health',
+    '/api/v1/health/test',
+    '/api/v1/health/detailed',
+    '/api/v1/health/service-status',
+    '/api/v1/health/metrics',
+    '/api/v1/health/summary',
+    '/api/v1/auth/login',
+    '/api/v1/auth/register',
+    '/api/v1/auth/forgot-password',
+    '/api/v1/auth/reset-password',
+    '/api/v1/auth/request-otp',
+    '/api/v1/auth/verify-otp',
+    '/api/v1/auth/refresh',
+  ]);
+
+  /**
+   * Public route prefixes (documentation, assets, etc.)
+   */
+  private readonly publicPrefixPaths = ['/docs', '/swagger', '/api-json', '/favicon.ico'];
+
+  /**
    * Creates a new JwtAuthGuard instance
    *
    * @param reflector - NestJS reflector for metadata access
@@ -129,7 +156,7 @@ export class JwtAuthGuard implements CanActivate {
       ]);
 
       const request = context.switchToHttp().getRequest<FastifyRequestWithUser>();
-      const path = request.raw?.url ?? '';
+      const path = this.normalizePath(request.raw?.url);
 
       // Allow public endpoints without token
       if (isPublic || this.isPublicPath(path)) {
@@ -382,20 +409,18 @@ export class JwtAuthGuard implements CanActivate {
   /**
    * Get session data from cache and parse it
    */
-  private async getSessionData(sessionKey: string): Promise<SessionData | null> {
-    const session = await this.cacheService.get<string>(sessionKey);
-    if (!session) {
-      return null;
-    }
+  private async getSessionData(userId: string, sessionId: string): Promise<SessionData | null> {
+    const sessionKeys = [`session:${userId}:${sessionId}`, `session:${sessionId}`];
 
-    const sessionData = JSON.parse(session) as SessionData;
+    for (const sessionKey of sessionKeys) {
+      const sessionRaw = await this.cacheService.get<unknown>(sessionKey);
+      const sessionData = this.normalizeSessionRecord(sessionRaw);
 
-    // Verify session is active
+      if (sessionData) {
     if (!sessionData.isActive) {
       return null;
     }
 
-    // Check session inactivity
     const lastActivity = new Date(sessionData.lastActivityAt).getTime();
     const inactivityDuration = Date.now() - lastActivity;
     if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
@@ -404,6 +429,81 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     return sessionData;
+      }
+    }
+
+    return null;
+  }
+
+  private normalizeSessionRecord(session: unknown): SessionData | null {
+    if (!session) {
+      return null;
+    }
+
+    let record: unknown = session;
+    if (typeof session === 'string') {
+      try {
+        record = JSON.parse(session) as unknown;
+      } catch {
+        return null;
+      }
+    }
+
+    if (!record || typeof record !== 'object') {
+      return null;
+    }
+
+    const data = record as Record<string, unknown>;
+    const sessionId = typeof data['sessionId'] === 'string' ? (data['sessionId'] as string) : null;
+    if (!sessionId) {
+      return null;
+    }
+
+    const isActive =
+      typeof data['isActive'] === 'boolean'
+        ? (data['isActive'] as boolean)
+        : !(data['isActive'] === 'false');
+
+    const lastActivityAt =
+      typeof data['lastActivityAt'] === 'string'
+        ? (data['lastActivityAt'] as string)
+        : data['lastActivity'] instanceof Date
+        ? (data['lastActivity'] as Date).toISOString()
+        : typeof data['lastActivity'] === 'string'
+        ? (data['lastActivity'] as string)
+        : new Date().toISOString();
+
+    const deviceInfoSource =
+      typeof data['deviceInfo'] === 'object' && data['deviceInfo'] !== null
+        ? (data['deviceInfo'] as Record<string, unknown>)
+        : undefined;
+
+    const userAgent =
+      (deviceInfoSource?.['userAgent'] as string | undefined) ||
+      (typeof data['userAgent'] === 'string' ? (data['userAgent'] as string) : 'unknown');
+
+    const ipAddress =
+      typeof data['ipAddress'] === 'string'
+        ? (data['ipAddress'] as string)
+        : (typeof data['metadata'] === 'object' &&
+            data['metadata'] !== null &&
+            typeof (data['metadata'] as Record<string, unknown>)['ipAddress'] === 'string'
+            ? ((data['metadata'] as Record<string, unknown>)['ipAddress'] as string)
+            : 'unknown');
+
+    const deviceFingerprint =
+      typeof data['deviceFingerprint'] === 'string' ? (data['deviceFingerprint'] as string) : '';
+
+    return {
+      sessionId,
+      isActive,
+      lastActivityAt,
+      deviceFingerprint,
+      deviceInfo: {
+        userAgent,
+      },
+      ipAddress,
+    };
   }
 
   private async validateSession(
@@ -453,8 +553,7 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Session ID is missing');
     }
 
-    const sessionKey = `session:${userId}:${sessionId}`;
-    const sessionData = await this.getSessionData(sessionKey);
+    const sessionData = await this.getSessionData(userId, sessionId);
 
     if (!sessionData) {
       void logger.log(
@@ -462,7 +561,7 @@ export class JwtAuthGuard implements CanActivate {
         LogLevel.WARN,
         'Session validation failed: Session not found in cache',
         'JwtAuthGuard',
-        { userId, sessionId, sessionKey }
+        { userId, sessionId }
       );
       throw new UnauthorizedException('Invalid session');
     }
@@ -748,26 +847,22 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private isPublicPath(path: string): boolean {
-    const publicPaths = [
-      '/',
-      '/auth/login',
-      '/auth/register',
-      '/auth/forgot-password',
-      '/auth/reset-password',
-      '/auth/verify-email',
-      '/health',
-      '/health/check',
-      '/api-health',
-      '/docs',
-      '/api',
-      '/api-json',
-      '/swagger',
-      '/favicon.ico',
-    ];
-    // Exact match for root path, prefix match for others
-    if (path === '/' || path === '') {
+    if (!path || path === '/') {
       return true;
     }
-    return publicPaths.some(publicPath => path.startsWith(publicPath));
+
+    if (this.publicExactPaths.has(path)) {
+      return true;
+    }
+
+    return this.publicPrefixPaths.some(publicPrefix => path.startsWith(publicPrefix));
+  }
+
+  private normalizePath(path?: string | null): string {
+    if (!path) {
+      return '/';
+    }
+    const [cleanPath] = path.split('?');
+    return cleanPath || '/';
   }
 }

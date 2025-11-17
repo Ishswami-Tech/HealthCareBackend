@@ -57,6 +57,12 @@ spec:
             secretKeyRef:
               name: healthcare-secrets
               key: jwt-secret
+        - name: CACHE_PROVIDER
+          value: "dragonfly"
+        - name: DRAGONFLY_HOST
+          value: "dragonfly"
+        - name: DRAGONFLY_PORT
+          value: "6379"
         - name: REDIS_HOST
           value: "10.43.199.102"
         - name: REDIS_PORT

@@ -18,13 +18,22 @@ data:
   DB_CONNECTION_TIMEOUT: "30000"
   DB_IDLE_TIMEOUT: "600000"
 
-  # Redis Configuration
+  # Cache Provider Configuration (Dragonfly is default)
+  CACHE_PROVIDER: "dragonfly"
+  
+  # Redis Configuration (for Redis provider)
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   REDIS_TTL: "3600"
   REDIS_PREFIX: "healthcare:"
   REDIS_MAX_MEMORY: "2gb"
   REDIS_POLICY: "allkeys-lru"
+  
+  # Dragonfly Configuration (default provider - 26x faster than Redis)
+  DRAGONFLY_ENABLED: "true"
+  DRAGONFLY_HOST: "dragonfly"
+  DRAGONFLY_PORT: "6379"
+  DRAGONFLY_KEY_PREFIX: "healthcare:"
 
   # JWT Configuration
   JWT_EXPIRATION: "24h"
@@ -123,10 +132,19 @@ data:
   QUEUE_ANALYTICS: "analytics"
   QUEUE_REPORTS: "reports"
 
-  # Redis Configuration
+  # Cache Provider Configuration (Dragonfly is default)
+  CACHE_PROVIDER: "dragonfly"
+  
+  # Redis Configuration (for Redis provider)
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   REDIS_PREFIX: "healthcare:queue:"
+  
+  # Dragonfly Configuration (default provider)
+  DRAGONFLY_ENABLED: "true"
+  DRAGONFLY_HOST: "dragonfly"
+  DRAGONFLY_PORT: "6379"
+  DRAGONFLY_KEY_PREFIX: "healthcare:queue:"
 
   # Database Configuration
   DB_POOL_MIN: "5"
@@ -254,7 +272,7 @@ data:
     # Limits
     maxclients 10000
     maxmemory 2gb
-    maxmemory-policy allkeys-lru
+    maxmemory-policy noeviction
     maxmemory-samples 5
 
     # Append Only Mode
