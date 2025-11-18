@@ -157,3 +157,40 @@ export interface UserCommunicationPreferences {
     timezone: string;
   };
 }
+
+/**
+ * Comprehensive communication health status (used by CommunicationHealthMonitorService)
+ * Provides detailed health information including Socket and Email connection status, metrics, etc.
+ */
+export interface CommunicationHealthMonitorStatus {
+  healthy: boolean;
+  socket: {
+    connected: boolean;
+    latency?: number;
+    connectedClients?: number;
+  };
+  email: {
+    connected: boolean;
+    latency?: number;
+    provider?: string;
+  };
+  whatsapp: {
+    connected: boolean;
+    latency?: number;
+    enabled?: boolean;
+  };
+  push: {
+    connected: boolean;
+    latency?: number;
+    provider?: string;
+  };
+  metrics: {
+    socketConnections: number;
+    emailQueueSize: number;
+  };
+  performance: {
+    socketThroughput?: number;
+    emailThroughput?: number;
+  };
+  issues: string[];
+}

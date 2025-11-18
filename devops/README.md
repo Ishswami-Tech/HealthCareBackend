@@ -7,7 +7,7 @@ This folder contains the operational configuration and scripts to run the Health
 - Production: Kubernetes (containerd), Kustomize overlays (local/staging/production)
 - Postgres: StatefulSet with WAL-G PITR backups
 - PgBouncer: connection pooling (transaction mode)
-- Redis: auth enabled; Redis cluster manifests available
+- Cache: Provider-agnostic (Redis/Dragonfly) with auth enabled; Redis/Dragonfly cluster manifests available
 
 ## Quick Start
 

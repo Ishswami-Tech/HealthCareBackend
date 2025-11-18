@@ -63,7 +63,7 @@ import { NotificationService } from '@services/notification';
 import { ClinicService } from '@services/clinic';
 
 import { PrismaService } from '@infrastructure/database';
-import { RedisService } from '@cache';
+import { CacheService } from '@cache';
 import { LoggingService } from '@logging';
 import { QueueService } from '@queue';
 import { EventService, getEventServiceToken } from '@infrastructure/events';
@@ -102,7 +102,7 @@ export class UserService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventService: EventService,
     private readonly sessionService: SessionService,
     private readonly rbacService: RbacService
@@ -144,8 +144,9 @@ export class UserService {
       });
 
       // Cache the result (with clinic-specific key if applicable)
+      // Use CacheService - single entry point for all cache operations
       const cacheKey = this.buildCacheKey('user', user.id, requestContext?.clinicId);
-      await this.cache.set(cacheKey, JSON.stringify(user), 3600);
+      await this.cache.set(cacheKey, user, 3600); // CacheService handles serialization
 
       this.logger.info('User created successfully', {
         userId: user.id,
@@ -169,10 +170,10 @@ export class UserService {
     try {
       // Check cache first
       const cacheKey = this.buildCacheKey('user', id, clinicId);
-      const cached = await this.cache.get(cacheKey);
+      const cached = await this.cache.get<User>(cacheKey);
       if (cached) {
         this.logger.debug('Cache hit for user', { userId: id });
-        return JSON.parse(cached);
+        return cached; // CacheService handles deserialization
       }
 
       // Query database with clinic isolation
@@ -198,7 +199,7 @@ export class UserService {
 
       // Cache result
       if (user) {
-        await this.cache.set(cacheKey, JSON.stringify(user), 3600);
+        await this.cache.set(cacheKey, user, 3600); // CacheService handles serialization
       }
 
       return user;

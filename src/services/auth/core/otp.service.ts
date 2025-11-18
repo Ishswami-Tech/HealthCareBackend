@@ -1,5 +1,5 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config';
 import { EmailTemplate } from '@core/types/common.types';
@@ -12,7 +12,8 @@ export class OtpService {
   private readonly config: OtpConfig;
 
   constructor(
-    private readonly redis: RedisService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
     @Inject(ConfigService) private readonly configService: ConfigService
   ) {
@@ -20,7 +21,11 @@ export class OtpService {
     // Use process.env as fallback only if ConfigService.get fails
     const getConfig = <T>(key: string, defaultValue: T): T => {
       try {
-        return this.configService?.get<T>(key, defaultValue) || (process.env[key] as T | undefined) || defaultValue;
+        return (
+          this.configService?.get<T>(key, defaultValue) ||
+          (process.env[key] as T | undefined) ||
+          defaultValue
+        );
       } catch {
         // Fallback to process.env if ConfigService.get fails
         const envValue = process.env[key];
@@ -65,7 +70,7 @@ export class OtpService {
     try {
       // Check cooldown
       const cooldownKey = `otp_cooldown:${email}`;
-      const cooldown = await this.redis.get(cooldownKey);
+      const cooldown = await this.cacheService.get<string>(cooldownKey);
 
       if (cooldown) {
         return {
@@ -76,7 +81,7 @@ export class OtpService {
 
       // Check attempts
       const attemptsKey = `otp_attempts:${email}`;
-      const attempts = await this.redis.get(attemptsKey);
+      const attempts = await this.cacheService.get<string>(attemptsKey);
       const attemptCount = attempts ? parseInt(attempts) : 0;
 
       if (attemptCount >= this.config.maxAttempts) {
@@ -91,9 +96,9 @@ export class OtpService {
       const otpKey = `otp:${email}`;
       const expirySeconds = this.config.expiryMinutes * 60;
 
-      await this.redis.set(otpKey, otp, expirySeconds);
-      await this.redis.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
-      await this.redis.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
+      await this.cacheService.set(otpKey, otp, expirySeconds);
+      await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
+      await this.cacheService.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
 
       // Send email
       await this.emailService.sendEmail({
@@ -132,7 +137,7 @@ export class OtpService {
   async verifyOtp(email: string, otp: string): Promise<OtpResult> {
     try {
       const otpKey = `otp:${email}`;
-      const storedOtp = await this.redis.get(otpKey);
+      const storedOtp = await this.cacheService.get<string>(otpKey);
 
       if (!storedOtp) {
         return {
@@ -149,7 +154,7 @@ export class OtpService {
       }
 
       // Remove OTP after successful verification
-      await this.redis.del(otpKey);
+      await this.cacheService.del(otpKey);
 
       this.logger.log(`OTP verified successfully for ${email}`);
 
@@ -183,9 +188,9 @@ export class OtpService {
       const cooldownKey = `otp_cooldown:${email}`;
 
       const [otpData, attempts, cooldownData] = await Promise.all([
-        this.redis.get(otpKey),
-        this.redis.get(attemptsKey),
-        this.redis.get(cooldownKey),
+        this.cacheService.get<string>(otpKey),
+        this.cacheService.get<string>(attemptsKey),
+        this.cacheService.get<string>(cooldownKey),
       ]);
 
       const otpExists = otpData !== null;
@@ -216,7 +221,7 @@ export class OtpService {
   async invalidateOtp(email: string): Promise<boolean> {
     try {
       const otpKey = `otp:${email}`;
-      await this.redis.del(otpKey);
+      await this.cacheService.del(otpKey);
 
       this.logger.log(`OTP invalidated for ${email}`);
 
@@ -238,7 +243,7 @@ export class OtpService {
       const attemptsKey = `otp_attempts:${email}`;
       const cooldownKey = `otp_cooldown:${email}`;
 
-      await Promise.all([this.redis.del(attemptsKey), this.redis.del(cooldownKey)]);
+      await Promise.all([this.cacheService.del(attemptsKey), this.cacheService.del(cooldownKey)]);
 
       this.logger.log(`OTP attempts reset for ${email}`);
     } catch (_error) {

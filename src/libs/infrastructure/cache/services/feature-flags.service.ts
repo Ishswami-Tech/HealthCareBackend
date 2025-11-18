@@ -52,7 +52,7 @@ export class FeatureFlagsService implements OnModuleInit {
     };
   }
 
-  async onModuleInit(): Promise<void> {
+  onModuleInit(): void {
     // Load flags after module initialization when ConfigService is ready
     this.loadFlags();
   }
@@ -63,9 +63,14 @@ export class FeatureFlagsService implements OnModuleInit {
   private loadFlags(): void {
     const getFlag = (key: string, defaultValue: boolean): boolean => {
       try {
-        return this.configService?.get<boolean>(key, defaultValue) || (process.env[key] === 'true' || process.env[key] === '1') || defaultValue;
+        return (
+          this.configService?.get<boolean>(key, defaultValue) ||
+          process.env[key] === 'true' ||
+          process.env[key] === '1' ||
+          defaultValue
+        );
       } catch {
-        return (process.env[key] === 'true' || process.env[key] === '1') || defaultValue;
+        return process.env[key] === 'true' || process.env[key] === '1' || defaultValue;
       }
     };
 

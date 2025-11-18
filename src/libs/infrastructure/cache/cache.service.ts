@@ -21,6 +21,7 @@ import { CircuitBreakerService } from '@core/resilience';
 import { CacheMetricsService } from '@infrastructure/cache/services/cache-metrics.service';
 import { FeatureFlagsService } from '@infrastructure/cache/services/feature-flags.service';
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
+import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
 import { CacheErrorHandler } from '@core/errors';
 import { CacheOptionsBuilder } from '@infrastructure/cache/builders/cache-options.builder';
 import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-provider.factory';
@@ -57,6 +58,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     private readonly metrics: CacheMetricsService,
     private readonly featureFlags: FeatureFlagsService,
     private readonly versioning: CacheVersioningService,
+    @Inject(forwardRef(() => CacheHealthMonitorService))
+    private readonly healthMonitor: CacheHealthMonitorService,
     @Inject(forwardRef(() => CacheErrorHandler))
     private readonly errorHandler: CacheErrorHandler,
     @Inject(forwardRef(() => CacheProviderFactory))
@@ -72,7 +75,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     // Load config after module initialization when all dependencies are ready
     this.config = this.loadConfig();
     this.advancedProvider = this.providerFactory.getProvider();
-    
+
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -116,7 +119,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
           }
           return defaultValue;
         }
-        return this.configService?.get<T>(key, defaultValue) || process.env[key] as T | undefined || defaultValue;
+        return (
+          this.configService?.get<T>(key, defaultValue) ||
+          (process.env[key] as T | undefined) ||
+          defaultValue
+        );
       } catch {
         // Fallback to environment variables
         const envValue = process.env[key];
@@ -212,7 +219,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     // Ensure config is initialized
     try {
       this.ensureConfigInitialized();
-    } catch (configError) {
+    } catch (_configError) {
       // If config initialization fails, fall back to direct fetch
       return await fetchFn();
     }
@@ -240,7 +247,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       let keyExists = false;
       try {
         keyExists = !options.forceRefresh && (await this.cacheRepository.exists(key));
-      } catch (existsError) {
+      } catch (_existsError) {
         // If exists check fails, continue with cache operation (will be treated as miss)
         keyExists = false;
       }
@@ -277,7 +284,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
             { operation: 'cache', key },
             fetchFn
           );
-        } catch (fallbackError) {
+        } catch (_fallbackError) {
           // If error handler fails, fall back to direct fetch
           return await fetchFn();
         }
@@ -546,12 +553,22 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   // ===== HEALTH AND MONITORING =====
 
+  /**
+   * Health check using optimized health monitor
+   * Uses dedicated health check with timeout protection and caching
+   */
   async healthCheck(): Promise<boolean> {
-    return this.getProvider().isHealthy();
+    const healthStatus = await this.healthMonitor.getHealthStatus();
+    return healthStatus.healthy;
   }
 
+  /**
+   * Get health status with latency
+   * Uses optimized health monitor for real-time status
+   */
   async getHealthStatus(): Promise<[boolean, number]> {
-    return this.getProvider().getHealthStatus();
+    const healthStatus = await this.healthMonitor.getHealthStatus();
+    return [healthStatus.healthy, healthStatus.connection.latency || 0];
   }
 
   async getCacheStats(): Promise<{ hits: number; misses: number }> {

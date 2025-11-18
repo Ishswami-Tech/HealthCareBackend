@@ -26,7 +26,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 ```typescript
 // Infrastructure aliases
 import { LoggingService } from '@logging';
-import { RedisService } from '@cache';
+import { CacheService } from '@infrastructure/cache'; // ✅ Use CacheService (NOT RedisService) - Provider-agnostic cache abstraction
 import { EventsService } from '@events';
 import { QueueService } from '@queue';
 import { PrismaService } from '@infrastructure/database';
@@ -159,7 +159,7 @@ export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly configService: ConfigService // From @config
   ) {}

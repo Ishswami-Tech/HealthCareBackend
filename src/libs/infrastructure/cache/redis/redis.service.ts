@@ -115,16 +115,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     // Check multiple environment variables to determine development mode
     this.isDevelopment = this.isDevEnvironment();
     this.verboseLoggingEnabled =
-      process.env['ENABLE_CACHE_DEBUG'] === 'true' ||
-      process.env['CACHE_VERBOSE_LOGS'] === 'true';
+      process.env['ENABLE_CACHE_DEBUG'] === 'true' || process.env['CACHE_VERBOSE_LOGS'] === 'true';
     if (this.verboseLoggingEnabled) {
-    void this.loggingService.log(
-      LogType.SYSTEM,
+      void this.loggingService.log(
+        LogType.SYSTEM,
         LogLevel.DEBUG,
-      `Running in ${this.isDevelopment ? 'development' : 'production'} mode`,
-      'CacheService',
-      { environment: this.isDevelopment ? 'development' : 'production' }
-    );
+        `Running in ${this.isDevelopment ? 'development' : 'production'} mode`,
+        'CacheService',
+        { environment: this.isDevelopment ? 'development' : 'production' }
+      );
     }
     this.initializeClient();
 
@@ -146,17 +145,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       // Always attempt connection - onModuleInit will handle if already connected
       if (this.verboseLoggingEnabled) {
-      void this.loggingService
-        .log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Constructor: Initiating cache connection immediately',
-          'RedisService',
-          {}
-        )
-        .catch(() => {
-          // Ignore logging errors - connection is more important
-        });
+        void this.loggingService
+          .log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Constructor: Initiating cache connection immediately',
+            'RedisService',
+            {}
+          )
+          .catch(() => {
+            // Ignore logging errors - connection is more important
+          });
       }
       void this.onModuleInit().catch(error => {
         const errorMessage = error instanceof Error ? error.message : String(error);

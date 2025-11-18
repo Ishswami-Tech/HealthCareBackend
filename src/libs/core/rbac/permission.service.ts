@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -42,7 +42,8 @@ export class PermissionService {
 
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly redis: RedisService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService
   ) {}
 
@@ -216,7 +217,7 @@ export class PermissionService {
   async getPermissionById(permissionId: string): Promise<PermissionRecord | null> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}id:${permissionId}`;
-      const cached = await this.redis.get<PermissionRecord>(cacheKey);
+      const cached = await this.cacheService.get<PermissionRecord>(cacheKey);
       if (cached) {
         return cached;
       }
@@ -234,7 +235,7 @@ export class PermissionService {
       // Convert Prisma entity to domain entity (InfrastructurePermissionEntity from @infrastructure/database)
       const permissionResult = this.toPermissionEntity(validatedResult);
       const mappedPermission = this.mapToPermission(permissionResult);
-      await this.redis.set(cacheKey, mappedPermission, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, mappedPermission, this.CACHE_TTL);
       return mappedPermission;
     } catch (error: unknown) {
       this.logError(`Failed to get permission by ID: ${permissionId}`, error);
@@ -249,7 +250,7 @@ export class PermissionService {
   ): Promise<PermissionRecord | null> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}resource:${resource}:${action}:${domain || 'null'}`;
-      const cached = await this.redis.get<PermissionRecord>(cacheKey);
+      const cached = await this.cacheService.get<PermissionRecord>(cacheKey);
       if (cached) {
         return cached;
       }
@@ -270,7 +271,7 @@ export class PermissionService {
       // Convert Prisma entity to domain entity (InfrastructurePermissionEntity from @infrastructure/database)
       const permission = this.toPermissionEntity(validatedResult);
       const mappedPermission = this.mapToPermission(permission);
-      await this.redis.set(cacheKey, mappedPermission, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, mappedPermission, this.CACHE_TTL);
       return mappedPermission;
     } catch (error: unknown) {
       this.logError(`Failed to get permission: ${resource}:${action}`, error);
@@ -281,7 +282,7 @@ export class PermissionService {
   async getPermissions(domain?: string, resource?: string): Promise<PermissionRecord[]> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}list:${domain || 'null'}:${resource || 'null'}`;
-      const cached = await this.redis.get<PermissionRecord[]>(cacheKey);
+      const cached = await this.cacheService.get<PermissionRecord[]>(cacheKey);
       if (cached) {
         return cached;
       }
@@ -301,7 +302,7 @@ export class PermissionService {
         return this.mapToPermission(p);
       });
 
-      await this.redis.set(cacheKey, mappedPermissions, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, mappedPermissions, this.CACHE_TTL);
       return mappedPermissions;
     } catch (error: unknown) {
       this.logError('Failed to get permissions', error);
@@ -847,10 +848,7 @@ export class PermissionService {
 
   private async clearPermissionCache(): Promise<void> {
     try {
-      const keys = await this.redis.keys(`${this.CACHE_PREFIX}*`);
-      if (keys.length > 0) {
-        await this.redis.del(...keys);
-      }
+      await this.cacheService.invalidateByPattern(`${this.CACHE_PREFIX}*`);
     } catch (error: unknown) {
       this.logError('Failed to clear permission cache', error);
     }

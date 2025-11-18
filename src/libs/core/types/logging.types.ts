@@ -423,3 +423,34 @@ export function createSecurityLog(
     ...details,
   } as EnterpriseLogEntry;
 }
+
+/**
+ * Comprehensive logging health status (used by LoggingHealthMonitorService)
+ * Provides detailed health information including service availability, endpoint accessibility, metrics, etc.
+ */
+export interface LoggingHealthMonitorStatus {
+  healthy: boolean;
+  service: {
+    available: boolean;
+    latency?: number;
+    serviceName?: string;
+  };
+  endpoint: {
+    accessible: boolean;
+    latency?: number;
+    url?: string;
+    port?: number;
+    statusCode?: number;
+  };
+  metrics: {
+    totalLogs: number;
+    errorRate: number;
+    averageResponseTime: number;
+  };
+  performance: {
+    throughput?: number;
+    bufferSize?: number;
+    flushInterval?: number;
+  };
+  issues: string[];
+}

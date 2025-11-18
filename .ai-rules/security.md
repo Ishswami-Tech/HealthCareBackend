@@ -38,13 +38,13 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractTokenFromHeader(request);
     const payload = await this.verifyToken(token); // Tries basic JWT + enhanced JWT
 
-    // 3. Check token blacklist in Redis
+    // 3. Check token blacklist in cache
     if (payload.jti) {
-      const isBlacklisted = await this.redisService.get(`jwt:blacklist:${payload.jti}`);
+      const isBlacklisted = await this.cacheService.get(`jwt:blacklist:${payload.jti}`);
       if (isBlacklisted) throw new UnauthorizedException('Token has been revoked');
     }
 
-    // 4. Validate session in Redis
+    // 4. Validate session in cache
     const sessionData = await this.validateSession(payload.sub, request);
 
     // 5. Check concurrent sessions limit
@@ -61,11 +61,11 @@ export class JwtAuthGuard implements CanActivate {
 
 **Key Features**:
 - **Dual JWT Verification**: Uses both `JwtService` and `JwtAuthService.verifyEnhancedToken()` for compatibility
-- **Token Blacklist**: Redis-based revoked token tracking (`jwt:blacklist:{jti}`)
-- **Session Validation**: Redis-backed session with device fingerprinting (`session:{userId}:{sessionId}`)
+- **Token Blacklist**: Cache-based revoked token tracking (`jwt:blacklist:{jti}`) - uses CacheService (provider-agnostic)
+- **Session Validation**: Cache-backed session with device fingerprinting (`session:{userId}:{sessionId}`) - uses CacheService
 - **Progressive Lockout**: 10m → 25m → 45m → 1h → 6h based on failed attempts
 - **Concurrent Session Limit**: Maximum 5 active sessions per user
-- **Security Event Tracking**: 30-day retention of auth failures in Redis (`security:events:{identifier}`)
+- **Security Event Tracking**: 30-day retention of auth failures in cache (`security:events:{identifier}`) - uses CacheService
 
 ### **Role-Based Access Control (RBAC)**
 
@@ -764,13 +764,13 @@ private async trackSecurityEvent(
   };
 
   // Store in Redis for fast access
-  await this.redisService.rPush(`security:events:${identifier}`, JSON.stringify(event));
+  await this.CacheService.rPush(`security:events:${identifier}`, JSON.stringify(event));
 
   // Trim old events (keep last 1000)
-  await this.redisService.lTrim(`security:events:${identifier}`, -1000, -1);
+  await this.CacheService.lTrim(`security:events:${identifier}`, -1000, -1);
 
   // Set expiry for events list (30 days)
-  await this.redisService.expire(`security:events:${identifier}`, 30 * 24 * 60 * 60);
+  await this.CacheService.expire(`security:events:${identifier}`, 30 * 24 * 60 * 60);
 }
 
 // Security logging in SessionManagementService

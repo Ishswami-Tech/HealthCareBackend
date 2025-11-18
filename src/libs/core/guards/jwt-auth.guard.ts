@@ -417,18 +417,18 @@ export class JwtAuthGuard implements CanActivate {
       const sessionData = this.normalizeSessionRecord(sessionRaw);
 
       if (sessionData) {
-    if (!sessionData.isActive) {
-      return null;
-    }
+        if (!sessionData.isActive) {
+          return null;
+        }
 
-    const lastActivity = new Date(sessionData.lastActivityAt).getTime();
-    const inactivityDuration = Date.now() - lastActivity;
-    if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
-      // Session is still valid but inactive for a while
-      // This is just for logging, we'll still return the session
-    }
+        const lastActivity = new Date(sessionData.lastActivityAt).getTime();
+        const inactivityDuration = Date.now() - lastActivity;
+        if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
+          // Session is still valid but inactive for a while
+          // This is just for logging, we'll still return the session
+        }
 
-    return sessionData;
+        return sessionData;
       }
     }
 
@@ -454,24 +454,22 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const data = record as Record<string, unknown>;
-    const sessionId = typeof data['sessionId'] === 'string' ? (data['sessionId'] as string) : null;
+    const sessionId = typeof data['sessionId'] === 'string' ? data['sessionId'] : null;
     if (!sessionId) {
       return null;
     }
 
     const isActive =
-      typeof data['isActive'] === 'boolean'
-        ? (data['isActive'] as boolean)
-        : !(data['isActive'] === 'false');
+      typeof data['isActive'] === 'boolean' ? data['isActive'] : !(data['isActive'] === 'false');
 
     const lastActivityAt =
       typeof data['lastActivityAt'] === 'string'
-        ? (data['lastActivityAt'] as string)
+        ? data['lastActivityAt']
         : data['lastActivity'] instanceof Date
-        ? (data['lastActivity'] as Date).toISOString()
-        : typeof data['lastActivity'] === 'string'
-        ? (data['lastActivity'] as string)
-        : new Date().toISOString();
+          ? data['lastActivity'].toISOString()
+          : typeof data['lastActivity'] === 'string'
+            ? data['lastActivity']
+            : new Date().toISOString();
 
     const deviceInfoSource =
       typeof data['deviceInfo'] === 'object' && data['deviceInfo'] !== null
@@ -480,19 +478,19 @@ export class JwtAuthGuard implements CanActivate {
 
     const userAgent =
       (deviceInfoSource?.['userAgent'] as string | undefined) ||
-      (typeof data['userAgent'] === 'string' ? (data['userAgent'] as string) : 'unknown');
+      (typeof data['userAgent'] === 'string' ? data['userAgent'] : 'unknown');
 
     const ipAddress =
       typeof data['ipAddress'] === 'string'
-        ? (data['ipAddress'] as string)
-        : (typeof data['metadata'] === 'object' &&
+        ? data['ipAddress']
+        : typeof data['metadata'] === 'object' &&
             data['metadata'] !== null &&
             typeof (data['metadata'] as Record<string, unknown>)['ipAddress'] === 'string'
-            ? ((data['metadata'] as Record<string, unknown>)['ipAddress'] as string)
-            : 'unknown');
+          ? ((data['metadata'] as Record<string, unknown>)['ipAddress'] as string)
+          : 'unknown';
 
     const deviceFingerprint =
-      typeof data['deviceFingerprint'] === 'string' ? (data['deviceFingerprint'] as string) : '';
+      typeof data['deviceFingerprint'] === 'string' ? data['deviceFingerprint'] : '';
 
     return {
       sessionId,
