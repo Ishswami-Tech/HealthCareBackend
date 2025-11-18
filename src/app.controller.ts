@@ -164,15 +164,11 @@ export class AppController {
                   responseTime: 0,
                   lastChecked: new Date().toISOString(),
                 },
-                socket: {
+                communication: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
                   lastChecked: new Date().toISOString(),
-                },
-                email: {
-                  status: 'unhealthy' as const,
-                  responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  details: 'Communication service unavailable',
                 },
               },
               processInfo: {
@@ -266,15 +262,11 @@ export class AppController {
               responseTime: 0,
               lastChecked: new Date().toISOString(),
             },
-            socket: {
+            communication: {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),
-            },
-            email: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              details: 'Communication service unavailable',
             },
           },
           processInfo: {
@@ -307,13 +299,29 @@ export class AppController {
       // Extract individual service statuses for real-time checks
       const queueHealth = healthServices.queue as ServiceHealth | undefined;
       const loggerHealth = healthServices.logger as ServiceHealth | undefined;
-      const socketStatus = (healthServices.socket as ServiceHealth | undefined)?.status;
-      const emailStatus = (healthServices.email as ServiceHealth | undefined)?.status;
+      const communicationHealth = (healthServices as { communication?: ServiceHealth })
+        .communication;
       const prismaStudioStatus = (healthServices as { prismaStudio?: ServiceHealth }).prismaStudio
         ?.status;
       const redisCommanderStatus = (healthServices as { redisCommander?: ServiceHealth })
         .redisCommander?.status;
       const pgAdminStatus = (healthServices as { pgAdmin?: ServiceHealth }).pgAdmin?.status;
+
+      // Extract communication sub-services status from communicationHealth
+      const communicationHealthData = communicationHealth as
+        | (ServiceHealth & {
+            communicationHealth?: {
+              socket?: { connected?: boolean };
+              email?: { connected?: boolean };
+            };
+          })
+        | undefined;
+      const socketStatus = communicationHealthData?.communicationHealth?.socket?.connected
+        ? 'healthy'
+        : 'unhealthy';
+      const emailStatus = communicationHealthData?.communicationHealth?.email?.connected
+        ? 'healthy'
+        : 'unhealthy';
 
       // Extract real-time metrics for all services
       const basePort =
@@ -325,12 +333,8 @@ export class AppController {
         (queueHealth && 'metrics' in queueHealth ? queueHealth.metrics : {}) || {};
       const loggerMetrics =
         (loggerHealth && 'metrics' in loggerHealth ? loggerHealth.metrics : {}) || {};
-      const socketHealth = healthServices.socket as ServiceHealth | undefined;
-      const socketMetrics =
-        (socketHealth && 'metrics' in socketHealth ? socketHealth.metrics : {}) || {};
-      const emailHealth = healthServices.email as ServiceHealth | undefined;
-      const emailMetrics =
-        (emailHealth && 'metrics' in emailHealth ? emailHealth.metrics : {}) || {};
+      const socketMetrics = communicationHealthData?.communicationHealth?.socket || {};
+      const emailMetrics = communicationHealthData?.communicationHealth?.email || {};
       const queuePort = (queueMetrics['port'] as number | string | undefined) || basePort;
       const loggerPort = (loggerMetrics['port'] as number | string | undefined) || basePort;
       const activeQueues = queueMetrics['activeQueues'] as number | undefined;
@@ -386,9 +390,9 @@ export class AppController {
           active: isSocketRunning, // Active if socket health check passes
           category: 'API',
           port: Number(basePort),
-          status:
-            (healthServices.socket as ServiceHealth | undefined)?.details ||
-            (isSocketRunning ? 'Running' : 'Inactive'),
+          status: communicationHealthData?.communicationHealth?.socket?.connected
+            ? 'Running'
+            : 'Inactive',
           metrics: socketMetrics,
         },
         {
@@ -398,9 +402,9 @@ export class AppController {
           active: isEmailRunning, // Active if email health check passes
           category: 'Services',
           port: Number(basePort),
-          status:
-            (healthServices.email as ServiceHealth | undefined)?.details ||
-            (isEmailRunning ? 'Running' : 'Inactive'),
+          status: communicationHealthData?.communicationHealth?.email?.connected
+            ? 'Running'
+            : 'Inactive',
           metrics: emailMetrics,
         },
       ];
@@ -1632,10 +1636,156 @@ export class AppController {
     </div>
 
     <script>
-        // Auto-refresh functionality
-        setInterval(() => {
-            window.location.reload();
-        }, 30000); // Refresh every 30 seconds
+        // Optimized real-time dashboard updates using AJAX (no page reload)
+        // Prevents excessive health checks and improves performance for 10M+ users
+        let updateInterval;
+        let isUpdating = false;
+        let lastUpdateTime = 0;
+        const MIN_UPDATE_INTERVAL_MS = 20000; // Minimum 20 seconds between updates (matches cache TTL)
+        
+        // Function to update dashboard data via AJAX
+        async function updateDashboard() {
+            // Prevent concurrent updates and throttle requests
+            if (isUpdating) return;
+            
+            // Throttle: Don't update more frequently than cache TTL
+            const now = Date.now();
+            const timeSinceLastUpdate = now - lastUpdateTime;
+            if (timeSinceLastUpdate < MIN_UPDATE_INTERVAL_MS) {
+                // Too soon - skip this update (prevents excessive requests)
+                return;
+            }
+            
+            isUpdating = true;
+            lastUpdateTime = now;
+            
+            try {
+                // Use existing /health endpoint (optimized with caching internally)
+                const response = await fetch('/health', {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                    },
+                    cache: 'no-cache',
+                });
+                
+                if (!response.ok) {
+                    throw new Error(\`HTTP error! status: \${response.status}\`);
+                }
+                
+                const healthData = await response.json();
+                
+                // Update overall health status
+                if (healthData.status) {
+                    const statusElement = document.querySelector('.overall-health .status-text');
+                    if (statusElement) {
+                        statusElement.textContent = healthData.status.toUpperCase();
+                        statusElement.className = \`status-text status-text-\${healthData.status}\`;
+                    }
+                    
+                    const lastCheckedElement = document.querySelector('.overall-health .last-checked');
+                    if (lastCheckedElement && healthData.timestamp) {
+                        lastCheckedElement.textContent = \`Last checked: \${new Date(healthData.timestamp).toLocaleString()}\`;
+                    }
+                }
+                
+                // Update individual service statuses
+                if (healthData.services) {
+                    Object.entries(healthData.services).forEach(([serviceName, serviceData]) => {
+                        const serviceElement = document.querySelector(\`[data-service="\${serviceName}"]\`);
+                        if (serviceElement && serviceData) {
+                            const service = serviceData;
+                            
+                            // Update status indicator
+                            const statusIndicator = serviceElement.querySelector('.status-indicator');
+                            if (statusIndicator) {
+                                statusIndicator.className = \`status-indicator \${service.status === 'healthy' ? 'status-healthy' : 'status-unhealthy'}\`;
+                            }
+                            
+                            // Update status text
+                            const statusText = serviceElement.querySelector('.status-text');
+                            if (statusText) {
+                                statusText.textContent = service.status === 'healthy' ? 'Active' : 'Inactive';
+                                statusText.className = \`status-text \${service.status === 'healthy' ? 'status-text-healthy' : 'status-text-unhealthy'}\`;
+                            }
+                            
+                            // Update response time
+                            const responseTimeElement = serviceElement.querySelector('.metric-value');
+                            if (responseTimeElement && service.responseTime !== undefined) {
+                                const responseTimeMetric = Array.from(serviceElement.querySelectorAll('.metric')).find(m => 
+                                    m.textContent.includes('Response Time')
+                                );
+                                if (responseTimeMetric) {
+                                    const valueElement = responseTimeMetric.querySelector('.metric-value');
+                                    if (valueElement) {
+                                        valueElement.textContent = \`\${service.responseTime} ms\`;
+                                    }
+                                }
+                            }
+                            
+                            // Update last checked
+                            const lastCheckedElement = serviceElement.querySelector('.last-checked');
+                            if (lastCheckedElement && service.lastChecked) {
+                                lastCheckedElement.textContent = \`Last checked: \${new Date(service.lastChecked).toLocaleString()}\`;
+                            }
+                        }
+                    });
+                }
+                
+                // Update system metrics if available
+                if (healthData.systemMetrics) {
+                    const metrics = healthData.systemMetrics;
+                    
+                    // Update memory usage
+                    if (metrics.memoryUsage) {
+                        const memoryElement = document.querySelector('[data-metric="memory"]');
+                        if (memoryElement && metrics.memoryUsage.heapUsed && metrics.memoryUsage.heapTotal) {
+                            const percentage = ((metrics.memoryUsage.heapUsed / metrics.memoryUsage.heapTotal) * 100).toFixed(1);
+                            memoryElement.textContent = \`\${percentage}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                        }
+                    }
+                    
+                    // Update CPU usage
+                    if (metrics.cpuUsage) {
+                        const cpuElement = document.querySelector('[data-metric="cpu"]');
+                        if (cpuElement && metrics.cpuUsage.cpuCount) {
+                            cpuElement.textContent = \`\${metrics.cpuUsage.cpuCount} cores\`;
+                        }
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Dashboard update error:', error);
+                // Silently fail - don't disrupt user experience
+            } finally {
+                isUpdating = false;
+            }
+        }
+        
+        // Helper function to format bytes
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+        
+        // Start auto-update on page load
+        // Update every 30 seconds (slightly longer than cache TTL to prevent excessive requests)
+        // This ensures we get fresh data without overloading the server with 10M+ users
+        // Health endpoint uses smart caching - returns cached data if fresh (< 20s)
+        updateInterval = setInterval(updateDashboard, 30000); // 30 seconds - optimized for 10M+ users
+        
+        // Initial update after 2 seconds (allow page to fully load, avoid initial burst)
+        setTimeout(updateDashboard, 2000);
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+            }
+        });
     </script>
 </body>
 </html>`;

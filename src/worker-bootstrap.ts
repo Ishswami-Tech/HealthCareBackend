@@ -73,8 +73,8 @@ async function bootstrap() {
               const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
               const useDragonfly = cacheProvider === 'dragonfly';
               return useDragonfly
-                ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
-                : (process.env['REDIS_HOST'] || 'localhost');
+                ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
+                : process.env['REDIS_HOST'] || 'localhost';
             })(),
             redisPort: (() => {
               const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
@@ -95,8 +95,8 @@ async function bootstrap() {
       const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
       const useDragonfly = cacheProvider === 'dragonfly';
       const cacheHost = useDragonfly
-        ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
-        : (process.env['REDIS_HOST'] || 'localhost');
+        ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
+        : process.env['REDIS_HOST'] || 'localhost';
       const cachePort = useDragonfly
         ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
         : parseInt(process.env['REDIS_PORT'] || '6379', 10);

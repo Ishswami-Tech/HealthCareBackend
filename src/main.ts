@@ -87,10 +87,12 @@ async function setupWebSocketAdapter(
     const cacheProviderConfig = configService?.get<string>('CACHE_PROVIDER');
     const cacheProvider = (cacheProviderConfig || cacheProviderEnv || 'dragonfly').toLowerCase();
     const useDragonfly = cacheProvider === 'dragonfly';
-    
+
     // Debug logging
-    logger.log(`[WebSocket] DEBUG: CACHE_PROVIDER from env: ${cacheProviderEnv}, from config: ${cacheProviderConfig}, final: ${cacheProvider}, useDragonfly: ${useDragonfly}`);
-    
+    logger.log(
+      `[WebSocket] DEBUG: CACHE_PROVIDER from env: ${cacheProviderEnv}, from config: ${cacheProviderConfig}, final: ${cacheProvider}, useDragonfly: ${useDragonfly}`
+    );
+
     // Use Dragonfly or Redis based on CACHE_PROVIDER
     // IMPORTANT: Use process.env directly, NOT configService, because:
     // - configService.get('REDIS_HOST') returns 'localhost' from redis.config.ts default
@@ -99,10 +101,12 @@ async function setupWebSocketAdapter(
     const redisHost = process.env['REDIS_HOST'] || '127.0.0.1';
     const cacheHost = useDragonfly ? dragonflyHost : redisHost;
     const cachePort = useDragonfly
-      ? (process.env['DRAGONFLY_PORT'] || '6379')
-      : (process.env['REDIS_PORT'] || '6379');
-    
-    logger.log(`[WebSocket] DEBUG: cacheHost=${cacheHost}, cachePort=${cachePort}, dragonflyHost=${dragonflyHost}, redisHost=${redisHost}, useDragonfly=${useDragonfly}`);
+      ? process.env['DRAGONFLY_PORT'] || '6379'
+      : process.env['REDIS_PORT'] || '6379';
+
+    logger.log(
+      `[WebSocket] DEBUG: cacheHost=${cacheHost}, cachePort=${cachePort}, dragonflyHost=${dragonflyHost}, redisHost=${redisHost}, useDragonfly=${useDragonfly}`
+    );
     // Get password - check environment variable first, then config service
     // This avoids errors when config keys don't exist
     let cachePassword: string | undefined;
@@ -125,22 +129,28 @@ async function setupWebSocketAdapter(
         }
       }
     }
-    
+
     // Log the configuration being used
-    logger.log(`[WebSocket] Using ${useDragonfly ? 'Dragonfly' : 'Redis'} for pub/sub: ${cacheHost}:${cachePort} (CACHE_PROVIDER=${cacheProvider})`);
-    
+    logger.log(
+      `[WebSocket] Using ${useDragonfly ? 'Dragonfly' : 'Redis'} for pub/sub: ${cacheHost}:${cachePort} (CACHE_PROVIDER=${cacheProvider})`
+    );
+
     const redisConfig = {
       url: `redis://${String(cacheHost).trim()}:${String(cachePort).trim()}`,
       ...(cachePassword && cachePassword.trim() && { password: cachePassword }),
       retryStrategy: (times: number) => {
         const maxRetries = 5;
         if (times > maxRetries) {
-          logger.error(`${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed after ${maxRetries} retries`);
+          logger.error(
+            `${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed after ${maxRetries} retries`
+          );
           return null;
         }
         const maxDelay = 3000;
         const delay = Math.min(times * 100, maxDelay);
-        logger.log(`${useDragonfly ? 'Dragonfly' : 'Redis'} reconnection attempt ${times}, delay: ${delay}ms`);
+        logger.log(
+          `${useDragonfly ? 'Dragonfly' : 'Redis'} reconnection attempt ${times}, delay: ${delay}ms`
+        );
         return delay;
       },
     };

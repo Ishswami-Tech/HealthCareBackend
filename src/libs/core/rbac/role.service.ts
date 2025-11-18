@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -36,7 +36,8 @@ export class RoleService {
    */
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly redis: RedisService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService
   ) {}
 
@@ -154,7 +155,7 @@ export class RoleService {
   async getRoleById(roleId: string): Promise<RoleRecord | null> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}id:${roleId}`;
-      const cached = await this.redis.get<RoleRecord>(cacheKey);
+      const cached = await this.cacheService.get<RoleRecord>(cacheKey);
 
       if (cached) {
         return cached;
@@ -170,7 +171,7 @@ export class RoleService {
       const mappedRole = this.mapToRole(role);
 
       // Cache the result
-      await this.redis.set(cacheKey, mappedRole, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, mappedRole, this.CACHE_TTL);
 
       return mappedRole;
     } catch (_error) {
@@ -195,7 +196,7 @@ export class RoleService {
   ): Promise<RoleRecord | null> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}name:${name}:${domain || 'null'}:${clinicId || 'null'}`;
-      const cached = await this.redis.get<RoleRecord>(cacheKey);
+      const cached = await this.cacheService.get<RoleRecord>(cacheKey);
 
       if (cached) {
         return cached;
@@ -211,7 +212,7 @@ export class RoleService {
       const mappedRole = this.mapToRole(role);
 
       // Cache the result
-      await this.redis.set(cacheKey, mappedRole, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, mappedRole, this.CACHE_TTL);
 
       return mappedRole;
     } catch (_error) {
@@ -232,7 +233,7 @@ export class RoleService {
   async getRoles(domain?: string, clinicId?: string): Promise<RoleRecord[]> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}list:${domain || 'null'}:${clinicId || 'null'}`;
-      const cached = await this.redis.get<RoleRecord[]>(cacheKey);
+      const cached = await this.cacheService.get<RoleRecord[]>(cacheKey);
 
       if (cached) {
         return cached;
@@ -246,7 +247,7 @@ export class RoleService {
       });
 
       // Cache the result
-      await this.redis.set(cacheKey, mappedRoles, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, mappedRoles, this.CACHE_TTL);
 
       return mappedRoles;
     } catch (_error) {
@@ -593,10 +594,7 @@ export class RoleService {
    */
   private async clearRoleCache(): Promise<void> {
     try {
-      const keys = await this.redis.keys(`${this.CACHE_PREFIX}*`);
-      if (keys.length > 0) {
-        await this.redis.del(...keys);
-      }
+      await this.cacheService.invalidateByPattern(`${this.CACHE_PREFIX}*`);
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,

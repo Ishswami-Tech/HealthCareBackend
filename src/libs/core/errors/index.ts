@@ -38,3 +38,7 @@ export { HealthcareErrorsService as Errors } from './healthcare-errors.service';
 
 // Cache error handler
 export { CacheErrorHandler, CacheErrorType } from './cache-error.handler';
+
+// Database error handler
+export { DatabaseErrorHandler, DatabaseErrorType } from './database-error.handler';
+export type { ErrorContext } from './database-error.handler';

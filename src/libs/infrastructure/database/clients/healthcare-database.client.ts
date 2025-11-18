@@ -35,9 +35,12 @@ import type {
   PaymentWhereInput,
 } from '@core/types/input.types';
 import { ConnectionPoolManager } from '@infrastructure/database/connection-pool.manager';
-import { DatabaseMetricsService } from '@infrastructure/database/database-metrics.service';
-import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
-import { HealthcareQueryOptimizerService } from '@infrastructure/database/query-optimizer.service';
+import { DatabaseMetricsService } from '@database/internal/database-metrics.service';
+import { ClinicIsolationService } from '@database/internal/clinic-isolation.service';
+import { HealthcareQueryOptimizerService } from '@database/internal/query-optimizer.service';
+import { ReadReplicaRouterService } from '@database/internal/read-replica-router.service';
+import { QueryCacheService } from '@database/internal/query-cache.service';
+import { DatabaseHealthMonitorService } from '@database/internal/database-health-monitor.service';
 import {
   calculatePagination,
   addDateRangeFilter,
@@ -129,18 +132,23 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   constructor(
     protected readonly prismaService: PrismaService,
-    @Inject(forwardRef(() => ConnectionPoolManager))
-    protected readonly connectionPoolManager: ConnectionPoolManager,
     @Inject(forwardRef(() => DatabaseMetricsService))
     protected readonly metricsService: DatabaseMetricsService,
     @Inject(forwardRef(() => ClinicIsolationService))
     protected readonly clinicIsolationService: ClinicIsolationService,
     protected readonly queryOptimizer: HealthcareQueryOptimizerService,
+    @Inject(forwardRef(() => ReadReplicaRouterService))
+    protected readonly readReplicaRouter: ReadReplicaRouterService,
+    @Inject(forwardRef(() => QueryCacheService))
+    protected readonly queryCacheService: QueryCacheService,
+    @Inject(forwardRef(() => DatabaseHealthMonitorService))
+    protected readonly healthMonitor: DatabaseHealthMonitorService,
     @Inject(forwardRef(() => LoggingService))
     protected readonly loggingService: LoggingService,
-
     @Inject(forwardRef(() => EventService))
     protected readonly eventService: unknown,
+    @Inject(forwardRef(() => ConnectionPoolManager))
+    protected readonly connectionPoolManager: ConnectionPoolManager,
     @Optional()
     @Inject(forwardRef(() => CacheService))
     protected readonly cacheService?: CacheService,
@@ -547,7 +555,16 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
           // Use the client directly instead of calling prismaService.findUserByEmailSafe again
           // This avoids recursive calls and connection pool exhaustion
           // Access user delegate using dot notation - PrismaTransactionClient has user as a property
-          const userDelegate = (client as { user: { findUnique: (args: { where: { email: string }; include?: Record<string, unknown> }) => Promise<UserWithRelations | null> } }).user;
+          const userDelegate = (
+            client as {
+              user: {
+                findUnique: (args: {
+                  where: { email: string };
+                  include?: Record<string, unknown>;
+                }) => Promise<UserWithRelations | null>;
+              };
+            }
+          ).user;
 
           // For 10M users: Only load relations if explicitly requested
           // Following .ai-rules: Use select to limit fields, use include with select for relations
@@ -811,8 +828,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {
     // Use PrismaService directly outside transaction for now
     // The transaction is handled at a higher level if needed
-        const prismaService = this.getInternalPrismaClient();
-        const result = await prismaService.createUserSafe(data);
+    const prismaService = this.getInternalPrismaClient();
+    const result = await prismaService.createUserSafe(data);
 
     // Invalidate cache after creation
     if (result?.id) {
@@ -829,8 +846,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   async updateUserSafe(id: string, data: UserUpdateInput): Promise<UserWithRelations> {
     // Call prismaService.updateUserSafe directly (not wrapped in executeHealthcareWrite)
     // to avoid transaction client issues similar to createUserSafe
-        const prismaService = this.getInternalPrismaClient();
-        const result = await prismaService.updateUserSafe(id, data);
+    const prismaService = this.getInternalPrismaClient();
+    const result = await prismaService.updateUserSafe(id, data);
 
     // Invalidate cache after update
     await this.invalidateCache([`user:${id}`, 'users']);
@@ -1896,6 +1913,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Execute a raw query with metrics and error handling
+   * This is the unified entry point for all raw SQL queries
+   * All queries go through PrismaService directly (unified service pattern)
    */
   async executeRawQuery<T = Record<string, never>>(
     query: string,
@@ -1904,11 +1923,35 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      const result: T = await this.connectionPoolManager.executeQuery<T>(query, params, {
-        ...(this.config.queryTimeout !== undefined && {
-          timeout: this.config.queryTimeout,
-        }),
+      // Execute query directly using PrismaService (unified service)
+      // This ensures all queries go through the same optimization layers
+      const prismaClient = this.prismaService.getClient();
+      const typedParams: Array<string | number | boolean | null> = params.map(param => {
+        if (
+          typeof param === 'string' ||
+          typeof param === 'number' ||
+          typeof param === 'boolean' ||
+          param === null
+        ) {
+          return param;
+        }
+        // For objects, use JSON.stringify to avoid '[object Object]' stringification
+        if (typeof param === 'object' && param !== null) {
+          try {
+            return JSON.stringify(param);
+          } catch {
+            return '[object Object]';
+          }
+        }
+        // For other types, convert to string
+        return String(param);
       });
+
+      const result = await (
+        prismaClient as unknown as {
+          $queryRawUnsafe: <T>(query: string, ...params: unknown[]) => Promise<T>;
+        }
+      ).$queryRawUnsafe<T>(query, ...typedParams);
 
       const executionTime = Date.now() - startTime;
       this.metricsService.recordQueryExecution('RAW_QUERY', executionTime, true);
@@ -1980,29 +2023,12 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const queryTimeout = this.config.queryTimeout || 30000; // Default 30 seconds if not configured
 
     try {
-      // Execute the operation with the Prisma client through internal accessor
-      // Note: Read replica routing is handled at the Prisma client level if configured
-      // Get PrismaService which has all delegates initialized as readonly properties
-      const prismaService = this.getInternalPrismaClient();
+      // Use ReadReplicaRouterService to get the appropriate client (replica for reads, primary for writes)
+      // This ensures optimal read performance by routing to read replicas when available
+      const readClient = this.readReplicaRouter.getReadClient();
 
-      // Ensure prismaClient is initialized (this also ensures delegates are initialized)
-      // PrismaService initializes delegates in constructor, but we need to ensure
-      // the underlying prismaClient exists and is properly initialized
-      let rawClient: PrismaClient;
-      try {
-        rawClient = prismaService.getRawPrismaClient();
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new HealthcareError(
-          ErrorCode.DATABASE_CONNECTION_FAILED,
-          `PrismaClient initialization failed: ${errorMessage}. Please ensure "prisma generate" has been run and the database is accessible.`,
-          undefined,
-          { originalError: errorMessage },
-          'HealthcareDatabaseClient.executeHealthcareRead'
-        );
-      }
-
-      if (!rawClient) {
+      // Ensure prismaClient is initialized
+      if (!readClient) {
         throw new HealthcareError(
           ErrorCode.DATABASE_CONNECTION_FAILED,
           'PrismaClient is not initialized. Please ensure "prisma generate" has been run.',
@@ -2012,10 +2038,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         );
       }
 
-      // PrismaService has delegates (user, clinic, appointment, etc.) as readonly properties
-      // However, operations expect PrismaTransactionClient which has delegates directly on the client
-      // Use the raw PrismaClient which has all delegates accessible
-      // The rawClient has delegates like client.user, client.clinic, etc. directly accessible
       // Add timeout wrapper to prevent queries from running indefinitely
       // Promise.race will reject with timeout error if operation takes longer than queryTimeout
       let timeoutId: NodeJS.Timeout | undefined;
@@ -2036,7 +2058,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       let data: T;
       try {
         data = await Promise.race([
-          operation(rawClient as unknown as PrismaTransactionClient),
+          operation(readClient as unknown as PrismaTransactionClient),
           timeoutPromise,
         ]);
         // Clear timeout if operation completes before timeout
@@ -2055,6 +2077,9 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
       // Record metrics for performance monitoring
       this.metricsService.recordQueryExecution('HEALTHCARE_READ', executionTime, true);
+      
+      // Record connection pool metrics (pass metrics to avoid circular dependency)
+      this.metricsService.recordConnectionPoolMetrics(this.connectionPoolManager.getMetrics());
 
       // Optimize query and get recommendations if query is slow
       // CRITICAL for 10M users: Rate limit slow query warnings to prevent log spam
@@ -2183,6 +2208,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Execute healthcare-specific write operations with audit trails
+   * All writes go through primary database via PrismaService transaction
+   * PrismaService transaction automatically uses primary database connection
    */
   async executeHealthcareWrite<T>(
     operation: (client: PrismaTransactionClient) => Promise<T>,
@@ -2191,15 +2218,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      // Use prioritized write connection
-      const _result = await this.connectionPoolManager.executeHealthcareWrite<T>(
-        '', // Query will be executed through Prisma client
-        [],
-        { priority: 'high', timeout: 60000 }
-      );
-
       // Execute within transaction for data consistency
+      // PrismaService.$transaction automatically uses primary database (writes always go to primary)
+      // The transaction client provided to the operation is the primary database client
       const data = await this.executeInTransaction(async client => {
+        // Execute the operation with the transaction client (always primary for writes)
         const operationResult = await operation(client);
 
         // Create audit trail entry
@@ -2218,6 +2241,9 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         auditInfo.clinicId,
         auditInfo.userId
       );
+      
+      // Record connection pool metrics (pass metrics to avoid circular dependency)
+      this.metricsService.recordConnectionPoolMetrics(this.connectionPoolManager.getMetrics());
 
       // Optimize query and get recommendations if query is slow
       // CRITICAL for 10M users: Rate limit slow query warnings to prevent log spam
@@ -2417,23 +2443,13 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get connection health status
-   * Optimized for fast health checks - bypasses HIPAA logging and slow query detection
+   * Uses DatabaseHealthMonitorService for comprehensive health monitoring
    */
   async getHealthStatus(): Promise<DatabaseHealthStatus> {
     try {
+      // Use DatabaseHealthMonitorService for comprehensive health status
+      const healthStatus = await this.healthMonitor.getHealthStatus();
       const connectionMetrics = this.connectionPoolManager.getMetrics();
-      const start = Date.now();
-
-      // Use dedicated health check client to avoid interfering with regular operations
-      // This bypasses executeHealthcareRead to avoid HIPAA logging and slow query detection overhead
-      const healthCheckClient = PrismaService.getHealthCheckClient();
-      const typedClient = healthCheckClient as unknown as {
-        $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
-      };
-
-      // Simple SELECT 1 query - fastest possible health check
-      await typedClient.$queryRaw`SELECT 1`;
-      const responseTime = Date.now() - start;
 
       // Trigger auto-scaling check as part of health check (non-blocking with timeout)
       // Use a very short timeout to prevent health checks from being delayed
@@ -2445,12 +2461,12 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       });
 
       return {
-        isHealthy: connectionMetrics.isHealthy && responseTime < 5000,
+        isHealthy: healthStatus.healthy && connectionMetrics.isHealthy,
         connectionCount: connectionMetrics.totalConnections,
         activeQueries: connectionMetrics.activeConnections,
-        avgResponseTime: responseTime,
+        avgResponseTime: healthStatus.primary.latency || 0,
         lastHealthCheck: new Date(),
-        errors: connectionMetrics.isHealthy ? [] : ['Connection pool unhealthy'],
+        errors: healthStatus.issues,
       };
     } catch (error) {
       return {
@@ -2472,16 +2488,16 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const currentMetrics = this.metricsService.getCurrentMetrics();
 
     return Promise.resolve({
-      totalQueries: currentMetrics.performance.totalQueries,
-      successfulQueries: currentMetrics.performance.successfulQueries,
-      failedQueries: currentMetrics.performance.failedQueries,
-      averageQueryTime: currentMetrics.performance.averageQueryTime,
-      slowQueries: currentMetrics.performance.slowQueries,
+      totalQueries: currentMetrics?.performance?.totalQueries || 0,
+      successfulQueries: currentMetrics?.performance?.successfulQueries || 0,
+      failedQueries: currentMetrics?.performance?.failedQueries || 0,
+      averageQueryTime: currentMetrics?.performance?.averageQueryTime || 0,
+      slowQueries: currentMetrics?.performance?.slowQueries || 0,
       connectionPool: {
-        total: connectionMetrics.totalConnections,
-        active: connectionMetrics.activeConnections,
-        idle: connectionMetrics.idleConnections,
-        waiting: connectionMetrics.waitingConnections,
+        total: connectionMetrics?.totalConnections || 0,
+        active: connectionMetrics?.activeConnections || 0,
+        idle: connectionMetrics?.idleConnections || 0,
+        waiting: connectionMetrics?.waitingConnections || 0,
       },
     });
   }
@@ -3009,7 +3025,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Execute query with read replica routing for optimal read performance
-   * Routes read-only queries to read replicas when available
+   * Routes read-only queries to read replicas when available using ReadReplicaRouterService
    */
   async executeWithReadReplica<T>(
     operation: (client: PrismaTransactionClient) => Promise<T>,
@@ -3018,17 +3034,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      // Route to read replica through ConnectionPoolManager
-      await this.connectionPoolManager.executeQueryWithReadReplica<T>(
-        '', // Query executed through Prisma
-        [],
-        {
-          ...(clinicId && { clinicId }),
-          priority: 'normal',
-        }
-      );
-
-      // Execute the actual operation through healthcare read
+      // Use ReadReplicaRouterService to get read client (automatically routes to replica if available)
+      // executeHealthcareRead already uses ReadReplicaRouterService, so this is a convenience method
       const data = await this.executeHealthcareRead(operation);
 
       const executionTime = Date.now() - startTime;
@@ -3074,7 +3081,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         [],
         { priority: 'high' as const }
       );
-      return operation(client);
+      // Execute the actual operation
+      return await operation(client);
     });
   }
 
@@ -3107,6 +3115,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get connection pool metrics for monitoring
+   * Uses ConnectionPoolManager for metrics (consolidated from ConnectionPoolService)
    */
   getConnectionPoolMetrics() {
     return this.connectionPoolManager.getMetrics();
@@ -3114,13 +3123,16 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get detailed connection pool metrics with query performance
+   * Uses ConnectionPoolManager for comprehensive metrics (primary pool manager)
    */
   getDetailedConnectionMetrics() {
+    // Use ConnectionPoolManager for detailed metrics (primary pool manager with full feature set)
     return this.connectionPoolManager.getDetailedMetrics();
   }
 
   /**
    * Reset circuit breaker (useful for recovery after issues)
+   * Uses ConnectionPoolManager for circuit breaker management (consolidated from ConnectionPoolService)
    */
   resetCircuitBreaker(): void {
     this.connectionPoolManager.resetCircuitBreaker();
@@ -3134,6 +3146,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get current queue length (queries waiting for execution)
+   * Uses ConnectionPoolManager for queue metrics (consolidated from ConnectionPoolService)
    */
   getQueueLength(): number {
     return this.connectionPoolManager.getQueueLength();

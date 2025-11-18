@@ -38,32 +38,35 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
     try {
       // Safely get cache options from reflector
-      const cacheOptions = this.reflector?.get<UnifiedCacheOptions>(CACHE_KEY, context.getHandler());
+      const cacheOptions = this.reflector?.get<UnifiedCacheOptions>(
+        CACHE_KEY,
+        context.getHandler()
+      );
       const invalidationOptions = this.reflector?.get<CacheInvalidationOptions>(
-      CACHE_INVALIDATE_KEY,
-      context.getHandler()
-    );
+        CACHE_INVALIDATE_KEY,
+        context.getHandler()
+      );
 
-    // If no cache configuration, proceed normally
-    if (!cacheOptions && !invalidationOptions) {
+      // If no cache configuration, proceed normally
+      if (!cacheOptions && !invalidationOptions) {
+        return next.handle();
+      }
+
+      const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
+      const _response = context.switchToHttp().getResponse<{ statusCode?: number }>();
+
+      // Handle cache read operations
+      if (cacheOptions && request.method === 'GET') {
+        return this.handleCacheRead(context, next, cacheOptions);
+      }
+
+      // Handle cache invalidation operations
+      if (invalidationOptions && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
+        return this.handleCacheInvalidation(context, next, invalidationOptions);
+      }
+
+      // Default behavior
       return next.handle();
-    }
-
-    const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
-    const _response = context.switchToHttp().getResponse<{ statusCode?: number }>();
-
-    // Handle cache read operations
-    if (cacheOptions && request.method === 'GET') {
-      return this.handleCacheRead(context, next, cacheOptions);
-    }
-
-    // Handle cache invalidation operations
-    if (invalidationOptions && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
-      return this.handleCacheInvalidation(context, next, invalidationOptions);
-    }
-
-    // Default behavior
-    return next.handle();
     } catch (error) {
       // If interceptor fails, log and proceed without caching
       void this.loggingService?.log(
@@ -299,32 +302,32 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
 
       // Safely call cache service methods with error handling
-    try {
-      // Route to appropriate cache method based on healthcare data type
-      if (options.patientSpecific) {
-        // This would use the healthcare cache service with patient-specific logic
-        // For now, we'll use the basic Redis cache
-        return await this.cacheService.get(cacheKey);
-      }
-
-      if (options.emergencyData) {
-        // Emergency data uses minimal caching
-        const cached = await this.cacheService.get(cacheKey);
-        // Double-check TTL for emergency data
-        if (cached) {
-          const ttl = await this.cacheService.ttl(cacheKey);
-          if (ttl > (options.ttl || 300)) {
-            // TTL too long for emergency data, invalidate
-            await this.cacheService.del(cacheKey);
-            return null;
-          }
+      try {
+        // Route to appropriate cache method based on healthcare data type
+        if (options.patientSpecific) {
+          // This would use the healthcare cache service with patient-specific logic
+          // For now, we'll use the basic Redis cache
+          return await this.cacheService.get(cacheKey);
         }
-        return cached;
-      }
 
-      // Standard cache retrieval
-      const cachedValue = await this.cacheService.get(cacheKey);
-      return cachedValue ? JSON.parse(cachedValue as string) : null;
+        if (options.emergencyData) {
+          // Emergency data uses minimal caching
+          const cached = await this.cacheService.get(cacheKey);
+          // Double-check TTL for emergency data
+          if (cached) {
+            const ttl = await this.cacheService.ttl(cacheKey);
+            if (ttl > (options.ttl || 300)) {
+              // TTL too long for emergency data, invalidate
+              await this.cacheService.del(cacheKey);
+              return null;
+            }
+          }
+          return cached;
+        }
+
+        // Standard cache retrieval
+        const cachedValue = await this.cacheService.get(cacheKey);
+        return cachedValue ? JSON.parse(cachedValue as string) : null;
       } catch (cacheError) {
         // Cache service might not be fully initialized yet
         void this.loggingService?.log(
@@ -375,47 +378,47 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
 
       // Safely call cache service methods with error handling
-    try {
-      const ttl = this.calculateTTL(options, context);
-      const serializedValue = JSON.stringify(value);
+      try {
+        const ttl = this.calculateTTL(options, context);
+        const serializedValue = JSON.stringify(value);
 
-      // Apply healthcare-specific caching logic
-      const cacheTTL = options.ttl ?? 1800;
-      if (options.containsPHI) {
-        // PHI data gets additional security measures
-        await this.cacheService.set(cacheKey, serializedValue, cacheTTL);
+        // Apply healthcare-specific caching logic
+        const cacheTTL = options.ttl ?? 1800;
+        if (options.containsPHI) {
+          // PHI data gets additional security measures
+          await this.cacheService.set(cacheKey, serializedValue, cacheTTL);
 
-        // Track PHI cache access for compliance
-        await this.trackPHIAccess(cacheKey, context, 'cache_set');
-      } else if (options.emergencyData) {
-        // Emergency data uses minimal TTL
-        const emergencyTTL = Math.min(ttl, 300); // Max 5 minutes
-        await this.cacheService.set(cacheKey, serializedValue, emergencyTTL);
-      } else {
-        // Standard caching with SWR support
-        await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {
-          ttl,
-          ...(options.compress !== undefined && { compress: options.compress }),
-          ...(options.enableCompression !== undefined && {
-            compress: options.enableCompression,
-          }),
-          priority: this.mapPriority(options.priority),
-          enableSwr: options.enableSWR !== false,
-          ...(options.staleTime !== undefined && {
-            staleTime: options.staleTime,
-          }),
-          ...(options.tags !== undefined && { tags: [...(options.tags ?? [])] }),
-        });
-      }
+          // Track PHI cache access for compliance
+          await this.trackPHIAccess(cacheKey, context, 'cache_set');
+        } else if (options.emergencyData) {
+          // Emergency data uses minimal TTL
+          const emergencyTTL = Math.min(ttl, 300); // Max 5 minutes
+          await this.cacheService.set(cacheKey, serializedValue, emergencyTTL);
+        } else {
+          // Standard caching with SWR support
+          await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {
+            ttl,
+            ...(options.compress !== undefined && { compress: options.compress }),
+            ...(options.enableCompression !== undefined && {
+              compress: options.enableCompression,
+            }),
+            priority: this.mapPriority(options.priority),
+            enableSwr: options.enableSWR !== false,
+            ...(options.staleTime !== undefined && {
+              staleTime: options.staleTime,
+            }),
+            ...(options.tags !== undefined && { tags: [...(options.tags ?? [])] }),
+          });
+        }
 
-      const ttlValue = options.ttl ?? 1800;
-      await this.loggingService.log(
-        LogType.CACHE,
-        LogLevel.DEBUG,
-        'Healthcare data cached',
-        'HealthcareCacheInterceptor',
-        { cacheKey, ttl: ttlValue }
-      );
+        const ttlValue = options.ttl ?? 1800;
+        await this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.DEBUG,
+          'Healthcare data cached',
+          'HealthcareCacheInterceptor',
+          { cacheKey, ttl: ttlValue }
+        );
       } catch (cacheError) {
         // Cache service might not be fully initialized yet
         void this.loggingService?.log(

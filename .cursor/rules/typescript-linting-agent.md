@@ -100,7 +100,7 @@ export class UserService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly sessionService: SessionService,
     private readonly rbacService: RbacService
@@ -282,7 +282,7 @@ export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly configService: ConfigService
   ) {}
