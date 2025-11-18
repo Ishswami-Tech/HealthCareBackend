@@ -26,7 +26,9 @@ export class SocialAuthService {
     // Helper to safely get config values with fallback
     const getConfig = (key: string, defaultValue = ''): string => {
       try {
-        return this.configService?.get<string>(key, defaultValue) || process.env[key] || defaultValue;
+        return (
+          this.configService?.get<string>(key, defaultValue) || process.env[key] || defaultValue
+        );
       } catch {
         return process.env[key] || defaultValue;
       }

@@ -97,17 +97,17 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       // - We need to check environment variables directly to get the actual values
       const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
       const useDragonfly = cacheProvider === 'dragonfly';
-      
+
       const cacheHost = useDragonfly
-        ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
-        : (process.env['REDIS_HOST'] || 'localhost');
+        ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
+        : process.env['REDIS_HOST'] || 'localhost';
       const cachePort = useDragonfly
         ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
         : parseInt(process.env['REDIS_PORT'] || '6379', 10);
       const cachePassword = useDragonfly
         ? process.env['DRAGONFLY_PASSWORD']
         : process.env['REDIS_PASSWORD'];
-      
+
       const redisConnection = {
         host: cacheHost,
         port: cachePort,

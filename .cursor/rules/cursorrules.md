@@ -56,7 +56,7 @@ import type { RequestContext } from '@types';
 import { EventService, getEventServiceToken } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2) - CENTRALIZED EVENT HUB
 import { type IEventService, isEventService } from '@core/types'; // Type guards for EventService
 import { QueueService } from '@queue';
-import { RedisService } from '@cache';
+import { CacheService } from '@cache';
 
 // ❌ NEVER use relative imports
 import { UserService } from '../../../services/users/user.service';
@@ -90,7 +90,7 @@ export class UserService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly sessionService: SessionService,
     private readonly rbacService: RbacService
@@ -264,7 +264,7 @@ export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventService: EventService, // ✅ Use EventService (NOT EventEmitter2)
     private readonly configService: ConfigService
   ) {}

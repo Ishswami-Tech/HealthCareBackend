@@ -1,11 +1,20 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { LoggingService } from './logging.service';
 import { LoggingController } from './logging.controller';
+import { LoggingHealthMonitorService } from './logging-health-monitor.service';
+import { ResilienceModule } from '@core/resilience';
 
 @Global()
 @Module({
+  imports: [
+    forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
+  ],
   controllers: [LoggingController],
-  providers: [LoggingService],
-  exports: [LoggingService],
+  providers: [LoggingService, LoggingHealthMonitorService],
+  exports: [
+    LoggingService,
+    // Export health monitor for HealthService
+    LoggingHealthMonitorService,
+  ],
 })
 export class LoggingModule {}

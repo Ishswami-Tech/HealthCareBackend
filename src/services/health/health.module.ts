@@ -9,6 +9,7 @@ import { EmailModule } from '@communication/channels/email';
 import { ErrorsModule } from '@core/errors';
 import { CacheModule } from '@infrastructure/cache';
 import { QueueModule } from '@infrastructure/queue';
+import { CommunicationModule } from '@communication/communication.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { QueueModule } from '@infrastructure/queue';
     CacheModule,
     QueueModule,
     LoggingModule,
+    CommunicationModule, // Import CommunicationModule to access CommunicationHealthMonitorService
     SocketModule,
     EmailModule,
     ErrorsModule,

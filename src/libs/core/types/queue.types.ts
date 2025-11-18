@@ -353,3 +353,37 @@ export enum AuditAction {
   UPDATE = 'update',
   DELETE = 'delete',
 }
+
+/**
+ * Comprehensive queue health status (used by QueueHealthMonitorService)
+ * Provides detailed health information including connection, metrics, queue status, etc.
+ */
+export interface QueueHealthMonitorStatus {
+  healthy: boolean;
+  connection: {
+    connected: boolean;
+    latency?: number;
+    provider?: string;
+  };
+  metrics: {
+    totalJobs: number;
+    activeJobs: number;
+    waitingJobs: number;
+    failedJobs: number;
+    completedJobs: number;
+    errorRate: number;
+  };
+  performance: {
+    averageProcessingTime: number;
+    throughputPerMinute: number;
+  };
+  queues: Array<{
+    name: string;
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+  }>;
+  issues: string[];
+}

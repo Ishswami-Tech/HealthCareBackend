@@ -14,7 +14,7 @@
  */
 
 import { Module, Global, forwardRef } from '@nestjs/common';
-import { APP_INTERCEPTOR, Reflector } from '@nestjs/core';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@config';
 import { EventsModule } from '@infrastructure/events';
@@ -30,6 +30,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { CacheMetricsService } from '@infrastructure/cache/services/cache-metrics.service';
 import { FeatureFlagsService } from '@infrastructure/cache/services/feature-flags.service';
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
+import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
 // CacheErrorHandler is now provided by global ErrorsModule
 
 // Factories
@@ -60,7 +61,6 @@ import { HealthcareCacheInterceptor } from '@core/interceptors';
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 // Dragonfly Module
 import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.module';
-import { LoggingService } from '@infrastructure/logging';
 
 /**
  * Cache Module with SOLID architecture and provider-agnostic design
@@ -92,6 +92,7 @@ import { LoggingService } from '@infrastructure/logging';
     CacheMetricsService,
     FeatureFlagsService,
     CacheVersioningService,
+    CacheHealthMonitorService,
     // CacheErrorHandler is provided by global ErrorsModule (imported in app.module.ts)
 
     // Factories
@@ -127,6 +128,8 @@ import { LoggingService } from '@infrastructure/logging';
     CacheService,
     // Export key factory for convenience
     CacheKeyFactory,
+    // Export health monitor for HealthService
+    CacheHealthMonitorService,
   ],
 })
 export class CacheModule {}

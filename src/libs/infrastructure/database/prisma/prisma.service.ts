@@ -516,8 +516,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       { emit: 'stdout' as const, level: 'warn' as const },
     ];
     // Check if query logging is enabled via environment variable
-    const enableQueryLogging = process.env['QUERY_LOGGING'] === 'true' || process.env['PRISMA_QUERY_LOG'] === 'true';
-    
+    const enableQueryLogging =
+      process.env['QUERY_LOGGING'] === 'true' || process.env['PRISMA_QUERY_LOG'] === 'true';
+
     const developmentLogConfig: LogConfig[] = [
       { emit: 'stdout' as const, level: 'error' as const },
       { emit: 'stdout' as const, level: 'warn' as const },
@@ -833,6 +834,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Get the PrismaClient instance
+   * Alias for getRawPrismaClient() for convenience
+   */
+  getClient(): PrismaClient {
+    return this.getRawPrismaClient();
   }
 
   /**

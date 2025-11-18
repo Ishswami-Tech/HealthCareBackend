@@ -25,8 +25,7 @@ export class RedisModule implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     // Only initialize RedisService if Redis is the selected cache provider
     // This prevents unnecessary connections when using Dragonfly or other providers
-    const cacheProvider =
-      process.env['CACHE_PROVIDER']?.toLowerCase() || 'dragonfly'; // Default to Dragonfly
+    const cacheProvider = process.env['CACHE_PROVIDER']?.toLowerCase() || 'dragonfly'; // Default to Dragonfly
 
     if (cacheProvider === 'redis') {
       // Explicitly trigger RedisService.onModuleInit by calling it

@@ -16,6 +16,7 @@
 // Unified Communication Service (primary entry point)
 export * from './communication.service';
 export { CommunicationModule } from './communication.module';
+export * from './communication-health-monitor.service';
 
 // Channel exports (for direct access if needed)
 export * from '@communication/channels/socket';

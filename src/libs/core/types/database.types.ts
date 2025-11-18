@@ -4,6 +4,7 @@
  * - Database infrastructure types (metrics, health, client interfaces)
  * - Repository pattern types (RepositoryResult, query options)
  * - Entity types (Prisma entity definitions and relations)
+ * - Database provider interfaces (IDatabaseProvider, IConnectionPoolManager, IReadReplicaRouter)
  * All types are strictly typed without using 'any' or 'unknown'.
  */
 
@@ -856,6 +857,133 @@ export class RepositoryResult<T, E = Error> {
   }
 }
 
+// ============================================================================
+// DATABASE PROVIDER INTERFACES
+// ============================================================================
+
+/**
+ * Database Provider Interface
+ * @interface IDatabaseProvider
+ * @description Abstraction for database providers (PostgreSQL, MySQL, etc.)
+ * Follows Dependency Inversion Principle
+ */
+export interface IDatabaseProvider {
+  /**
+   * Get primary database client
+   */
+  getPrimaryClient(): PrismaClient;
+
+  /**
+   * Get read replica client (if available)
+   */
+  getReadReplicaClient(): PrismaClient | null;
+
+  /**
+   * Check if read replicas are available
+   */
+  hasReadReplicas(): boolean;
+
+  /**
+   * Get health status
+   */
+  getHealthStatus(): Promise<{
+    primary: boolean;
+    replicas: Array<{ url: string; healthy: boolean; lag?: number }>;
+  }>;
+
+  /**
+   * Close all connections
+   */
+  close(): Promise<void>;
+}
+
+/**
+ * Connection Pool Interface
+ * @interface IConnectionPoolManager
+ * @description Abstraction for connection pool management
+ * Follows Dependency Inversion Principle
+ */
+export interface IConnectionPoolManager {
+  /**
+   * Execute query with connection pool
+   */
+  executeQuery<T>(query: string, params: unknown[], options: QueryOptions): Promise<T>;
+
+  /**
+   * Get connection pool metrics
+   */
+  getMetrics(): ConnectionMetrics;
+
+  /**
+   * Get circuit breaker state
+   */
+  getCircuitBreakerState(): {
+    isOpen: boolean;
+    failures: number;
+    failureCount: number;
+    successCount: number;
+  };
+
+  /**
+   * Reset circuit breaker
+   */
+  resetCircuitBreaker(): void;
+
+  /**
+   * Get queue length
+   */
+  getQueueLength(): number;
+}
+
+/**
+ * Load Balancing Strategy for Read Replicas
+ */
+export type LoadBalancingStrategy = 'round-robin' | 'least-connections' | 'latency-based';
+
+/**
+ * Read Replica Configuration
+ */
+export interface ReadReplicaConfig {
+  enabled: boolean;
+  urls: string[];
+  strategy: LoadBalancingStrategy;
+  failover: boolean;
+  healthCheckInterval: number;
+}
+
+/**
+ * Read Replica Router Interface
+ * @interface IReadReplicaRouter
+ * @description Abstraction for read replica routing
+ * Follows Dependency Inversion Principle
+ */
+export interface IReadReplicaRouter {
+  /**
+   * Get client for read operation (routes to replica if available)
+   */
+  getReadClient(): PrismaClient;
+
+  /**
+   * Get client for write operation (always primary)
+   */
+  getWriteClient(): PrismaClient;
+
+  /**
+   * Check if query is read-only
+   */
+  isReadOnlyQuery(query: string): boolean;
+
+  /**
+   * Get replica health status
+   */
+  getReplicaHealth(): Promise<Array<{ url: string; healthy: boolean; lag?: number }>>;
+
+  /**
+   * Update replica configuration
+   */
+  updateConfig(config: Partial<ReadReplicaConfig>): void;
+}
+
 /**
  * JSON representation of result
  */
@@ -1033,7 +1161,7 @@ export interface DatabaseErrorCacheEntry {
 }
 
 /**
- * Database health status
+ * Database health status (simplified - used by HealthcareDatabaseClient)
  */
 export interface DatabaseHealthStatus {
   isHealthy: boolean;
@@ -1042,6 +1170,41 @@ export interface DatabaseHealthStatus {
   avgResponseTime: number;
   lastHealthCheck: Date;
   errors: string[];
+}
+
+/**
+ * Comprehensive database health status (used by DatabaseHealthMonitorService)
+ * Provides detailed health information including primary, replicas, disk space, locks, etc.
+ */
+export interface DatabaseHealthMonitorStatus {
+  healthy: boolean;
+  primary: {
+    connected: boolean;
+    version?: string;
+    latency?: number;
+  };
+  replicas: Array<{
+    url: string;
+    healthy: boolean;
+    lag?: number;
+  }>;
+  connectionPool: {
+    total: number;
+    active: number;
+    idle: number;
+    utilization: number;
+  };
+  diskSpace?: {
+    used: number;
+    available: number;
+    percentage: number;
+  };
+  replicationLag?: number;
+  locks?: {
+    count: number;
+    blocking: number;
+  };
+  issues: string[];
 }
 
 /**

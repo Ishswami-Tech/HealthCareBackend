@@ -6,14 +6,7 @@
  * This service provides direct access to Dragonfly operations
  */
 
-import {
-  Injectable,
-  OnModuleInit,
-  OnModuleDestroy,
-  HttpStatus,
-  Inject,
-  forwardRef,
-} from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
 import Redis from 'ioredis';
 
@@ -65,8 +58,7 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
   ) {
     this.isDevelopment = this.isDevEnvironment();
     this.verboseLoggingEnabled =
-      process.env['ENABLE_CACHE_DEBUG'] === 'true' ||
-      process.env['CACHE_VERBOSE_LOGS'] === 'true';
+      process.env['ENABLE_CACHE_DEBUG'] === 'true' || process.env['CACHE_VERBOSE_LOGS'] === 'true';
     this.initializeClient();
   }
 
@@ -117,17 +109,17 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
       const hasPassword = dragonflyPassword && dragonflyPassword.trim().length > 0;
 
       if (this.verboseLoggingEnabled) {
-      void this.loggingService
-        .log(
-          LogType.SYSTEM,
+        void this.loggingService
+          .log(
+            LogType.SYSTEM,
             LogLevel.DEBUG,
-          `Initializing Dragonfly connection to ${dragonflyHost}:${dragonflyPort}`,
-          'DragonflyService',
-          { host: dragonflyHost, port: dragonflyPort, hasPassword: !!hasPassword }
-        )
-        .catch(() => {
-          // Ignore logging errors - connection is more important
-        });
+            `Initializing Dragonfly connection to ${dragonflyHost}:${dragonflyPort}`,
+            'DragonflyService',
+            { host: dragonflyHost, port: dragonflyPort, hasPassword: !!hasPassword }
+          )
+          .catch(() => {
+            // Ignore logging errors - connection is more important
+          });
       }
 
       const dragonflyOptions: {
@@ -200,30 +192,31 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
 
       this.client.on('connect', () => {
         if (this.verboseLoggingEnabled) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          `Dragonfly connected to ${dragonflyHost}:${dragonflyPort}`,
-          'DragonflyService',
-          { host: dragonflyHost, port: dragonflyPort }
-        );
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            `Dragonfly connected to ${dragonflyHost}:${dragonflyPort}`,
+            'DragonflyService',
+            { host: dragonflyHost, port: dragonflyPort }
+          );
         }
       });
 
       this.client.on('ready', () => {
         if (this.verboseLoggingEnabled) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Dragonfly client ready',
-          'DragonflyService',
-          {}
-        );
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Dragonfly client ready',
+            'DragonflyService',
+            {}
+          );
         }
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorCode = error instanceof HealthcareError ? error.code : ErrorCode.CACHE_OPERATION_FAILED;
+      const errorCode =
+        error instanceof HealthcareError ? error.code : ErrorCode.CACHE_OPERATION_FAILED;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
@@ -240,17 +233,17 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
       // Check if already connected to avoid duplicate connection attempts
       if (this.client && this.client.status === 'ready') {
         if (this.verboseLoggingEnabled) {
-        void this.loggingService
-          .log(
-            LogType.SYSTEM,
-            LogLevel.INFO,
-            'Dragonfly already connected, skipping connection attempt',
-            'DragonflyService',
-            {}
-          )
-          .catch(() => {
-            // Ignore logging errors
-          });
+          void this.loggingService
+            .log(
+              LogType.SYSTEM,
+              LogLevel.INFO,
+              'Dragonfly already connected, skipping connection attempt',
+              'DragonflyService',
+              {}
+            )
+            .catch(() => {
+              // Ignore logging errors
+            });
         }
         return;
       }
@@ -264,13 +257,13 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
       // Only connect if Dragonfly is the selected provider
       if (cacheProvider !== 'dragonfly') {
         if (this.verboseLoggingEnabled) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          `DragonflyService skipped - using ${cacheProvider} as cache provider`,
-          'DragonflyService',
-          { cacheProvider }
-        );
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            `DragonflyService skipped - using ${cacheProvider} as cache provider`,
+            'DragonflyService',
+            { cacheProvider }
+          );
         }
         return; // Don't connect if not using Dragonfly
       }
@@ -282,13 +275,13 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
 
       if (!isDragonflyEnabled) {
         if (this.verboseLoggingEnabled) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Dragonfly is disabled in configuration',
-          'DragonflyService',
-          {}
-        );
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Dragonfly is disabled in configuration',
+            'DragonflyService',
+            {}
+          );
         }
         return;
       }
@@ -302,13 +295,13 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
       }
 
       if (this.verboseLoggingEnabled) {
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'DragonflyService initialized successfully',
-        'DragonflyService',
-        {}
-      );
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'DragonflyService initialized successfully',
+          'DragonflyService',
+          {}
+        );
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -328,16 +321,16 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
       if (this.client) {
         await this.client.quit();
         if (this.verboseLoggingEnabled) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'DragonflyService disconnected',
-          'DragonflyService',
-          {}
-        );
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'DragonflyService disconnected',
+            'DragonflyService',
+            {}
+          );
         }
       }
-    } catch (error) {
+    } catch (_error) {
       // Ignore errors during shutdown
     }
   }
@@ -356,17 +349,17 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
       // Verify that cache_mode is false (which means noeviction)
       // We can't change this at runtime - it's set at startup
       if (this.verboseLoggingEnabled) {
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Dragonfly eviction policy: noeviction (cache_mode=false set at startup)',
-        'DragonflyService',
-        {
-          note: 'Dragonfly eviction is controlled by --cache_mode flag. cache_mode=false means noeviction policy.',
-        }
-      );
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Dragonfly eviction policy: noeviction (cache_mode=false set at startup)',
+          'DragonflyService',
+          {
+            note: 'Dragonfly eviction is controlled by --cache_mode flag. cache_mode=false means noeviction policy.',
+          }
+        );
       }
-    } catch (error) {
+    } catch (_error) {
       // Ignore logging errors
     }
   }
@@ -380,15 +373,15 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
     if (process.env['NODE_ENV'] === 'production') {
       try {
         if (this.verboseLoggingEnabled) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Applied production memory optimizations',
-          'DragonflyService',
-          {}
-        );
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Applied production memory optimizations',
+            'DragonflyService',
+            {}
+          );
         }
-      } catch (error) {
+      } catch (_error) {
         // Ignore config errors
       }
     }
@@ -478,7 +471,9 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async multi(commands: Array<{ command: string; args: unknown[] }>): Promise<Array<[Error | null, unknown]>> {
+  async multi(
+    commands: Array<{ command: string; args: unknown[] }>
+  ): Promise<Array<[Error | null, unknown]>> {
     if (!this.client || this.client.status !== 'ready') {
       return commands.map(() => [new Error('Dragonfly not ready'), null]);
     }
@@ -824,4 +819,3 @@ export class DragonflyService implements OnModuleInit, OnModuleDestroy {
     return this.client && this.client.status === 'ready' ? this.client : null;
   }
 }
-

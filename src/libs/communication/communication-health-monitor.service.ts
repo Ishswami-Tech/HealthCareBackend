@@ -1,0 +1,697 @@
+/**
+ * Communication Health Monitor Service
+ * @class CommunicationHealthMonitorService
+ * @description Monitors communication service health (Socket and Email) with optimized checks for frequent monitoring
+ * Follows Single Responsibility Principle - only handles health monitoring
+ * Optimized for frequent checks (every 10-30 seconds) without performance impact
+ */
+
+import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@config';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import type { CommunicationHealthMonitorStatus } from '@core/types';
+import { CircuitBreakerService } from '@core/resilience';
+import { SocketService } from './channels/socket/socket.service';
+import { EmailService } from './channels/email/email.service';
+import { WhatsAppService } from './channels/whatsapp/whatsapp.service';
+import { PushNotificationService } from './channels/push/push.service';
+
+@Injectable()
+export class CommunicationHealthMonitorService implements OnModuleInit, OnModuleDestroy {
+  private readonly serviceName = 'CommunicationHealthMonitorService';
+  private healthCheckInterval?: NodeJS.Timeout;
+  // Background monitoring interval: 10-30 seconds (configurable, default 20 seconds)
+  // Optimized for 10M+ users - frequent enough for real-time status, not too frequent to cause load
+  private readonly CHECK_INTERVAL_MS = parseInt(
+    process.env['COMMUNICATION_HEALTH_CHECK_INTERVAL_MS'] || '20000',
+    10
+  ); // Default 20 seconds (within 10-30 range)
+  private cachedHealthStatus: CommunicationHealthMonitorStatus | null = null;
+  private lastHealthCheckTime = 0;
+  private readonly CACHE_TTL_MS = 10000; // Cache health status for 10 seconds to avoid excessive queries
+  private readonly HEALTH_CHECK_TIMEOUT_MS = 2000; // Max 2 seconds for health check (non-blocking)
+  private lastExpensiveCheckTime = 0;
+  private readonly EXPENSIVE_CHECK_INTERVAL_MS = 60000; // Run expensive checks every 60 seconds only
+  private isHealthCheckInProgress = false; // Prevent concurrent health checks
+  // Circuit breaker name for health checks (prevents CPU load when communication is down)
+  private readonly HEALTH_CHECK_CIRCUIT_BREAKER_NAME = 'communication-health-check';
+
+  constructor(
+    private readonly circuitBreakerService: CircuitBreakerService,
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => SocketService))
+    private readonly socketService?: SocketService,
+    @Inject(forwardRef(() => EmailService))
+    private readonly emailService?: EmailService,
+    @Inject(forwardRef(() => WhatsAppService))
+    private readonly whatsappService?: WhatsAppService,
+    @Inject(forwardRef(() => PushNotificationService))
+    private readonly pushService?: PushNotificationService
+  ) {
+    // Circuit breaker is managed by CircuitBreakerService using named instances
+    // The service will automatically track failures and open/close the circuit
+    // Prevents excessive health checks when communication is down (saves CPU for 10M+ users)
+  }
+
+  onModuleInit(): void {
+    this.startHealthMonitoring();
+  }
+
+  /**
+   * Get comprehensive communication health status
+   * Uses caching, timeout protection, and non-blocking execution
+   * Optimized for frequent checks (every 10-30 seconds) without performance impact
+   */
+  async getHealthStatus(): Promise<CommunicationHealthMonitorStatus> {
+    // Return cached status if still fresh (within cache TTL)
+    const now = Date.now();
+    if (this.cachedHealthStatus && now - this.lastHealthCheckTime < this.CACHE_TTL_MS) {
+      return this.cachedHealthStatus;
+    }
+
+    // Prevent concurrent health checks (non-blocking)
+    if (this.isHealthCheckInProgress) {
+      // Return cached status if check is in progress
+      return this.cachedHealthStatus || this.getDefaultUnhealthyStatus();
+    }
+
+    // Execute health check with timeout protection (non-blocking)
+    return this.executeHealthCheckWithTimeout();
+  }
+
+  /**
+   * Execute health check with timeout protection
+   * Non-blocking: Uses Promise.race to ensure health check completes within timeout
+   */
+  private async executeHealthCheckWithTimeout(): Promise<CommunicationHealthMonitorStatus> {
+    this.isHealthCheckInProgress = true;
+
+    try {
+      // Race between health check and timeout
+      const healthCheckPromise = this.performHealthCheckInternal();
+      const timeoutPromise = new Promise<CommunicationHealthMonitorStatus>(resolve => {
+        setTimeout(() => {
+          // Return cached status or default on timeout
+          resolve(
+            this.cachedHealthStatus || this.getDefaultUnhealthyStatus(['Health check timeout'])
+          );
+        }, this.HEALTH_CHECK_TIMEOUT_MS);
+      });
+
+      const status = await Promise.race([healthCheckPromise, timeoutPromise]);
+
+      // Update cache
+      this.cachedHealthStatus = status;
+      this.lastHealthCheckTime = Date.now();
+
+      // Circuit breaker tracks failures automatically
+      if (!status.healthy) {
+        // Record failure in circuit breaker
+        this.circuitBreakerService.recordFailure(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
+      } else {
+        // Record success in circuit breaker
+        this.circuitBreakerService.recordSuccess(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
+      }
+
+      return status;
+    } catch (error) {
+      // Record failure in circuit breaker
+      this.circuitBreakerService.recordFailure(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
+
+      const errorStatus = this.getDefaultUnhealthyStatus([
+        `Health check error: ${error instanceof Error ? error.message : String(error)}`,
+      ]);
+      this.cachedHealthStatus = errorStatus;
+      this.lastHealthCheckTime = Date.now();
+      return errorStatus;
+    } finally {
+      this.isHealthCheckInProgress = false;
+    }
+  }
+
+  /**
+   * Perform internal health check (core logic)
+   * Fast path: Only essential checks for frequent monitoring
+   * Expensive checks run periodically (every 60 seconds)
+   * Optimized for 10M+ users - minimal CPU load, non-blocking
+   */
+  private async performHealthCheckInternal(): Promise<CommunicationHealthMonitorStatus> {
+    const issues: string[] = [];
+    const status: CommunicationHealthMonitorStatus = {
+      healthy: true,
+      socket: {
+        connected: false,
+      },
+      email: {
+        connected: false,
+      },
+      whatsapp: {
+        connected: false,
+      },
+      push: {
+        connected: false,
+      },
+      metrics: {
+        socketConnections: 0,
+        emailQueueSize: 0,
+      },
+      performance: {},
+      issues: [],
+    };
+
+    const now = Date.now();
+    const shouldRunExpensiveChecks =
+      now - this.lastExpensiveCheckTime >= this.EXPENSIVE_CHECK_INTERVAL_MS;
+
+    // Check circuit breaker - if open, return cached status or default unhealthy (saves CPU)
+    if (!this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)) {
+      // Circuit breaker is open - return cached or default status (no CPU load)
+      return (
+        this.cachedHealthStatus ||
+        this.getDefaultUnhealthyStatus(['Circuit breaker open - too many failures'])
+      );
+    }
+
+    try {
+      // Fast path: Essential Socket health check only (always runs)
+      // Uses lightweight service check - fastest possible socket check
+      const socketHealth = await this.checkSocketHealthWithTimeout();
+      status.socket = socketHealth;
+      if (!socketHealth.connected) {
+        issues.push('Socket service not connected');
+        status.healthy = false;
+        // Circuit breaker will track failures automatically
+      }
+
+      // Fast path: Essential Email health check only (always runs)
+      // Uses lightweight service check - fastest possible email check
+      const emailHealth = await this.checkEmailHealthWithTimeout();
+      status.email = emailHealth;
+      if (!emailHealth.connected) {
+        issues.push('Email service not connected');
+        status.healthy = false;
+      }
+
+      // Fast path: Essential WhatsApp health check only (always runs)
+      const whatsappHealth = await this.checkWhatsAppHealthWithTimeout();
+      status.whatsapp = whatsappHealth;
+      if (!whatsappHealth.connected) {
+        issues.push('WhatsApp service not connected');
+        status.healthy = false;
+      }
+
+      // Fast path: Essential Push health check only (always runs)
+      const pushHealth = await this.checkPushHealthWithTimeout();
+      status.push = pushHealth;
+      if (!pushHealth.connected) {
+        issues.push('Push service not connected');
+        status.healthy = false;
+      }
+
+      // Expensive checks only run periodically (every 60 seconds) to avoid performance impact
+      // These are non-blocking and won't affect CPU load for frequent health checks
+      if (shouldRunExpensiveChecks && (status.socket.connected || status.email.connected)) {
+        this.lastExpensiveCheckTime = now;
+
+        // Run expensive checks in background (non-blocking) - update cached status when complete
+        // This ensures they don't block the health check response (fast path returns immediately)
+        void Promise.all([
+          // Get socket metrics (expensive - runs periodically, non-blocking)
+          Promise.race([
+            this.getSocketMetricsAsync().catch(() => null),
+            new Promise<null>(
+              resolve => setTimeout(() => resolve(null), 1000) // 1 second timeout
+            ),
+          ]),
+          // Get email metrics (expensive - runs periodically, non-blocking)
+          Promise.race([
+            Promise.resolve(this.getEmailMetricsAsync()).catch(() => null),
+            new Promise<null>(
+              resolve => setTimeout(() => resolve(null), 1000) // 1 second timeout
+            ),
+          ]),
+        ])
+          .then(([socketMetrics, emailMetrics]) => {
+            // Update cached status with expensive check results (non-blocking)
+            if (this.cachedHealthStatus) {
+              if (socketMetrics) {
+                this.cachedHealthStatus.metrics.socketConnections =
+                  socketMetrics.connectedClients || 0;
+              }
+              if (emailMetrics) {
+                this.cachedHealthStatus.metrics.emailQueueSize = emailMetrics.queueSize || 0;
+              }
+            }
+          })
+          .catch(() => {
+            // Expensive checks failure shouldn't fail overall health
+          });
+      } else {
+        // Use cached expensive check data if available (no query overhead)
+        if (this.cachedHealthStatus) {
+          status.metrics = { ...this.cachedHealthStatus.metrics };
+          status.performance = { ...this.cachedHealthStatus.performance };
+        }
+      }
+
+      status.issues = issues;
+    } catch (error) {
+      status.healthy = false;
+      status.issues.push(
+        `Health check failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      // Circuit breaker will track failures automatically
+    }
+
+    return status;
+  }
+
+  /**
+   * Get default unhealthy status
+   */
+  private getDefaultUnhealthyStatus(issues: string[] = []): CommunicationHealthMonitorStatus {
+    return {
+      healthy: false,
+      socket: {
+        connected: false,
+      },
+      email: {
+        connected: false,
+      },
+      whatsapp: {
+        connected: false,
+      },
+      push: {
+        connected: false,
+      },
+      metrics: {
+        socketConnections: 0,
+        emailQueueSize: 0,
+      },
+      performance: {},
+      issues,
+    };
+  }
+
+  /**
+   * Check socket health with timeout protection
+   * Uses lightweight service check for minimal overhead
+   * Non-blocking: Times out after 1.5 seconds
+   * Optimized for 10M+ users - minimal CPU load, fastest possible check
+   */
+  private async checkSocketHealthWithTimeout(): Promise<{
+    connected: boolean;
+    latency?: number;
+    connectedClients?: number;
+  }> {
+    const start = Date.now();
+    const QUERY_TIMEOUT_MS = 1500; // 1.5 seconds max for socket check (fast enough for 10M+ users)
+
+    try {
+      if (!this.socketService) {
+        return {
+          connected: false,
+          latency: Date.now() - start,
+        };
+      }
+
+      // Use lightweight service check - just verify service is initialized
+      const isInitialized = this.socketService.getInitializationState();
+
+      if (!isInitialized) {
+        return {
+          connected: false,
+          latency: Date.now() - start,
+        };
+      }
+
+      // Try to get connected clients count (lightweight operation)
+      try {
+        const server = this.socketService.getServer();
+        if (server) {
+          const connectedClientsPromise = server.allSockets();
+          const timeoutPromise = new Promise<Set<string>>(resolve => {
+            setTimeout(() => resolve(new Set()), QUERY_TIMEOUT_MS);
+          });
+
+          const connectedClients = await Promise.race([connectedClientsPromise, timeoutPromise]);
+          const latency = Date.now() - start;
+
+          return {
+            connected: true,
+            latency,
+            connectedClients: connectedClients.size,
+          };
+        }
+      } catch {
+        // If getting clients fails, service is still initialized, so it's connected
+      }
+
+      const latency = Date.now() - start;
+      return {
+        connected: true,
+        latency,
+      };
+    } catch (_error) {
+      // Socket check failed - return false with latency measurement
+      return {
+        connected: false,
+        latency: Date.now() - start,
+      };
+    }
+  }
+
+  /**
+   * Check email health with timeout protection
+   * Uses lightweight service check for minimal overhead
+   * Non-blocking: Times out after 1.5 seconds
+   * Optimized for 10M+ users - minimal CPU load, fastest possible check
+   */
+  private async checkEmailHealthWithTimeout(): Promise<{
+    connected: boolean;
+    latency?: number;
+    provider?: string;
+  }> {
+    const start = Date.now();
+    const QUERY_TIMEOUT_MS = 1500; // 1.5 seconds max for email check (fast enough for 10M+ users)
+
+    try {
+      if (!this.emailService) {
+        return {
+          connected: false,
+          latency: Date.now() - start,
+        };
+      }
+
+      // Use lightweight service check - just verify service is healthy
+      const checkPromise = Promise.resolve(this.emailService.isHealthy());
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Email service check timeout')), QUERY_TIMEOUT_MS);
+      });
+
+      const isHealthy = await Promise.race([checkPromise, timeoutPromise]);
+      const latency = Date.now() - start;
+
+      // Try to get provider info (non-blocking, optional)
+      let provider: string | undefined;
+      try {
+        // Provider info could be extracted from config or service state
+        // For now, we'll skip it to keep checks lightweight
+        provider = undefined;
+      } catch {
+        // Provider detection failed - not critical
+      }
+
+      return {
+        connected: isHealthy,
+        latency,
+        ...(provider !== undefined && { provider }),
+      };
+    } catch (_error) {
+      // Email check failed - return false with latency measurement
+      return {
+        connected: false,
+        latency: Date.now() - start,
+      };
+    }
+  }
+
+  /**
+   * Check WhatsApp health with timeout protection
+   * Uses lightweight service check - fastest possible WhatsApp check
+   */
+  private async checkWhatsAppHealthWithTimeout(): Promise<{
+    connected: boolean;
+    latency?: number;
+    enabled?: boolean;
+  }> {
+    const start = Date.now();
+    const QUERY_TIMEOUT_MS = 1500; // 1.5 seconds max for WhatsApp check (fast enough for 10M+ users)
+
+    try {
+      if (!this.whatsappService) {
+        return {
+          connected: false,
+          latency: Date.now() - start,
+        };
+      }
+
+      // WhatsAppService doesn't have a direct 'isHealthy' method,
+      // but it has an 'enabled' flag in its config.
+      // For a lightweight check, we can assume it's "connected" if the service is instantiated.
+      // Check if service exists and is initialized (service being present means it's available)
+      const checkPromise = Promise.resolve(
+        this.whatsappService !== null && this.whatsappService !== undefined
+      );
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('WhatsApp service check timeout')), QUERY_TIMEOUT_MS);
+      });
+
+      const isEnabled = await Promise.race([checkPromise, timeoutPromise]);
+      const latency = Date.now() - start;
+
+      return {
+        connected: isEnabled,
+        latency,
+        enabled: isEnabled,
+      };
+    } catch (_error) {
+      // WhatsApp check failed - return false with latency measurement
+      return {
+        connected: false,
+        latency: Date.now() - start,
+      };
+    }
+  }
+
+  /**
+   * Check Push health with timeout protection
+   * Uses lightweight service check - fastest possible Push check
+   */
+  private async checkPushHealthWithTimeout(): Promise<{
+    connected: boolean;
+    latency?: number;
+    provider?: string;
+  }> {
+    const start = Date.now();
+    const QUERY_TIMEOUT_MS = 1500; // 1.5 seconds max for Push check (fast enough for 10M+ users)
+
+    try {
+      if (!this.pushService) {
+        return {
+          connected: false,
+          latency: Date.now() - start,
+        };
+      }
+
+      // Use lightweight service check - just verify service is healthy
+      const checkPromise = Promise.resolve(
+        typeof (this.pushService as { isHealthy?: () => boolean }).isHealthy === 'function'
+          ? (this.pushService as { isHealthy: () => boolean }).isHealthy()
+          : true // If no isHealthy method, assume healthy if service exists
+      );
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Push service check timeout')), QUERY_TIMEOUT_MS);
+      });
+
+      const isHealthy = await Promise.race([checkPromise, timeoutPromise]);
+      const latency = Date.now() - start;
+
+      // Try to get provider info (non-blocking, optional)
+      let provider: string | undefined;
+      try {
+        // Provider info could be extracted from config or service state
+        // For now, we'll skip it to keep checks lightweight
+        provider = 'FCM/SNS'; // Placeholder provider
+      } catch {
+        // Provider detection failed - not critical
+      }
+
+      return {
+        connected: isHealthy,
+        latency,
+        ...(provider !== undefined && { provider }),
+      };
+    } catch (_error) {
+      // Push check failed - return false with latency measurement
+      return {
+        connected: false,
+        latency: Date.now() - start,
+      };
+    }
+  }
+
+  /**
+   * Get socket metrics asynchronously (expensive operation)
+   * Runs periodically in background, non-blocking
+   */
+  private async getSocketMetricsAsync(): Promise<{
+    connectedClients: number;
+  }> {
+    try {
+      if (!this.socketService || !this.socketService.getInitializationState()) {
+        return { connectedClients: 0 };
+      }
+
+      const server = this.socketService.getServer();
+      if (server) {
+        const connectedClients = await server.allSockets();
+        return { connectedClients: connectedClients.size };
+      }
+    } catch {
+      // Metrics collection failed - return default
+    }
+    return { connectedClients: 0 };
+  }
+
+  /**
+   * Get email metrics asynchronously (expensive operation)
+   * Runs periodically in background, non-blocking
+   */
+  private getEmailMetricsAsync(): {
+    queueSize: number;
+  } {
+    // For now, return default metrics
+    // In the future, this could query actual email queue metrics
+    return { queueSize: 0 };
+  }
+
+  /**
+   * Get lightweight health status (service only, no expensive queries)
+   * Use this for very frequent checks (e.g., every second) to avoid query overhead
+   */
+  getLightweightHealthStatus(): {
+    healthy: boolean;
+    socket: {
+      connected: boolean;
+    };
+    email: {
+      connected: boolean;
+    };
+    whatsapp: {
+      connected: boolean;
+    };
+    push: {
+      connected: boolean;
+    };
+    lastCheck: Date;
+  } {
+    // Return lightweight status based on cached data
+    // This doesn't query the services, just returns cached status
+    if (this.cachedHealthStatus) {
+      return {
+        healthy: this.cachedHealthStatus.healthy,
+        socket: {
+          connected: this.cachedHealthStatus.socket.connected,
+        },
+        email: {
+          connected: this.cachedHealthStatus.email.connected,
+        },
+        whatsapp: {
+          connected: this.cachedHealthStatus.whatsapp.connected,
+        },
+        push: {
+          connected: this.cachedHealthStatus.push.connected,
+        },
+        lastCheck: new Date(this.lastHealthCheckTime),
+      };
+    }
+
+    // Fallback if no cached data
+    return {
+      healthy: false,
+      socket: {
+        connected: false,
+      },
+      email: {
+        connected: false,
+      },
+      whatsapp: {
+        connected: false,
+      },
+      push: {
+        connected: false,
+      },
+      lastCheck: new Date(),
+    };
+  }
+
+  /**
+   * Start health monitoring
+   * Runs every 10-30 seconds (configurable via COMMUNICATION_HEALTH_CHECK_INTERVAL_MS)
+   * Optimized for 10M+ users - non-blocking, minimal CPU load
+   */
+  private startHealthMonitoring(): void {
+    // Ensure interval is within 10-30 seconds range
+    const interval = Math.max(10000, Math.min(30000, this.CHECK_INTERVAL_MS));
+
+    this.healthCheckInterval = setInterval(() => {
+      // Non-blocking: Don't await, just trigger update
+      // This ensures health monitoring doesn't block the event loop
+      void this.performHealthCheck();
+    }, interval);
+  }
+
+  /**
+   * Perform background health check (non-blocking)
+   * Runs periodically to update cached status
+   * Optimized for 10M+ users - uses lightweight checks, timeout protection, circuit breaker
+   */
+  private performHealthCheck(): void {
+    // Non-blocking: Don't await, just trigger update
+    // Uses lightweight service check (fastest possible) with timeout protection
+    // Circuit breaker prevents excessive checks when unhealthy (saves CPU)
+    void this.getHealthStatus()
+      .then(status => {
+        if (
+          !status.healthy &&
+          this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
+        ) {
+          // Only log if circuit breaker is not open (avoid log spam)
+          void this.loggingService?.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Communication health check failed',
+            this.serviceName,
+            {
+              issues: status.issues,
+              socketConnected: status.socket.connected,
+              emailConnected: status.email.connected,
+              whatsappConnected: status.whatsapp.connected,
+              pushConnected: status.push.connected,
+              socketLatency: status.socket.latency,
+              emailLatency: status.email.latency,
+              whatsappLatency: status.whatsapp.latency,
+              pushLatency: status.push.latency,
+            }
+          );
+        }
+      })
+      .catch(error => {
+        // Log errors but don't let them block health monitoring
+        void this.loggingService?.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          'Health check error',
+          this.serviceName,
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+      });
+  }
+
+  /**
+   * Cleanup
+   */
+  onModuleDestroy(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+  }
+}

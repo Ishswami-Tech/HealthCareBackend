@@ -1,7 +1,7 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 
 // Internal imports - Infrastructure
-import { RedisModule } from '@infrastructure/cache/redis/redis.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 
 import { RateLimitService } from './rate-limit.service';
@@ -35,7 +35,7 @@ import { RateLimitService } from './rate-limit.service';
  * - HIPAA-compliant rate limiting for healthcare data
  */
 @Module({
-  imports: [RedisModule, LoggingModule],
+  imports: [forwardRef(() => CacheModule), LoggingModule],
   providers: [RateLimitService],
   exports: [RateLimitService],
 })

@@ -8,13 +8,22 @@ import { LogType, LogLevel } from '@core/types';
 import { initDatabase } from './scripts/init-db';
 // healthcareConfig is imported by ConfigModule, not used directly here
 import { ConnectionPoolManager } from './connection-pool.manager';
-import { HealthcareQueryOptimizerService } from './query-optimizer.service';
+import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
 import { UserRepository } from './repositories/user.repository';
-import { ClinicIsolationService } from './clinic-isolation.service';
+import { ClinicIsolationService } from './internal/clinic-isolation.service';
 import { SimplePatientRepository } from './repositories/simple-patient.repository';
-import { DatabaseMetricsService } from './database-metrics.service';
+import { DatabaseMetricsService } from './internal/database-metrics.service';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 import { EventsModule } from '@infrastructure/events';
+// New services following SOLID principles
+import { RetryService } from './internal/retry.service';
+import { DatabaseErrorHandler } from '@core/errors';
+import { ReadReplicaRouterService } from './internal/read-replica-router.service';
+import { ConnectionLeakDetectorService } from './internal/connection-leak-detector.service';
+import { DatabaseHealthMonitorService } from './internal/database-health-monitor.service';
+import { QueryCacheService } from './internal/query-cache.service';
+import { DatabaseAlertService } from './internal/database-alert.service';
+import { ResilienceModule } from '@core/resilience';
 
 /**
  * Database Module - Single Unified Database Service
@@ -53,6 +62,8 @@ import { EventsModule } from '@infrastructure/events';
     forwardRef(() => ConfigModule),
     // EventsModule for EventService
     forwardRef(() => EventsModule),
+    // ResilienceModule for CircuitBreakerService
+    ResilienceModule,
     // LoggingModule is @Global() and imported before DatabaseModule in AppModule
     // Since it's @Global(), we don't need to import it explicitly - it's available everywhere
     // CacheModule is @Global() - no need to import it explicitly
@@ -60,12 +71,21 @@ import { EventsModule } from '@infrastructure/events';
   providers: [
     // ALL components are INTERNAL - only HealthcareDatabaseClient is exported
     // Order matters for circular dependencies: list services before services that depend on them
-    ClinicIsolationService, // @internal - no dependencies on other providers
+
+    // Shared services (DRY principle)
+    RetryService, // @internal - shared retry logic
+    DatabaseErrorHandler, // @internal - shared error handling
+
+    // Core services (SRP principle - single responsibility)
+    DatabaseAlertService, // @internal - alert generation only
+    ConnectionLeakDetectorService, // @internal - leak detection only
+    DatabaseHealthMonitorService, // @internal - health monitoring only
+    QueryCacheService, // @internal - query result caching only
+    ReadReplicaRouterService, // @internal - read replica routing only
+
+    // Infrastructure services
     HealthcareQueryOptimizerService, // @internal - no dependencies on other providers
-    ConnectionPoolManager, // @internal - must be before DatabaseMetricsService and HealthcareDatabaseClient
-    DatabaseMetricsService, // @internal - depends on ConnectionPoolManager and HealthcareDatabaseClient
-    UserRepository, // @internal - infrastructure component, not exported
-    SimplePatientRepository, // @internal - infrastructure component, not exported
+    ClinicIsolationService, // @internal - infrastructure component used BY HealthcareDatabaseClient (uses PrismaService directly to avoid circular dependency)
     {
       provide: 'HealthcareDatabaseConfig',
       useValue: {
@@ -80,7 +100,16 @@ import { EventsModule } from '@infrastructure/events';
         healthCheckInterval: 30000,
       },
     },
+    // ConnectionPoolManager must be before DatabaseMetricsService and HealthcareDatabaseClient
+    // ConnectionPoolManager is the PRIMARY connection pool manager with full features (batch, critical queries, auto-scaling, pool warming, etc.)
+    // Consolidated: ConnectionPoolService and ConnectionPoolWarmingService merged into ConnectionPoolManager
+    ConnectionPoolManager, // @internal - PRIMARY connection pool manager (consolidated: includes pool warming, metrics, health checks)
+    // DatabaseMetricsService must be before HealthcareDatabaseClient (HealthcareDatabaseClient depends on it)
+    DatabaseMetricsService, // @internal - infrastructure component used BY HealthcareDatabaseClient (uses PrismaService directly to avoid circular dependency)
+    // HealthcareDatabaseClient must be after all its dependencies (ConnectionPoolManager, DatabaseMetricsService, etc.)
     HealthcareDatabaseClient,
+    UserRepository, // @internal - infrastructure component, not exported
+    SimplePatientRepository, // @internal - infrastructure component, not exported
   ],
   exports: [
     // SINGLE UNIFIED DATABASE SERVICE - This is the ONLY export
@@ -97,7 +126,7 @@ export class DatabaseModule implements OnModuleInit {
 
   constructor(
     @Inject(forwardRef(() => ConfigService)) private configService: ConfigService,
-    private connectionPoolManager: ConnectionPoolManager,
+    private connectionPoolManager: ConnectionPoolManager, // PRIMARY connection pool manager (consolidated: includes pool warming, metrics, health checks)
     private clinicIsolationService: ClinicIsolationService,
     @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService
   ) {}

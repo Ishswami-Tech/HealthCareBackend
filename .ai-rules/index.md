@@ -56,7 +56,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // 2. Internal imports - Infrastructure layer
 import { DatabaseService } from '@infrastructure/database'; // ✅ Use DatabaseService (NOT PrismaService)
-import { RedisService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache'; // ✅ Use CacheService (NOT RedisService) - Provider-agnostic cache abstraction
 import { QueueService } from '@infrastructure/queue';
 import { EventService } from '@infrastructure/events'; // ✅ Use EventService (NOT EventEmitter2) - CENTRALIZED EVENT HUB
 import { EventCategory, EventPriority } from '@core/types';
@@ -318,7 +318,7 @@ import { Logger } from '@nestjs/common'; // Missing HIPAA compliance, audit trai
 // ✅ DO
 import { UserService } from '@services/users';
 import { PrismaService } from '@infrastructure/database';
-import { RedisService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache';
 
 // ❌ DON'T
 import { UserService } from '../../../services/users/user.service';

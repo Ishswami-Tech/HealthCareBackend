@@ -336,7 +336,7 @@ export interface CachePerformanceMetrics {
 }
 
 /**
- * Cache health status
+ * Cache health status (simplified - used by CacheService)
  * @interface CacheHealth
  * @description Cache service health information
  */
@@ -351,6 +351,35 @@ export interface CacheHealth {
   readonly connectionStatus: boolean;
   /** Last health check timestamp */
   readonly lastHealthCheck: Date;
+}
+
+/**
+ * Comprehensive cache health status (used by CacheHealthMonitorService)
+ * Provides detailed health information including connection, metrics, memory, etc.
+ */
+export interface CacheHealthMonitorStatus {
+  healthy: boolean;
+  connection: {
+    connected: boolean;
+    latency?: number;
+    provider?: 'redis' | 'dragonfly' | 'memcached' | 'memory' | 'unknown';
+    providerStatus?: 'connected' | 'disconnected' | 'error';
+    providerVersion?: string;
+  };
+  metrics: {
+    hitRate: number;
+    missRate: number;
+    totalKeys: number;
+    memoryUsed?: number;
+    memoryAvailable?: number;
+    memoryPercentage?: number;
+  };
+  performance: {
+    averageResponseTime?: number;
+    operationsPerSecond?: number;
+    errorRate?: number;
+  };
+  issues: string[];
 }
 
 // ============================================================================

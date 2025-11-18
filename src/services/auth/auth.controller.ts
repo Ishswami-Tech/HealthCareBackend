@@ -480,21 +480,26 @@ export class AuthController {
         throw this.errors.invalidCredentials('AuthController.logout');
       }
 
-      const user = req.user as { sessionId?: string; sub?: string; jti?: string; [key: string]: unknown };
-      
+      const user = req.user as {
+        sessionId?: string;
+        sub?: string;
+        jti?: string;
+        [key: string]: unknown;
+      };
+
       // Priority: 1. Request body, 2. JWT payload sessionId, 3. Extract from token if needed
       let sessionId = logoutDto.sessionId || user?.sessionId;
-      
+
       // If still no sessionId, try to extract from token payload using bracket notation
       if (!sessionId && user) {
-        sessionId = (user['sessionId'] as string | undefined);
+        sessionId = user['sessionId'];
       }
 
       // If we have a sessionId, use the logout service
       // Otherwise, we can still blacklist the token (best effort)
       if (sessionId) {
-      const result = await this.authService.logout(sessionId);
-      return new SuccessResponseDto(result.message);
+        const result = await this.authService.logout(sessionId);
+        return new SuccessResponseDto(result.message);
       } else {
         // No sessionId - try to blacklist the token directly (best effort)
         // Extract token from Authorization header if possible
@@ -504,7 +509,7 @@ export class AuthController {
           try {
             // Try to blacklist the token directly
             await this.authService.logout(token); // This will try to blacklist if sessionId is the token itself
-          } catch (blacklistError) {
+          } catch (_blacklistError) {
             // Log but don't fail - logout is best effort
           }
         }
@@ -1021,23 +1026,23 @@ export class AuthController {
       },
     },
   })
-  async getProfile(
-    @Request() req: FastifyRequestWithUser
-  ): Promise<DataResponseDto<{
-        id: string;
-        email: string;
-        role: string;
-        clinicId?: string;
-        domain: string;
-  }>> {
+  async getProfile(@Request() req: FastifyRequestWithUser): Promise<
+    DataResponseDto<{
+      id: string;
+      email: string;
+      role: string;
+      clinicId?: string;
+      domain: string;
+    }>
+  > {
     try {
       // Extract user ID from JWT payload
       if (!req.user) {
         throw this.errors.invalidCredentials('AuthController.getProfile');
       }
-      
+
       const user = req.user as { sub?: string; id?: string; [key: string]: unknown };
-      const userId = user?.sub || (user?.id as string | undefined);
+      const userId = user?.sub || user?.id;
       if (!userId) {
         throw this.errors.invalidCredentials('AuthController.getProfile');
       }
@@ -1052,10 +1057,15 @@ export class AuthController {
         userProfile = await this.authService.getUserProfile(userId, clinicId);
       } catch (profileError) {
         // If getUserProfile fails (cache/database issue), try to get basic info from JWT payload
-        const jwtUser = req.user as { sub?: string; email?: string; role?: string; [key: string]: unknown };
-        const jwtEmail = jwtUser?.email as string | undefined;
-        const jwtRole = jwtUser?.role as string | undefined;
-        
+        const jwtUser = req.user as {
+          sub?: string;
+          email?: string;
+          role?: string;
+          [key: string]: unknown;
+        };
+        const jwtEmail = jwtUser?.email;
+        const jwtRole = jwtUser?.role;
+
         if (jwtEmail) {
           // Create a minimal profile from JWT payload
           userProfile = {

@@ -3,7 +3,8 @@ import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 
 // Internal imports - Infrastructure
 import { DatabaseService } from '@infrastructure/database';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { LoggingHealthMonitorService } from './logging-health-monitor.service';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -116,13 +117,15 @@ export class LoggingService {
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService?: DatabaseService,
     @Optional()
-    private readonly redisService?: RedisService
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService?: CacheService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingHealthMonitorService))
+    private readonly healthMonitor?: LoggingHealthMonitorService
   ) {
     this.serviceName = process.env['SERVICE_NAME'] || 'healthcare';
     this.configuredSystemUserId =
-      process.env['LOGGING_SYSTEM_USER_ID'] ||
-      process.env['SYSTEM_USER_ID'] ||
-      null;
+      process.env['LOGGING_SYSTEM_USER_ID'] || process.env['SYSTEM_USER_ID'] || null;
     const disableLookupEnv =
       process.env['LOGGING_DISABLE_SYSTEM_USER_LOOKUP'] === 'true' ||
       process.env['DISABLE_SYSTEM_USER_LOOKUP'] === 'true' ||
@@ -178,7 +181,7 @@ export class LoggingService {
       const ttl =
         this.cachedSystemUser !== null ? this.systemUserCacheTTL : this.systemUserNegativeCacheTTL;
       if (now - this.systemUserCacheTime < ttl) {
-      return this.cachedSystemUser;
+        return this.cachedSystemUser;
       }
     }
 
@@ -204,8 +207,8 @@ export class LoggingService {
               ? this.systemUserCacheTTL
               : this.systemUserNegativeCacheTTL;
           if (Date.now() - this.systemUserCacheTime < ttl) {
-          return this.cachedSystemUser;
-        }
+            return this.cachedSystemUser;
+          }
         }
         if (!this.databaseService) {
           return null;
@@ -221,8 +224,8 @@ export class LoggingService {
           }),
         ])) as { id: string } | null;
 
-          this.cachedSystemUser = systemUser;
-          this.systemUserCacheTime = Date.now();
+        this.cachedSystemUser = systemUser;
+        this.systemUserCacheTime = Date.now();
         this.systemUserCacheInitialized = true;
 
         if (!systemUser) {
@@ -287,13 +290,13 @@ export class LoggingService {
       this.metricsBuffer = [];
 
       // Store metrics in cache for real-time access with longer TTL for 1M users
-      await this.redisService?.set(
+      await this.cacheService?.set(
         'system_metrics',
-        JSON.stringify({
+        {
           timestamp: new Date().toISOString(),
           metrics: JSON.stringify(metrics),
           count: metrics.length,
-        }),
+        },
         600
       ); // 10 minutes TTL for high-scale operations
 
@@ -379,7 +382,13 @@ export class LoggingService {
                   this.databaseService.executeHealthcareWrite(
                     async client => {
                       // Access auditLog delegate using dot notation for consistency
-                      const auditLog = (client as { auditLog: { create: (args: { data: unknown }) => Promise<{ id: string }> } }).auditLog;
+                      const auditLog = (
+                        client as {
+                          auditLog: {
+                            create: (args: { data: unknown }) => Promise<{ id: string }>;
+                          };
+                        }
+                      ).auditLog;
                       return (await auditLog.create({
                         data: {
                           userId: systemUser.id,
@@ -438,15 +447,15 @@ export class LoggingService {
         }
       }
 
-      // High-performance Redis logging
+      // High-performance cache logging
       try {
         await Promise.all([
-          this.redisService?.rPush('logs', JSON.stringify(logEntry)),
-          this.redisService?.lTrim('logs', -5000, -1), // Keep last 5000 logs for 1M users
+          this.cacheService?.rPush('logs', JSON.stringify(logEntry)),
+          this.cacheService?.lTrim('logs', -5000, -1), // Keep last 5000 logs for 1M users
         ]);
-      } catch (_redisError) {
-        // Silent fail for Redis logging - resilient for high scale
-        // Redis logging failures shouldn't break the logging service
+      } catch (_cacheError) {
+        // Silent fail for cache logging - resilient for high scale
+        // Cache logging failures shouldn't break the logging service
       }
 
       // Add to metrics buffer for monitoring
@@ -537,7 +546,7 @@ export class LoggingService {
       const cacheKey = `logs:v2:${type || 'all'}:${level || 'all'}:${finalStartTime.getTime()}:${finalEndTime.getTime()}`;
 
       // Enhanced caching with compression for large datasets
-      const cachedLogs = await this.redisService?.get(cacheKey);
+      const cachedLogs = await this.cacheService?.get<string>(cacheKey);
       if (cachedLogs) {
         return JSON.parse(cachedLogs) as unknown[];
       }
@@ -556,9 +565,9 @@ export class LoggingService {
 
       // Enhanced database query with better indexing
       if (!this.databaseService) {
-        // Redis-only fallback for high performance
-        const redisLogs = (await this.redisService?.lRange('logs', 0, -1)) || [];
-        const parsedLogs = redisLogs
+        // Cache-only fallback for high performance
+        const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
+        const parsedLogs = cachedLogs
           .map(log => JSON.parse(log) as unknown)
           .filter((log: unknown) => {
             const logData = log as { timestamp: string };
@@ -574,7 +583,24 @@ export class LoggingService {
       try {
         const dbLogs = (await this.databaseService.executeHealthcareRead(async client => {
           // Access auditLog delegate using dot notation for consistency
-          const auditLog = (client as { auditLog: { findMany: (args: unknown) => Promise<Array<{ id: string; action: string; description: string; timestamp: Date; userId: string; ipAddress: string | null; device: string | null; clinicId: string | null }>> } }).auditLog;
+          const auditLog = (
+            client as {
+              auditLog: {
+                findMany: (args: unknown) => Promise<
+                  Array<{
+                    id: string;
+                    action: string;
+                    description: string;
+                    timestamp: Date;
+                    userId: string;
+                    ipAddress: string | null;
+                    device: string | null;
+                    clinicId: string | null;
+                  }>
+                >;
+              };
+            }
+          ).auditLog;
           return (await auditLog.findMany({
             where: whereClause as PrismaDelegateArgs,
             orderBy: {
@@ -641,16 +667,16 @@ export class LoggingService {
         });
 
         // Enhanced caching with longer TTL for 1M users
-        await this.redisService?.set(cacheKey, JSON.stringify(result), 900); // 15 minutes
+        await this.cacheService?.set(cacheKey, result, 900); // 15 minutes
 
         return result;
       } catch (_error) {
-        // Database query failed, falling back to Redis - silent fail
+        // Database query failed, falling back to cache - silent fail
 
-        // Fallback to Redis-only logs
+        // Fallback to cache-only logs
         try {
-          const redisLogs = (await this.redisService?.lRange('logs', 0, -1)) || [];
-          const parsedLogs = redisLogs
+          const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
+          const parsedLogs = cachedLogs
             .map(log => JSON.parse(log) as unknown)
             .filter((log: unknown) => {
               const logData = log as { timestamp: string };
@@ -660,8 +686,8 @@ export class LoggingService {
             .slice(0, 1000); // Limit for performance
 
           return parsedLogs;
-        } catch (_redisError) {
-          // Redis fallback also failed - return empty array
+        } catch (_cacheError) {
+          // Cache fallback also failed - return empty array
           return [];
         }
       }
@@ -673,7 +699,7 @@ export class LoggingService {
 
   async clearLogs(): Promise<{ success: boolean; message: string }> {
     try {
-      await this.redisService?.del('logs');
+      await this.cacheService?.del('logs');
       return { success: true, message: 'Logs cleared successfully' };
     } catch (error) {
       throw new HealthcareError(
@@ -691,8 +717,8 @@ export class LoggingService {
   async getEvents(type?: string): Promise<unknown[]> {
     try {
       // Enhanced event retrieval for 1M users
-      const redisEvents = (await this.redisService?.lRange('events', 0, -1)) || [];
-      let events = redisEvents.map(event => JSON.parse(event) as unknown);
+      const cachedEvents = (await this.cacheService?.lRange('events', 0, -1)) || [];
+      let events = cachedEvents.map(event => JSON.parse(event) as unknown);
 
       // Apply filters
       if (type) {
@@ -718,7 +744,7 @@ export class LoggingService {
 
   async clearEvents(): Promise<{ success: boolean; message: string }> {
     try {
-      await this.redisService?.del('events');
+      await this.cacheService?.del('events');
       return { success: true, message: 'Events cleared successfully' };
     } catch (error) {
       throw new HealthcareError(
@@ -876,7 +902,11 @@ export class LoggingService {
    */
   async getSystemMetrics() {
     try {
-      const cachedMetrics = await this.redisService?.get('system_metrics');
+      const cachedMetrics = await this.cacheService?.get<{
+        timestamp: string;
+        metrics: string;
+        count: number;
+      }>('system_metrics');
       if (!cachedMetrics) return [];
 
       const metricsData =
@@ -962,7 +992,7 @@ export class LoggingService {
 
       // Store in dedicated PHI audit cache for compliance reporting
       const auditKey = `phi_audit:${userId}:${patientId}:${Date.now()}`;
-      await this.redisService?.set(auditKey, JSON.stringify(auditEntry), 86400 * 7); // 7 days
+      await this.cacheService?.set(auditKey, auditEntry, 86400 * 7); // 7 days
     } catch (_error) {
       // Silent fail for PHI access logging - critical operation shouldn't break on logging failure
     }
@@ -1110,5 +1140,36 @@ export class LoggingService {
     } catch (_error) {
       // Silent fail during cleanup to prevent errors in shutdown process
     }
+  }
+
+  // ===== HEALTH AND MONITORING =====
+
+  /**
+   * Health check using optimized health monitor
+   * Uses dedicated health check with timeout protection and caching
+   */
+  async healthCheck(): Promise<boolean> {
+    if (this.healthMonitor) {
+      const healthStatus = await this.healthMonitor.getHealthStatus();
+      return healthStatus.healthy;
+    }
+    // Fallback: service exists and log method is callable
+    return typeof this.log === 'function';
+  }
+
+  /**
+   * Get health status with latency
+   * Uses optimized health monitor for real-time status
+   */
+  async getHealthStatus(): Promise<[boolean, number]> {
+    if (this.healthMonitor) {
+      const healthStatus = await this.healthMonitor.getHealthStatus();
+      return [
+        healthStatus.healthy,
+        healthStatus.service.latency || healthStatus.endpoint.latency || 0,
+      ];
+    }
+    // Fallback: service exists
+    return [typeof this.log === 'function', 0];
   }
 }

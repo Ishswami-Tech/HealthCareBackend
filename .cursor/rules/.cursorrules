@@ -55,7 +55,7 @@ import { CreateUserDto } from '@dtos';
 import type { RequestContext } from '@types';
 import { EventsService } from '@events';
 import { QueueService } from '@queue';
-import { RedisService } from '@cache';
+import { CacheService } from '@cache';
 
 // ❌ NEVER use relative imports
 import { UserService } from '../../../services/users/user.service';
@@ -89,7 +89,7 @@ export class UserService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventEmitter: EventEmitter2,
     private readonly sessionService: SessionService,
     private readonly rbacService: RbacService
@@ -279,7 +279,7 @@ export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly logger: LoggingService,
-    private readonly cache: RedisService,
+    private readonly cache: CacheService,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService
   ) {}

@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 
 // Internal imports - Infrastructure
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 
 // Internal imports - Core
@@ -70,7 +70,9 @@ export interface RateLimitResult {
 @Injectable()
 export class RateLimitService {
   constructor(
-    private readonly redis: RedisService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 
@@ -107,23 +109,32 @@ export class RateLimitService {
    */
   async checkRateLimit(key: string, options: RateLimitOptions): Promise<RateLimitResult> {
     try {
-      const now = Date.now();
-      const window = Math.floor(now / options.windowMs);
-      const redisKey = `rate_limit:${key}:${window}`;
+      const windowSeconds = Math.ceil(options.windowMs / 1000);
 
-      // Get current count
-      const current = (await this.redis.get<number>(redisKey)) || 0;
+      // Use CacheService.isRateLimited for optimized rate limiting
+      // This leverages the cache infrastructure (Redis/Dragonfly) with proper abstraction
+      const isLimited = await this.cacheService.isRateLimited(
+        `rate_limit:${key}`,
+        options.max,
+        windowSeconds
+      );
 
-      if (current >= options.max) {
-        // Rate limit exceeded
-        const resetTime = new Date((window + 1) * options.windowMs);
+      if (isLimited) {
+        // Rate limit exceeded - get current usage for response
+        const rateLimitInfo = await this.cacheService.getRateLimit(
+          `rate_limit:${key}`,
+          options.max,
+          windowSeconds
+        );
+
+        const resetTime = new Date(Date.now() + options.windowMs);
 
         void this.loggingService.log(
           LogType.SECURITY,
           LogLevel.WARN,
           'Rate limit exceeded',
           'RateLimitService',
-          { key, current, max: options.max, window }
+          { key, used: rateLimitInfo.used, max: options.max, window: windowSeconds }
         );
 
         return {
@@ -134,16 +145,15 @@ export class RateLimitService {
         };
       }
 
-      // Increment counter
-      const newCount = await this.redis.incr(redisKey);
+      // Get rate limit info for response
+      const rateLimitInfo = await this.cacheService.getRateLimit(
+        `rate_limit:${key}`,
+        options.max,
+        windowSeconds
+      );
 
-      // Set expiration on first increment
-      if (newCount === 1) {
-        await this.redis.expire(redisKey, Math.ceil(options.windowMs / 1000));
-      }
-
-      const resetTime = new Date((window + 1) * options.windowMs);
-      const remaining = Math.max(0, options.max - newCount);
+      const resetTime = new Date(Date.now() + options.windowMs);
+      const remaining = Math.max(0, options.max - rateLimitInfo.used);
 
       return {
         allowed: true,
@@ -164,7 +174,7 @@ export class RateLimitService {
         }
       );
 
-      // Fail open - allow request if Redis is down
+      // Fail open - allow request if cache is down
       return {
         allowed: true,
         remaining: options.max - 1,
@@ -176,20 +186,20 @@ export class RateLimitService {
 
   async resetRateLimit(key: string): Promise<void> {
     try {
-      const pattern = `rate_limit:${key}:*`;
-      const keys = await this.redis.keys(pattern);
+      // Use CacheService to delete rate limit keys
+      // Pattern matching for rate limit keys
+      const pattern = `rate_limit:${key}*`;
 
-      if (keys.length > 0) {
-        await this.redis.del(...keys);
+      // Delete all matching keys using cache service
+      const deletedCount = await this.cacheService.invalidateByPattern(pattern);
 
-        void this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.INFO,
-          'Rate limit reset',
-          'RateLimitService',
-          { key, keysCleared: keys.length }
-        );
-      }
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.INFO,
+        'Rate limit reset',
+        'RateLimitService',
+        { key, pattern, deletedCount }
+      );
     } catch (_error) {
       void this.loggingService.log(
         LogType.SECURITY,

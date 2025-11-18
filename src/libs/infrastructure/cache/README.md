@@ -940,7 +940,7 @@ describe('CacheService', () => {
 
 If you're migrating from direct `RedisService` usage or an older cache implementation:
 
-1. **Replace direct provider usage** - Use `CacheService` instead of `RedisService` or `DragonflyService` directly
+1. **Replace direct provider usage** - Use `CacheService` instead of `RedisService` or `DragonflyService` directly. **All services should use `CacheService` as the single entry point for cache operations.**
 2. **Use CacheKeyFactory** - Replace manual key generation with `CacheKeyFactory` for consistent naming
 3. **Use CacheOptionsBuilder** - Replace manual option construction with `CacheOptionsBuilder` for complex options
 4. **Use healthcare-specific methods** - Replace generic cache calls with healthcare-specific methods for patient/doctor/clinic data
@@ -951,10 +951,10 @@ If you're migrating from direct `RedisService` usage or an older cache implement
 **Before:**
 ```typescript
 const key = `user:${userId}`;
-const cached = await redisService.get(key);
+const cached = await cacheService.get(key);
 if (cached) return JSON.parse(cached);
 const data = await this.repository.find(userId);
-await redisService.set(key, JSON.stringify(data), 'EX', 3600);
+await cacheService.set(key, data, 3600);
 return data;
 ```
 

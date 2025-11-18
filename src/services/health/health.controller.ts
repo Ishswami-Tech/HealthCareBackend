@@ -1,8 +1,9 @@
-import { Controller, Get, Res, Param } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { HealthService } from './health.service';
 import { HealthCheckResponse, DetailedHealthCheckResponse } from '@core/types/common.types';
 import { Public } from '@core/decorators/public.decorator';
+import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
 
 @ApiTags('health')
@@ -18,16 +19,18 @@ export class HealthController {
   /**
    * Basic Health Check Endpoint
    *
-   * Returns lightweight health status of core services.
-   * Uses smart caching (15-30s freshness) to avoid excessive requests.
-   * Perfect for load balancers, monitoring tools, and quick status checks.
+   * Returns real-time health status of core services.
+   * Always performs fresh health checks for accurate status.
+   * Uses robust database health check with dedicated connection pool.
+   * Perfect for load balancers, monitoring tools, and real-time status checks.
    */
   @Get()
   @Public()
+  @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
   @ApiOperation({
-    summary: 'Get basic health status of core services',
+    summary: 'Get real-time health status of core services',
     description:
-      'Lightweight health check with smart caching. Returns cached status if fresh (< 30s), otherwise performs quick checks. Perfect for load balancers and monitoring.',
+      "Real-time health check with fresh status. Always performs fresh checks for accurate status. Uses robust database health check with dedicated connection pool (won't exhaust main pool). Perfect for load balancers and monitoring.",
   })
   @ApiResponse({
     status: 200,
@@ -72,6 +75,54 @@ export class HealthController {
                 status: { type: 'string', enum: ['healthy', 'unhealthy'] },
                 responseTime: { type: 'number' },
                 lastChecked: { type: 'string', format: 'date-time' },
+                details: { type: 'string' },
+                queueHealth: {
+                  type: 'object',
+                  properties: {
+                    healthy: { type: 'boolean' },
+                    connection: {
+                      type: 'object',
+                      properties: {
+                        connected: { type: 'boolean' },
+                        latency: { type: 'number' },
+                        provider: { type: 'string' },
+                      },
+                    },
+                    metrics: {
+                      type: 'object',
+                      properties: {
+                        totalJobs: { type: 'number' },
+                        activeJobs: { type: 'number' },
+                        waitingJobs: { type: 'number' },
+                        failedJobs: { type: 'number' },
+                        completedJobs: { type: 'number' },
+                        errorRate: { type: 'number' },
+                      },
+                    },
+                    performance: {
+                      type: 'object',
+                      properties: {
+                        averageProcessingTime: { type: 'number' },
+                        throughputPerMinute: { type: 'number' },
+                      },
+                    },
+                    queues: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          name: { type: 'string' },
+                          waiting: { type: 'number' },
+                          active: { type: 'number' },
+                          completed: { type: 'number' },
+                          failed: { type: 'number' },
+                          delayed: { type: 'number' },
+                        },
+                      },
+                    },
+                    issues: { type: 'array', items: { type: 'string' } },
+                  },
+                },
               },
             },
             logger: {
@@ -80,22 +131,110 @@ export class HealthController {
                 status: { type: 'string', enum: ['healthy', 'unhealthy'] },
                 responseTime: { type: 'number' },
                 lastChecked: { type: 'string', format: 'date-time' },
+                details: { type: 'string' },
+                loggingHealth: {
+                  type: 'object',
+                  properties: {
+                    healthy: { type: 'boolean' },
+                    service: {
+                      type: 'object',
+                      properties: {
+                        available: { type: 'boolean' },
+                        latency: { type: 'number' },
+                        serviceName: { type: 'string' },
+                      },
+                    },
+                    endpoint: {
+                      type: 'object',
+                      properties: {
+                        accessible: { type: 'boolean' },
+                        latency: { type: 'number' },
+                        url: { type: 'string' },
+                        port: { type: 'number' },
+                        statusCode: { type: 'number' },
+                      },
+                    },
+                    metrics: {
+                      type: 'object',
+                      properties: {
+                        totalLogs: { type: 'number' },
+                        errorRate: { type: 'number' },
+                        averageResponseTime: { type: 'number' },
+                      },
+                    },
+                    performance: {
+                      type: 'object',
+                      properties: {
+                        throughput: { type: 'number' },
+                        bufferSize: { type: 'number' },
+                        flushInterval: { type: 'number' },
+                      },
+                    },
+                    issues: { type: 'array', items: { type: 'string' } },
+                  },
+                },
               },
             },
-            socket: {
+            communication: {
               type: 'object',
               properties: {
                 status: { type: 'string', enum: ['healthy', 'unhealthy'] },
                 responseTime: { type: 'number' },
                 lastChecked: { type: 'string', format: 'date-time' },
-              },
-            },
-            email: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                responseTime: { type: 'number' },
-                lastChecked: { type: 'string', format: 'date-time' },
+                details: { type: 'string' },
+                communicationHealth: {
+                  type: 'object',
+                  properties: {
+                    healthy: { type: 'boolean' },
+                    socket: {
+                      type: 'object',
+                      properties: {
+                        connected: { type: 'boolean' },
+                        latency: { type: 'number' },
+                        connectedClients: { type: 'number' },
+                      },
+                    },
+                    email: {
+                      type: 'object',
+                      properties: {
+                        connected: { type: 'boolean' },
+                        latency: { type: 'number' },
+                        provider: { type: 'string' },
+                      },
+                    },
+                    whatsapp: {
+                      type: 'object',
+                      properties: {
+                        connected: { type: 'boolean' },
+                        latency: { type: 'number' },
+                        enabled: { type: 'boolean' },
+                      },
+                    },
+                    push: {
+                      type: 'object',
+                      properties: {
+                        connected: { type: 'boolean' },
+                        latency: { type: 'number' },
+                        provider: { type: 'string' },
+                      },
+                    },
+                    metrics: {
+                      type: 'object',
+                      properties: {
+                        socketConnections: { type: 'number' },
+                        emailQueueSize: { type: 'number' },
+                      },
+                    },
+                    performance: {
+                      type: 'object',
+                      properties: {
+                        socketThroughput: { type: 'number' },
+                        emailThroughput: { type: 'number' },
+                      },
+                    },
+                    issues: { type: 'array', items: { type: 'string' } },
+                  },
+                },
               },
             },
           },
@@ -111,10 +250,9 @@ export class HealthController {
       }
       const health = await this.healthService.getHealth();
       return res.status(200).send(health);
-    } catch (error) {
+    } catch (_error) {
       // Fallback: return degraded status if health check fails
       // IMPORTANT: If we can return this response, the API is healthy!
-      const errorMessage = error instanceof Error ? error.message : 'Health check failed';
       const fallbackResponse: HealthCheckResponse = {
         status: 'degraded',
         timestamp: new Date().toISOString(),
@@ -166,12 +304,7 @@ export class HealthController {
             responseTime: 0,
             lastChecked: new Date().toISOString(),
           },
-          socket: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-          },
-          email: {
+          communication: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),
@@ -183,115 +316,19 @@ export class HealthController {
   }
 
   /**
-   * Test individual service health
-   * Useful for debugging which service is failing
-   */
-  @Get('test/:service')
-  @Public()
-  @ApiOperation({
-    summary: 'Test individual service health',
-    description: 'Test a specific service health check (database, cache, queue, logger, socket, email)',
-  })
-  async testService(@Param('service') service: string, @Res() res: FastifyReply): Promise<void> {
-    try {
-      if (!this.healthService) {
-        return res.status(500).send({ error: 'HealthService is not available' });
-      }
-
-      let result: { service: string; status: string; details: string; error?: string };
-      
-              switch (service.toLowerCase()) {
-                case 'database':
-                  result = await this.healthService.checkDatabaseHealth().then(health => {
-                    const baseResult = {
-                      service: 'database',
-                      status: health.status,
-                      details: health.details || 'No details available',
-                    };
-                    return health.error ? { ...baseResult, error: health.error } : baseResult;
-                  });
-                  break;
-                case 'cache':
-                case 'redis':
-                  result = await this.healthService.checkRedisHealth().then(health => {
-                    const baseResult = {
-                      service: 'cache',
-                      status: health.status,
-                      details: health.details || 'No details available',
-                    };
-                    return health.error ? { ...baseResult, error: health.error } : baseResult;
-                  });
-                  break;
-                case 'queue':
-                  result = await this.healthService.checkQueueHealth().then(health => {
-                    const baseResult = {
-                      service: 'queue',
-                      status: health.status,
-                      details: health.details || 'No details available',
-                    };
-                    return health.error ? { ...baseResult, error: health.error } : baseResult;
-                  });
-                  break;
-                case 'logger':
-                  result = await this.healthService.checkLoggerHealth().then(health => {
-                    const baseResult = {
-                      service: 'logger',
-                      status: health.status,
-                      details: health.details || 'No details available',
-                    };
-                    return health.error ? { ...baseResult, error: health.error } : baseResult;
-                  });
-                  break;
-                case 'socket':
-                  result = await this.healthService.checkSocketHealth().then(health => {
-                    const baseResult = {
-                      service: 'socket',
-                      status: health.status,
-                      details: health.details || 'No details available',
-                    };
-                    return health.error ? { ...baseResult, error: health.error } : baseResult;
-                  });
-                  break;
-                case 'email':
-                  result = await this.healthService.checkEmailHealth().then(health => {
-                    const baseResult = {
-                      service: 'email',
-                      status: health.status,
-                      details: health.details || 'No details available',
-                    };
-                    return health.error ? { ...baseResult, error: health.error } : baseResult;
-                  });
-                  break;
-        default:
-          return res.status(400).send({
-            error: 'Invalid service name',
-            availableServices: ['database', 'cache', 'queue', 'logger', 'socket', 'email'],
-          });
-      }
-
-      return res.status(200).send(result);
-    } catch (error) {
-      return res.status(500).send({
-        service,
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
-  }
-
-  /**
    * Detailed Health Check Endpoint
    *
-   * Returns comprehensive health status with detailed metrics.
+   * Returns comprehensive real-time health status with detailed metrics.
    * Includes system metrics, process info, and extended service details.
-   * Uses smart caching but may perform fresh checks if cache is stale.
+   * Always performs fresh health checks for accurate real-time status.
    */
   @Get('detailed')
   @Public()
+  @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
   @ApiOperation({
-    summary: 'Get detailed health status with comprehensive metrics',
+    summary: 'Get detailed real-time health status with comprehensive metrics',
     description:
-      'Comprehensive health check with detailed metrics, system information, and extended service status. Uses smart caching for performance.',
+      'Comprehensive real-time health check with detailed metrics, system information, and extended service status. Always performs fresh checks for accurate status. Uses robust database health check with dedicated connection pool.',
   })
   @ApiResponse({
     status: 200,
@@ -397,12 +434,7 @@ export class HealthController {
               responseTime: 0,
               lastChecked: new Date().toISOString(),
             },
-            socket: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
-              lastChecked: new Date().toISOString(),
-            },
-            email: {
+            communication: {
               status: 'unhealthy' as const,
               responseTime: 0,
               lastChecked: new Date().toISOString(),

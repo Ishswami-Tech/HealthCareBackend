@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { RoleService } from './role.service';
 import { PermissionService } from './permission.service';
 import { DatabaseService } from '@infrastructure/database';
-import { RedisService } from '@infrastructure/cache/redis/redis.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -38,7 +38,8 @@ export class RbacService {
     private readonly roleService: RoleService,
     private readonly permissionService: PermissionService,
     private readonly databaseService: DatabaseService,
-    private readonly redis: RedisService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService
   ) {}
 
@@ -55,7 +56,7 @@ export class RbacService {
         context.resource,
         context.action
       );
-      const cached = await this.redis.get<PermissionCheck>(cacheKey);
+      const cached = await this.cacheService.get<PermissionCheck>(cacheKey);
 
       if (cached) {
         return cached;
@@ -96,7 +97,7 @@ export class RbacService {
       };
 
       // Cache the result
-      await this.redis.set(cacheKey, result, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, result, this.CACHE_TTL);
 
       // Log permission check
       await this.loggingService.log(
@@ -359,7 +360,7 @@ export class RbacService {
   async getUserRoles(userId: string, clinicId?: string): Promise<RoleAssignment[]> {
     try {
       const cacheKey = this.getCacheKey('user_roles', userId, clinicId);
-      const cached = await this.redis.get<RoleAssignment[]>(cacheKey);
+      const cached = await this.cacheService.get<RoleAssignment[]>(cacheKey);
 
       if (cached) {
         return cached;
@@ -396,7 +397,7 @@ export class RbacService {
       }));
 
       // Cache the result
-      await this.redis.set(cacheKey, roles, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, roles, this.CACHE_TTL);
 
       return roles;
     } catch (error) {
@@ -425,7 +426,7 @@ export class RbacService {
       }
 
       const cacheKey = this.getCacheKey('role_permissions', ...roleIds);
-      const cached = await this.redis.get<string[]>(cacheKey);
+      const cached = await this.cacheService.get<string[]>(cacheKey);
 
       if (cached) {
         return cached;
@@ -454,7 +455,7 @@ export class RbacService {
       const uniquePermissions: string[] = Array.from(new Set(permissions));
 
       // Cache the result
-      await this.redis.set(cacheKey, uniquePermissions, this.CACHE_TTL);
+      await this.cacheService.set(cacheKey, uniquePermissions, this.CACHE_TTL);
 
       return uniquePermissions;
     } catch (_error) {
@@ -539,10 +540,7 @@ export class RbacService {
       ];
 
       for (const pattern of patterns) {
-        const keys = await this.redis.keys(pattern);
-        if (keys.length > 0) {
-          await this.redis.del(...keys);
-        }
+        await this.cacheService.invalidateByPattern(pattern);
       }
     } catch (_error) {
       void this.loggingService.log(

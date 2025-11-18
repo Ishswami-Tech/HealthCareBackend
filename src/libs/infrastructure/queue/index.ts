@@ -32,3 +32,4 @@ export * from './src/queue.constants';
 // Monitoring and health
 export { QueueMonitoringService } from './src/monitoring/queue-monitoring.service';
 export { QueueMonitoringModule } from './src/monitoring/queue-monitoring.module';
+export { QueueHealthMonitorService } from './src/queue-health-monitor.service';

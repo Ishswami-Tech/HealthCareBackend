@@ -14,6 +14,7 @@ import { FastifyAdapter } from '@bull-board/fastify';
 import { QueueStatusGateway } from './sockets/queue-status.gateway';
 import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
+import { QueueHealthMonitorService } from './queue-health-monitor.service';
 import {
   APPOINTMENT_QUEUE,
   EMAIL_QUEUE,
@@ -75,17 +76,17 @@ export class QueueModule {
     // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
     const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
     const useDragonfly = cacheProvider === 'dragonfly';
-    
+
     const defaultCacheHost = useDragonfly
-      ? (process.env['DRAGONFLY_HOST'] || 'dragonfly')
-      : (process.env['REDIS_HOST'] || 'localhost');
+      ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
+      : process.env['REDIS_HOST'] || 'localhost';
     const defaultCachePort = useDragonfly
       ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
       : parseInt(process.env['REDIS_PORT'] || '6379', 10);
     const defaultCachePassword = useDragonfly
       ? process.env['DRAGONFLY_PASSWORD']
       : process.env['REDIS_PASSWORD'];
-    
+
     if (serviceName === 'clinic') {
       queueNames = clinicQueues;
       // Fashion-specific Redis configuration
@@ -113,7 +114,10 @@ export class QueueModule {
       // Default to clinic queues (including 'clinic' service)
       queueNames = clinicQueues;
       // Clinic-specific Redis configuration
-      const redisPassword = process.env['CLINIC_REDIS_PASSWORD'] || defaultCachePassword || process.env['REDIS_PASSWORD'];
+      const redisPassword =
+        process.env['CLINIC_REDIS_PASSWORD'] ||
+        defaultCachePassword ||
+        process.env['REDIS_PASSWORD'];
       const hasPassword = redisPassword && redisPassword.trim().length > 0;
       redisConfig = {
         host: process.env['CLINIC_REDIS_HOST'] || defaultCacheHost,
@@ -198,6 +202,7 @@ export class QueueModule {
       providers: [
         // Core services first - QueueService must be available before QueueStatusGateway
         QueueService,
+        QueueHealthMonitorService,
         QueueProcessor,
         ...(serviceName === 'worker' ? [SharedWorkerService] : []),
         // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
@@ -341,6 +346,8 @@ export class QueueModule {
       exports: [
         QueueService,
         BullModule,
+        // Export health monitor for HealthService
+        QueueHealthMonitorService,
         ...(serviceName === 'worker' ? [SharedWorkerService] : []),
         ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
       ],
@@ -386,8 +393,19 @@ export class QueueModule {
           name: ANALYTICS_QUEUE,
         }),
       ],
-      providers: [QueueService, QueueStatusGateway],
-      exports: [BullModule, QueueService, QueueStatusGateway],
+      providers: [
+        QueueService,
+        QueueStatusGateway,
+        // Provide health monitor for HealthService
+        QueueHealthMonitorService,
+      ],
+      exports: [
+        BullModule,
+        QueueService,
+        QueueStatusGateway,
+        // Export health monitor for HealthService
+        QueueHealthMonitorService,
+      ],
     };
   }
 }

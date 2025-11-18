@@ -31,6 +31,7 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
+import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
 
 // Types
 import {
@@ -167,7 +168,9 @@ export class CommunicationService implements OnModuleInit {
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => CacheService))
-    private readonly cacheService: CacheService
+    private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => CommunicationHealthMonitorService))
+    private readonly healthMonitor?: CommunicationHealthMonitorService
   ) {}
 
   private typedEventService?: IEventService;
@@ -839,5 +842,34 @@ export class CommunicationService implements OnModuleInit {
         whatsapp: { sent: 0, successful: 0, failed: 0 },
       },
     };
+  }
+
+  // ===== HEALTH AND MONITORING =====
+
+  /**
+   * Health check using optimized health monitor
+   * Uses dedicated health check with timeout protection and caching
+   */
+  async healthCheck(): Promise<boolean> {
+    if (this.healthMonitor) {
+      const healthStatus = await this.healthMonitor.getHealthStatus();
+      return healthStatus.healthy;
+    }
+    // Fallback: check if services are available
+    return true; // CommunicationService itself is always available if instantiated
+  }
+
+  /**
+   * Get health status with latency
+   * Uses optimized health monitor for real-time status
+   */
+  async getHealthStatus(): Promise<[boolean, number]> {
+    if (this.healthMonitor) {
+      const healthStatus = await this.healthMonitor.getHealthStatus();
+      const latency = healthStatus.socket.latency || healthStatus.email.latency || 0;
+      return [healthStatus.healthy, latency];
+    }
+    // Fallback: service exists
+    return [true, 0];
   }
 }

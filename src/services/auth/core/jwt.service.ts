@@ -39,7 +39,9 @@ export class JwtAuthService {
       }
       return (await this.cacheService.get<T>(key)) || defaultValue;
     } catch (error) {
-      this.logger.warn(`Cache get failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.warn(
+        `Cache get failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
       return defaultValue;
     }
   }
@@ -51,7 +53,9 @@ export class JwtAuthService {
       }
       await this.cacheService.set(key, value, ttl);
     } catch (error) {
-      this.logger.warn(`Cache set failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.warn(
+        `Cache set failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -62,7 +66,9 @@ export class JwtAuthService {
       }
       await this.cacheService.delete(key);
     } catch (error) {
-      this.logger.warn(`Cache delete failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logger.warn(
+        `Cache delete failed for key ${key}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 
@@ -218,7 +224,9 @@ export class JwtAuthService {
         await this.checkRateLimit(payload.sub);
       } catch (rateLimitError) {
         // Log but don't fail - rate limiting is best effort
-        this.logger.warn(`Rate limit check failed (non-critical): ${rateLimitError instanceof Error ? rateLimitError.message : String(rateLimitError)}`);
+        this.logger.warn(
+          `Rate limit check failed (non-critical): ${rateLimitError instanceof Error ? rateLimitError.message : String(rateLimitError)}`
+        );
       }
 
       // Device tracking (best effort - don't fail if cache unavailable)
@@ -227,7 +235,9 @@ export class JwtAuthService {
           await this.trackDevice(payload.sub, deviceFingerprint);
         } catch (trackError) {
           // Log but don't fail - device tracking is best effort
-          this.logger.warn(`Device tracking failed (non-critical): ${trackError instanceof Error ? trackError.message : String(trackError)}`);
+          this.logger.warn(
+            `Device tracking failed (non-critical): ${trackError instanceof Error ? trackError.message : String(trackError)}`
+          );
         }
       }
 
@@ -254,7 +264,9 @@ export class JwtAuthService {
         await this.cacheTokens(accessToken, refreshToken, payload.sub);
       } catch (cacheError) {
         // Log but don't fail - caching is best effort
-        this.logger.warn(`Token caching failed (non-critical): ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`);
+        this.logger.warn(
+          `Token caching failed (non-critical): ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`
+        );
       }
 
       return {
@@ -287,7 +299,10 @@ export class JwtAuthService {
       } catch (blacklistError) {
         // If blacklist check fails due to cache, log but continue verification
         // Only throw if token is actually blacklisted
-        if (blacklistError instanceof Error && blacklistError.message === 'Token has been revoked') {
+        if (
+          blacklistError instanceof Error &&
+          blacklistError.message === 'Token has been revoked'
+        ) {
           throw blacklistError;
         }
         this.logger.warn('Blacklist check failed (non-critical), continuing verification');
@@ -300,7 +315,7 @@ export class JwtAuthService {
           this.logger.debug('Token verified from cache');
           return cachedPayload;
         }
-      } catch (cacheError) {
+      } catch (_cacheError) {
         // Cache miss or error - continue with JWT verification
         this.logger.debug('Cache check failed (non-critical), verifying token directly');
       }
@@ -319,7 +334,7 @@ export class JwtAuthService {
       // Cache verified token (best effort - don't fail if cache unavailable)
       try {
         await this.cacheTokenPayload(token, payload);
-      } catch (cacheError) {
+      } catch (_cacheError) {
         // Log but don't fail - token is still valid
         this.logger.debug('Failed to cache token payload (non-critical)');
       }
@@ -503,11 +518,7 @@ export class JwtAuthService {
 
       await Promise.all([
         this.safeCacheSet(accessKey, { type: 'access', userId }, this.ACCESS_TOKEN_CACHE_TTL),
-        this.safeCacheSet(
-          refreshKey,
-          { type: 'refresh', userId },
-          this.REFRESH_TOKEN_CACHE_TTL
-        ),
+        this.safeCacheSet(refreshKey, { type: 'refresh', userId }, this.REFRESH_TOKEN_CACHE_TTL),
       ]);
 
       // Track user tokens
@@ -616,7 +627,13 @@ export class JwtAuthService {
   }
 
   private stripRegisteredClaims(payload: TokenPayload): TokenPayload {
-    const { exp, iat, nbf, ...rest } = payload as TokenPayload & {
+    // Destructure to remove registered claims (exp, iat, nbf) - these are unused but need to be removed
+    const {
+      exp: _exp,
+      iat: _iat,
+      nbf: _nbf,
+      ...rest
+    } = payload as TokenPayload & {
       exp?: number;
       iat?: number;
       nbf?: number;

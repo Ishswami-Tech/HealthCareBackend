@@ -44,11 +44,12 @@ libs/
 │   └── types/               # Core type definitions (canonical domain types)
 ├── dtos/                     # Data transfer objects (shared DTOs)
 ├── infrastructure/           # Infrastructure layer
-│   ├── cache/               # Redis caching with SWR
+│   ├── cache/               # Provider-agnostic caching with SWR (Redis/Dragonfly)
 │   │   ├── controllers/     # Cache management endpoints
 │   │   ├── decorators/      # Cache decorators
 │   │   ├── interceptors/    # Cache interceptors
-│   │   └── redis/           # Redis service
+│   │   ├── providers/       # Cache providers (Redis, Dragonfly)
+│   │   └── redis/           # Redis provider (internal - use CacheService instead)
 │   ├── database/            # Database layer
 │   │   ├── clients/         # Database clients
 │   │   ├── config/          # Database configuration

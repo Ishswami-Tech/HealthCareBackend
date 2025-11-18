@@ -34,7 +34,7 @@ Checklist:
 - Indexing: composite indexes for high-cardinality filters; regular index health audits.
 - Hot Paths: denormalized read models for top queries (e.g., appointment summaries) updated via events.
 - Write Contention: batch writes where safe; queue buffering for spikes; idempotent upserts.
-- Caching: Redis with tenant-aware keys; TTL + SWR; cache stampede protection (locks/jitter).
+- Caching: Provider-agnostic cache (Redis/Dragonfly) with tenant-aware keys; TTL + SWR; cache stampede protection (locks/jitter). Use CacheService (NOT RedisService).
 - Migrations: online, backward-compatible; expand-and-contract pattern; dark migrations for big tables.
 
 
