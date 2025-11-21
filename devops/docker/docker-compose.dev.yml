@@ -47,6 +47,13 @@ services:
       JWT_ACCESS_EXPIRES_IN: 24h
       JWT_REFRESH_EXPIRES_IN: 7d
       
+      # Session Configuration (Fastify Session with CacheService/Dragonfly)
+      SESSION_SECRET: dev-session-secret-change-in-production-min-32-chars-long
+      SESSION_TIMEOUT: 86400
+      SESSION_SECURE_COOKIES: "false"
+      SESSION_SAME_SITE: "lax"
+      COOKIE_SECRET: dev-cookie-secret-change-in-production-min-32-chars
+      
       # Base URLs
       BASE_URL: http://localhost:8088
       API_URL: http://localhost:8088
@@ -114,6 +121,8 @@ services:
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
         pnpm prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed' &&
+        echo 'Fixing Prisma types...' &&
+        (pnpm exec ts-node -r tsconfig-paths/register scripts/fix-prisma-types.ts || echo 'Fix script completed') &&
         echo 'Running Prisma Migrations...' &&
         pnpm prisma:migrate || echo 'Migration failed or already applied' &&
         echo 'Starting application...' &&

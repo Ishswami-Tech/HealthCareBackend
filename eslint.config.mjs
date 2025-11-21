@@ -13,7 +13,17 @@ const nestjsTypedRules =
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs', 'dist', 'node_modules', 'prisma.config.js'],
+    ignores: [
+      'eslint.config.mjs',
+      'dist',
+      'node_modules',
+      'prisma.config.js',
+      '**/generated/**',
+      'src/libs/infrastructure/database/generated/**',
+      'src/libs/infrastructure/database/prisma/generated/**',
+      '**/*.generated.ts',
+      '**/*.generated.js',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
@@ -55,9 +65,44 @@ export default tseslint.config(
       ],
 
       // Recommended for backend: discourage console.log in production code
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      // Allow console.log in seed files and scripts
+      'no-console': [
+        'warn',
+        {
+          allow: ['warn', 'error'],
+        },
+      ],
 
       // Any additional stylistic rules can be added here
+    },
+  },
+  {
+    // Allow console.log in seed files and scripts
+    files: ['**/seed.ts', '**/seed.js', '**/scripts/**/*.ts', '**/scripts/**/*.js'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    // JavaScript files in scripts - disable type checking and use basic parser
+    files: ['**/scripts/**/*.js'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        ecmaVersion: 2020,
+        sourceType: 'script', // Use 'script' for CommonJS files
+      },
+    },
+    rules: {
+      // Disable TypeScript-specific rules for JS files
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-floating-promises': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
     },
   }
 );

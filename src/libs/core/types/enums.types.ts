@@ -232,3 +232,14 @@ export enum Role {
   NURSE = 'NURSE',
   COUNSELOR = 'COUNSELOR',
 }
+
+/**
+ * Special case enumeration for patients
+ * @enum SpecialCase
+ */
+export enum SpecialCase {
+  MINOR_AGE_12_OR_BELOW = 'MINOR_AGE_12_OR_BELOW',
+  PHYSICAL_HANDICAP = 'PHYSICAL_HANDICAP',
+  PREGNANT_WOMEN = 'PREGNANT_WOMEN',
+  SENIOR_CITIZEN = 'SENIOR_CITIZEN',
+}

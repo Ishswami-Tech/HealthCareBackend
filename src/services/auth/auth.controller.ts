@@ -24,6 +24,8 @@ import { HealthcareErrorsService } from '@core/errors';
 import { HealthcareError } from '@core/errors';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Public } from '@core/decorators/public.decorator';
+import { SessionManagementService } from '@core/session/session-management.service';
+import { JwtAuthService } from './core/jwt.service';
 import type { FastifyRequestWithUser } from '@core/types/guard.types';
 import {
   LoginDto,
@@ -62,7 +64,9 @@ import { Cache, InvalidateCache, PatientCache, InvalidatePatientCache } from '@c
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
-    private readonly errors: HealthcareErrorsService
+    private readonly errors: HealthcareErrorsService,
+    private readonly sessionService: SessionManagementService,
+    private readonly jwtAuthService: JwtAuthService
   ) {}
 
   @Public()
@@ -172,9 +176,31 @@ export class AuthController {
       },
     },
   })
-  async register(@Body() registerDto: RegisterDto): Promise<DataResponseDto<AuthResponse>> {
+  async register(
+    @Body() registerDto: RegisterDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<AuthResponse>> {
     try {
       const result = await this.authService.register(registerDto);
+
+      // Sync session to Fastify session if available
+      if (req.session && result.user) {
+        const decodedToken = result.accessToken
+          ? this.jwtAuthService.decodeToken(result.accessToken)
+          : null;
+        const sessionId =
+          decodedToken && typeof decodedToken === 'object' && decodedToken !== null
+            ? (decodedToken as { sessionId?: string }).sessionId
+            : undefined;
+
+        if (sessionId) {
+          const sessionData = await this.sessionService.getSession(sessionId);
+          if (sessionData) {
+            this.sessionService.syncToFastifySession(sessionData, req.session);
+          }
+        }
+      }
+
       return new DataResponseDto(result, 'User registered successfully');
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -288,9 +314,31 @@ export class AuthController {
       },
     },
   })
-  async login(@Body() loginDto: LoginDto): Promise<DataResponseDto<AuthResponse>> {
+  async login(
+    @Body() loginDto: LoginDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<AuthResponse>> {
     try {
       const result = await this.authService.login(loginDto);
+
+      // Sync session to Fastify session if available
+      if (req.session && result.user) {
+        const decodedToken = result.accessToken
+          ? this.jwtAuthService.decodeToken(result.accessToken)
+          : null;
+        const sessionId =
+          decodedToken && typeof decodedToken === 'object' && decodedToken !== null
+            ? (decodedToken as { sessionId?: string }).sessionId
+            : undefined;
+
+        if (sessionId) {
+          const sessionData = await this.sessionService.getSession(sessionId);
+          if (sessionData) {
+            this.sessionService.syncToFastifySession(sessionData, req.session);
+          }
+        }
+      }
+
       return new DataResponseDto(result, 'Login successful');
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -487,12 +535,25 @@ export class AuthController {
         [key: string]: unknown;
       };
 
-      // Priority: 1. Request body, 2. JWT payload sessionId, 3. Extract from token if needed
-      let sessionId = logoutDto.sessionId || user?.sessionId;
+      // Priority: 1. Request body, 2. Fastify session, 3. JWT payload sessionId, 4. Extract from token
+      let sessionId = logoutDto.sessionId || req.session?.sessionId || user?.sessionId;
 
       // If still no sessionId, try to extract from token payload using bracket notation
-      if (!sessionId && user) {
-        sessionId = user['sessionId'];
+      if (!sessionId && user && typeof user === 'object') {
+        sessionId = (user as { sessionId?: string }).sessionId;
+      }
+
+      // Invalidate Fastify session if available
+      if (req.session) {
+        try {
+          // Clear Fastify session
+          delete req.session.sessionId;
+          delete req.session.userId;
+          delete req.session.clinicId;
+          // Fastify session will be destroyed when response is sent
+        } catch (_sessionError) {
+          // Log but don't fail - session clearing is best effort
+        }
       }
 
       // If we have a sessionId, use the logout service
@@ -504,7 +565,7 @@ export class AuthController {
         // No sessionId - try to blacklist the token directly (best effort)
         // Extract token from Authorization header if possible
         const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith('Bearer ')) {
+        if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
           const token = authHeader.substring(7);
           try {
             // Try to blacklist the token directly
@@ -960,9 +1021,31 @@ export class AuthController {
       },
     },
   })
-  async verifyOtp(@Body() verifyDto: VerifyOtpRequestDto): Promise<DataResponseDto<AuthResponse>> {
+  async verifyOtp(
+    @Body() verifyDto: VerifyOtpRequestDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<AuthResponse>> {
     try {
       const result = await this.authService.verifyOtp(verifyDto);
+
+      // Sync session to Fastify session if available
+      if (req.session && result.user) {
+        const decodedToken = result.accessToken
+          ? this.jwtAuthService.decodeToken(result.accessToken)
+          : null;
+        const sessionId =
+          decodedToken && typeof decodedToken === 'object' && decodedToken !== null
+            ? (decodedToken as { sessionId?: string }).sessionId
+            : undefined;
+
+        if (sessionId) {
+          const sessionData = await this.sessionService.getSession(sessionId);
+          if (sessionData) {
+            this.sessionService.syncToFastifySession(sessionData, req.session);
+          }
+        }
+      }
+
       return new DataResponseDto(result, 'OTP verified successfully');
     } catch (_error) {
       if (_error instanceof HealthcareError) {

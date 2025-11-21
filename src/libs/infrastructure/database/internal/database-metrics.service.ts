@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { ConnectionMetrics } from '@core/types/database.types';
+// Import services normally - dependencies will be set via factory provider
 import { HealthcareQueryOptimizerService } from './query-optimizer.service';
 import { ClinicIsolationService } from './clinic-isolation.service';
 import { DatabaseAlertService } from './database-alert.service';
@@ -94,15 +95,47 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     health: 'healthy',
   };
 
+  private clinicIsolationService?: ClinicIsolationService;
+  private alertService?: DatabaseAlertService;
+  private queryOptimizer?: HealthcareQueryOptimizerService;
+
   constructor(
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
     @Inject(forwardRef(() => PrismaService))
     private readonly prismaService: PrismaService,
-    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
-    private readonly queryOptimizer: HealthcareQueryOptimizerService,
-    private readonly clinicIsolationService: ClinicIsolationService,
-    private readonly alertService: DatabaseAlertService
-  ) {}
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
+  ) {
+    // No internal service dependencies in constructor
+    // Dependencies will be set via setDependencies() method called by factory provider
+  }
+
+  /**
+   * Set dependencies for DatabaseMetricsService
+   * Called by factory provider to wire dependencies explicitly
+   * This breaks circular dependency by deferring dependency resolution until after all providers are registered
+   * @internal
+   */
+  setDependencies(
+    clinicIsolation: ClinicIsolationService,
+    alertService: DatabaseAlertService,
+    queryOptimizer: HealthcareQueryOptimizerService
+  ): void {
+    // Validate dependencies (security check)
+    if (!clinicIsolation || !alertService || !queryOptimizer) {
+      throw new Error('All dependencies must be provided');
+    }
+    this.clinicIsolationService = clinicIsolation;
+    this.alertService = alertService;
+    this.queryOptimizer = queryOptimizer;
+
+    // Log dependency injection for audit trail
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.DEBUG,
+      'DatabaseMetricsService dependencies initialized',
+      this.serviceName
+    );
+  }
 
   onModuleInit() {
     void this.loggingService.log(
@@ -451,8 +484,12 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       type AppointmentDelegate = { count: (args?: Record<string, never>) => Promise<number> };
       type ClinicDelegate = { count: (args?: Record<string, never>) => Promise<number> };
 
-      const patientDelegate = (prismaClient as unknown as Record<string, PatientDelegate>)['patient'];
-      const appointmentDelegate = (prismaClient as unknown as Record<string, AppointmentDelegate>)['appointment'];
+      const patientDelegate = (prismaClient as unknown as Record<string, PatientDelegate>)[
+        'patient'
+      ];
+      const appointmentDelegate = (prismaClient as unknown as Record<string, AppointmentDelegate>)[
+        'appointment'
+      ];
       const clinicDelegate = (prismaClient as unknown as Record<string, ClinicDelegate>)['clinic'];
 
       if (!patientDelegate || !appointmentDelegate || !clinicDelegate) {
@@ -541,8 +578,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     await this.recordHealthcareMetrics();
 
     // Get query optimizer stats
-    const optimizerStats = this.queryOptimizer.getOptimizerStats();
-    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheHitRate || 0;
+    const optimizerStats = this.queryOptimizer?.getOptimizerStats();
+    this.currentMetrics.performance.cacheHitRate = optimizerStats?.cacheHitRate || 0;
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -613,7 +650,9 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       };
 
       const clinicDelegate = (prismaClient as unknown as Record<string, ClinicDelegate>)['clinic'];
-      const patientDelegate = (prismaClient as unknown as Record<string, PatientDelegate>)['patient'];
+      const patientDelegate = (prismaClient as unknown as Record<string, PatientDelegate>)[
+        'patient'
+      ];
 
       if (!clinicDelegate || !patientDelegate) {
         throw new Error('Prisma delegates not found');
@@ -621,28 +660,28 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
       // Get clinic-specific data
       const clinics = await clinicDelegate.findMany({
-          select: {
-            id: true,
-            _count: {
-              select: {
-                appointments: true,
-              },
+        select: {
+          id: true,
+          _count: {
+            select: {
+              appointments: true,
             },
           },
-        } as Record<string, unknown>);
+        },
+      } as Record<string, unknown>);
 
       // Get patient counts separately (since patients are related through appointments)
       const patientCounts = await Promise.all(
         clinics.map(async (clinic: ClinicWithCount) => {
           const patientCount = await patientDelegate.count({
-              where: {
-                appointments: {
-                  some: {
-                    clinicId: clinic.id,
-                  },
+            where: {
+              appointments: {
+                some: {
+                  clinicId: clinic.id,
                 },
               },
-            } as Record<string, unknown>);
+            },
+          } as Record<string, unknown>);
           return {
             clinicId: clinic.id,
             patientCount,
@@ -689,7 +728,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Performance alerts
     if (metrics.performance.averageQueryTime > this.slowQueryThreshold) {
-      void this.alertService.generateAlert({
+      this.alertService?.generateAlert({
         type: 'PERFORMANCE',
         severity: 'warning',
         message: `Average query time (${metrics.performance.averageQueryTime}ms) exceeds threshold`,
@@ -701,7 +740,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (metrics.performance.criticalQueries > 0) {
-      void this.alertService.generateAlert({
+      this.alertService?.generateAlert({
         type: 'PERFORMANCE',
         severity: 'critical',
         message: `${metrics.performance.criticalQueries} critical queries detected`,
@@ -714,7 +753,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Connection pool alerts
     if (metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage) {
-      void this.alertService.generateAlert({
+      this.alertService?.generateAlert({
         type: 'CONNECTION_POOL',
         severity: 'warning',
         message: `Connection pool usage (${(metrics.connectionPool.connectionPoolUsage * 100).toFixed(1)}%) is high`,
@@ -727,7 +766,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Healthcare alerts
     if (metrics.healthcare.unauthorizedAccessAttempts > 0) {
-      void this.alertService.generateAlert({
+      this.alertService?.generateAlert({
         type: 'SECURITY',
         severity: 'critical',
         message: `${metrics.healthcare.unauthorizedAccessAttempts} unauthorized access attempts detected`,
@@ -739,7 +778,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Update alerts from alert service
-    this.currentMetrics.alerts = this.alertService.getRecentAlerts(100);
+    this.currentMetrics.alerts = this.alertService?.getRecentAlerts(100) || [];
   }
 
   private calculateTrend(current: number, previous: number): 'improving' | 'stable' | 'degrading' {

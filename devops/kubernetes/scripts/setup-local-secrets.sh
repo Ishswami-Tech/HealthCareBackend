@@ -17,6 +17,8 @@ POSTGRES_USER="postgres"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres123}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-redis123}"
 JWT_SECRET="${JWT_SECRET:-local-dev-jwt-secret-change-in-production-$(openssl rand -hex 16)}"
+SESSION_SECRET="${SESSION_SECRET:-local-dev-session-secret-$(openssl rand -hex 32)}"
+COOKIE_SECRET="${COOKIE_SECRET:-local-dev-cookie-secret-$(openssl rand -hex 32)}"
 
 # Database URLs
 DB_URL="${DB_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/userdb?schema=public}"
@@ -35,7 +37,9 @@ kubectl create secret generic healthcare-secrets \
     --from-literal=database-url="$DB_URL" \
     --from-literal=database-migration-url="$DB_MIGRATION_URL" \
     --from-literal=redis-password="$REDIS_PASSWORD" \
-    --from-literal=jwt-secret="$JWT_SECRET"
+    --from-literal=jwt-secret="$JWT_SECRET" \
+    --from-literal=session-secret="$SESSION_SECRET" \
+    --from-literal=cookie-secret="$COOKIE_SECRET"
 
 echo "✅ Secrets created successfully"
 echo ""

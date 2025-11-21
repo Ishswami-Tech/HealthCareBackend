@@ -84,6 +84,25 @@ if (-not $JWT_SECRET -or $JWT_SECRET -like "*CHANGE_THIS*") {
     exit 1
 }
 
+# Session secrets (required for Fastify session with CacheService/Dragonfly)
+$SESSION_SECRET = $envVars["SESSION_SECRET"] -or ""
+if (-not $SESSION_SECRET -or $SESSION_SECRET.Length -lt 32) {
+    Write-Host "⚠️  SESSION_SECRET not set or too short (min 32 chars). Generating one..." -ForegroundColor Yellow
+    $SESSION_SECRET = (New-Guid).ToString().Replace('-', '') + (Get-Random -Minimum 100000 -Maximum 999999).ToString()
+    while ($SESSION_SECRET.Length -lt 32) {
+        $SESSION_SECRET += (New-Guid).ToString().Replace('-', '')
+    }
+}
+
+$COOKIE_SECRET = $envVars["COOKIE_SECRET"] -or ""
+if (-not $COOKIE_SECRET -or $COOKIE_SECRET.Length -lt 32) {
+    Write-Host "⚠️  COOKIE_SECRET not set or too short (min 32 chars). Generating one..." -ForegroundColor Yellow
+    $COOKIE_SECRET = (New-Guid).ToString().Replace('-', '') + (Get-Random -Minimum 100000 -Maximum 999999).ToString()
+    while ($COOKIE_SECRET.Length -lt 32) {
+        $COOKIE_SECRET += (New-Guid).ToString().Replace('-', '')
+    }
+}
+
 # Optional secrets
 $GOOGLE_CLIENT_ID = $envVars["GOOGLE_CLIENT_ID"] -or ""
 $GOOGLE_CLIENT_SECRET = $envVars["GOOGLE_CLIENT_SECRET"] -or ""
@@ -105,7 +124,9 @@ $secretArgs = @(
     "--from-literal=database-url=$DATABASE_URL",
     "--from-literal=database-migration-url=$DB_MIGRATION_URL",
     "--from-literal=redis-password=$REDIS_PASSWORD",
-    "--from-literal=jwt-secret=$JWT_SECRET"
+    "--from-literal=jwt-secret=$JWT_SECRET",
+    "--from-literal=session-secret=$SESSION_SECRET",
+    "--from-literal=cookie-secret=$COOKIE_SECRET"
 )
 
 # Add optional secrets if provided

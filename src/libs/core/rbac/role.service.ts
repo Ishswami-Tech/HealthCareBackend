@@ -51,7 +51,6 @@ export class RoleService {
       name: string;
       displayName: string;
       description: string | null;
-      domain: string;
       clinicId: string | null;
       isSystemRole: boolean;
       isActive: boolean;
@@ -66,7 +65,6 @@ export class RoleService {
         role.description !== null && role.description !== undefined
           ? String(role.description)
           : null,
-      domain: String(role.domain),
       clinicId:
         role.clinicId !== null && role.clinicId !== undefined ? String(role.clinicId) : null,
       isSystemRole: Boolean(role.isSystemRole),
@@ -82,19 +80,18 @@ export class RoleService {
    */
   async createRole(createRoleDto: CreateRoleDto): Promise<RoleRecord> {
     try {
-      // Check if role with same name exists in the same domain/clinic
+      // Check if role with same name exists in the same clinic
       const existingRolePrisma = await this.databaseService.findRoleByNameSafe(
         createRoleDto.name,
-        createRoleDto.domain,
         createRoleDto.clinicId
       );
 
       if (existingRolePrisma) {
         throw new HealthcareError(
           ErrorCode.DATABASE_DUPLICATE_ENTRY,
-          `Role '${createRoleDto.name}' already exists in this domain`,
+          `Role '${createRoleDto.name}' already exists in this clinic`,
           undefined,
-          { roleName: createRoleDto.name, domain: createRoleDto.domain },
+          { roleName: createRoleDto.name, clinicId: createRoleDto.clinicId },
           'RoleService.createRole'
         );
       }
@@ -103,14 +100,12 @@ export class RoleService {
         name: string;
         displayName: string;
         description?: string | null;
-        domain: string;
         clinicId?: string | null;
         isSystemRole?: boolean;
         isActive?: boolean;
       } = {
         name: createRoleDto.name,
         displayName: createRoleDto.displayName,
-        domain: createRoleDto.domain,
         isSystemRole: false,
         isActive: true,
       };
@@ -189,20 +184,16 @@ export class RoleService {
   /**
    * Get role by name
    */
-  async getRoleByName(
-    name: string,
-    domain?: string,
-    clinicId?: string
-  ): Promise<RoleRecord | null> {
+  async getRoleByName(name: string, clinicId?: string): Promise<RoleRecord | null> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}name:${name}:${domain || 'null'}:${clinicId || 'null'}`;
+      const cacheKey = `${this.CACHE_PREFIX}name:${name}:${clinicId || 'null'}`;
       const cached = await this.cacheService.get<RoleRecord>(cacheKey);
 
       if (cached) {
         return cached;
       }
 
-      const rolePrisma = await this.databaseService.findRoleByNameSafe(name, domain, clinicId);
+      const rolePrisma = await this.databaseService.findRoleByNameSafe(name, clinicId);
 
       if (!rolePrisma) {
         return null;
@@ -221,7 +212,7 @@ export class RoleService {
         LogLevel.ERROR,
         'Failed to get role by name',
         'RoleService',
-        { name, domain, clinicId, _error }
+        { name, clinicId, _error }
       );
       return null;
     }
@@ -230,16 +221,16 @@ export class RoleService {
   /**
    * Get all roles
    */
-  async getRoles(domain?: string, clinicId?: string): Promise<RoleRecord[]> {
+  async getRoles(clinicId?: string): Promise<RoleRecord[]> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}list:${domain || 'null'}:${clinicId || 'null'}`;
+      const cacheKey = `${this.CACHE_PREFIX}list:${clinicId || 'null'}`;
       const cached = await this.cacheService.get<RoleRecord[]>(cacheKey);
 
       if (cached) {
         return cached;
       }
 
-      const rolesPrisma = await this.databaseService.findRolesByDomainSafe(domain, clinicId);
+      const rolesPrisma = await this.databaseService.findRolesByClinicSafe(clinicId);
 
       const mappedRoles: RoleRecord[] = rolesPrisma.map(rolePrisma => {
         const role = this.toRoleEntity(rolePrisma);
@@ -256,7 +247,7 @@ export class RoleService {
         LogLevel.ERROR,
         'Failed to get roles',
         'RoleService',
-        { domain, clinicId, _error }
+        { clinicId, _error }
       );
       return [];
     }
@@ -496,42 +487,36 @@ export class RoleService {
           name: 'SUPER_ADMIN',
           displayName: 'Super Administrator',
           description: 'Full system access',
-          domain: 'healthcare',
         },
         {
           name: 'CLINIC_ADMIN',
           displayName: 'Clinic Administrator',
           description: 'Full clinic management access',
-          domain: 'healthcare',
         },
         {
           name: 'DOCTOR',
           displayName: 'Doctor',
           description: 'Medical practitioner access',
-          domain: 'healthcare',
         },
         {
           name: 'NURSE',
           displayName: 'Nurse',
           description: 'Nursing staff access',
-          domain: 'healthcare',
         },
         {
           name: 'RECEPTIONIST',
           displayName: 'Receptionist',
           description: 'Front desk staff access',
-          domain: 'healthcare',
         },
         {
           name: 'PATIENT',
           displayName: 'Patient',
           description: 'Patient access to own records',
-          domain: 'healthcare',
         },
       ];
 
       for (const roleData of systemRoles) {
-        const existingRole = await this.getRoleByName(roleData.name, roleData.domain);
+        const existingRole = await this.getRoleByName(roleData.name);
 
         if (!existingRole) {
           await this.databaseService.createSystemRoleSafe({
@@ -576,7 +561,6 @@ export class RoleService {
       id: role.id,
       name: role.name,
       displayName: role.displayName,
-      domain: role.domain,
       isSystemRole: role.isSystemRole,
       isActive: role.isActive,
       createdAt: role.createdAt,

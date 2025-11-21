@@ -186,6 +186,16 @@ export interface IFastifyFrameworkAdapter extends IFrameworkAdapter {
    * Register Multipart plugin
    */
   registerMultipart(app: INestApplication, options: Record<string, unknown>): Promise<void>;
+
+  /**
+   * Register Cookie plugin
+   */
+  registerCookie(app: INestApplication, options: Record<string, unknown>): Promise<void>;
+
+  /**
+   * Register Session plugin
+   */
+  registerSession(app: INestApplication, options: Record<string, unknown>): Promise<void>;
 }
 
 // ============================================================================

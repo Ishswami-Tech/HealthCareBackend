@@ -294,7 +294,7 @@ export class AppointmentWaitlistService {
 
       // Get doctor's working hours and capacity using executeHealthcareRead
       const doctor = (await this.databaseService.executeHealthcareRead(async client => {
-        const doctorDelegate = client['doctor'] as {
+        const doctorDelegate = client['doctor'] as unknown as {
           findUnique: (args: {
             where: { id: string };
             include: {

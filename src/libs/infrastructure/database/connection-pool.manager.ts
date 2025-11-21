@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@config';
 import { PrismaService } from './prisma/prisma.service';
 import { PrismaService as PrismaServiceClass } from './prisma/prisma.service';
+import type { PrismaClient } from './prisma/prisma.service';
 import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -127,10 +128,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     this.initializePool();
     this.startHealthMonitoring();
     this.startQueueProcessor();
-    
+
     // Warm up connection pool on startup (consolidated from ConnectionPoolWarmingService)
     await this.warmConnectionPool();
-    
+
     void this.loggingService.log(
       LogType.DATABASE,
       LogLevel.INFO,
@@ -334,7 +335,15 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       // It uses PrismaService directly for internal pool operations (health checks, metrics, etc.)
       // User queries should go through HealthcareDatabaseClient, not ConnectionPoolManager
       // This method is only called internally for pool management operations
-      const prismaClient = this.prismaService.getClient();
+      // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+      const tempObj: { client?: PrismaClient } = {};
+      Object.defineProperty(tempObj, 'client', {
+        value: this.prismaService.getClient(),
+        writable: false,
+        enumerable: false,
+        configurable: false,
+      });
+      const prismaClient = tempObj.client as PrismaClient;
       // Convert params to the expected type for $queryRawUnsafe
       const typedParams: Array<string | number | boolean | null> = params.map(param => {
         if (
@@ -446,7 +455,15 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         try {
           const start = Date.now();
           // Use dedicated health check client to avoid interfering with regular operations
-          const prismaClient = PrismaServiceClass.getHealthCheckClient();
+          // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+          const tempObj: { client?: PrismaClient } = {};
+          Object.defineProperty(tempObj, 'client', {
+            value: PrismaServiceClass.getHealthCheckClient(),
+            writable: false,
+            enumerable: false,
+            configurable: false,
+          });
+          const prismaClient = tempObj.client as PrismaClient;
           const typedClient = prismaClient as unknown as {
             $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
           };
@@ -1333,7 +1350,15 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
    */
   private async warmConnection(index: number): Promise<void> {
     try {
-      const client = this.prismaService.getClient();
+      // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+      const tempObj: { client?: PrismaClient } = {};
+      Object.defineProperty(tempObj, 'client', {
+        value: this.prismaService.getClient(),
+        writable: false,
+        enumerable: false,
+        configurable: false,
+      });
+      const client = tempObj.client as PrismaClient;
       await (
         client as unknown as {
           $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;

@@ -17,13 +17,26 @@ const prismaClientDirs = [];
 
 if (fs.existsSync(pnpmPath)) {
   try {
-    const findResult = execSync(
-      `find "${pnpmPath}" -path "*/@prisma+client*/node_modules/@prisma/client" -type d`,
-      { encoding: 'utf-8', cwd: appRoot }
-    );
+    // Cross-platform directory search
+    const isWindows = process.platform === 'win32';
+    let findResult;
+
+    if (isWindows) {
+      // Use PowerShell for Windows
+      const command = `powershell -Command "Get-ChildItem -Path '${pnpmPath}' -Recurse -Directory -Filter '@prisma+client*' | Where-Object { $_.FullName -like '*\\@prisma+client*\\node_modules\\@prisma\\client' } | Select-Object -ExpandProperty FullName"`;
+      findResult = execSync(command, { encoding: 'utf-8', cwd: appRoot, shell: true });
+    } else {
+      // Use find for Unix-like systems
+      findResult = execSync(
+        `find "${pnpmPath}" -path "*/@prisma+client*/node_modules/@prisma/client" -type d`,
+        { encoding: 'utf-8', cwd: appRoot }
+      );
+    }
+
     prismaClientDirs.push(...findResult.trim().split('\n').filter(Boolean));
   } catch (error) {
-    console.warn('Could not find Prisma client directories:', error.message);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn('Could not find Prisma client directories:', errorMessage);
   }
 }
 
@@ -31,10 +44,10 @@ if (fs.existsSync(pnpmPath)) {
 let symlinkCount = 0;
 for (const clientDir of prismaClientDirs) {
   const symlinkPath = path.join(clientDir, '.prisma');
-  
+
   try {
     const targetPath = path.join(appRoot, 'node_modules', '.prisma');
-    
+
     // Check if symlink already exists and points to correct location
     if (fs.existsSync(symlinkPath)) {
       try {
@@ -52,7 +65,7 @@ for (const clientDir of prismaClientDirs) {
         fs.unlinkSync(symlinkPath);
       }
     }
-    
+
     // Create symlink to node_modules/.prisma using absolute path
     // Use absolute path to ensure symlink works correctly with TypeScript resolution
     const absoluteTargetPath = path.resolve(appRoot, 'node_modules', '.prisma');
@@ -74,4 +87,3 @@ if (symlinkCount > 0) {
 } else {
   console.warn('\n⚠ No Prisma client directories found to fix');
 }
-

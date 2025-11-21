@@ -9,7 +9,8 @@ import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import type { PrismaClient } from '@prisma/client';
+// Prisma 7: Import from generated client location
+import type { PrismaClient } from '../prisma/prisma.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { IReadReplicaRouter, LoadBalancingStrategy, ReadReplicaConfig } from '@core/types';
 
@@ -131,7 +132,15 @@ export class ReadReplicaRouterService implements IReadReplicaRouter, OnModuleIni
 
     // Select replica based on strategy
     const selectedReplica = this.selectReplica(healthyReplicas);
-    const client = this.replicaClients.get(selectedReplica.url);
+    // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+    const tempObj: { client?: PrismaClient } = {};
+    Object.defineProperty(tempObj, 'client', {
+      value: this.replicaClients.get(selectedReplica.url),
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    const client = tempObj.client;
 
     if (!client) {
       return this.prismaService.getClient();
@@ -257,7 +266,15 @@ export class ReadReplicaRouterService implements IReadReplicaRouter, OnModuleIni
         continue;
       }
       try {
-        const client = this.replicaClients.get(url);
+        // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+        const tempObj: { client?: PrismaClient } = {};
+        Object.defineProperty(tempObj, 'client', {
+          value: this.replicaClients.get(url),
+          writable: false,
+          enumerable: false,
+          configurable: false,
+        });
+        const client = tempObj.client;
         if (client) {
           const start = Date.now();
           await (

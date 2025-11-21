@@ -1,5 +1,5 @@
-/* eslint-disable no-console */
-import { PrismaClient } from '@prisma/client';
+// Prisma 7: Import from generated client location
+import { PrismaClient } from './generated/client/client';
 import { faker } from '@faker-js/faker';
 import * as bcrypt from 'bcrypt';
 // Import enums from centralized location

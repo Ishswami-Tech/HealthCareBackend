@@ -69,9 +69,10 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Prisma
-src/libs/infrastructure/database/prisma/generated/
 src/libs/infrastructure/database/prisma/*.db
+src/libs/infrastructure/database/prisma/generated/ 
 node_modules/.prisma
+# Note: src/libs/infrastructure/database/prisma/generated/ is tracked in git
 
 .claude
 

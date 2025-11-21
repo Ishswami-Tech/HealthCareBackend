@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
+import { CacheService } from '@infrastructure/cache';
 import { LogType, LogLevel } from '@core/types';
 import type {
   ClinicCreateInput,
@@ -19,7 +20,10 @@ import type {
 export class ClinicService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService?: CacheService
   ) {}
 
   async createClinic(data: ClinicCreateInput): Promise<ClinicResponseDto> {
@@ -548,6 +552,47 @@ export class ClinicService {
     }
   }
 
+  /**
+   * Generate unique health identification (UHID) for a patient
+   * Format: UHID-YYYY-NNNNNN (Year + sequential number)
+   */
+  private async generateUniqueHealthIdentification(clinicId?: string): Promise<string> {
+    const year = new Date().getFullYear();
+    const counterKey = clinicId
+      ? `uhid:counter:${clinicId}:${year}`
+      : `uhid:counter:global:${year}`;
+
+    if (this.cacheService) {
+      const currentId = await this.cacheService.get(counterKey);
+      const nextId = currentId ? parseInt(currentId as string, 10) + 1 : 1;
+      await this.cacheService.set(counterKey, nextId.toString());
+      return `UHID-${year}-${nextId.toString().padStart(6, '0')}`;
+    }
+
+    // Fallback: Use database count if cache is not available
+    const count = await this.databaseService.executeHealthcareRead<number>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const whereClause = clinicId
+        ? {
+            clinicId,
+            uniqueHealthIdentification: {
+              startsWith: `UHID-${year}-`,
+            },
+          }
+        : {
+            uniqueHealthIdentification: {
+              startsWith: `UHID-${year}-`,
+            },
+          };
+      return await typedClient.patient.count({
+        where: whereClause as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+
+    const nextId = count + 1;
+    return `UHID-${year}-${nextId.toString().padStart(6, '0')}`;
+  }
+
   async registerPatientToClinic(data: {
     userId: string;
     clinicId: string;
@@ -555,10 +600,14 @@ export class ClinicService {
     try {
       // Use executeHealthcareWrite for create with audit logging
       const userId = data.userId;
+      const clinicId = data.clinicId;
 
       if (!userId) {
         throw new Error('userId is required');
       }
+
+      // Generate unique health identification automatically
+      const uniqueHealthIdentification = await this.generateUniqueHealthIdentification(clinicId);
 
       const patient = await this.databaseService.executeHealthcareWrite<PatientWithUser>(
         async client => {
@@ -566,6 +615,8 @@ export class ClinicService {
           const result = await typedClient.patient.create({
             data: {
               userId,
+              clinicId,
+              uniqueHealthIdentification,
             } as PrismaDelegateArgs,
             include: { user: true } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
@@ -573,12 +624,12 @@ export class ClinicService {
         },
         {
           userId,
-          clinicId: '',
+          clinicId: clinicId || '',
           resourceType: 'PATIENT',
           operation: 'CREATE',
           resourceId: '',
           userRole: 'system',
-          details: { userId },
+          details: { userId, clinicId, uniqueHealthIdentification },
         }
       );
       return patient;

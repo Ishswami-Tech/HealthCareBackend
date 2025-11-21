@@ -383,7 +383,7 @@ export class LoggingService {
                     async client => {
                       // Access auditLog delegate using dot notation for consistency
                       const auditLog = (
-                        client as {
+                        client as unknown as {
                           auditLog: {
                             create: (args: { data: unknown }) => Promise<{ id: string }>;
                           };

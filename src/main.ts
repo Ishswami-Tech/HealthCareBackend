@@ -591,6 +591,22 @@ async function bootstrap() {
       await securityConfigService.configureProductionSecurity(app, logger);
     }
 
+    // Configure Fastify session with cache-backed store (for all environments)
+    // Session store uses CacheService, which works with Dragonfly, Redis, or any configured cache provider
+    try {
+      const { FastifySessionStoreAdapter } = await import(
+        '@core/session/fastify-session-store.adapter'
+      );
+      const sessionStore = app.get(FastifySessionStoreAdapter);
+      await securityConfigService.configureSession(app, sessionStore);
+      logger.log('Fastify session configured with CacheService-backed store');
+    } catch (sessionError) {
+      logger.warn(
+        `Failed to configure Fastify session (non-critical): ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`
+      );
+      // Continue without session store - will use in-memory store as fallback
+    }
+
     // Prepare middleware configuration
     const apiPrefix =
       configService?.get<string>('API_PREFIX') || process.env['API_PREFIX'] || 'api/v1';

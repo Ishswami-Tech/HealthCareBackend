@@ -57,7 +57,11 @@ export class SecurityConfigService {
       'registerRateLimit' in adapter &&
       typeof adapter.registerRateLimit === 'function' &&
       'registerMultipart' in adapter &&
-      typeof adapter.registerMultipart === 'function'
+      typeof adapter.registerMultipart === 'function' &&
+      'registerCookie' in adapter &&
+      typeof adapter.registerCookie === 'function' &&
+      'registerSession' in adapter &&
+      typeof adapter.registerSession === 'function'
     );
   }
 
@@ -107,6 +111,8 @@ export class SecurityConfigService {
       this.configureRateLimiting(app),
       this.configureMultipart(app),
       this.configureHelmet(app),
+      this.configureCookies(app),
+      // Session will be configured separately with store from SessionManagementService
     ]);
 
     logger.log('Production security middleware configured');
@@ -379,6 +385,113 @@ export class SecurityConfigService {
         done();
       }
     });
+  }
+
+  /**
+   * Configure Cookie plugin
+   *
+   * @param app - NestJS application instance
+   * @returns Promise<void>
+   *
+   * @description
+   * Configures the @fastify/cookie plugin for handling HTTP cookies.
+   * Must be configured before session plugin.
+   */
+  private async configureCookies(app: INestApplication): Promise<void> {
+    const adapter = this.getFastifyAdapter();
+    // Type guard ensures adapter has registerCookie method
+    if (!adapter || typeof adapter.registerCookie !== 'function') {
+      throw new Error('Fastify adapter does not support cookie registration');
+    }
+    const cookieSecret =
+      (this.configService?.get<string>('COOKIE_SECRET') as string | undefined) ||
+      process.env['COOKIE_SECRET'] ||
+      'default-cookie-secret-change-in-production-min-32-chars';
+
+    const cookieOptions = {
+      secret: cookieSecret,
+      parseOptions: {},
+    };
+
+    // Use Reflect.apply to call method with proper 'this' binding - avoids ESLint unbound-method warning
+    const methodName: keyof IFastifyFrameworkAdapter = 'registerCookie';
+    const method = adapter[methodName];
+    if (typeof method !== 'function') {
+      throw new Error('registerCookie is not a function');
+    }
+    await Reflect.apply(method, adapter, [app, cookieOptions]);
+  }
+
+  /**
+   * Configure Session plugin
+   *
+   * @param app - NestJS application instance
+   * @param store - Optional session store adapter (if not provided, uses in-memory store)
+   * @returns Promise<void>
+   *
+   * @description
+   * Configures the @fastify/session plugin for managing user sessions.
+   * Uses CacheService via FastifySessionStoreAdapter for cache-backed storage (Dragonfly/Redis)
+   * if store is provided. CacheService is provider-agnostic and works with any configured cache backend.
+   */
+  async configureSession(app: INestApplication, store?: unknown): Promise<void> {
+    const adapter = this.getFastifyAdapter();
+    // Type guard ensures adapter has registerSession method
+    if (!adapter || typeof adapter.registerSession !== 'function') {
+      throw new Error('Fastify adapter does not support session registration');
+    }
+
+    // Get session secret from config (must be at least 32 characters)
+    const sessionSecret =
+      this.configService?.get<string>('SESSION_SECRET') ||
+      process.env['SESSION_SECRET'] ||
+      'default-session-secret-change-in-production-min-32-chars-long';
+
+    if (sessionSecret.length < 32) {
+      this.logger.warn(
+        'SESSION_SECRET is less than 32 characters. Please use a longer secret for production.'
+      );
+    }
+
+    // Session timeout in milliseconds (default: 24 hours)
+    const sessionTimeout =
+      this.configService?.get<number>('SESSION_TIMEOUT', 86400) ||
+      parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+    const maxAge = sessionTimeout * 1000;
+
+    // Cookie configuration
+    const secureCookies =
+      this.configService?.get<boolean>('SESSION_SECURE_COOKIES', true) ??
+      process.env['SESSION_SECURE_COOKIES'] !== 'false';
+
+    const sameSite = (this.configService?.get<string>('SESSION_SAME_SITE', 'strict') ||
+      process.env['SESSION_SAME_SITE'] ||
+      'strict') as 'strict' | 'lax' | 'none';
+
+    const sessionOptions: Record<string, unknown> = {
+      secret: sessionSecret,
+      cookie: {
+        secure: secureCookies,
+        httpOnly: true,
+        sameSite,
+        maxAge,
+        path: '/',
+      },
+      cookieName: 'healthcare.session',
+    };
+
+    // Add store if provided
+    if (store) {
+      sessionOptions['store'] = store;
+    }
+
+    // Use Reflect.apply to call method with proper 'this' binding - avoids ESLint unbound-method warning
+    const methodName: keyof IFastifyFrameworkAdapter = 'registerSession';
+    const method = adapter[methodName];
+    if (typeof method !== 'function') {
+      throw new Error('registerSession is not a function');
+    }
+    await Reflect.apply(method, adapter, [app, sessionOptions]);
   }
 
   /**

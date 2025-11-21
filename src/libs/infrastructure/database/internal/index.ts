@@ -21,3 +21,7 @@ export type { Alert } from '@core/types/database.types';
 export { DatabaseMetricsService } from './database-metrics.service';
 export { ClinicIsolationService } from './clinic-isolation.service';
 export { HealthcareQueryOptimizerService } from './query-optimizer.service';
+export { RowLevelSecurityService } from './row-level-security.service';
+export { ClinicRateLimiterService } from './clinic-rate-limiter.service';
+export { DataMaskingService } from './data-masking.service';
+export { SQLInjectionPreventionService } from './sql-injection-prevention.service';

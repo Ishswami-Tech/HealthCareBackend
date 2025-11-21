@@ -39,6 +39,8 @@ import fastifyHelmet from '@fastify/helmet';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyCompress from '@fastify/compress';
 import fastifyMultipart from '@fastify/multipart';
+import fastifyCookie from '@fastify/cookie';
+import fastifySession from '@fastify/session';
 
 // Type helpers for Fastify plugin compatibility with NestJS FastifyAdapter
 // Using proper TypeScript types (no 'any') per coding standards
@@ -372,6 +374,36 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
    */
   async registerMultipart(app: INestApplication, options: Record<string, unknown>): Promise<void> {
     await this.registerPlugin(app, fastifyMultipart, options);
+  }
+
+  /**
+   * Register Fastify Cookie plugin (Fastify-specific helper)
+   *
+   * @param app - NestJS application instance
+   * @param options - Cookie configuration options
+   * @returns Promise<void>
+   *
+   * @description
+   * Registers the cookie plugin for handling HTTP cookies.
+   * Must be registered before @fastify/session.
+   */
+  async registerCookie(app: INestApplication, options: Record<string, unknown>): Promise<void> {
+    await this.registerPlugin(app, fastifyCookie, options);
+  }
+
+  /**
+   * Register Fastify Session plugin (Fastify-specific helper)
+   *
+   * @param app - NestJS application instance
+   * @param options - Session configuration options
+   * @returns Promise<void>
+   *
+   * @description
+   * Registers the session plugin for managing user sessions.
+   * Requires @fastify/cookie to be registered first.
+   */
+  async registerSession(app: INestApplication, options: Record<string, unknown>): Promise<void> {
+    await this.registerPlugin(app, fastifySession, options);
   }
 
   /**

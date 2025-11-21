@@ -74,6 +74,7 @@ export {
   AgniType,
   TherapyStatus,
   Role as RoleEnum,
+  SpecialCase,
 } from './enums.types';
 // Export Role type from rbac.types as the primary Role
 export type { Role } from './rbac.types';

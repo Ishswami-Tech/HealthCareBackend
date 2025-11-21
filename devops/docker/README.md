@@ -301,6 +301,13 @@ Once all services are running:
 | **Cache Info** | http://localhost:8088/api/v1/cache | - |
 | **Prisma Studio** | http://localhost:5555 | - |
 | **PgAdmin** | http://localhost:5050 | admin@admin.com / admin |
+
+**Session Management:**
+- **Fastify Session**: Configured with CacheService/Dragonfly backend
+- **Session Store**: Uses `FastifySessionStoreAdapter` with CacheService (provider-agnostic)
+- **Session Timeout**: 24 hours (86400 seconds) - configurable via `SESSION_TIMEOUT`
+- **Cookie Security**: Development uses `SESSION_SECURE_COOKIES=false`, production uses `true`
+- **Session Secrets**: `SESSION_SECRET` and `COOKIE_SECRET` (minimum 32 characters each)
 | **Redis Commander** | http://localhost:8082 | admin / admin |
 
 ## Troubleshooting
@@ -503,11 +510,21 @@ curl "http://localhost:8088/api/v1/cache?includeDebug=true" | jq .
 
 Key environment variables can be configured in `docker-compose.dev.yml`:
 
+**Cache Configuration:**
 - `CACHE_PROVIDER`: `dragonfly` (default) or `redis`
 - `DRAGONFLY_HOST`: `dragonfly` (container name)
 - `DRAGONFLY_PORT`: `6379`
 - `REDIS_HOST`: `redis` (container name)
 - `REDIS_PORT`: `6379`
+
+**Session Configuration (Fastify Session with CacheService/Dragonfly):**
+- `SESSION_SECRET`: Session secret (minimum 32 characters) - used for Fastify session encryption
+- `SESSION_TIMEOUT`: Session timeout in seconds (default: 86400 = 24 hours)
+- `SESSION_SECURE_COOKIES`: `true` for production, `false` for development
+- `SESSION_SAME_SITE`: Cookie SameSite policy (`strict`, `lax`, or `none`)
+- `COOKIE_SECRET`: Cookie signing secret (minimum 32 characters) - used for cookie encryption
+
+**Database Configuration:**
 - `DATABASE_URL`: PostgreSQL connection string
 - `NODE_ENV`: `development` or `production`
 

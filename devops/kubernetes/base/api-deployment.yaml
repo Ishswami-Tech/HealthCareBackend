@@ -57,6 +57,16 @@ spec:
             secretKeyRef:
               name: healthcare-secrets
               key: jwt-secret
+        - name: SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: session-secret
+        - name: COOKIE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: cookie-secret
         - name: CACHE_PROVIDER
           value: "dragonfly"
         - name: DRAGONFLY_HOST

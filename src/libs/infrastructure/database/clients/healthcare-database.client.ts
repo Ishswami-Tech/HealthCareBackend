@@ -1,6 +1,6 @@
-import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
-import { EventService } from '@infrastructure/events';
 import type { PrismaClient } from '@infrastructure/database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -35,12 +35,19 @@ import type {
   PaymentWhereInput,
 } from '@core/types/input.types';
 import { ConnectionPoolManager } from '@infrastructure/database/connection-pool.manager';
+import { HealthcareQueryOptimizerService } from '@database/internal/query-optimizer.service';
+// Import services normally - forwardRef() in constructor will break circular dependency at runtime
+// The forwardRef() wrapper defers dependency resolution until after all providers are registered
 import { DatabaseMetricsService } from '@database/internal/database-metrics.service';
 import { ClinicIsolationService } from '@database/internal/clinic-isolation.service';
-import { HealthcareQueryOptimizerService } from '@database/internal/query-optimizer.service';
 import { ReadReplicaRouterService } from '@database/internal/read-replica-router.service';
 import { QueryCacheService } from '@database/internal/query-cache.service';
 import { DatabaseHealthMonitorService } from '@database/internal/database-health-monitor.service';
+import { RowLevelSecurityService } from '@database/internal/row-level-security.service';
+// ClinicRateLimiterService is provided by RateLimitModule - imported normally for runtime use with ModuleRef
+import { ClinicRateLimiterService } from '@database/internal/clinic-rate-limiter.service';
+import { DataMaskingService } from '@database/internal/data-masking.service';
+import { SQLInjectionPreventionService } from '@database/internal/sql-injection-prevention.service';
 import {
   calculatePagination,
   addDateRangeFilter,
@@ -127,35 +134,52 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   private readonly maxErrorCacheSize = 1000;
   private readonly errorCacheTTL = 5 * 60 * 1000; // 5 minutes
   private typedEventService?: IEventService;
+  private clinicRateLimiterService?: ClinicRateLimiterService;
+  private moduleRef?: ModuleRef;
+
+  /**
+   * Get ClinicRateLimiterService lazily to break circular dependency
+   */
+  protected get clinicRateLimiter(): ClinicRateLimiterService {
+    if (!this.clinicRateLimiterService) {
+      if (this.moduleRef) {
+        this.clinicRateLimiterService = this.moduleRef.get(ClinicRateLimiterService, { strict: false });
+      } else {
+        throw new Error('ClinicRateLimiterService not available and ModuleRef not provided');
+      }
+    }
+    return this.clinicRateLimiterService;
+  }
 
   protected readonly config: HealthcareDatabaseConfig;
 
   constructor(
     protected readonly prismaService: PrismaService,
-    @Inject(forwardRef(() => DatabaseMetricsService))
     protected readonly metricsService: DatabaseMetricsService,
-    @Inject(forwardRef(() => ClinicIsolationService))
     protected readonly clinicIsolationService: ClinicIsolationService,
     protected readonly queryOptimizer: HealthcareQueryOptimizerService,
-    @Inject(forwardRef(() => ReadReplicaRouterService))
     protected readonly readReplicaRouter: ReadReplicaRouterService,
-    @Inject(forwardRef(() => QueryCacheService))
     protected readonly queryCacheService: QueryCacheService,
-    @Inject(forwardRef(() => DatabaseHealthMonitorService))
     protected readonly healthMonitor: DatabaseHealthMonitorService,
-    @Inject(forwardRef(() => LoggingService))
     protected readonly loggingService: LoggingService,
-    @Inject(forwardRef(() => EventService))
     protected readonly eventService: unknown,
-    @Inject(forwardRef(() => ConnectionPoolManager))
     protected readonly connectionPoolManager: ConnectionPoolManager,
+    protected readonly rlsService: RowLevelSecurityService,
+    protected readonly dataMaskingService: DataMaskingService,
+    protected readonly sqlInjectionPrevention: SQLInjectionPreventionService,
     @Optional()
-    @Inject(forwardRef(() => CacheService))
     protected readonly cacheService?: CacheService,
     @Optional()
     @Inject('HealthcareDatabaseConfig')
-    config?: HealthcareDatabaseConfig
+    config?: HealthcareDatabaseConfig,
+    @Optional()
+    moduleRef?: ModuleRef
   ) {
+    // Store ModuleRef for lazy injection of ClinicRateLimiterService
+    // ModuleRef is optional - will be lazily resolved if not provided
+    if (moduleRef) {
+      this.moduleRef = moduleRef;
+    }
     // Type guard ensures type safety when using the service
     if (isEventService(this.eventService)) {
       this.typedEventService = this.eventService;
@@ -556,7 +580,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
           // This avoids recursive calls and connection pool exhaustion
           // Access user delegate using dot notation - PrismaTransactionClient has user as a property
           const userDelegate = (
-            client as {
+            client as unknown as {
               user: {
                 findUnique: (args: {
                   where: { email: string };
@@ -1442,27 +1466,19 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   async findPermissionByResourceActionSafe(
     resource: string,
-    action: string,
-    domain?: string
+    action: string
   ): Promise<PermissionEntity | null> {
     return await this.executeHealthcareRead<PermissionEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findPermissionByResourceActionSafe(
-        resource,
-        action,
-        domain
-      );
+      const result = await prismaService.findPermissionByResourceActionSafe(resource, action);
       return result;
     });
   }
 
-  async findPermissionsByResourceSafe(
-    resource: string,
-    domain?: string
-  ): Promise<PermissionEntity[]> {
+  async findPermissionsByResourceSafe(resource: string): Promise<PermissionEntity[]> {
     return await this.executeHealthcareRead<PermissionEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findPermissionsByResourceSafe(resource, domain);
+      const result = await prismaService.findPermissionsByResourceSafe(resource);
       return result;
     });
   }
@@ -1516,14 +1532,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     });
   }
 
-  async findRoleByNameSafe(
-    name: string,
-    domain?: string,
-    clinicId?: string
-  ): Promise<RbacRoleEntity | null> {
+  async findRoleByNameSafe(name: string, clinicId?: string): Promise<RbacRoleEntity | null> {
     return await this.executeHealthcareRead<RbacRoleEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findRoleByNameSafe(name, domain, clinicId);
+      const result = await prismaService.findRoleByNameSafe(name, clinicId);
       return result;
     });
   }
@@ -1532,7 +1544,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     name: string;
     displayName: string;
     description?: string | null;
-    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;
@@ -1555,10 +1566,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     );
   }
 
-  async findRolesByDomainSafe(domain?: string, clinicId?: string): Promise<RbacRoleEntity[]> {
+  async findRolesByClinicSafe(clinicId?: string): Promise<RbacRoleEntity[]> {
     return await this.executeHealthcareRead<RbacRoleEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findRolesByDomainSafe(domain, clinicId);
+      const result = await prismaService.findRolesByClinicSafe(clinicId);
       return result;
     });
   }
@@ -1664,7 +1675,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     name: string;
     displayName: string;
     description?: string | null;
-    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;
@@ -2025,7 +2035,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     try {
       // Use ReadReplicaRouterService to get the appropriate client (replica for reads, primary for writes)
       // This ensures optimal read performance by routing to read replicas when available
-      const readClient = this.readReplicaRouter.getReadClient();
+      const readClient: PrismaTransactionClient | null =
+        this.readReplicaRouter.getReadClient() as PrismaTransactionClient | null;
 
       // Ensure prismaClient is initialized
       if (!readClient) {
@@ -2077,7 +2088,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
       // Record metrics for performance monitoring
       this.metricsService.recordQueryExecution('HEALTHCARE_READ', executionTime, true);
-      
+
       // Record connection pool metrics (pass metrics to avoid circular dependency)
       this.metricsService.recordConnectionPoolMetrics(this.connectionPoolManager.getMetrics());
 
@@ -2241,7 +2252,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         auditInfo.clinicId,
         auditInfo.userId
       );
-      
+
       // Record connection pool metrics (pass metrics to avoid circular dependency)
       this.metricsService.recordConnectionPoolMetrics(this.connectionPoolManager.getMetrics());
 
@@ -3330,13 +3341,13 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   private async getStaffCount(clinicId: string): Promise<number> {
     try {
       const result = await this.executeWithClinicContext(clinicId, async client => {
-        const doctorClinicDelegate = client['doctorClinic'] as {
+        const doctorClinicDelegate = client['doctorClinic'] as unknown as {
           count: (args: { where: Record<string, unknown> }) => Promise<number>;
         };
-        const receptionistsDelegate = client['receptionistsAtClinic'] as {
+        const receptionistsDelegate = client['receptionistsAtClinic'] as unknown as {
           count: (args: { where: Record<string, unknown> }) => Promise<number>;
         };
-        const clinicAdminDelegate = client['clinicAdmin'] as {
+        const clinicAdminDelegate = client['clinicAdmin'] as unknown as {
           count: (args: { where: Record<string, unknown> }) => Promise<number>;
         };
 

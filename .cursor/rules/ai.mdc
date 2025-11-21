@@ -8,11 +8,44 @@ alwaysApply: true
 
 This agent enforces comprehensive TypeScript, ESLint, and coding standards for the Healthcare Backend system. It ensures code quality, security, and compliance with healthcare industry standards.
 
+## 📚 Official Documentation References
+
+**ALWAYS reference official documentation when implementing features or fixing issues:**
+
+### Core Framework & Language
+- **NestJS**: https://docs.nestjs.com - Framework architecture, modules, dependency injection, guards, interceptors
+- **TypeScript**: https://www.typescriptlang.org/docs/ - Type system, strict mode, type safety, advanced types
+- **Fastify**: https://fastify.dev/docs/latest/ - HTTP framework, plugins, hooks, TypeScript support
+
+### Database & ORM
+- **Prisma**: https://www.prisma.io/docs - Schema design, migrations, queries, transactions, type safety
+- **PostgreSQL**: https://www.postgresql.org/docs/ - SQL syntax, performance, indexing, RLS
+
+### Caching & Session Management
+- **Dragonfly**: https://www.dragonflydb.io/docs - High-performance cache, Redis-compatible API
+- **Redis**: https://redis.io/docs/ - Data structures, commands, pub/sub, clustering
+- **@fastify/session**: https://github.com/fastify/session - Session management, store interface, callbacks
+
+### Queue & Background Jobs
+- **BullMQ**: https://docs.bullmq.io/ - Job queues, workers, repeatable jobs, rate limiting
+
+### Real-time Communication
+- **Socket.IO**: https://socket.io/docs/v4/ - WebSocket communication, rooms, namespaces, adapters
+
+### Infrastructure & DevOps
+- **Docker**: https://docs.docker.com/ - Containerization, Dockerfile, docker-compose, multi-stage builds
+- **Kubernetes**: https://kubernetes.io/docs/ - Pods, services, deployments, ingress, configmaps, secrets
+
+### Frontend (for API design reference)
+- **Next.js**: https://nextjs.org/docs - SSR, API routes, routing patterns
+- **React**: https://react.dev/reference/react - Component patterns, hooks, state management
+- **Expo**: https://docs.expo.dev/ - Mobile app development, API compatibility
+
 ## 🎯 Key Responsibilities
 
 1. **TypeScript Strict Mode Enforcement** - Zero tolerance for `any` types, strict null checks, proper typing
 2. **Linting Standards** - ESLint + Prettier compliance with healthcare-specific rules
-3. **Coding Standards** - SOLID principles, DRY, multi-tenant architecture, HIPAA compliance
+3. **Coding Standards** - SOLID principles, DRY, KISS, multi-tenant architecture, HIPAA compliance
 4. **Architecture Patterns** - NestJS best practices, Fastify optimization, plugin architecture
 5. **Security Standards** - RBAC, session management, audit logging, data encryption
 
@@ -35,5 +68,130 @@ This agent enforces comprehensive TypeScript, ESLint, and coding standards for t
 - `@utils/*` → `src/libs/utils/*`
 - `@communication/*` → `src/libs/communication/*`
 - `@database/*` → `src/libs/infrastructure/database/*`
+- `@config` → `src/config`
+- `@logging` → `src/libs/infrastructure/logging`
+- `@cache` → `src/libs/infrastructure/cache`
+- `@queue` → `src/libs/infrastructure/queue`
+- `@security` → `src/libs/security`
+- `@types` → `src/libs/core/types`
 
-For detailed rules and patterns, see: `.cursor/rules/typescript-linting-agent.md`
+## 🏗️ Codebase Structure
+
+```
+src/
+├── config/                    # Configuration management (@config)
+│   ├── config.module.ts
+│   ├── config.service.ts
+│   └── environment/
+├── libs/
+│   ├── core/                  # Core domain logic (@core)
+│   │   ├── decorators/        # Custom decorators
+│   │   ├── errors/            # Error handling
+│   │   ├── filters/          # Exception filters
+│   │   ├── guards/           # Authentication/authorization guards
+│   │   ├── interceptors/     # Request/response interceptors
+│   │   ├── rbac/             # Role-based access control
+│   │   ├── resilience/       # Circuit breakers, graceful shutdown
+│   │   ├── session/          # Session management
+│   │   └── types/            # Type definitions (@types)
+│   ├── dtos/                 # Data Transfer Objects (@dtos)
+│   ├── infrastructure/       # Infrastructure layer (@infrastructure)
+│   │   ├── cache/            # Cache service (@cache)
+│   │   ├── database/         # Database layer (@database)
+│   │   ├── events/           # Event system
+│   │   ├── framework/        # Framework adapters (Fastify)
+│   │   ├── logging/          # Logging service (@logging)
+│   │   └── queue/            # Queue service (@queue)
+│   ├── security/             # Security utilities (@security)
+│   └── utils/                # Utility functions (@utils)
+└── services/                 # Business services (@services)
+    ├── auth/                 # Authentication service
+    ├── appointments/         # Appointment management
+    ├── users/                # User management
+    └── ...
+```
+
+## 🔗 Documentation Usage Guidelines
+
+When implementing features, **ALWAYS**:
+
+1. **Check official documentation first** before implementing
+2. **Reference documentation links** in code comments for complex implementations
+3. **Follow official patterns** from documentation, not custom workarounds
+4. **Use official TypeScript types** from package definitions
+5. **Follow best practices** outlined in official docs
+
+### Example: Using Documentation References
+
+```typescript
+/**
+ * Fastify Session Store Adapter
+ * 
+ * Implements @fastify/session Store interface using CacheService
+ * @see https://github.com/fastify/session#store - Store interface specification
+ * @see https://www.dragonflydb.io/docs - Cache backend documentation
+ */
+@Injectable()
+export class FastifySessionStoreAdapter implements SessionStore {
+  // Implementation follows Fastify Store callback pattern
+  get(sid: string, callback: (err: unknown, result?: unknown) => void): void {
+    // Implementation
+  }
+}
+```
+
+## 📖 Technology-Specific Guidelines
+
+### NestJS Patterns
+- **Reference**: https://docs.nestjs.com
+- Use dependency injection, modules, guards, interceptors
+- Follow NestJS lifecycle hooks (OnModuleInit, OnModuleDestroy)
+- Use decorators for metadata (@Injectable, @Controller, etc.)
+
+### Fastify Integration
+- **Reference**: https://fastify.dev/docs/latest/
+- Use FastifyAdapter, not ExpressAdapter
+- Register plugins via FastifyFrameworkAdapter
+- Use Fastify hooks for request/response lifecycle
+- Session management via @fastify/session with callback-based Store
+
+### Prisma Database
+- **Reference**: https://www.prisma.io/docs
+- Use PrismaClient for all database operations
+- Implement proper migrations
+- Use transactions for data consistency
+- Follow Prisma query optimization patterns
+
+### Cache (Dragonfly/Redis)
+- **Reference**: https://www.dragonflydb.io/docs | https://redis.io/docs/
+- Use CacheService abstraction (provider-agnostic)
+- Implement proper TTL management
+- Use cache patterns (cache-aside, write-through)
+- Handle cache failures gracefully
+
+### Queue (BullMQ)
+- **Reference**: https://docs.bullmq.io/
+- Use QueueService for job management
+- Implement proper job retry logic
+- Use job priorities and rate limiting
+- Handle job failures with error handlers
+
+### Socket.IO
+- **Reference**: https://socket.io/docs/v4/
+- Use namespaces for multi-tenancy
+- Implement proper room management
+- Use adapters for horizontal scaling
+- Handle connection/disconnection events
+
+## 📖 Comprehensive Documentation
+
+For detailed rules and patterns, see:
+- **Main Rules**: `.cursor/rules/typescript-linting-agent.md`
+- **Architecture Guidelines**: `.ai-rules/architecture.md` - SOLID principles, plugin architecture, multi-tenant design
+- **Coding Standards**: `.ai-rules/coding-standards.md` - TypeScript standards, naming conventions, path aliases
+- **Database Guidelines**: `.ai-rules/database.md` - PostgreSQL with Prisma, repository patterns, transactions
+- **NestJS Specific**: `.ai-rules/nestjs-specific.md` - NestJS/Fastify patterns, guards, decorators, events
+- **Security Guidelines**: `.ai-rules/security.md` - RBAC, session management, HIPAA compliance, audit logging
+- **Index & Quick Reference**: `.ai-rules/index.md` - Complete system overview and quick reference
+
+**ALWAYS consult these comprehensive guides when implementing features or fixing issues.**

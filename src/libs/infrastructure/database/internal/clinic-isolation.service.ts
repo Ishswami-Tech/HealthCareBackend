@@ -1,7 +1,6 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { PrismaService } from '../prisma/prisma.service';
-import type { PrismaClient } from '@prisma/client';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
@@ -13,10 +12,7 @@ import type { ClinicIsolationResult } from '@core/types/database.types';
  * Helper function to safely access PrismaClient models
  * Uses bracket notation to satisfy TypeScript's strict index signature checks
  */
-function getPrismaModel<T>(
-  prismaService: PrismaService,
-  modelName: string
-): T {
+function getPrismaModel<T>(prismaService: PrismaService, modelName: string): T {
   const client = prismaService.getClient() as unknown as Record<string, T>;
   return client[modelName] as T;
 }
@@ -87,24 +83,26 @@ export class ClinicIsolationService implements OnModuleInit {
 
       // Load all active clinics - ClinicIsolationService is an infrastructure component used BY HealthcareDatabaseClient
       // It uses PrismaService directly to avoid circular dependency
-      const clinicModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(this.prismaService, 'clinic');
+      const clinicModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(
+        this.prismaService,
+        'clinic'
+      );
       const rawClinics = await clinicModel.findMany({
-          where: { isActive: true },
-          include: {
-            locations: {
-              select: {
-                id: true,
-              },
+        where: { isActive: true },
+        include: {
+          locations: {
+            select: {
+              id: true,
             },
-            _count: {
-              select: {
-                users: true,
-                appointments: true,
-              },
-            },
-
           },
-        });
+          _count: {
+            select: {
+              users: true,
+              appointments: true,
+            },
+          },
+        },
+      });
       const clinics = rawClinics as Array<{
         id: string;
         name: string;
@@ -194,20 +192,23 @@ export class ClinicIsolationService implements OnModuleInit {
       if (!clinicContext) {
         // If not in cache, try to load from database
         // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const clinicModel = getPrismaModel<{ findFirst: <T>(args: T) => Promise<unknown | null> }>(this.prismaService, 'clinic');
+        const clinicModel = getPrismaModel<{ findFirst: <T>(args: T) => Promise<unknown> }>(
+          this.prismaService,
+          'clinic'
+        );
         const rawClinic = await clinicModel.findFirst({
-            where: {
-              id: clinicId,
-              isActive: true,
-            },
-            include: {
-              locations: {
-                select: {
-                  id: true,
-                },
+          where: {
+            id: clinicId,
+            isActive: true,
+          },
+          include: {
+            locations: {
+              select: {
+                id: true,
               },
             },
-          });
+          },
+        });
         const clinic = rawClinic as {
           id: string;
           name: string;
@@ -309,25 +310,28 @@ export class ClinicIsolationService implements OnModuleInit {
       if (!userClinics || !userClinics.includes(clinicId)) {
         // Load from database if not in cache
         // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const userModel = getPrismaModel<{ findFirst: <T>(args: T) => Promise<unknown | null> }>(this.prismaService, 'user');
+        const userModel = getPrismaModel<{ findFirst: <T>(args: T) => Promise<unknown> }>(
+          this.prismaService,
+          'user'
+        );
         const rawUserClinicAccess = await userModel.findFirst({
-            where: {
-              id: userId,
-              OR: [
-                { primaryClinicId: clinicId }, // Primary clinic assignment
-                {
-                  clinics: {
-                    some: {
-                      id: clinicId,
-                    },
+          where: {
+            id: userId,
+            OR: [
+              { primaryClinicId: clinicId }, // Primary clinic assignment
+              {
+                clinics: {
+                  some: {
+                    id: clinicId,
                   },
-                }, // Many-to-many clinic association
-              ],
-            },
-            select: {
-              id: true,
-            },
-          });
+                },
+              }, // Many-to-many clinic association
+            ],
+          },
+          select: {
+            id: true,
+          },
+        });
         const userClinicAccess = rawUserClinicAccess as { id: string } | null;
 
         if (!userClinicAccess) {
@@ -404,22 +408,25 @@ export class ClinicIsolationService implements OnModuleInit {
       if (!userClinics) {
         // Load from database
         // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const userModel = getPrismaModel<{ findUnique: <T>(args: T) => Promise<unknown | null> }>(this.prismaService, 'user');
+        const userModel = getPrismaModel<{ findUnique: <T>(args: T) => Promise<unknown> }>(
+          this.prismaService,
+          'user'
+        );
         const rawUser = await userModel.findUnique({
-            where: { id: userId },
-            include: {
-              primaryClinic: {
-                select: {
-                  id: true,
-                },
-              },
-              clinics: {
-                select: {
-                  id: true,
-                },
+          where: { id: userId },
+          include: {
+            primaryClinic: {
+              select: {
+                id: true,
               },
             },
-          });
+            clinics: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        });
         const user = rawUser as {
           id: string;
           primaryClinic: { id: string } | null;
@@ -482,17 +489,19 @@ export class ClinicIsolationService implements OnModuleInit {
       if (!clinicId) {
         // Load from database
         // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const clinicLocationModel = getPrismaModel<{ findUnique: <T>(args: T) => Promise<{ id: string; clinic: { id: string } | null } | null> }>(this.prismaService, 'clinicLocation');
+        const clinicLocationModel = getPrismaModel<{
+          findUnique: <T>(args: T) => Promise<{ id: string; clinic: { id: string } | null } | null>;
+        }>(this.prismaService, 'clinicLocation');
         const rawResult = await clinicLocationModel.findUnique({
-            where: { id: locationId },
-            include: {
-              clinic: {
-                select: {
-                  id: true,
-                },
+          where: { id: locationId },
+          include: {
+            clinic: {
+              select: {
+                id: true,
               },
             },
-          });
+          },
+        });
         const location = rawResult as {
           id: string;
           clinic: { id: string } | null;
@@ -581,18 +590,21 @@ export class ClinicIsolationService implements OnModuleInit {
 
   private async loadUserClinicMappings(): Promise<void> {
     // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-    const userModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(this.prismaService, 'user');
+    const userModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(
+      this.prismaService,
+      'user'
+    );
     const rawUsers = await userModel.findMany({
-        select: {
-          id: true,
-          primaryClinicId: true,
-          clinics: {
-            select: {
-              id: true,
-            },
+      select: {
+        id: true,
+        primaryClinicId: true,
+        clinics: {
+          select: {
+            id: true,
           },
         },
-      });
+      },
+    });
     const users = rawUsers as Array<{
       id: string;
       primaryClinicId: string | null;
@@ -767,16 +779,19 @@ export class ClinicIsolationService implements OnModuleInit {
     if (uncachedUserIds.length > 0) {
       try {
         // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const userModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(this.prismaService, 'user');
+        const userModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(
+          this.prismaService,
+          'user'
+        );
         const rawUsers = await userModel.findMany({
-            where: {
-              id: { in: uncachedUserIds },
-              clinicAdmins: {
-                some: { clinicId },
-              },
+          where: {
+            id: { in: uncachedUserIds },
+            clinicAdmins: {
+              some: { clinicId },
             },
-            select: { id: true },
-          });
+          },
+          select: { id: true },
+        });
         const users = rawUsers as Array<{ id: string }>;
 
         const validUserIds = new Set(users.map(u => u.id));
