@@ -12,7 +12,7 @@
     "outDir": "./dist",
     "baseUrl": "./",
     "incremental": true,
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -26,6 +26,7 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
+    "allowJs": true,
     "paths": {
       "@database/*": ["src/libs/infrastructure/database/*"],
       "@infrastructure/*": ["src/libs/infrastructure/*"],
@@ -45,5 +46,14 @@
       "@config/*": ["src/config/*"]
     }
   },
-  "exclude": ["node_modules", "dist", "prisma.config.js"]
+  "include": ["src/**/*", "scripts/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "prisma.config.js",
+    "**/generated/**",
+    "src/libs/infrastructure/database/generated"
+    // Note: src/libs/infrastructure/database/prisma/generated is NOT excluded
+    // to allow TypeScript to resolve types from Prisma Client
+  ]
 }

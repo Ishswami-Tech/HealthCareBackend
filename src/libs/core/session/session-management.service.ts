@@ -12,6 +12,7 @@ import type {
   CreateSessionDto,
   SessionSummary,
 } from '@core/types/session.types';
+import type { FastifySession } from '@core/types/guard.types';
 
 /**
  * Session Management Service for Healthcare Backend
@@ -671,6 +672,99 @@ export class SessionManagementService implements OnModuleInit {
         }
       );
     }
+  }
+
+  /**
+   * Sync session data to Fastify session object
+   * @param sessionData - Session data from SessionManagementService
+   * @param fastifySession - Fastify session object (from request.session)
+   * @returns void
+   */
+  syncToFastifySession(sessionData: SessionData, fastifySession: FastifySession): void {
+    if (sessionData.sessionId) {
+      fastifySession.sessionId = sessionData.sessionId;
+    }
+    if (sessionData.userId) {
+      fastifySession.userId = sessionData.userId;
+    }
+    if (sessionData.clinicId) {
+      fastifySession.clinicId = sessionData.clinicId;
+    }
+    if (sessionData.userAgent) {
+      fastifySession.userAgent = sessionData.userAgent;
+    }
+    if (sessionData.ipAddress) {
+      fastifySession.ipAddress = sessionData.ipAddress;
+    }
+    if (sessionData.loginTime) {
+      fastifySession.loginTime = sessionData.loginTime;
+    }
+    if (sessionData.lastActivity) {
+      fastifySession.lastActivity = sessionData.lastActivity;
+    }
+    if (sessionData.expiresAt) {
+      fastifySession.expiresAt = sessionData.expiresAt;
+    }
+    if (sessionData.isActive !== undefined) {
+      fastifySession.isActive = sessionData.isActive;
+    }
+    if (sessionData.metadata) {
+      fastifySession.metadata = sessionData.metadata;
+    }
+  }
+
+  /**
+   * Create session data from Fastify session object
+   * @param fastifySession - Fastify session object (from request.session)
+   * @returns SessionData or null if invalid
+   */
+  createFromFastifySession(fastifySession: FastifySession): SessionData | null {
+    if (!fastifySession.sessionId || !fastifySession.userId) {
+      return null;
+    }
+
+    const sessionData: SessionData = {
+      sessionId: fastifySession.sessionId,
+      userId: fastifySession.userId,
+      loginTime: fastifySession.loginTime || new Date(),
+      lastActivity: fastifySession.lastActivity || new Date(),
+      expiresAt: fastifySession.expiresAt || new Date(),
+      isActive: fastifySession.isActive ?? true,
+      metadata: fastifySession.metadata || {},
+      ...(fastifySession.clinicId && { clinicId: fastifySession.clinicId }),
+      ...(fastifySession.userAgent && { userAgent: fastifySession.userAgent }),
+      ...(fastifySession.ipAddress && { ipAddress: fastifySession.ipAddress }),
+    };
+
+    return sessionData;
+  }
+
+  /**
+   * Update Fastify session activity
+   * @param fastifySession - Fastify session object (from request.session)
+   * @param metadata - Optional metadata to merge
+   * @returns True if session was updated, false otherwise
+   */
+  async updateFastifySessionActivity(
+    fastifySession: FastifySession,
+    metadata?: Record<string, unknown>
+  ): Promise<boolean> {
+    if (!fastifySession.sessionId) {
+      return false;
+    }
+
+    const sessionData = this.createFromFastifySession(fastifySession);
+    if (!sessionData) {
+      return false;
+    }
+
+    const updated = await this.updateSessionActivity(sessionData.sessionId, metadata);
+    if (updated && sessionData) {
+      // Sync updated data back to Fastify session
+      this.syncToFastifySession(sessionData, fastifySession);
+    }
+
+    return updated;
   }
 
   /**

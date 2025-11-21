@@ -70,6 +70,19 @@ if [ -z "$JWT_SECRET" ] || [[ "$JWT_SECRET" =~ CHANGE_THIS ]]; then
     exit 1
 fi
 
+# Session secrets (required for Fastify session with CacheService/Dragonfly)
+SESSION_SECRET="${SESSION_SECRET:-}"
+if [ -z "$SESSION_SECRET" ] || [ ${#SESSION_SECRET} -lt 32 ]; then
+    echo "⚠️  SESSION_SECRET not set or too short (min 32 chars). Generating one..."
+    SESSION_SECRET=$(openssl rand -hex 32)
+fi
+
+COOKIE_SECRET="${COOKIE_SECRET:-}"
+if [ -z "$COOKIE_SECRET" ] || [ ${#COOKIE_SECRET} -lt 32 ]; then
+    echo "⚠️  COOKIE_SECRET not set or too short (min 32 chars). Generating one..."
+    COOKIE_SECRET=$(openssl rand -hex 32)
+fi
+
 # Optional secrets
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
 GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
@@ -91,6 +104,8 @@ kubectl create secret generic healthcare-secrets \
     --from-literal=database-migration-url="$DB_MIGRATION_URL" \
     --from-literal=redis-password="$REDIS_PASSWORD" \
     --from-literal=jwt-secret="$JWT_SECRET" \
+    --from-literal=session-secret="$SESSION_SECRET" \
+    --from-literal=cookie-secret="$COOKIE_SECRET" \
     ${GOOGLE_CLIENT_ID:+--from-literal=google-client-id="$GOOGLE_CLIENT_ID"} \
     ${GOOGLE_CLIENT_SECRET:+--from-literal=google-client-secret="$GOOGLE_CLIENT_SECRET"} \
     ${AWS_ACCESS_KEY_ID:+--from-literal=aws-access-key-id="$AWS_ACCESS_KEY_ID"} \

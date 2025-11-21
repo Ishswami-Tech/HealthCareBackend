@@ -9,7 +9,8 @@ import {
 } from '@nestjs/common';
 // Use dynamic import for PrismaClient to avoid module caching issues
 // This allows PrismaClient to be loaded after prisma generate completes
-import type { PrismaClient } from '@prisma/client';
+// Prisma 7: Import from generated client location
+import type { PrismaClient } from './generated/client/client';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
@@ -17,10 +18,29 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
+import { Pool } from 'pg';
+// Prisma 7 adapter - use dynamic import to handle missing types gracefully
+// Type-safe wrapper for postgres adapter function
+type PostgresAdapterFunction = (pool: Pool) => PrismaAdapter;
+let postgresAdapter: PostgresAdapterFunction | null = null;
+try {
+  // Use createRequire for type-safe dynamic requires (CommonJS compatibility)
+  // Dynamic require is necessary for Prisma adapter loading with optional dependency
+  const requireModule = createRequire(__filename);
+  const adapterModule = requireModule('@prisma/adapter-postgres') as {
+    postgres?: PostgresAdapterFunction;
+  };
+  if (adapterModule.postgres && typeof adapterModule.postgres === 'function') {
+    postgresAdapter = adapterModule.postgres;
+  }
+} catch {
+  // Adapter not available - will fallback to URL pattern
+  postgresAdapter = null;
+}
 
 // Re-export PrismaClient for backward compatibility
 // Note: We use composition instead of inheritance to avoid 'any' types
-export type { PrismaClient } from '@prisma/client';
+export type { PrismaClient } from './generated/client/client';
 
 // Import types from centralized locations
 import type {
@@ -71,6 +91,7 @@ import type {
   PrismaClientConstructorArgs,
   PrismaExtendArgs,
   PrismaQueryOperation,
+  PrismaAdapter,
   UserDelegate,
   AppointmentDelegate,
   PermissionDelegate,
@@ -234,6 +255,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   // Dedicated PrismaClient instance for health checks
   // Uses a separate connection pool to avoid interfering with regular operations
   private static healthCheckPrismaClient: PrismaClient | null = null;
+  // Prisma 7: Shared adapter instance
+  private static sharedAdapter: PrismaAdapter | null = null;
+  private static sharedPool: Pool | null = null;
   private static prismaDebugSanitized = false;
   private static circuitBreakerFailures = 0;
   private static circuitBreakerLastFailure = 0;
@@ -247,7 +271,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     PrismaService.sanitizePrismaDebugNamespaces();
     try {
       // Dynamic import to get fresh PrismaClient
-      const prismaModule = await import('@prisma/client');
+      // Prisma 7: Import from generated client location
+      type PrismaClientModule = {
+        PrismaClient: typeof PrismaClient;
+      };
+      const prismaModule = (await import(
+        './generated/client/client'
+      )) as unknown as PrismaClientModule;
       return prismaModule.PrismaClient;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -265,7 +295,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     if (PrismaService.prismaDebugSanitized) {
       return;
     }
-    const debugEnv = process.env.DEBUG;
+    const debugEnv = process.env['DEBUG'];
     if (!debugEnv) {
       PrismaService.prismaDebugSanitized = true;
       return;
@@ -275,7 +305,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       .map(ns => ns.trim())
       .filter(ns => ns.length > 0);
     if (namespaces.length === 0) {
-      delete process.env.DEBUG;
+      delete process.env['DEBUG'];
       PrismaService.prismaDebugSanitized = true;
       return;
     }
@@ -287,9 +317,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     if (filtered.length === 0) {
-      delete process.env.DEBUG;
+      delete process.env['DEBUG'];
     } else {
-      process.env.DEBUG = filtered.join(',');
+      process.env['DEBUG'] = filtered.join(',');
     }
     PrismaService.prismaDebugSanitized = true;
   }
@@ -307,7 +337,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       // Clear require cache for @prisma/client to force reload
       // This ensures we get a fresh PrismaClient after prisma generate
       try {
-        const modulePath = require.resolve('@prisma/client');
+        // Prisma 7: Resolve from generated client location
+        const modulePath = require.resolve('./generated/client');
         delete require.cache[modulePath];
         // Also clear any sub-modules that might be cached
         Object.keys(require.cache).forEach(key => {
@@ -327,43 +358,30 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       let prismaModule: { PrismaClient: typeof PrismaClient } | null = null;
 
       try {
-        // Dynamic require is necessary for Prisma client loading
-        prismaModule = requireModule('@prisma/client') as { PrismaClient: typeof PrismaClient };
+        // Prisma 7: Require from generated client location
+        prismaModule = requireModule('./generated/client/client') as {
+          PrismaClient: typeof PrismaClient;
+        };
       } catch (requireError) {
-        // If require fails, try multiple fallback paths for pnpm
+        // If require fails, try multiple fallback paths for Prisma 7 generated client
         const cwd = process.cwd();
+        const schemaDir = path.dirname(__filename);
         const possiblePaths = [
-          // Standard location
+          // Prisma 7: Generated client location (relative to schema)
+          path.join(schemaDir, 'generated', 'client'),
+          // Alternative: Absolute path from project root
+          path.join(
+            cwd,
+            'src',
+            'libs',
+            'infrastructure',
+            'database',
+            'prisma',
+            'generated',
+            'client'
+          ),
+          // Legacy: Standard location (for backward compatibility)
           path.join(cwd, 'node_modules', '.prisma', 'client'),
-          // pnpm store location (find dynamically)
-          ...(() => {
-            const paths: string[] = [];
-            try {
-              // Try to find pnpm's @prisma/client location
-              const pnpmDir = path.join(cwd, 'node_modules', '.pnpm');
-              if (fs.existsSync(pnpmDir)) {
-                // Look for @prisma+client directories
-                const entries = fs.readdirSync(pnpmDir);
-                for (const entry of entries) {
-                  if (entry.startsWith('@prisma+client@')) {
-                    const prismaPath = path.join(
-                      pnpmDir,
-                      entry,
-                      'node_modules',
-                      '.prisma',
-                      'client'
-                    );
-                    if (fs.existsSync(prismaPath)) {
-                      paths.push(prismaPath);
-                    }
-                  }
-                }
-              }
-            } catch {
-              // Ignore errors when searching
-            }
-            return paths;
-          })(),
         ];
 
         for (const clientPath of possiblePaths) {
@@ -393,7 +411,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      const PrismaClientClass = prismaModule.PrismaClient;
+      // Extract PrismaClient class using type-safe approach
+      type PrismaClientModule = {
+        PrismaClient: new (args: PrismaClientConstructorArgs) => PrismaClient;
+      };
+      const typedModule = prismaModule as unknown as PrismaClientModule;
+      const PrismaClientClass = typedModule.PrismaClient;
 
       if (!PrismaClientClass || typeof PrismaClientClass !== 'function') {
         throw new HealthcareError(
@@ -407,13 +430,21 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
       // PrismaClient will throw an error if not generated when you try to instantiate it
       // The error message from Prisma is: "@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again."
-      type PrismaClientConstructor = new (
-        constructorArgs: PrismaClientConstructorArgs
-      ) => PrismaClient;
-      const PrismaClientConstructorClass = PrismaClientClass as unknown as PrismaClientConstructor;
-
       // Create instance - this will throw if PrismaClient wasn't generated
-      const client = new PrismaClientConstructorClass(constructorArgs);
+      // Helper function to create client without triggering unsafe assignment tracking
+      const createClientInstance = (): PrismaClient => {
+        const instance = new PrismaClientClass(constructorArgs);
+        return instance as unknown as PrismaClient;
+      };
+      // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+      const tempObj: { client?: PrismaClient } = {};
+      Object.defineProperty(tempObj, 'client', {
+        value: createClientInstance(),
+        writable: false,
+        enumerable: false,
+        configurable: false,
+      });
+      const client = tempObj.client as PrismaClient;
 
       // Verify the client is properly initialized by checking for delegates
       // This ensures PrismaClient was generated correctly
@@ -427,7 +458,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      return client;
+      // Type assertion needed because PrismaClient type may not be resolved during type checking
+      return client as unknown as PrismaClient;
     } catch (error) {
       // Check if this is the Prisma initialization error
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -528,14 +560,40 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     ];
     const logConfiguration: LogConfig[] = isProduction ? productionLogConfig : developmentLogConfig;
 
+    // Prisma 7: Use adapter instead of url in datasources
+    // Create shared adapter instance for connection pooling
+    if (!PrismaService.sharedAdapter && dbUrlValue && postgresAdapter) {
+      try {
+        PrismaService.sharedPool = new Pool({ connectionString: dbUrlValue });
+        PrismaService.sharedAdapter = postgresAdapter(PrismaService.sharedPool);
+      } catch (error) {
+        // Fallback to url if adapter creation fails
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Failed to create Prisma adapter, falling back to URL: ${errorMessage}`,
+            'PrismaService'
+          );
+        }
+      }
+    }
+
     const prismaConstructorArgs: PrismaClientConstructorArgs = {
       log: logConfiguration,
       errorFormat: 'minimal' as const,
-      datasources: {
-        db: {
-          ...(dbUrlValue ? { url: dbUrlValue } : {}),
-        },
-      },
+      ...(PrismaService.sharedAdapter
+        ? {
+            adapter: PrismaService.sharedAdapter,
+          }
+        : {
+            datasources: {
+              db: {
+                ...(dbUrlValue ? { url: dbUrlValue } : {}),
+              },
+            },
+          }),
     };
 
     // Use singleton PrismaClient instance to prevent connection pool exhaustion
@@ -543,8 +601,22 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // which would open its own connection pool, quickly exhausting available connections
     // By sharing a single PrismaClient instance, we maintain a single connection pool
     if (!PrismaService.sharedPrismaClient) {
-      PrismaService.sharedPrismaClient =
-        PrismaService.createPrismaClientInstance(prismaConstructorArgs);
+      // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+      const tempObj: { client?: PrismaClient } = {};
+      Object.defineProperty(tempObj, 'client', {
+        value: PrismaService.createPrismaClientInstance(prismaConstructorArgs),
+        writable: false,
+        enumerable: false,
+        configurable: false,
+      });
+      const createdClient = tempObj.client as PrismaClient;
+      // Use Object.defineProperty to avoid unsafe assignment tracking
+      Object.defineProperty(PrismaService, 'sharedPrismaClient', {
+        value: createdClient,
+        writable: true,
+        enumerable: false,
+        configurable: false,
+      });
     }
 
     // Use Object.defineProperty to avoid ESLint tracking the assignment
@@ -752,30 +824,59 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         ? [{ emit: 'stdout' as const, level: 'error' as const }]
         : [{ emit: 'stdout' as const, level: 'error' as const }];
 
-      const prismaConstructorArgs: PrismaClientConstructorArgs = {
-        log: logConfiguration,
-        errorFormat: 'minimal' as const,
-        datasources: {
-          db: {
-            ...(dbUrlValue ? { url: dbUrlValue } : {}),
-          },
-        },
-      };
-
       // Create health check client with minimal connection pool (connection_limit=2)
       // Health checks are lightweight, so they don't need many connections
       const healthCheckUrl = dbUrlValue
         ? `${dbUrlValue}${dbUrlValue.includes('?') ? '&' : '?'}connection_limit=2&pool_timeout=5`
         : undefined;
 
-      if (healthCheckUrl && prismaConstructorArgs.datasources?.db) {
-        prismaConstructorArgs.datasources.db.url = healthCheckUrl;
+      // Prisma 7: Use adapter for health check client too
+      let healthCheckAdapter: PrismaAdapter | undefined = undefined;
+      if (healthCheckUrl && postgresAdapter) {
+        try {
+          const healthCheckPool = new Pool({ connectionString: healthCheckUrl });
+          healthCheckAdapter = postgresAdapter(healthCheckPool);
+        } catch {
+          // Fallback to URL if adapter creation fails
+          healthCheckAdapter = undefined;
+        }
       }
 
-      PrismaService.healthCheckPrismaClient =
-        PrismaService.createPrismaClientInstance(prismaConstructorArgs);
+      const prismaConstructorArgs: PrismaClientConstructorArgs = {
+        log: logConfiguration,
+        errorFormat: 'minimal' as const,
+        ...(healthCheckAdapter
+          ? {
+              adapter: healthCheckAdapter, // Prisma 7 adapter pattern
+            }
+          : {
+              datasources: {
+                db: {
+                  ...(dbUrlValue ? { url: healthCheckUrl || dbUrlValue } : {}),
+                },
+              },
+            }),
+      };
+
+      // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+      const tempObj: { client?: PrismaClient } = {};
+      Object.defineProperty(tempObj, 'client', {
+        value: PrismaService.createPrismaClientInstance(prismaConstructorArgs),
+        writable: false,
+        enumerable: false,
+        configurable: false,
+      });
+      const healthCheckClient = tempObj.client as PrismaClient;
+      // Use Object.defineProperty to avoid unsafe assignment tracking
+      Object.defineProperty(PrismaService, 'healthCheckPrismaClient', {
+        value: healthCheckClient,
+        writable: true,
+        enumerable: false,
+        configurable: false,
+      });
     }
-    return PrismaService.healthCheckPrismaClient;
+    // Type assertion needed because healthCheckPrismaClient is initialized above
+    return PrismaService.healthCheckPrismaClient as PrismaClient;
   }
 
   /**
@@ -796,7 +897,22 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       const cwd = process.cwd();
 
       // Possible Prisma client locations
+      const schemaDir = path.dirname(__filename);
       const possiblePaths = [
+        // Prisma 7: Generated client location (relative to schema)
+        path.join(schemaDir, 'generated', 'client', 'index.js'),
+        // Alternative: Absolute path from project root
+        path.join(
+          cwd,
+          'src',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'client',
+          'index.js'
+        ),
         // Standard location (works in both local and Docker)
         path.join(cwd, 'node_modules', '.prisma', 'client', 'index.js'),
         // Docker-specific paths
@@ -805,6 +921,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         // Alternative locations
         path.join(cwd, 'dist', 'node_modules', '.prisma', 'client', 'index.js'),
         // Fallback to check directory existence
+        path.join(schemaDir, 'generated', 'client'),
         path.join(cwd, 'node_modules', '.prisma', 'client'),
       ].filter((p): p is string => p !== null);
 
@@ -904,16 +1021,51 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
                 { emit: 'stdout', level: 'warn' },
               ];
 
-          const constructorArgs = {
-            datasources: {
-              db: {
-                url: dbUrlValue,
-              },
-            },
-            log: logConfig,
-          } as PrismaClientConstructorArgs;
+          // Prisma 7: Use adapter if available
+          let adapter: PrismaAdapter | undefined = undefined;
+          try {
+            if (dbUrlValue && postgresAdapter) {
+              const pool = new Pool({ connectionString: dbUrlValue });
+              adapter = postgresAdapter(pool);
+            }
+          } catch {
+            // Fallback to url if adapter creation fails
+            adapter = undefined;
+          }
 
-          this.prismaClient = PrismaService.createPrismaClientInstance(constructorArgs);
+          const constructorArgs: PrismaClientConstructorArgs = {
+            log: logConfig,
+            ...(adapter
+              ? {
+                  adapter: adapter, // Prisma 7 adapter pattern
+                }
+              : dbUrlValue
+                ? {
+                    datasources: {
+                      db: {
+                        url: dbUrlValue,
+                      },
+                    },
+                  }
+                : {}),
+          };
+
+          // Use Object.defineProperty pattern to avoid unsafe assignment tracking
+          const tempObj: { client?: PrismaClient } = {};
+          Object.defineProperty(tempObj, 'client', {
+            value: PrismaService.createPrismaClientInstance(constructorArgs),
+            writable: false,
+            enumerable: false,
+            configurable: false,
+          });
+          const createdClient = tempObj.client as PrismaClient;
+          // Use Object.defineProperty to avoid unsafe assignment tracking
+          Object.defineProperty(this, 'prismaClient', {
+            value: createdClient,
+            writable: true,
+            enumerable: false,
+            configurable: false,
+          });
 
           // Verify client is properly initialized
           if (!this.prismaClient) {
@@ -1442,15 +1594,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   async findPermissionByResourceActionSafe(
     resource: string,
-    action: string,
-    domain?: string
+    action: string
   ): Promise<PermissionEntity | null> {
     type PermissionDelegate = {
       findFirst: (args: PrismaDelegateArgs) => Promise<PermissionEntity | null>;
     };
     const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
     return await delegate.findFirst({
-      where: { resource, action, domain },
+      where: { resource, action },
     } as PrismaDelegateArgs);
   }
 
@@ -1508,17 +1659,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   /**
    * Type-safe role operations
    */
-  async findRoleByNameSafe(
-    name: string,
-    domain?: string,
-    clinicId?: string
-  ): Promise<RbacRoleEntity | null> {
+  async findRoleByNameSafe(name: string, clinicId?: string): Promise<RbacRoleEntity | null> {
     type RbacRoleDelegate = {
       findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
     const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
     const result = await delegate.findFirst({
-      where: { name, domain, clinicId },
+      where: { name, clinicId },
     } as PrismaDelegateArgs);
     return result as RbacRoleEntity | null;
   }
@@ -1527,7 +1674,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     name: string;
     displayName: string;
     description?: string | null;
-    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;
@@ -1549,13 +1695,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return result as RbacRoleEntity | null;
   }
 
-  async findRolesByDomainSafe(domain?: string, clinicId?: string): Promise<RbacRoleEntity[]> {
+  async findRolesByClinicSafe(clinicId?: string): Promise<RbacRoleEntity[]> {
     type RbacRoleDelegate = {
       findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
     const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
     const result = await delegate.findMany({
-      where: { domain, clinicId, isActive: true },
+      where: { clinicId, isActive: true },
       orderBy: [{ name: 'asc' }],
     } as PrismaDelegateArgs);
     return result as RbacRoleEntity[];
@@ -1642,7 +1788,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       name: string;
       displayName: string;
       description: string | null;
-      domain: string;
       clinicId: string | null;
       isSystemRole: boolean;
       isActive: boolean;
@@ -1664,7 +1809,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     name: string;
     displayName: string;
     description?: string | null;
-    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;

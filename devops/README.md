@@ -128,6 +128,8 @@ kubectl rollout status deploy/healthcare-api -n healthcare-backend --timeout=300
   - `database-url`: connect via PgBouncer, e.g. `postgresql://user:pass@pgbouncer:6432/userdb?pgbouncer=true`
   - `database-migration-url`: direct Postgres for migrations, e.g. `postgresql://user:pass@postgres:5432/userdb`
   - `postgres-user`, `postgres-password`, `redis-password`, `jwt-secret`
+  - `session-secret`: Fastify session secret (minimum 32 characters) - used with CacheService/Dragonfly
+  - `cookie-secret`: Fastify cookie secret (minimum 32 characters) - used for cookie signing
 - Secret `wal-g-secrets` (namespace `healthcare-backend`)
   - `WALG_S3_PREFIX`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `WALG_S3_ENDPOINT`
 

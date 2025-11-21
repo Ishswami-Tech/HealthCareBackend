@@ -41,7 +41,6 @@ export interface RoleEntity {
   readonly name: string;
   readonly displayName: string;
   readonly description: string | null;
-  readonly domain: string;
   readonly clinicId: string | null;
   readonly isSystemRole: boolean;
   readonly isActive: boolean;
@@ -111,7 +110,6 @@ export interface PrismaPermissionEntity {
   readonly resource: string;
   readonly action: string;
   readonly description: string | null;
-  readonly domain: string;
   readonly isSystemPermission: boolean;
   readonly isActive: boolean;
   readonly createdAt: Date;
@@ -129,7 +127,6 @@ export interface PermissionEntity {
   readonly resource: string;
   readonly action: string;
   readonly description: string | null;
-  readonly domain: string;
   readonly isSystemPermission: boolean;
   readonly isActive: boolean;
   readonly createdAt: Date;

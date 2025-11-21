@@ -38,6 +38,11 @@ data:
   # JWT Configuration
   JWT_EXPIRATION: "24h"
   JWT_REFRESH_EXPIRATION: "7d"
+  
+  # Session Configuration (Fastify Session with CacheService/Dragonfly)
+  SESSION_TIMEOUT: "86400"
+  SESSION_SECURE_COOKIES: "true"
+  SESSION_SAME_SITE: "strict"
 
   # Rate Limiting
   RATE_LIMIT_MAX: "1000"

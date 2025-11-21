@@ -3,6 +3,41 @@
 ## 🎯 Agent Mission
 This agent enforces comprehensive TypeScript, ESLint, and coding standards for the Healthcare Backend system. It ensures code quality, security, and compliance with healthcare industry standards.
 
+**📚 IMPORTANT**: This file works in conjunction with the comprehensive `.ai-rules` folder documentation. Always reference both this file and the detailed guides in `.ai-rules/` when implementing features.
+
+## 📚 Official Documentation References
+
+**ALWAYS reference official documentation when implementing features or fixing issues:**
+
+### Core Framework & Language
+- **NestJS**: https://docs.nestjs.com - Framework architecture, modules, dependency injection, guards, interceptors, lifecycle hooks
+- **TypeScript**: https://www.typescriptlang.org/docs/ - Type system, strict mode, type safety, advanced types, utility types
+- **Fastify**: https://fastify.dev/docs/latest/ - HTTP framework, plugins, hooks, TypeScript support, request lifecycle
+
+### Database & ORM
+- **Prisma**: https://www.prisma.io/docs - Schema design, migrations, queries, transactions, type safety, Prisma Client API
+- **PostgreSQL**: https://www.postgresql.org/docs/ - SQL syntax, performance optimization, indexing strategies, Row-Level Security (RLS)
+
+### Caching & Session Management
+- **Dragonfly**: https://www.dragonflydb.io/docs - High-performance cache, Redis-compatible API, commands, data structures
+- **Redis**: https://redis.io/docs/ - Data structures, commands, pub/sub, clustering, persistence, performance tuning
+- **@fastify/session**: https://github.com/fastify/session - Session management, Store interface (callback-based), cookie handling
+
+### Queue & Background Jobs
+- **BullMQ**: https://docs.bullmq.io/ - Job queues, workers, repeatable jobs, rate limiting, job priorities, error handling
+
+### Real-time Communication
+- **Socket.IO**: https://socket.io/docs/v4/ - WebSocket communication, rooms, namespaces, adapters, horizontal scaling
+
+### Infrastructure & DevOps
+- **Docker**: https://docs.docker.com/ - Containerization, Dockerfile best practices, docker-compose, multi-stage builds, networking
+- **Kubernetes**: https://kubernetes.io/docs/ - Pods, services, deployments, ingress, configmaps, secrets, horizontal pod autoscaling
+
+### Frontend (for API design reference)
+- **Next.js**: https://nextjs.org/docs - SSR patterns, API routes, routing conventions, data fetching
+- **React**: https://react.dev/reference/react - Component patterns, hooks, state management, performance optimization
+- **Expo**: https://docs.expo.dev/ - Mobile app development, API compatibility, native modules
+
 ## 🔧 TypeScript Enforcement
 
 ### **Strict Mode Requirements**
@@ -245,6 +280,8 @@ console.log('Debug info'); // FORBIDDEN
 
 ## 🔄 NestJS Patterns
 
+**Reference**: https://docs.nestjs.com
+
 ### **Module Structure**
 ```typescript
 @Module({
@@ -419,10 +456,18 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 ## 🚀 Performance Standards
 
 ### **Database Optimization**
-- Use Prisma with proper indexing
-- Implement connection pooling
-- Use transactions for data consistency
-- Cache frequently accessed data
+**Reference**: https://www.prisma.io/docs | https://www.postgresql.org/docs/
+- Use Prisma with proper indexing (follow Prisma indexing best practices)
+- Implement connection pooling (Prisma connection pool configuration)
+- Use transactions for data consistency (Prisma transaction API)
+- Cache frequently accessed data (Dragonfly/Redis patterns)
+
+### **Cache Optimization**
+**Reference**: https://www.dragonflydb.io/docs | https://redis.io/docs/
+- Use CacheService abstraction for provider-agnostic caching
+- Implement proper TTL management based on data sensitivity
+- Use cache patterns: cache-aside, write-through, write-behind
+- Handle cache failures gracefully with fallback strategies
 
 ### **Memory Management**
 - Avoid memory leaks in event listeners
@@ -510,5 +555,144 @@ Remember: This is a production healthcare system handling sensitive patient data
 - `@OnEvent` decorators work correctly (EventService emits through EventEmitter2 internally)
 
 For detailed integration documentation, see: `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`
+
+## 📚 Comprehensive AI Rules Documentation
+
+**ALWAYS reference the comprehensive `.ai-rules` folder for detailed guidelines:**
+
+- **🏗️ Architecture**: `.ai-rules/architecture.md` - SOLID principles, plugin architecture, multi-tenant design, project structure
+- **📝 Coding Standards**: `.ai-rules/coding-standards.md` - TypeScript standards, naming conventions, import organization, path aliases
+- **🗄️ Database**: `.ai-rules/database.md` - PostgreSQL with Prisma, repository patterns, transactions, 10M users optimization
+- **🚀 NestJS Specific**: `.ai-rules/nestjs-specific.md` - NestJS/Fastify patterns, guards, decorators, events, module structure
+- **🔒 Security**: `.ai-rules/security.md` - RBAC, session management, HIPAA compliance, audit logging, JWT authentication
+- **📋 Index**: `.ai-rules/index.md` - Complete system overview, quick reference, technology stack, service architecture
+
+**Key Points from `.ai-rules`:**
+- **DatabaseService**: Use `DatabaseService` (NOT `PrismaService`) from `@infrastructure/database`
+- **CacheService**: Use `CacheService` (NOT `RedisService`) - Provider-agnostic cache abstraction
+- **EventService**: Use `EventService` (NOT `EventEmitter2`) - CENTRALIZED EVENT HUB
+- **LoggingService**: Use `LoggingService` from `@infrastructure/logging` (NOT NestJS Logger)
+- **10M Users Ready**: Optimized for 1M+ concurrent users, 200+ clinics, horizontal scaling
+- **Multi-Tenant**: Clinic-based data isolation with comprehensive RBAC (15+ healthcare roles)
+- **Plugin Architecture**: Extensible appointment system with 12+ plugins
+
+## 🔗 Documentation Usage in Code
+
+When implementing features, **ALWAYS**:
+
+1. **Check official documentation first** - Don't guess, verify patterns from official docs
+2. **Reference documentation in comments** - Add `@see` links for complex implementations
+3. **Follow official TypeScript types** - Use types from `@types/*` packages and official definitions
+4. **Use official examples** - Adapt official examples to our codebase patterns
+5. **Document deviations** - If deviating from official patterns, document why
+
+### Example: Documentation References in Code
+
+```typescript
+/**
+ * Fastify Session Store Adapter
+ * 
+ * Implements @fastify/session Store interface using CacheService
+ * @see https://github.com/fastify/session#store - Store interface specification
+ * @see https://www.dragonflydb.io/docs - Cache backend documentation
+ * @see https://fastify.dev/docs/latest/Guides/TypeScript/ - Fastify TypeScript patterns
+ */
+@Injectable()
+export class FastifySessionStoreAdapter implements SessionStore {
+  /**
+   * Get session data by session ID
+   * Implements Fastify Store interface with callback pattern
+   * @see https://github.com/fastify/session#store-interface
+   */
+  get(sid: string, callback: (err: unknown, result?: unknown) => void): void {
+    // Implementation follows Fastify Store callback pattern
+  }
+}
+```
+
+### Technology-Specific Documentation Patterns
+
+#### NestJS Implementation
+```typescript
+/**
+ * User Service
+ * @see https://docs.nestjs.com/providers - Dependency injection patterns
+ * @see https://docs.nestjs.com/techniques/database - Database integration
+ */
+@Injectable()
+export class UserService {
+  // Follow NestJS lifecycle hooks: OnModuleInit, OnModuleDestroy
+}
+```
+
+#### Prisma Queries
+```typescript
+/**
+ * Database query with Prisma
+ * @see https://www.prisma.io/docs/concepts/components/prisma-client/crud - CRUD operations
+ * @see https://www.prisma.io/docs/concepts/components/prisma-client/transactions - Transactions
+ */
+async createUser(data: CreateUserDto): Promise<User> {
+  return this.prisma.$transaction(async (tx) => {
+    // Transaction implementation
+  });
+}
+```
+
+#### Fastify Plugins
+```typescript
+/**
+ * Register Fastify Session plugin
+ * @see https://fastify.dev/docs/latest/Reference/Plugins/ - Plugin registration
+ * @see https://github.com/fastify/session - Session plugin documentation
+ */
+async registerSession(app: INestApplication, options: Record<string, unknown>): Promise<void> {
+  await this.registerPlugin(app, fastifySession, options);
+}
+```
+
+#### Cache Operations
+```typescript
+/**
+ * Cache patient records
+ * @see https://www.dragonflydb.io/docs/commands/ - Cache commands
+ * @see https://redis.io/docs/manual/patterns/cache-aside/ - Cache-aside pattern
+ */
+async cachePatientRecords<T>(patientId: string, fetchFn: () => Promise<T>): Promise<T> {
+  // Cache-aside pattern implementation
+}
+```
+
+#### Queue Jobs
+```typescript
+/**
+ * Process appointment notification job
+ * @see https://docs.bullmq.io/guide/jobs - Job creation and processing
+ * @see https://docs.bullmq.io/guide/workers - Worker implementation
+ */
+@Processor('appointment-notifications')
+export class AppointmentNotificationProcessor {
+  @Process('send-notification')
+  async handleNotification(job: Job<NotificationData>): Promise<void> {
+    // Job processing implementation
+  }
+}
+```
+
+#### Socket.IO Events
+```typescript
+/**
+ * Socket.IO event handler
+ * @see https://socket.io/docs/v4/server-api/ - Server API
+ * @see https://socket.io/docs/v4/rooms-and-namespaces/ - Rooms and namespaces
+ */
+@WebSocketGateway({ namespace: '/appointments' })
+export class AppointmentGateway {
+  @SubscribeMessage('join-room')
+  handleJoinRoom(client: Socket, roomId: string): void {
+    // Room management implementation
+  }
+}
+```
 
 **Last Updated**: January 2025

@@ -1,14 +1,16 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
 generator client {
-  provider        = "prisma-client-js"
-  output          = "../../../../../node_modules/.prisma/client"
-  previewFeatures = []
-  binaryTargets   = ["native", "linux-musl"]
-  engineType      = "library"
+  provider = "prisma-client"
+  output   = "./generated/client"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -159,6 +161,7 @@ model Clinic {
   primaryUsers          User[]                       @relation("UserPrimaryClinic")
   videoConsultations    VideoConsultation[]
   users                 User[]                       @relation("UserClinics")
+  patients              Patient[]                    @relation("PatientClinic")
 
   @@index([app_name])
   @@index([isActive])
@@ -188,6 +191,7 @@ model ClinicLocation {
   appointments Appointment[]
   doctorClinic DoctorClinic[]
   clinic       Clinic         @relation(fields: [clinicId], references: [id])
+  patients     Patient[]      @relation("PatientClinicLocation")
 
   @@index([clinicId])
   @@map("clinic_locations")
@@ -285,24 +289,38 @@ model Doctor {
 }
 
 model Patient {
-  id                 String                       @id @default(uuid())
-  userId             String                       @unique
-  prakriti           Prakriti?
-  dosha              Dosha?
-  createdAt          DateTime                     @default(now())
-  appointments       Appointment[]
-  checkIns           CheckIn[]
-  eligibilityChecks  EligibilityCheck[]
-  healthRecords      HealthRecord[]
-  insurance          Insurance[]
-  user               User                         @relation(fields: [userId], references: [id])
-  prescriptions      Prescription[]
-  queueEntries       QueueEntry[]
-  recurringSeries    RecurringAppointmentSeries[]
-  reviews            Review[]
-  therapySessions    TherapySession[]
-  waitlistEntries    WaitlistEntry[]
-  videoConsultations VideoConsultation[]
+  id                         String                       @id @default(uuid())
+  userId                     String                       @unique
+  prakriti                   Prakriti?
+  dosha                      Dosha?
+  registrationDate           DateTime                     @default(now())
+  uniqueHealthIdentification String?                      @unique
+  specialCase                SpecialCase?
+  presentIllness             String?
+  occupation                 String?
+  clinicId                   String?
+  clinicLocationId           String?
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  appointments               Appointment[]
+  checkIns                   CheckIn[]
+  eligibilityChecks          EligibilityCheck[]
+  healthRecords              HealthRecord[]
+  insurance                  Insurance[]
+  user                       User                         @relation(fields: [userId], references: [id])
+  prescriptions              Prescription[]
+  queueEntries               QueueEntry[]
+  recurringSeries            RecurringAppointmentSeries[]
+  reviews                    Review[]
+  therapySessions            TherapySession[]
+  waitlistEntries            WaitlistEntry[]
+  videoConsultations         VideoConsultation[]
+  clinic                     Clinic?                      @relation("PatientClinic", fields: [clinicId], references: [id])
+  clinicLocation             ClinicLocation?              @relation("PatientClinicLocation", fields: [clinicLocationId], references: [id])
+
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([uniqueHealthIdentification])
 }
 
 model Appointment {
@@ -977,16 +995,14 @@ model Permission {
   resource           String
   action             String
   description        String?
-  domain             String           @default("healthcare")
   isSystemPermission Boolean          @default(false)
   isActive           Boolean          @default(true)
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   rolePermissions    RolePermission[]
 
-  @@unique([resource, action, domain])
+  @@unique([resource, action])
   @@index([resource, action])
-  @@index([domain])
 }
 
 model RbacRole {
@@ -994,7 +1010,6 @@ model RbacRole {
   name         String
   displayName  String
   description  String?
-  domain       String           @default("healthcare")
   clinicId     String?
   isSystemRole Boolean          @default(false)
   isActive     Boolean          @default(true)
@@ -1004,8 +1019,8 @@ model RbacRole {
   permissions  RolePermission[]
   userRoles    UserRole[]
 
-  @@unique([name, domain, clinicId])
-  @@index([domain, clinicId])
+  @@unique([name, clinicId])
+  @@index([clinicId])
 }
 
 model UserRole {
@@ -1632,4 +1647,11 @@ enum InvoiceStatus {
   VOID
   UNCOLLECTIBLE
   OVERDUE
+}
+
+enum SpecialCase {
+  MINOR_AGE_12_OR_BELOW
+  PHYSICAL_HANDICAP
+  PREGNANT_WOMEN
+  SENIOR_CITIZEN
 }
