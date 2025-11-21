@@ -133,12 +133,32 @@ export interface ClinicValidationResult {
 }
 
 /**
+ * Fastify session interface
+ * @interface FastifySession
+ * @description Session data stored in Fastify session
+ */
+export interface FastifySession {
+  sessionId?: string;
+  userId?: string;
+  clinicId?: string;
+  userAgent?: string;
+  ipAddress?: string;
+  loginTime?: Date;
+  lastActivity?: Date;
+  expiresAt?: Date;
+  isActive?: boolean;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
  * Fastify request interface with user context
  * @interface FastifyRequestWithUser
- * @description Enhanced request interface for JWT authentication
+ * @description Enhanced request interface for JWT authentication with Fastify session support
  */
 export interface FastifyRequestWithUser {
   user?: JwtGuardUser;
+  session?: FastifySession;
   readonly ip?: string;
   readonly headers: JwtRequestHeaders;
   readonly method: string;

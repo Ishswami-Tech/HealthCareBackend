@@ -16,8 +16,6 @@ export interface CreateRoleDto {
   readonly displayName: string;
   /** Optional description of the role */
   readonly description?: string;
-  /** Domain/namespace for the role */
-  readonly domain: string;
   /** Optional clinic ID for clinic-specific roles */
   readonly clinicId?: string;
   /** Optional array of permission IDs to assign */

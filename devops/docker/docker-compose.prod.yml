@@ -59,6 +59,14 @@ services:
       FRONTEND_DOMAIN: ishswami.in
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       JWT_EXPIRATION: 24h
+      
+      # Session Configuration (Fastify Session with CacheService/Dragonfly)
+      SESSION_SECRET: ${SESSION_SECRET:-your-session-secret-change-in-production-min-32-chars-long}
+      SESSION_TIMEOUT: ${SESSION_TIMEOUT:-86400}
+      SESSION_SECURE_COOKIES: ${SESSION_SECURE_COOKIES:-true}
+      SESSION_SAME_SITE: ${SESSION_SAME_SITE:-strict}
+      COOKIE_SECRET: ${COOKIE_SECRET:-your-cookie-secret-change-in-production-min-32-chars}
+      
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       SECURITY_RATE_LIMIT: "true"

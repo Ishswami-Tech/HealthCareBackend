@@ -22,7 +22,6 @@ interface PermissionEntityStructure {
   readonly resource: string;
   readonly action: string;
   readonly description: string | null;
-  readonly domain: string;
   readonly isSystemPermission: boolean;
   readonly isActive: boolean;
   readonly createdAt: Date;
@@ -63,7 +62,6 @@ export class PermissionService {
       (record['description'] === null ||
         record['description'] === undefined ||
         typeof record['description'] === 'string') &&
-      typeof record['domain'] === 'string' &&
       typeof record['isSystemPermission'] === 'boolean' &&
       typeof record['isActive'] === 'boolean' &&
       record['createdAt'] instanceof Date &&
@@ -137,7 +135,6 @@ export class PermissionService {
       resource: permission.resource,
       action: permission.action,
       description: permission.description,
-      domain: permission.domain,
       isSystemPermission: permission.isSystemPermission,
       isActive: permission.isActive,
       createdAt: permission.createdAt,
@@ -150,8 +147,7 @@ export class PermissionService {
     try {
       const existingResult: PermissionRecord | null = await this.getPermissionByResourceAction(
         createPermissionDto.resource,
-        createPermissionDto.action,
-        createPermissionDto.domain
+        createPermissionDto.action
       );
       const existing = existingResult;
 
@@ -171,7 +167,6 @@ export class PermissionService {
         resource: createPermissionDto.resource,
         action: createPermissionDto.action,
         description: createPermissionDto.description ?? null,
-        domain: createPermissionDto.domain,
         isSystemPermission: false,
         isActive: true,
       };
@@ -245,11 +240,10 @@ export class PermissionService {
 
   async getPermissionByResourceAction(
     resource: string,
-    action: string,
-    domain?: string
+    action: string
   ): Promise<PermissionRecord | null> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}resource:${resource}:${action}:${domain || 'null'}`;
+      const cacheKey = `${this.CACHE_PREFIX}resource:${resource}:${action}`;
       const cached = await this.cacheService.get<PermissionRecord>(cacheKey);
       if (cached) {
         return cached;
@@ -258,8 +252,7 @@ export class PermissionService {
       // Use unified database client for optimized read operations with caching
       const permissionInfraResult = await this.databaseService.findPermissionByResourceActionSafe(
         resource,
-        action,
-        domain
+        action
       );
 
       const validatedResult = await this.getPrismaPermission(
@@ -279,9 +272,9 @@ export class PermissionService {
     }
   }
 
-  async getPermissions(domain?: string, resource?: string): Promise<PermissionRecord[]> {
+  async getPermissions(resource?: string): Promise<PermissionRecord[]> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}list:${domain || 'null'}:${resource || 'null'}`;
+      const cacheKey = `${this.CACHE_PREFIX}list:${resource || 'null'}`;
       const cached = await this.cacheService.get<PermissionRecord[]>(cacheKey);
       if (cached) {
         return cached;
@@ -289,8 +282,7 @@ export class PermissionService {
 
       // Use unified database client for optimized read operations with caching
       const permissionsInfraResult = await this.databaseService.findPermissionsByResourceSafe(
-        resource || '*',
-        domain
+        resource || '*'
       );
 
       const validatedResults = await this.getPrismaPermissions(
@@ -452,8 +444,8 @@ export class PermissionService {
     }
   }
 
-  async getPermissionsByResource(resource: string, domain?: string): Promise<PermissionRecord[]> {
-    return this.getPermissions(domain, resource);
+  async getPermissionsByResource(resource: string): Promise<PermissionRecord[]> {
+    return this.getPermissions(resource);
   }
 
   async getSystemPermissions(): Promise<PermissionRecord[]> {
@@ -755,14 +747,12 @@ export class PermissionService {
       for (const permissionData of systemPermissions) {
         const existing = await this.getPermissionByResourceAction(
           permissionData.resource,
-          permissionData.action,
-          'healthcare'
+          permissionData.action
         );
 
         if (!existing) {
           await this.databaseService.createPermissionSafe({
             ...permissionData,
-            domain: 'healthcare',
             isSystemPermission: true,
             isActive: true,
           });
@@ -808,7 +798,7 @@ export class PermissionService {
     }
   }
 
-  async getPermissionsSummary(domain?: string): Promise<{
+  async getPermissionsSummary(resource?: string): Promise<{
     totalPermissions: number;
     systemPermissions: number;
     customPermissions: number;
@@ -816,7 +806,7 @@ export class PermissionService {
     actionBreakdown: Record<string, number>;
   }> {
     try {
-      const permissions = await this.getPermissions(domain);
+      const permissions = await this.getPermissions(resource);
       const summary = {
         totalPermissions: permissions.length,
         systemPermissions: permissions.filter((p: PermissionRecord) => p.isSystemPermission).length,

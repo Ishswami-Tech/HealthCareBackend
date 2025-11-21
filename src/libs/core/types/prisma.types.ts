@@ -588,8 +588,17 @@ export type PrismaTransactionClientWithDelegates = Omit<PrismaClientWithDelegate
 // ============================================================================
 
 /**
+ * Prisma 7 Adapter type
+ * Type for Prisma adapter (e.g., postgres adapter)
+ */
+export type PrismaAdapter = {
+  readonly [key: string]: never;
+};
+
+/**
  * Prisma Client constructor arguments
  * Strict type definition for PrismaClient constructor
+ * Supports both Prisma 6 (datasources.url) and Prisma 7 (adapter) patterns
  */
 export interface PrismaClientConstructorArgs {
   log?: Array<{
@@ -597,6 +606,9 @@ export interface PrismaClientConstructorArgs {
     level: 'query' | 'info' | 'warn' | 'error';
   }>;
   errorFormat?: 'pretty' | 'colorless' | 'minimal';
+  // Prisma 7: adapter pattern
+  adapter?: PrismaAdapter;
+  // Prisma 6: datasources pattern (fallback)
   datasources?: {
     db?: {
       url?: string;

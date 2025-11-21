@@ -1,8 +1,8 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 
 // Internal imports - Infrastructure
-import { CacheModule } from '@infrastructure/cache/cache.module';
-import { LoggingModule } from '@infrastructure/logging';
+// CacheModule is @Global() - no need to import it explicitly
+// LoggingModule is @Global() - no need to import it explicitly
 
 import { RateLimitService } from './rate-limit.service';
 
@@ -33,9 +33,13 @@ import { RateLimitService } from './rate-limit.service';
  * - Healthcare-specific rate limiting decorators
  * - Comprehensive logging and monitoring
  * - HIPAA-compliant rate limiting for healthcare data
+ *
+ * NOTE: ClinicRateLimiterService is provided by DatabaseModule to avoid circular dependency
+ * (DatabaseModule imports RateLimitModule, so RateLimitModule cannot provide services from DatabaseModule)
  */
 @Module({
-  imports: [forwardRef(() => CacheModule), LoggingModule],
+  // CacheModule and LoggingModule are @Global() - no need to import them
+  // RateLimitService injects CacheService and LoggingService with forwardRef in constructor
   providers: [RateLimitService],
   exports: [RateLimitService],
 })

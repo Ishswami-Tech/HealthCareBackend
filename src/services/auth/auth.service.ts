@@ -222,7 +222,8 @@ export class AuthService {
       // Use createUserSafe from DatabaseService
       const user = await this.databaseService.createUserSafe(userCreateInput);
 
-      // Create session first
+      // Create session first (stored in Redis via SessionManagementService)
+      // Fastify session will be set in controller if request object is available
       const session = await this.sessionService.createSession({
         userId: user.id,
         userAgent: 'Registration',
@@ -337,6 +338,8 @@ export class AuthService {
       }
 
       // Create session first - handle null clinicId
+      // Session is stored in Redis via SessionManagementService
+      // Fastify session will be set in controller if request object is available
       const clinicId = loginDto.clinicId || user.primaryClinicId || undefined;
       const session = await this.sessionService.createSession({
         userId: user.id,
@@ -808,6 +811,8 @@ export class AuthService {
       await this.cacheService.del(`otp:${user.id}`);
 
       // Create session first
+      // Session is stored in Redis via SessionManagementService
+      // Fastify session will be set in controller if request object is available
       const clinicId = verifyDto.clinicId || user.primaryClinicId || undefined;
       const session = await this.sessionService.createSession({
         userId: user.id,

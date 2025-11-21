@@ -396,7 +396,7 @@ export class CheckInLocationService {
     try {
       // Validate appointment exists using executeHealthcareRead
       const appointment = await this.databaseService.executeHealthcareRead(async client => {
-        const appointmentDelegate = client['appointment'] as {
+        const appointmentDelegate = client['appointment'] as unknown as {
           findUnique: (args: { where: { id: string } }) => Promise<unknown>;
         };
         return await appointmentDelegate.findUnique({
@@ -511,7 +511,7 @@ export class CheckInLocationService {
       // Update appointment status using executeHealthcareWrite
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          const appointmentDelegate = client['appointment'] as {
+          const appointmentDelegate = client['appointment'] as unknown as {
             update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
           };
           return await appointmentDelegate.update({
