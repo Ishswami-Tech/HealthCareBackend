@@ -30,7 +30,7 @@ export class HealthcareError extends HttpException {
   public readonly metadata?: ErrorMetadata;
   public readonly isOperational: boolean;
   public readonly context?: string;
-  
+
   /**
    * Get HTTP status code (for backward compatibility)
    * Uses getStatus() from HttpException
