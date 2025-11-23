@@ -1,10 +1,15 @@
 # Database Robust Refactoring - Unified Enterprise Plan (10M+ Concurrent Users)
 
 > **Note**: This is the consolidated plan that merges all database refactoring plans. It includes:
+
 > - Layered architecture with zero circular dependencies
+
 > - All enterprise features for 10M+ concurrent users
+
 > - SOLID, DRY, KISS principles
+
 > - Incremental integration and testing strategy
+
 > - Proper folder structure with database.module.ts and database.service.ts in root
 
 ## Architecture Overview
@@ -443,6 +448,7 @@ This prevents issues from compounding and ensures each service is properly integ
 **Goal**: Implement design patterns following cache module structure
 
 **6.1 Create Query Strategies** (Strategy Pattern - like cache/strategies/)
+
 - Create `query/strategies/` directory
 - Create `base-query.strategy.ts` - base strategy interface
 - Create `read-query.strategy.ts` - read strategies (optimized, cached, replica)
@@ -452,6 +458,7 @@ This prevents issues from compounding and ensures each service is properly integ
 - Add to module, test after each
 
 **6.2 Create Query Middleware** (Middleware Pattern - like cache/middleware/)
+
 - Create `query/middleware/` directory
 - Create `base-query.middleware.ts` - base middleware interface
 - Create `query-middleware.interface.ts` - middleware interface
@@ -463,17 +470,20 @@ This prevents issues from compounding and ensures each service is properly integ
 - Add to module, test after each
 
 **6.3 Create Query Builders** (Builder Pattern - like cache/builders/)
+
 - Create `query/builders/` directory
 - Create `query-options.builder.ts` - query options builder (like CacheOptionsBuilder)
 - Create `transaction-options.builder.ts` - transaction options builder
 - Add to module, test
 
 **6.4 Create Query Factories** (Factory Pattern - like cache/factories/)
+
 - Create `query/factories/` directory
 - Create `query-key.factory.ts` - query cache key factory (like CacheKeyFactory)
 - Add to module, test
 
 **6.5 Create Database Controller** (Optional - like cache/controllers/)
+
 - Create `controllers/` directory
 - Create `database.controller.ts` - health checks, metrics, admin operations
 - Add to module, test
@@ -555,7 +565,8 @@ This prevents issues from compounding and ensures each service is properly integ
         - DatabaseMetricsService
         - QueryOptimizerService
 
-     3. Query patterns (strategies, middleware, builders, factories):
+     1. Query patterns (strategies, middleware, builders, factories):
+
         - QueryStrategyManager
         - QueryMiddlewareChain
         - QueryOptionsBuilder
@@ -563,9 +574,9 @@ This prevents issues from compounding and ensures each service is properly integ
         - Individual strategies (ReadQueryStrategy, WriteQueryStrategy, TransactionQueryStrategy)
         - Individual middleware (ValidationQueryMiddleware, MetricsQueryMiddleware, SecurityQueryMiddleware, OptimizationQueryMiddleware)
 
-     4. ConnectionPoolManager
-     5. DatabaseService - depends on everything above
-     6. DatabaseController (optional - for admin endpoints)
+     1. ConnectionPoolManager
+     2. DatabaseService - depends on everything above
+     3. DatabaseController (optional - for admin endpoints)
 
    - No ModuleRef lazy injection needed
    - Clean, straightforward dependency injection
@@ -713,12 +724,14 @@ After each phase and each file creation:
 Following the cache module pattern, we can implement:
 
 ### 1. Strategy Pattern (query/strategies/)
+
 - **ReadQueryStrategy**: Optimized read, cached read, replica read strategies
 - **WriteQueryStrategy**: Audit write, critical write, batch write strategies
 - **TransactionQueryStrategy**: Optimistic, pessimistic, read-only transaction strategies
 - **QueryStrategyManager**: Manages and selects appropriate strategy (like CacheStrategyManager)
 
 ### 2. Middleware Pattern (query/middleware/)
+
 - **ValidationQueryMiddleware**: Query validation before execution
 - **MetricsQueryMiddleware**: Query metrics tracking
 - **SecurityQueryMiddleware**: SQL injection check, RLS enforcement
@@ -726,20 +739,24 @@ Following the cache module pattern, we can implement:
 - **QueryMiddlewareChain**: Chain of Responsibility pattern (like CacheMiddlewareChain)
 
 ### 3. Builder Pattern (query/builders/)
+
 - **QueryOptionsBuilder**: Build query options (like CacheOptionsBuilder)
   - Methods: forRead(), forWrite(), forTransaction(), forPHI(), forEmergency()
 - **TransactionOptionsBuilder**: Build transaction options
   - Methods: optimistic(), pessimistic(), readOnly(), isolationLevel()
 
 ### 4. Factory Pattern (query/factories/)
+
 - **QueryKeyFactory**: Generate cache keys for queries (like CacheKeyFactory)
   - Methods: forUser(), forPatient(), forAppointment(), forClinic()
 
 ### 5. Interceptor (Optional - in @core/interceptors/)
+
 - **HealthcareDatabaseInterceptor**: Automatic query optimization, caching, metrics
   - Similar to HealthcareCacheInterceptor
 
 ### 6. Controller (Optional - controllers/)
+
 - **DatabaseController**: Admin endpoints for health checks, metrics, management
   - Similar to CacheController
 
