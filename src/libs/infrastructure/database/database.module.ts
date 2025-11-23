@@ -13,6 +13,16 @@ import { UserRepository } from './repositories/user.repository';
 import { ClinicIsolationService } from './internal/clinic-isolation.service';
 import { SimplePatientRepository } from './repositories/simple-patient.repository';
 import { DatabaseMetricsService } from './internal/database-metrics.service';
+import { RetryService } from './internal/retry.service';
+import { ConnectionLeakDetectorService } from './internal/connection-leak-detector.service';
+import { DatabaseAlertService } from './internal/database-alert.service';
+import { SQLInjectionPreventionService } from './internal/sql-injection-prevention.service';
+import { DataMaskingService } from './internal/data-masking.service';
+import { QueryCacheService } from './internal/query-cache.service';
+import { RowLevelSecurityService } from './internal/row-level-security.service';
+import { ReadReplicaRouterService } from './internal/read-replica-router.service';
+import { DatabaseHealthMonitorService } from './internal/database-health-monitor.service';
+import { ClinicRateLimiterService } from './internal/clinic-rate-limiter.service';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 import { EventsModule } from '@infrastructure/events';
 
@@ -60,10 +70,21 @@ import { EventsModule } from '@infrastructure/events';
   providers: [
     // ALL components are INTERNAL - only HealthcareDatabaseClient is exported
     // Order matters for circular dependencies: list services before services that depend on them
-    ClinicIsolationService, // @internal - no dependencies on other providers
-    HealthcareQueryOptimizerService, // @internal - no dependencies on other providers
+    // Layer 2: Internal Services (independent, no cross-deps)
+    RetryService, // @internal - LoggingService only
+    ConnectionLeakDetectorService, // @internal - LoggingService only
+    DatabaseAlertService, // @internal - LoggingService only
+    SQLInjectionPreventionService, // @internal - ConfigService, LoggingService
+    DataMaskingService, // @internal - ConfigService, LoggingService
+    QueryCacheService, // @internal - CacheService, LoggingService
+    RowLevelSecurityService, // @internal - PrismaService, ConfigService, LoggingService
+    ReadReplicaRouterService, // @internal - PrismaService, ConfigService, LoggingService
+    DatabaseHealthMonitorService, // @internal - PrismaService, ConfigService, LoggingService
+    ClinicRateLimiterService, // @internal - CacheService, ConfigService, LoggingService
+    ClinicIsolationService, // @internal - PrismaService, ConfigService, LoggingService
+    HealthcareQueryOptimizerService, // @internal - LoggingService only
     ConnectionPoolManager, // @internal - must be before DatabaseMetricsService and HealthcareDatabaseClient
-    DatabaseMetricsService, // @internal - depends on ConnectionPoolManager and HealthcareDatabaseClient
+    DatabaseMetricsService, // @internal - depends on ConnectionPoolManager, PrismaService, ConfigService, LoggingService
     UserRepository, // @internal - infrastructure component, not exported
     SimplePatientRepository, // @internal - infrastructure component, not exported
     {

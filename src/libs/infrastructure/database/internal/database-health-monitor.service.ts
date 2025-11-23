@@ -1,0 +1,154 @@
+/**
+ * Database Health Monitor Service
+ * @class DatabaseHealthMonitorService
+ * @description Monitors database health and availability
+ *
+ * @internal
+ * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
+ */
+
+import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@config';
+import { PrismaService } from '../prisma/prisma.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+
+export interface DatabaseHealthStatus {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  latency: number;
+  lastCheck: Date;
+  connectionCount: number;
+  errorRate: number;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Database health monitor service
+ * @internal
+ */
+@Injectable()
+export class DatabaseHealthMonitorService implements OnModuleInit {
+  private readonly serviceName = 'DatabaseHealthMonitorService';
+  private healthCheckInterval!: NodeJS.Timeout;
+  private readonly checkIntervalMs = 30000; // 30 seconds
+  private currentHealth: DatabaseHealthStatus = {
+    status: 'healthy',
+    latency: 0,
+    lastCheck: new Date(),
+    connectionCount: 0,
+    errorRate: 0,
+  };
+  private readonly healthCheckTimeout = 5000; // 5 seconds
+
+  constructor(
+    @Inject(forwardRef(() => PrismaService))
+    private readonly prismaService: PrismaService,
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService
+  ) {}
+
+  onModuleInit(): void {
+    this.startHealthMonitoring();
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.INFO,
+      'Database health monitor service initialized',
+      this.serviceName
+    );
+  }
+
+  /**
+   * Start health monitoring
+   */
+  private startHealthMonitoring(): void {
+    // Perform initial health check
+    void this.performHealthCheck();
+
+    // Schedule periodic health checks
+    this.healthCheckInterval = setInterval(() => {
+      void this.performHealthCheck();
+    }, this.checkIntervalMs);
+  }
+
+  /**
+   * Perform health check
+   */
+  private async performHealthCheck(): Promise<void> {
+    const startTime = Date.now();
+
+    try {
+      // Simple health check query
+      type UserDelegate = {
+        count: () => Promise<number>;
+      };
+      const userDelegate = this.prismaService.user as unknown as UserDelegate;
+      await Promise.race([
+        userDelegate.count(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Health check timeout')), this.healthCheckTimeout)
+        ),
+      ]);
+
+      const latency = Date.now() - startTime;
+      const status: DatabaseHealthStatus['status'] = latency < 1000 ? 'healthy' : 'degraded';
+
+      this.currentHealth = {
+        status,
+        latency,
+        lastCheck: new Date(),
+        connectionCount: 0, // Would be populated from ConnectionPoolManager
+        errorRate: 0, // Would be populated from DatabaseMetricsService
+      };
+    } catch (error) {
+      const latency = Date.now() - startTime;
+
+      this.currentHealth = {
+        status: 'unhealthy',
+        latency,
+        lastCheck: new Date(),
+        connectionCount: 0,
+        errorRate: 1.0,
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Database health check failed: ${error instanceof Error ? error.message : String(error)}`,
+        this.serviceName,
+        { error: error instanceof Error ? error.stack : String(error) }
+      );
+    }
+  }
+
+  /**
+   * Get current health status
+   * INTERNAL: Only accessible by DatabaseService
+   * @internal
+   */
+  getHealthStatus(): DatabaseHealthStatus {
+    return { ...this.currentHealth };
+  }
+
+  /**
+   * Check if database is healthy
+   * INTERNAL: Only accessible by DatabaseService
+   * @internal
+   */
+  isHealthy(): boolean {
+    return this.currentHealth.status === 'healthy';
+  }
+
+  /**
+   * Cleanup on module destroy
+   */
+  onModuleDestroy(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+  }
+}

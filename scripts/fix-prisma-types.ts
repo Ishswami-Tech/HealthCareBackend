@@ -106,9 +106,9 @@ function fixTypeAnnotations(filePath: string, fileName: string): void {
 
   if (modified) {
     fs.writeFileSync(filePath, content, 'utf-8');
-    console.log(`✓ Fixed TypeScript type annotations in ${fileName}`);
+    console.log(`[OK] Fixed TypeScript type annotations in ${fileName}`);
   } else {
-    console.log(`✓ No changes needed in ${fileName}`);
+    console.log(`[OK] No changes needed in ${fileName}`);
   }
 }
 

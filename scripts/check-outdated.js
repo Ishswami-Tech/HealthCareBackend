@@ -17,7 +17,7 @@ try {
 
   // If no output, try checking if all packages are up to date
   if (!output || output.trim().length === 0) {
-    console.log('✓ All dependencies are up to date!');
+    console.log('[OK] All dependencies are up to date!');
     process.exit(0);
   }
 
@@ -71,7 +71,7 @@ try {
   }
 
   if (outdatedPackages.length === 0) {
-    console.log('✓ All dependencies are up to date!');
+    console.log('[OK] All dependencies are up to date!');
     process.exit(0);
   }
 
@@ -95,6 +95,6 @@ try {
   process.exit(0);
 } catch (error) {
   // If command fails, just show a message
-  console.log('⚠️  Could not check outdated dependencies:', error.message);
+  console.log('[WARN] Could not check outdated dependencies:', error.message);
   process.exit(0); // Don't fail the build
 }

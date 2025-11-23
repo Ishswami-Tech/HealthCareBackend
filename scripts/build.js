@@ -27,15 +27,15 @@ function logStep(step, message) {
 }
 
 function logSuccess(message) {
-  log(`✓ ${message}`, 'green');
+  log(`[OK] ${message}`, 'green');
 }
 
 function logWarning(message) {
-  log(`⚠️  ${message}`, 'yellow');
+  log(`[WARN] ${message}`, 'yellow');
 }
 
 function logError(message) {
-  log(`❌ ${message}`, 'red');
+  log(`[ERROR] ${message}`, 'red');
 }
 
 function runCommand(command, description, continueOnError = false) {
@@ -77,12 +77,12 @@ function main() {
         : 'pnpm run build:dev';
 
   log('\n' + '='.repeat(60), 'bright');
-  log('🚀 Healthcare Backend - Build Process', 'bright');
+  log('Healthcare Backend - Build Process', 'bright');
   log('='.repeat(60) + '\n', 'bright');
 
   try {
     // Pre-build validation steps
-    log('📋 Pre-Build Validation', 'blue');
+    log('Pre-Build Validation', 'blue');
     log('-'.repeat(60), 'blue');
 
     // Critical validations (must pass)
@@ -96,7 +96,7 @@ function main() {
     runCommand('pnpm run format:check', 'Prettier verification (after fixes)');
 
     // Security and dependency checks (warnings only)
-    log('\n🔒 Security & Dependency Checks', 'blue');
+    log('\nSecurity & Dependency Checks', 'blue');
     log('-'.repeat(60), 'blue');
     runCommand('pnpm run security:audit', 'Security audit', true);
     runCommand('pnpm run deps:check', 'Dependency check', true);
@@ -104,7 +104,7 @@ function main() {
     runCommand('pnpm run todo:check', 'TODO/FIXME check', true);
 
     // Build step
-    log('\n🔨 Building Application', 'blue');
+    log('\nBuilding Application', 'blue');
     log('-'.repeat(60), 'blue');
 
     // Set environment variable and run nest build
@@ -122,22 +122,22 @@ function main() {
 
     // Success message
     log('\n' + '='.repeat(60), 'green');
-    log(`✅ BUILD COMPLETE!`, 'green');
+    log(`BUILD COMPLETE!`, 'green');
     log('='.repeat(60), 'green');
-    log(`\n✨ Build completed successfully in ${buildTime}s`, 'green');
-    log(`📦 Output directory: dist/`, 'green');
-    log(`🌍 Environment: ${environment}`, 'green');
-    log('\n🎉 Ready for deployment!\n', 'bright');
+    log(`\nBuild completed successfully in ${buildTime}s`, 'green');
+    log(`Output directory: dist/`, 'green');
+    log(`Environment: ${environment}`, 'green');
+    log('\nReady for deployment!\n', 'bright');
 
     process.exit(0);
   } catch (error) {
     const buildTime = ((Date.now() - startTime) / 1000).toFixed(2);
 
     log('\n' + '='.repeat(60), 'red');
-    log('❌ BUILD FAILED', 'red');
+    log('BUILD FAILED', 'red');
     log('='.repeat(60), 'red');
-    log(`\n⏱️  Build failed after ${buildTime}s`, 'red');
-    log(`💡 Please fix the errors above and try again.\n`, 'yellow');
+    log(`\nBuild failed after ${buildTime}s`, 'red');
+    log(`Please fix the errors above and try again.\n`, 'yellow');
 
     process.exit(1);
   }

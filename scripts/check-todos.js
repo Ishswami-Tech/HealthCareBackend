@@ -76,7 +76,7 @@ if (!fs.existsSync(srcDir)) {
 const allIssues = checkDirectory(srcDir);
 
 if (allIssues.length > 0) {
-  console.warn('\n⚠️  Found TODO/FIXME/XXX/HACK comments in source code:\n');
+  console.warn('\n[WARN] Found TODO/FIXME/XXX/HACK comments in source code:\n');
   allIssues.forEach(issue => {
     console.warn(`  ${issue.file}:${issue.line} - ${issue.type}`);
     console.warn(
@@ -84,9 +84,9 @@ if (allIssues.length > 0) {
     );
   });
   console.warn(`\nTotal: ${allIssues.length} issue(s) found`);
-  console.warn('⚠️  Build continuing. Please address these TODOs when possible.\n');
+  console.warn('[WARN] Build continuing. Please address these TODOs when possible.\n');
   process.exit(0); // Don't fail the build - just warn
 } else {
-  console.log('✓ No TODO/FIXME/XXX/HACK comments found');
+  console.log('[OK] No TODO/FIXME/XXX/HACK comments found');
   process.exit(0);
 }

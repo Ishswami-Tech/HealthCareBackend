@@ -53,7 +53,7 @@ for (const clientDir of prismaClientDirs) {
       try {
         const realPath = fs.realpathSync(symlinkPath);
         if (realPath === targetPath) {
-          console.log(`✓ Symlink already exists and is correct: ${symlinkPath}`);
+          console.log(`[OK] Symlink already exists and is correct: ${symlinkPath}`);
           symlinkCount++;
           continue;
         } else {
@@ -71,19 +71,19 @@ for (const clientDir of prismaClientDirs) {
     const absoluteTargetPath = path.resolve(appRoot, 'node_modules', '.prisma');
     fs.symlinkSync(absoluteTargetPath, symlinkPath, 'dir');
     symlinkCount++;
-    console.log(`✓ Created symlink: ${symlinkPath} -> ${targetPath}`);
+    console.log(`[OK] Created symlink: ${symlinkPath} -> ${targetPath}`);
   } catch (error) {
     if (error.code !== 'EEXIST') {
-      console.warn(`⚠ Failed to create symlink in ${clientDir}:`, error.message);
+      console.warn(`[WARN] Failed to create symlink in ${clientDir}:`, error.message);
     } else {
-      console.log(`✓ Symlink already exists: ${symlinkPath}`);
+      console.log(`[OK] Symlink already exists: ${symlinkPath}`);
       symlinkCount++;
     }
   }
 }
 
 if (symlinkCount > 0) {
-  console.log(`\n✓ Fixed Prisma Client path resolution: ${symlinkCount} symlink(s) created`);
+  console.log(`\n[OK] Fixed Prisma Client path resolution: ${symlinkCount} symlink(s) created`);
 } else {
-  console.warn('\n⚠ No Prisma client directories found to fix');
+  console.warn('\n[WARN] No Prisma client directories found to fix');
 }
