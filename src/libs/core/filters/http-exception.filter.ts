@@ -108,7 +108,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // Check for HealthcareError first (it extends HttpException but has custom properties)
     let status: number;
     let exceptionResponse: unknown;
-    
+
     if (exception instanceof HealthcareError) {
       status = exception.getStatus();
       exceptionResponse = {

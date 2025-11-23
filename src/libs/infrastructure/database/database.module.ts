@@ -8,11 +8,11 @@ import { LogType, LogLevel } from '@core/types';
 import { initDatabase } from './scripts/init-db';
 // healthcareConfig is imported by ConfigModule, not used directly here
 import { ConnectionPoolManager } from './connection-pool.manager';
-import { HealthcareQueryOptimizerService } from './query-optimizer.service';
+import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
 import { UserRepository } from './repositories/user.repository';
-import { ClinicIsolationService } from './clinic-isolation.service';
+import { ClinicIsolationService } from './internal/clinic-isolation.service';
 import { SimplePatientRepository } from './repositories/simple-patient.repository';
-import { DatabaseMetricsService } from './database-metrics.service';
+import { DatabaseMetricsService } from './internal/database-metrics.service';
 import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
 import { EventsModule } from '@infrastructure/events';
 

@@ -1,12 +1,9 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
-import type { PrismaService } from './prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { ConnectionPoolManager } from './connection-pool.manager';
-import { HealthcareQueryOptimizerService } from './query-optimizer.service';
-import { ClinicIsolationService } from './clinic-isolation.service';
+import { ConnectionPoolManager } from '../connection-pool.manager';
 import type {
   DatabaseMetrics,
   ConnectionPoolMetricsInternal,
@@ -23,7 +20,7 @@ import type {
  * Comprehensive Database Metrics Service
  *
  * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
- * All methods are private/protected. Use HealthcareDatabaseClient instead.
+ * All methods are private/protected. Use DatabaseService instead.
  *
  * Features:
  * - Real-time performance monitoring
@@ -97,13 +94,11 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
-    @Inject(forwardRef(() => HealthcareDatabaseClient))
-    private readonly databaseService: HealthcareDatabaseClient,
+    @Inject(forwardRef(() => PrismaService))
+    private readonly prismaService: PrismaService,
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => ConnectionPoolManager))
-    private readonly connectionPoolManager: ConnectionPoolManager,
-    private readonly queryOptimizer: HealthcareQueryOptimizerService,
-    private readonly clinicIsolationService: ClinicIsolationService
+    private readonly connectionPoolManager: ConnectionPoolManager
   ) {}
 
   onModuleInit() {
@@ -130,40 +125,40 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get current database metrics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getCurrentMetrics(): DatabaseMetrics {
     return { ...this.currentMetrics };
   }
 
   /**
    * Get metrics history
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getMetricsHistory(limit: number = 100): MetricsSnapshot[] {
     return this.metricsHistory.slice(-limit);
   }
 
   /**
    * Get clinic-specific metrics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getClinicMetrics(clinicId: string): ClinicMetrics | null {
     return this.currentMetrics.clinicMetrics.get(clinicId) || null;
   }
 
   /**
    * Get performance trends
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getPerformanceTrends(timeRange: '1h' | '6h' | '24h' | '7d'): PerformanceTrends {
     const now = Date.now();
     const timeRanges = {
@@ -239,10 +234,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get health status
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getHealthStatus(): HealthStatus {
     const metrics = this.currentMetrics;
     const issues: string[] = [];
@@ -295,7 +290,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record cache hit
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
   recordCacheHit(cacheTime: number): void {
@@ -316,7 +311,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record cache miss
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
   recordCacheMiss(cacheMissTime: number): void {
@@ -363,10 +358,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record query execution metrics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   recordQueryExecution(
     operation: string,
     executionTime: number,
@@ -420,10 +415,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record connection pool metrics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   recordConnectionPoolMetrics(): void {
     const poolMetrics = this.connectionPoolManager.getMetrics();
     const metrics = this.currentMetrics.connectionPool;
@@ -439,25 +434,21 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Record healthcare metrics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async recordHealthcareMetrics(): Promise<void> {
     try {
-      // Use internal accessor - DatabaseMetricsService is infrastructure component
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
-      ).getInternalPrismaClient();
-
+      // Use PrismaService directly
       // Type-safe Prisma delegates
       type PatientDelegate = { count: (args?: Record<string, never>) => Promise<number> };
       type AppointmentDelegate = { count: (args?: Record<string, never>) => Promise<number> };
       type ClinicDelegate = { count: (args?: Record<string, never>) => Promise<number> };
 
-      const patientDelegate = prismaClient.patient as unknown as PatientDelegate;
-      const appointmentDelegate = prismaClient.appointment as unknown as AppointmentDelegate;
-      const clinicDelegate = prismaClient.clinic as unknown as ClinicDelegate;
+      const patientDelegate = this.prismaService.patient as unknown as PatientDelegate;
+      const appointmentDelegate = this.prismaService.appointment as unknown as AppointmentDelegate;
+      const clinicDelegate = this.prismaService.clinic as unknown as ClinicDelegate;
 
       // Get patient count
       const patientCount = await patientDelegate.count({} as Record<string, never>);
@@ -542,9 +533,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // Record healthcare metrics
     await this.recordHealthcareMetrics();
 
-    // Get query optimizer stats
-    const optimizerStats = this.queryOptimizer.getOptimizerStats();
-    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheHitRate || 0;
+    // Cache hit rate and index usage will be updated by DatabaseService when available
+    // For now, keep existing values or set defaults
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -595,11 +585,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   private async updateClinicSpecificMetrics(): Promise<void> {
     try {
-      // Use internal accessor - DatabaseMetricsService is infrastructure component
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
-      ).getInternalPrismaClient();
-
+      // Use PrismaService directly
       // Type-safe Prisma delegates
       type ClinicWithCount = {
         id: string;
@@ -614,8 +600,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
         count: (args: Record<string, unknown>) => Promise<number>;
       };
 
-      const clinicDelegate = prismaClient.clinic as unknown as ClinicDelegate;
-      const patientDelegate = prismaClient.patient as unknown as PatientDelegate;
+      const clinicDelegate = this.prismaService.clinic as unknown as ClinicDelegate;
+      const patientDelegate = this.prismaService.patient as unknown as PatientDelegate;
 
       // Get clinic-specific data
       const clinics = await clinicDelegate.findMany({

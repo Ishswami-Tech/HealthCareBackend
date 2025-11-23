@@ -8,6 +8,9 @@ import type { QueryMetrics } from '@core/types/database.types';
  * @class HealthcareQueryOptimizerService
  * @description Provides real query optimization capabilities for healthcare database operations
  * Implements query analysis, index recommendations, query rewriting, and performance optimization
+ *
+ * @internal
+ * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
  */
 @Injectable()
 export class HealthcareQueryOptimizerService {
@@ -350,7 +353,7 @@ export class HealthcareQueryOptimizerService {
 
   /**
    * Get query performance metrics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
   getQueryMetrics(): QueryMetrics {
@@ -362,7 +365,7 @@ export class HealthcareQueryOptimizerService {
 
   /**
    * Get optimizer statistics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
   getOptimizerStats(): QueryMetrics & {
@@ -380,8 +383,8 @@ export class HealthcareQueryOptimizerService {
   }
 
   /**
-   * Update cache hit rate (called by HealthcareDatabaseClient when cache metrics available)
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * Update cache hit rate (called by DatabaseService when cache metrics available)
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
   updateCacheHitRate(hitRate: number): void {

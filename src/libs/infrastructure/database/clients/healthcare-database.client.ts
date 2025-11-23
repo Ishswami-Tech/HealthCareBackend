@@ -35,9 +35,9 @@ import type {
   PaymentWhereInput,
 } from '@core/types/input.types';
 import { ConnectionPoolManager } from '@infrastructure/database/connection-pool.manager';
-import { DatabaseMetricsService } from '@infrastructure/database/database-metrics.service';
-import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
-import { HealthcareQueryOptimizerService } from '@infrastructure/database/query-optimizer.service';
+import { DatabaseMetricsService } from '@infrastructure/database/internal/database-metrics.service';
+import { ClinicIsolationService } from '@infrastructure/database/internal/clinic-isolation.service';
+import { HealthcareQueryOptimizerService } from '@infrastructure/database/internal/query-optimizer.service';
 import { CacheService } from '@infrastructure/cache';
 import { RepositoryResult } from '@core/types/database.types';
 import { HealthcareError } from '@core/errors';
@@ -1708,7 +1708,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     try {
       // Get the raw PrismaClient to access $transaction method
       const rawClient = this.prismaService.getRawPrismaClient();
-      
+
       // Use PrismaClient's $transaction method directly
       const result = await rawClient.$transaction(
         async (tx: PrismaTransactionClient) => {
