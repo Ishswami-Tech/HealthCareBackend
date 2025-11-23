@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -36,9 +36,10 @@ export class RoleService {
    */
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly loggingService: LoggingService,
+    @Optional()
     @Inject(forwardRef(() => CacheService))
-    private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService
+    private readonly cacheService?: CacheService
   ) {}
 
   /**
@@ -100,12 +101,14 @@ export class RoleService {
         name: string;
         displayName: string;
         description?: string | null;
+        domain: string;
         clinicId?: string | null;
         isSystemRole?: boolean;
         isActive?: boolean;
       } = {
         name: createRoleDto.name,
         displayName: createRoleDto.displayName,
+        domain: 'healthcare', // Default domain for healthcare roles
         isSystemRole: false,
         isActive: true,
       };
@@ -150,10 +153,12 @@ export class RoleService {
   async getRoleById(roleId: string): Promise<RoleRecord | null> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}id:${roleId}`;
-      const cached = await this.cacheService.get<RoleRecord>(cacheKey);
+      if (this.cacheService) {
+        const cached = await this.cacheService.get<RoleRecord>(cacheKey);
 
-      if (cached) {
-        return cached;
+        if (cached) {
+          return cached;
+        }
       }
 
       const rolePrisma = await this.databaseService.findRoleByIdSafe(roleId);
@@ -166,7 +171,9 @@ export class RoleService {
       const mappedRole = this.mapToRole(role);
 
       // Cache the result
-      await this.cacheService.set(cacheKey, mappedRole, this.CACHE_TTL);
+      if (this.cacheService) {
+        await this.cacheService.set(cacheKey, mappedRole, this.CACHE_TTL);
+      }
 
       return mappedRole;
     } catch (_error) {
@@ -187,10 +194,12 @@ export class RoleService {
   async getRoleByName(name: string, clinicId?: string): Promise<RoleRecord | null> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}name:${name}:${clinicId || 'null'}`;
-      const cached = await this.cacheService.get<RoleRecord>(cacheKey);
+      if (this.cacheService) {
+        const cached = await this.cacheService.get<RoleRecord>(cacheKey);
 
-      if (cached) {
-        return cached;
+        if (cached) {
+          return cached;
+        }
       }
 
       const rolePrisma = await this.databaseService.findRoleByNameSafe(name, clinicId);
@@ -203,7 +212,9 @@ export class RoleService {
       const mappedRole = this.mapToRole(role);
 
       // Cache the result
-      await this.cacheService.set(cacheKey, mappedRole, this.CACHE_TTL);
+      if (this.cacheService) {
+        await this.cacheService.set(cacheKey, mappedRole, this.CACHE_TTL);
+      }
 
       return mappedRole;
     } catch (_error) {
@@ -224,21 +235,25 @@ export class RoleService {
   async getRoles(clinicId?: string): Promise<RoleRecord[]> {
     try {
       const cacheKey = `${this.CACHE_PREFIX}list:${clinicId || 'null'}`;
-      const cached = await this.cacheService.get<RoleRecord[]>(cacheKey);
+      if (this.cacheService) {
+        const cached = await this.cacheService.get<RoleRecord[]>(cacheKey);
 
-      if (cached) {
-        return cached;
+        if (cached) {
+          return cached;
+        }
       }
 
-      const rolesPrisma = await this.databaseService.findRolesByClinicSafe(clinicId);
+      const rolesPrisma = await this.databaseService.findRolesByDomainSafe('healthcare', clinicId);
 
-      const mappedRoles: RoleRecord[] = rolesPrisma.map(rolePrisma => {
+      const mappedRoles: RoleRecord[] = rolesPrisma.map((rolePrisma: RbacRoleEntity) => {
         const role = this.toRoleEntity(rolePrisma);
         return this.mapToRole(role);
       });
 
       // Cache the result
-      await this.cacheService.set(cacheKey, mappedRoles, this.CACHE_TTL);
+      if (this.cacheService) {
+        await this.cacheService.set(cacheKey, mappedRoles, this.CACHE_TTL);
+      }
 
       return mappedRoles;
     } catch (_error) {
@@ -521,6 +536,7 @@ export class RoleService {
         if (!existingRole) {
           await this.databaseService.createSystemRoleSafe({
             ...roleData,
+            domain: 'healthcare', // Default domain for healthcare roles
             isSystemRole: true,
             isActive: true,
           });
@@ -578,7 +594,9 @@ export class RoleService {
    */
   private async clearRoleCache(): Promise<void> {
     try {
-      await this.cacheService.invalidateByPattern(`${this.CACHE_PREFIX}*`);
+      if (this.cacheService) {
+        await this.cacheService.invalidateByPattern(`${this.CACHE_PREFIX}*`);
+      }
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,

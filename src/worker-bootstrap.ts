@@ -50,7 +50,7 @@ async function bootstrap() {
       logger: ['error', 'warn'],
     });
 
-    const configService = app.get(ConfigService);
+    const configService = await app.resolve(ConfigService);
 
     // Initialize worker service
     await app.init();
@@ -58,7 +58,7 @@ async function bootstrap() {
     // Try to use LoggingService, fallback to console if not available
     try {
       const LoggingServiceClass = (await import('@infrastructure/logging')).LoggingService;
-      logService = app.get(LoggingServiceClass);
+      logService = await app.resolve(LoggingServiceClass);
       const { LogType, LogLevel } = await import('@core/types');
 
       if (logService) {
@@ -108,7 +108,7 @@ async function bootstrap() {
     // Setup process error handlers using ProcessErrorHandlersService
     if (logService && app) {
       try {
-        const processErrorHandlersService = app.get(ProcessErrorHandlersService);
+        const processErrorHandlersService = await app.resolve(ProcessErrorHandlersService);
         processErrorHandlersService.setupErrorHandlers();
       } catch (error) {
         // If service is not available, log and continue
@@ -128,7 +128,7 @@ async function bootstrap() {
     // Setup graceful shutdown using GracefulShutdownService
     if (app && logService) {
       try {
-        const gracefulShutdownService = app.get(GracefulShutdownService);
+        const gracefulShutdownService = await app.resolve(GracefulShutdownService);
         gracefulShutdownService.setupShutdownHandlers(app, null, null, null);
       } catch (error) {
         // If service is not available, use fallback shutdown handler

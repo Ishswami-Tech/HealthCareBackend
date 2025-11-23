@@ -7,10 +7,10 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService } from './prisma/prisma.service';
+import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
+import type { PrismaService } from './prisma/prisma.service';
 import { PrismaService as PrismaServiceClass } from './prisma/prisma.service';
-import type { PrismaClient } from './prisma/prisma.service';
-import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
+import { HealthcareQueryOptimizerService } from './query-optimizer.service';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 
@@ -39,6 +39,11 @@ interface IEventService {
 // Note: Using forwardRef causes TypeScript to treat EventService as error type,
 // so we use IEventService interface for property types and type guards
 import { EventService } from '@infrastructure/events';
+
+// Helper function to get EventService token for forwardRef (avoids type resolution issues)
+function getEventServiceToken(): typeof EventService {
+  return EventService;
+}
 
 import type {
   ConnectionMetrics,
@@ -99,13 +104,14 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     @Inject(forwardRef(() => ConfigService)) private configService: ConfigService,
-    @Inject(forwardRef(() => PrismaService)) private prismaService: PrismaService,
+    @Inject(forwardRef(() => HealthcareDatabaseClient))
+    private databaseService: HealthcareDatabaseClient,
     @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService,
     @Optional()
     // Type assertion needed due to circular dependency - EventService type can't be resolved in forwardRef
     // Using helper function to avoid TypeScript type resolution issues with forwardRef
     // The type guard ensures type safety at runtime
-    @Inject(forwardRef(() => EventService))
+    @Inject(forwardRef(getEventServiceToken))
     eventService?: unknown,
     @Optional()
     @Inject(forwardRef(() => HealthcareQueryOptimizerService))
@@ -124,14 +130,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     this.initializeCircuitBreaker();
   }
 
-  async onModuleInit() {
+  onModuleInit() {
     this.initializePool();
     this.startHealthMonitoring();
     this.startQueueProcessor();
-
-    // Warm up connection pool on startup (consolidated from ConnectionPoolWarmingService)
-    await this.warmConnectionPool();
-
     void this.loggingService.log(
       LogType.DATABASE,
       LogLevel.INFO,
@@ -331,19 +333,12 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     try {
       this.metrics.activeConnections++;
 
-      // ConnectionPoolManager is an infrastructure component that manages the pool
-      // It uses PrismaService directly for internal pool operations (health checks, metrics, etc.)
-      // User queries should go through HealthcareDatabaseClient, not ConnectionPoolManager
-      // This method is only called internally for pool management operations
-      // Use Object.defineProperty pattern to avoid unsafe assignment tracking
-      const tempObj: { client?: PrismaClient } = {};
-      Object.defineProperty(tempObj, 'client', {
-        value: this.prismaService.getClient(),
-        writable: false,
-        enumerable: false,
-        configurable: false,
-      });
-      const prismaClient = tempObj.client as PrismaClient;
+      // Execute query using Prisma's raw query through HealthcareDatabaseClient
+      // Use protected internal accessor for infrastructure components
+      // Accessing protected method - ConnectionPoolManager is infrastructure component
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+      ).getInternalPrismaClient();
       // Convert params to the expected type for $queryRawUnsafe
       const typedParams: Array<string | number | boolean | null> = params.map(param => {
         if (
@@ -387,11 +382,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         // Should not reach here, but handle gracefully
         return JSON.stringify(param);
       });
-      const result = await (
-        prismaClient as unknown as {
-          $queryRawUnsafe: <T>(query: string, ...params: unknown[]) => Promise<T>;
-        }
-      ).$queryRawUnsafe<T>(query, ...typedParams);
+      const result = await prismaClient.$queryRawUnsafe<T>(query, ...typedParams);
 
       return result as T;
     } finally {
@@ -455,15 +446,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         try {
           const start = Date.now();
           // Use dedicated health check client to avoid interfering with regular operations
-          // Use Object.defineProperty pattern to avoid unsafe assignment tracking
-          const tempObj: { client?: PrismaClient } = {};
-          Object.defineProperty(tempObj, 'client', {
-            value: PrismaServiceClass.getHealthCheckClient(),
-            writable: false,
-            enumerable: false,
-            configurable: false,
-          });
-          const prismaClient = tempObj.client as PrismaClient;
+          const prismaClient = PrismaServiceClass.getHealthCheckClient();
           const typedClient = prismaClient as unknown as {
             $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
           };
@@ -1294,85 +1277,6 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private isReadOnlyQuery(query: string): boolean {
     const readOnlyPatterns = /^\s*(SELECT|WITH|SHOW|EXPLAIN|DESCRIBE)/i;
     return readOnlyPatterns.test(query.trim());
-  }
-
-  /**
-   * Warm up connection pool on startup (consolidated from ConnectionPoolWarmingService)
-   * Pre-establishes connections to reduce latency for first queries
-   */
-  private async warmConnectionPool(): Promise<void> {
-    try {
-      const warmPoolEnabled = this.configService?.get<boolean>('DB_POOL_WARMING_ENABLED') ?? true;
-      if (!warmPoolEnabled) {
-        return;
-      }
-
-      const startTime = Date.now();
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.INFO,
-        'Starting connection pool warming',
-        this.serviceName
-      );
-
-      const poolSize = this.configService?.get<number>('DB_POOL_MIN') ?? 50;
-      const warmConnections = Math.min(poolSize, 10); // Warm up to 10 connections
-
-      // Create connections gradually
-      const warmPromises: Promise<void>[] = [];
-      for (let i = 0; i < warmConnections; i++) {
-        warmPromises.push(this.warmConnection(i));
-      }
-
-      await Promise.all(warmPromises);
-
-      const duration = Date.now() - startTime;
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.INFO,
-        `Connection pool warmed up: ${warmConnections} connections in ${duration}ms`,
-        this.serviceName,
-        { connections: warmConnections, duration }
-      );
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.WARN,
-        'Connection pool warming failed',
-        this.serviceName,
-        { error: error instanceof Error ? error.message : String(error) }
-      );
-    }
-  }
-
-  /**
-   * Warm a single connection
-   */
-  private async warmConnection(index: number): Promise<void> {
-    try {
-      // Use Object.defineProperty pattern to avoid unsafe assignment tracking
-      const tempObj: { client?: PrismaClient } = {};
-      Object.defineProperty(tempObj, 'client', {
-        value: this.prismaService.getClient(),
-        writable: false,
-        enumerable: false,
-        configurable: false,
-      });
-      const client = tempObj.client as PrismaClient;
-      await (
-        client as unknown as {
-          $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
-        }
-      ).$queryRaw`SELECT 1`;
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.WARN,
-        `Failed to warm connection ${index}`,
-        this.serviceName,
-        { error: error instanceof Error ? error.message : String(error) }
-      );
-    }
   }
 
   private optimizeQueryForClinic(query: string, _clinicId: string): string {
