@@ -3,7 +3,7 @@ import { ConfigService } from '@config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { ConnectionPoolManager } from '../connection-pool.manager';
+import { ConnectionPoolManager } from '../query/scripts/connection-pool.manager';
 import type {
   DatabaseMetrics,
   ConnectionPoolMetricsInternal,

@@ -7,10 +7,10 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
-import type { PrismaService } from './prisma/prisma.service';
-import { PrismaService as PrismaServiceClass } from './prisma/prisma.service';
-import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
+import { HealthcareDatabaseClient } from '../../clients/healthcare-database.client';
+import type { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService as PrismaServiceClass } from '../../prisma/prisma.service';
+import { HealthcareQueryOptimizerService } from '../../internal/query-optimizer.service';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 

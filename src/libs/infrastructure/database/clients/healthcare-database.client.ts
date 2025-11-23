@@ -34,7 +34,7 @@ import type {
   PaymentUpdateInput,
   PaymentWhereInput,
 } from '@core/types/input.types';
-import { ConnectionPoolManager } from '@infrastructure/database/connection-pool.manager';
+import { ConnectionPoolManager } from '../query/scripts/connection-pool.manager';
 import { DatabaseMetricsService } from '@infrastructure/database/internal/database-metrics.service';
 import { ClinicIsolationService } from '@infrastructure/database/internal/clinic-isolation.service';
 import { HealthcareQueryOptimizerService } from '@infrastructure/database/internal/query-optimizer.service';
