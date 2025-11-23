@@ -56,7 +56,7 @@ function validateEnvironment(): void {
   }
 
   if (warnings.length > 0 && NODE_ENV === 'development') {
-    console.warn(`\n⚠️  Recommended environment variables not set (using defaults):`);
+    console.warn(`\n[WARN] Recommended environment variables not set (using defaults):`);
     warnings.forEach(varName => {
       console.warn(`  - ${varName}`);
     });
@@ -64,9 +64,9 @@ function validateEnvironment(): void {
   }
 
   if (missing.length === 0) {
-    console.log(`✓ Environment validation passed for ${NODE_ENV}`);
+    console.log(`[OK] Environment validation passed for ${NODE_ENV}`);
     if (NODE_ENV === 'production') {
-      console.log('✓ All required production variables are set');
+      console.log('[OK] All required production variables are set');
     }
   }
 }
