@@ -43,7 +43,8 @@
       "@queue/*": ["src/libs/infrastructure/queue/*"],
       "@security/*": ["src/libs/security/*"],
       "@config": ["src/config"],
-      "@config/*": ["src/config/*"]
+      "@config/*": ["src/config/*"],
+      "@prisma/client": ["src/libs/infrastructure/database/prisma/generated/client"]
     }
   },
   "include": ["src/**/*", "scripts/**/*"],

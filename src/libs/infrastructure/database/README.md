@@ -43,31 +43,21 @@ database/
 ├── clients/
 │   └── healthcare-database.client.ts    # Main database client (internal)
 ├── prisma/
-│   ├── prisma.service.ts                # Prisma ORM wrapper with optimizations
+│   ├── prisma.service.ts                # Prisma ORM wrapper
 │   ├── prisma.module.ts                 # Prisma NestJS module
 │   └── schema.prisma                    # Database schema
-├── internal/                            # All internal services (SRP)
-│   ├── read-replica-router.service.ts   # Read replica routing
-│   ├── retry.service.ts                 # Retry logic with exponential backoff
-│   ├── database-metrics.service.ts      # Metrics & monitoring
-│   ├── clinic-isolation.service.ts      # Multi-tenant isolation
-│   ├── query-optimizer.service.ts       # Query optimization
-│   ├── query-cache.service.ts           # Query result caching
-│   ├── database-health-monitor.service.ts # Health monitoring
-│   ├── connection-leak-detector.service.ts # Leak detection
-│   ├── database-alert.service.ts        # Alert generation
-│   └── index.ts                         # Internal service exports
 ├── repositories/
 │   ├── base.repository.ts               # Base repository (internal)
 │   ├── user.repository.ts               # User repository (internal)
 │   └── simple-patient.repository.ts     # Patient repository (internal)
 ├── config/
 │   └── healthcare.config.ts             # Database configuration
-├── query/
-│   └── query.utils.ts                   # Query utility functions
-├── connection-pool.manager.ts           # Legacy pool manager (backward compatibility)
+├── connection-pool.manager.ts           # Connection pool management (internal)
+├── clinic-isolation.service.ts          # Multi-tenant isolation (internal)
+├── database-metrics.service.ts          # Metrics & monitoring (internal)
+├── query-optimizer.service.ts           # Query optimization (internal)
 ├── database.module.ts                   # NestJS module
-└── index.ts                             # Public exports (DatabaseService ONLY)
+└── index.ts                             # Public exports (DatabaseService)
 ```
 
 ### Architecture Layers
@@ -76,13 +66,11 @@ database/
 ┌─────────────────────────────────────────────────────────┐
 │              External Services (Public API)              │
 │  import { DatabaseService } from "@infrastructure/database" │
-│  ✅ SINGLE ENTRY POINT - Only DatabaseService exported  │
 └──────────────────────┬──────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────┐
 │         DatabaseService (Public Interface)              │
 │    (alias for HealthcareDatabaseClient)                 │
-│    ✅ All optimization layers automatically applied      │
 └──────────────────────┬──────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────┐
@@ -90,56 +78,21 @@ database/
 │  - executeHealthcareRead/Write                          │
 │  - Transaction management                               │
 │  - Cache integration                                    │
-│  - All services integrated & wired                      │
 └──────┬───────────────────────────────┬──────────────────┘
        │                               │
-┌──────▼──────────┐        ┌──────────▼──────────────────┐
-│ PrismaService   │        │ Optimization Layer          │
-│ (ORM Wrapper)   │        │ ✅ ReadReplicaRouterService │
-│ - Connection    │        │ ✅ ConnectionPoolManager    │
-│   Pooling       │        │ ✅ DatabaseHealthMonitor    │
-│ - Circuit       │        │ ✅ QueryCacheService        │
-│   Breaker       │        │ ✅ DatabaseMetricsService   │
-│ - Query Timeout │        │ ✅ ClinicIsolationService   │
-│ - Type-Safe     │        │ ✅ QueryOptimizerService    │
-│   Delegates     │        │ ✅ RetryService             │
-└──────┬──────────┘        │ ✅ DatabaseErrorHandler     │
-       │                   │ ✅ ConnectionLeakDetector   │
-       │                   │ ✅ DatabaseAlertService     │
-       │                   │ ✅ ConnectionPoolManager    │
-       │                   └─────────────────────────────┘
+┌──────▼──────────┐        ┌──────────▼──────────┐
+│ PrismaService   │        │ Optimization Layer  │
+│ (ORM Wrapper)   │        │ - Query Optimizer   │
+│                 │        │ - Connection Pool   │
+│                 │        │ - Metrics Service   │
+│                 │        │ - Clinic Isolation  │
+└──────┬──────────┘        └─────────────────────┘
        │
 ┌──────▼──────────┐
 │   PostgreSQL    │
 │   Database      │
-│   (Primary +    │
-│    Read Replicas)│
 └─────────────────┘
 ```
-
-### ✅ Single Entry Point Architecture
-
-**CRITICAL:** This module provides **ONLY ONE** public database service:
-
-```typescript
-// ✅ CORRECT - ONLY way to use database
-import { DatabaseService } from "@infrastructure/database";
-
-// ❌ WRONG - Never import these directly
-// import { HealthcareDatabaseClient } from "...";  // INTERNAL ONLY
-// import { PrismaService } from "...";             // INTERNAL ONLY
-// import { ConnectionPoolManager } from "...";     // INTERNAL ONLY
-```
-
-**All optimization layers are automatically applied through DatabaseService:**
-- ✅ Connection pooling and read replicas
-- ✅ Query caching and optimization
-- ✅ Metrics tracking and monitoring
-- ✅ HIPAA compliance and audit logging
-- ✅ Multi-tenant clinic isolation
-- ✅ Error handling and retry logic
-- ✅ Circuit breaker protection
-- ✅ Health monitoring
 
 ---
 
@@ -210,34 +163,6 @@ Support for read replica routing:
 
 ## 🔌 Integration
 
-### ✅ Single Entry Point - DatabaseService
-
-**CRITICAL:** All external services MUST use ONLY `DatabaseService`:
-
-```typescript
-// ✅ CORRECT - Use DatabaseService
-import { DatabaseService } from "@infrastructure/database";
-
-@Injectable()
-export class UserService {
-  constructor(private readonly database: DatabaseService) {}
-  
-  async findUser(id: string) {
-    return await this.database.executeHealthcareRead(async (client) => {
-      return await client.user.findUnique({ where: { id } });
-    });
-  }
-}
-```
-
-**❌ WRONG - Never import internal services:**
-```typescript
-// ❌ WRONG - Internal services not exported
-import { HealthcareDatabaseClient } from "@infrastructure/database/clients/...";
-import { PrismaService } from "@infrastructure/database/prisma/...";
-import { ConnectionPoolService } from "@infrastructure/database/internal/...";
-```
-
 ### NestJS Integration
 
 The database module is a **@Global()** NestJS module, automatically available throughout the application:
@@ -254,11 +179,6 @@ import { DatabaseModule } from '@infrastructure/database';
 })
 export class AppModule {}
 ```
-
-**Module Exports:**
-- ✅ `HealthcareDatabaseClient` (exported as `DatabaseService` in index.ts)
-- ✅ `ClinicIsolationService` (for GuardsModule circular dependency only)
-- ❌ All other services are INTERNAL and NOT exported
 
 ### Fastify Integration
 
@@ -303,11 +223,9 @@ The database module is **framework-agnostic** and works seamlessly with Fastify 
 
 ## 🧩 Components
 
-### 1. DatabaseService (Public Interface) - ✅ SINGLE ENTRY POINT
+### 1. DatabaseService (Public Interface)
 
-**Location**: `index.ts` (exported as alias for HealthcareDatabaseClient)
-
-**✅ This is the ONLY public interface. All external services MUST use this.**
+**Location**: `index.ts` (exported as alias)
 
 **Usage**:
 ```typescript
@@ -325,34 +243,19 @@ export class UserService {
 }
 ```
 
-**Features** (All automatically applied):
-- ✅ Connection pooling and read replicas
-- ✅ Query caching and optimization
-- ✅ Metrics tracking and monitoring
-- ✅ HIPAA compliance and audit logging
-- ✅ Multi-tenant clinic isolation
-- ✅ Error handling and retry logic
-- ✅ Circuit breaker protection
-- ✅ Health monitoring
-
-### 2. HealthcareDatabaseClient (Internal) - ❌ NOT FOR DIRECT USE
+### 2. HealthcareDatabaseClient (Internal)
 
 **Location**: `clients/healthcare-database.client.ts`
 
-**⚠️ INTERNAL ONLY - Do NOT import directly. Use DatabaseService instead.**
+**Features**:
+- Read/write operation wrappers
+- Transaction management
+- Cache integration
+- Metrics tracking
+- Error handling
+- Audit logging
 
-**Integrated Services:**
-- ✅ PrismaService - Core Prisma client
-- ✅ ConnectionPoolManager - Connection pool management (consolidated: includes pool warming, metrics, health checks)
-- ✅ ReadReplicaRouterService - Read replica routing
-- ✅ DatabaseHealthMonitorService - Health monitoring
-- ✅ QueryCacheService - Query caching
-- ✅ DatabaseMetricsService - Metrics tracking
-- ✅ ClinicIsolationService - Multi-tenant isolation
-- ✅ HealthcareQueryOptimizerService - Query optimization
-- ✅ ConnectionPoolManager - Legacy (backward compatibility)
-
-### 3. PrismaService (Internal) - ❌ NOT FOR DIRECT USE
+### 3. PrismaService (Internal)
 
 **Location**: `prisma/prisma.service.ts`
 
@@ -361,113 +264,48 @@ export class UserService {
 - REQUEST scope for tenant isolation
 - Connection pool management
 - Circuit breaker integration
-- Query timeout protection
-- Production optimizations
 
-**Methods:**
-- `getClient()` - Returns PrismaClient
-- `getRawPrismaClient()` - Returns raw PrismaClient
-- All delegates initialized (user, appointment, clinic, etc.)
+### 4. ConnectionPoolManager (Internal)
 
-### 4. Internal Services (All in `internal/` folder) - ❌ NOT FOR DIRECT USE
-
-**All services follow Single Responsibility Principle (SRP):**
-
-#### ConnectionPoolManager (Consolidated)
 **Location**: `connection-pool.manager.ts`
-- **PRIMARY** connection pool manager with full feature set
-- Connection pool management (consolidated from ConnectionPoolService)
-- Circuit breaker integration
+
+**Features**:
+- Connection pool management
+- Auto-scaling
 - Health monitoring
-- Metrics tracking
-- Pool warming on startup (consolidated from ConnectionPoolWarmingService)
-- Batch operations, critical queries, auto-scaling
+- Circuit breaker
+- Priority queue
 
-#### ReadReplicaRouterService
-**Location**: `internal/read-replica-router.service.ts`
-- Read replica routing
-- Load balancing (round-robin, least-connections, latency-based)
-- Health monitoring
-- Automatic failover
+### 5. ClinicIsolationService (Internal)
 
-#### DatabaseHealthMonitorService
-**Location**: `internal/database-health-monitor.service.ts`
-- Comprehensive health monitoring
-- Primary/replica health checks
-- Disk space monitoring
-- Replication lag tracking
-- Lock monitoring
+**Location**: `clinic-isolation.service.ts`
 
-#### QueryCacheService
-**Location**: `internal/query-cache.service.ts`
-- Query result caching
-- TTL-based expiration
-- Tag-based invalidation
-
-#### DatabaseMetricsService
-**Location**: `internal/database-metrics.service.ts`
-- Real-time performance metrics
-- Query performance tracking
-- Connection pool metrics
-- HIPAA compliance metrics
-- Alert system integration
-
-#### ClinicIsolationService
-**Location**: `internal/clinic-isolation.service.ts`
+**Features**:
 - Multi-tenant data isolation
 - Clinic context caching
 - User-clinic mapping
 - Location-clinic mapping
 
-#### HealthcareQueryOptimizerService
-**Location**: `internal/query-optimizer.service.ts`
+### 6. DatabaseMetricsService (Internal)
+
+**Location**: `database-metrics.service.ts`
+
+**Features**:
+- Real-time performance metrics
+- Query performance tracking
+- Connection pool metrics
+- HIPAA compliance metrics
+- Alert system
+
+### 7. HealthcareQueryOptimizerService (Internal)
+
+**Location**: `query-optimizer.service.ts`
+
+**Features**:
 - Query analysis
 - Index recommendations
 - Query rewriting
 - Performance optimization
-
-#### RetryService
-**Location**: `internal/retry.service.ts`
-- Retry logic with exponential backoff
-- Configurable retry options
-- Used by all database operations
-
-#### DatabaseErrorHandler
-**Location**: `@core/errors/database-error.handler.ts`
-- Error classification
-- Consistent error handling
-- Graceful degradation
-
-#### ConnectionLeakDetectorService
-**Location**: `internal/connection-leak-detector.service.ts`
-- Connection leak detection
-- Leak tracking and alerts
-
-#### DatabaseAlertService
-**Location**: `internal/database-alert.service.ts`
-- Alert generation
-- Event emission
-- Alert management
-
-
-### 5. ConnectionPoolManager (Internal - PRIMARY Pool Manager)
-
-**Location**: `connection-pool.manager.ts`
-
-**Status**: PRIMARY connection pool manager with full feature set. This is the main service for connection pooling.
-
-**Features**:
-- Full connection pool management
-- Batch operations (`executeBatch`)
-- Critical query execution (`executeCriticalQuery`)
-- Clinic-optimized queries (`executeClinicOptimizedQuery`)
-- Auto-scaling (`autoScaleConnectionPool`)
-- Health monitoring
-- Circuit breaker
-- Priority queue
-- Detailed metrics (`getDetailedMetrics`)
-
-**Note**: `ConnectionPoolService` and `ConnectionPoolWarmingService` have been consolidated into `ConnectionPoolManager` to reduce duplication and simplify the architecture. `ConnectionPoolManager` is now the single, unified connection pool manager with all features.
 
 ---
 
@@ -684,78 +522,54 @@ DB_POOL_IDLE_TIMEOUT=300000
 
 ### ✅ DO
 
-1. **Always use DatabaseService (ONLY public interface)**:
+1. **Always use DatabaseService**:
    ```typescript
-   // ✅ CORRECT - Single entry point
    import { DatabaseService } from "@infrastructure/database";
-   
-   constructor(private readonly database: DatabaseService) {}
    ```
 
-2. **Use executeHealthcareRead/Write for all operations**:
+2. **Use executeHealthcareRead/Write**:
    ```typescript
-   // ✅ CORRECT - All optimization layers applied
    await this.database.executeHealthcareRead(async (client) => {
-     return await client.user.findUnique({ where: { id } });
+     // Read operations
    });
-   
-   await this.database.executeHealthcareWrite(async (client) => {
-     return await client.user.create({ data: userData });
-   }, auditInfo);
    ```
 
 3. **Use transactions for related operations**:
    ```typescript
-   // ✅ CORRECT - ACID compliance
    await this.database.executeInTransaction(async (tx) => {
-     const user = await tx.user.create({ data: userData });
-     const profile = await tx.profile.create({ data: profileData });
-     return { user, profile };
+     // Multiple related operations
    });
    ```
 
-4. **Use clinic context for multi-tenant operations**:
+4. **Use select to limit fields**:
    ```typescript
-   // ✅ CORRECT - Automatic clinic isolation
-   await this.database.executeWithClinicContext(clinicId, async (client) => {
-     return await client.patient.findMany({ where: { clinicId } });
-   });
-   ```
-
-5. **Use select to limit fields (10M+ users optimization)**:
-   ```typescript
-   // ✅ CORRECT - Reduces data transfer
    select: { id: true, name: true, email: true }
    ```
 
-6. **Use pagination for large datasets**:
+5. **Use pagination for large datasets**:
    ```typescript
-   // ✅ CORRECT - Prevents loading millions of records
    skip: (page - 1) * limit,
-   take: limit  // Max 1000 per query
+   take: limit
    ```
 
 ### ❌ DON'T
 
-1. **Don't import internal services directly**:
+1. **Don't import HealthcareDatabaseClient directly**:
    ```typescript
-   // ❌ WRONG - Internal services not exported
-   import { HealthcareDatabaseClient } from "@infrastructure/database/clients/...";
-   import { PrismaService } from "@infrastructure/database/prisma/...";
-   import { ConnectionPoolManager } from "@infrastructure/database/connection-pool.manager"; // INTERNAL ONLY
-   import { ReadReplicaRouterService } from "@infrastructure/database/internal/...";
+   // ❌ WRONG
+   import { HealthcareDatabaseClient } from "@infrastructure/database/clients/healthcare-database.client";
    
-   // ✅ CORRECT - Use public interface only
+   // ✅ CORRECT
    import { DatabaseService } from "@infrastructure/database";
    ```
 
 2. **Don't bypass optimization layers**:
    ```typescript
-   // ❌ WRONG - Bypasses caching, metrics, read replicas, etc.
+   // ❌ WRONG - Bypasses caching, metrics, etc.
    const client = await this.database.getRawPrismaClient();
    await client.user.findMany();
    
-   // ✅ CORRECT - Uses all optimization layers automatically
+   // ✅ CORRECT - Uses all optimization layers
    await this.database.executeHealthcareRead(async (client) => {
      return await client.user.findMany();
    });
@@ -763,32 +577,20 @@ DB_POOL_IDLE_TIMEOUT=300000
 
 3. **Don't use SELECT * for large tables**:
    ```typescript
-   // ❌ WRONG - Fetches all fields (wasteful for 10M+ users)
-   select: {} // or no select clause
+   // ❌ WRONG
+   select: {} // Selects all fields
    
-   // ✅ CORRECT - Only fetch needed fields
+   // ✅ CORRECT
    select: { id: true, name: true, email: true }
    ```
 
 4. **Don't ignore pagination**:
    ```typescript
-   // ❌ WRONG - Fetches all records (dangerous for 10M+ users)
+   // ❌ WRONG - Fetches all records
    await client.user.findMany();
    
-   // ✅ CORRECT - Always use pagination
-   await client.user.findMany({ 
-     skip: (page - 1) * limit, 
-     take: limit  // Max 1000
-   });
-   ```
-
-5. **Don't access PrismaService directly**:
-   ```typescript
-   // ❌ WRONG - Bypasses all optimization layers
-   constructor(private prisma: PrismaService) {}
-   
-   // ✅ CORRECT - Use DatabaseService
-   constructor(private database: DatabaseService) {}
+   // ✅ CORRECT - Uses pagination
+   await client.user.findMany({ skip: 0, take: 100 });
    ```
 
 ---
@@ -874,84 +676,16 @@ ENCRYPTION_ALGORITHM=AES-256-GCM
 
 ### Health Checks
 
-**Multiple Health Check Methods Available:**
-
-#### 1. Comprehensive Health Check (Recommended for periodic checks)
 ```typescript
-// Get comprehensive database health status
-// Uses lightweight SELECT 1 query with dedicated connection pool
-// Cached for 5 seconds to avoid excessive queries
+// Get database health status
 const health = await this.database.getHealthStatus();
-```
 
-**Features:**
-- ✅ Uses dedicated health check connection pool (connection_limit=2)
-- ✅ Lightweight `SELECT 1` query (fastest possible)
-- ✅ Cached for 5 seconds (prevents excessive queries)
-- ✅ Won't exhaust main connection pool
-- ✅ Includes connection pool metrics, disk space, replication lag, locks
-
-#### 2. Lightweight Health Check (For very frequent checks)
-```typescript
-// Get lightweight health status (no DB query, uses cached data)
-// Use this for checks every second or more frequently
-const lightweightHealth = this.database.getLightweightHealthStatus();
-```
-
-**Features:**
-- ✅ No database query (uses cached data)
-- ✅ Returns connection pool metrics only
-- ✅ Perfect for very frequent checks (every 1-5 seconds)
-- ✅ Zero overhead on database
-
-#### 3. Connection Pool Metrics Only
-```typescript
-// Get connection pool metrics without health check query
+// Get connection pool metrics
 const metrics = await this.database.getConnectionPoolMetrics();
+
+// Get performance report
+const report = await this.database.getPerformanceReport();
 ```
-
-**Features:**
-- ✅ No database query
-- ✅ Real-time connection pool status
-- ✅ Fast and lightweight
-
-### Health Check Architecture
-
-**Dedicated Health Check Connection:**
-- **Separate Connection Pool**: `connection_limit=2` (won't exhaust main pool)
-- **Lightweight Query**: `SELECT 1` (fastest possible query)
-- **Caching**: 5-second cache to prevent excessive queries
-- **Frequency**: Health checks run every 10 seconds (configurable)
-
-**Why This Approach:**
-1. **Won't Exhaust Pool**: Dedicated connection pool separate from main pool
-2. **Fast**: Uses `SELECT 1` instead of `SELECT version()` (10x faster)
-3. **Efficient**: 5-second caching prevents duplicate queries
-4. **Real-time**: Still provides accurate health status
-
-### Alternative Health Check Methods
-
-**Method 1: SELECT 1 (Current - Recommended)**
-- ✅ Lightest possible query
-- ✅ Just checks connectivity
-- ✅ ~1-5ms response time
-- ✅ Used by default
-
-**Method 2: Connection Pool Metrics Only**
-- ✅ No database query at all
-- ✅ Uses internal metrics
-- ✅ Instant response
-- ✅ Use `getLightweightHealthStatus()`
-
-**Method 3: Cached Status**
-- ✅ Returns cached result if fresh (< 5 seconds)
-- ✅ Reduces database load
-- ✅ Automatic caching in `getHealthStatus()`
-
-**Method 4: Periodic Comprehensive Check**
-- ✅ Full health check every 30 seconds
-- ✅ Lightweight checks every 10 seconds
-- ✅ Best of both worlds
 
 ---
 

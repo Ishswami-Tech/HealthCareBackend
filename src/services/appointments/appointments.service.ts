@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
@@ -139,11 +139,12 @@ export class AppointmentsService {
     private readonly errors: HealthcareErrorsService,
     private readonly rbacService: RbacService,
 
-    // Queue Injections
-    @InjectQueue('clinic-appointment') private readonly appointmentQueue: Queue,
+    // Queue Injections (optional when cache is disabled)
+    @Optional() @InjectQueue('clinic-appointment') private readonly appointmentQueue: Queue | null,
+    @Optional()
     @InjectQueue('clinic-notification')
-    private readonly notificationQueue: Queue,
-    @InjectQueue('clinic-analytics') private readonly analyticsQueue: Queue
+    private readonly notificationQueue: Queue | null,
+    @Optional() @InjectQueue('clinic-analytics') private readonly analyticsQueue: Queue | null
   ) {}
 
   // Note: Use DatabaseService safe methods instead of direct Prisma access

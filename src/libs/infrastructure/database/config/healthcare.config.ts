@@ -115,8 +115,9 @@ export const healthcareConfig = registerAs('healthcare', () => ({
   },
 
   // Cache settings - Optimized for 10M+ users
+  // Note: Cache enabled status is controlled by cache.config.ts (single source of truth)
   cache: {
-    enabled: process.env['CACHE_ENABLED'] === 'true' || true,
+    enabled: process.env['CACHE_ENABLED'] === 'true',
     ttl: parseInt(process.env['CACHE_TTL'] || '300', 10), // 5 minutes
     maxSize: parseInt(process.env['CACHE_MAX_SIZE'] || '100000', 10), // Increased from 10000 to 100000 for 10M+ users
 

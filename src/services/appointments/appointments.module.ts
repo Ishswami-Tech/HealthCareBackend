@@ -116,55 +116,60 @@ import { CommunicationModule } from '@communication/communication.module';
     // But appointment services use clinic-specific queue names (clinic-appointment, clinic-notification, etc.) with Bull
     // These clinic-specific queues need Bull (not BullMQ) to be initialized first
     // TODO: Migrate appointment services to use BullMQ and standard queue constants from @infrastructure/queue
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (_configService: ConfigService) => {
-        // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
-        const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-        const useDragonfly = cacheProvider === 'dragonfly';
+    // Only register BullModule if cache is enabled (Bull requires Redis/Dragonfly)
+    ...(process.env['CACHE_ENABLED'] === 'true'
+      ? [
+          BullModule.forRootAsync({
+            imports: [ConfigModule],
+            useFactory: (_configService: ConfigService) => {
+              // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
+              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+              const useDragonfly = cacheProvider === 'dragonfly';
 
-        const cacheHost = useDragonfly
-          ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-          : process.env['REDIS_HOST'] || 'localhost';
-        const cachePort = useDragonfly
-          ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-          : parseInt(process.env['REDIS_PORT'] || '6379', 10);
-        const cachePassword = useDragonfly
-          ? process.env['DRAGONFLY_PASSWORD']
-          : process.env['REDIS_PASSWORD'];
+              const cacheHost = useDragonfly
+                ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
+                : process.env['REDIS_HOST'] || 'localhost';
+              const cachePort = useDragonfly
+                ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
+                : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+              const cachePassword = useDragonfly
+                ? process.env['DRAGONFLY_PASSWORD']
+                : process.env['REDIS_PASSWORD'];
 
-        return {
-          redis: {
-            host: cacheHost,
-            port: cachePort,
-            ...(cachePassword?.trim() && {
-              password: cachePassword.trim(),
-            }),
-            db: parseInt(process.env['REDIS_DB'] || '0', 10),
-          },
-          defaultJobOptions: {
-            removeOnComplete: 1000,
-            removeOnFail: 500,
-            attempts: 5,
-            timeout: 60000,
-          },
-          settings: {
-            stalledInterval: 30000,
-            maxStalledCount: 1,
-          },
-        };
-      },
-      inject: [ConfigService],
-    }),
-    BullModule.registerQueue(
-      { name: 'clinic-appointment' },
-      { name: 'clinic-notification' },
-      { name: 'clinic-payment' },
-      { name: 'clinic-video-call' },
-      { name: 'clinic-analytics' },
-      { name: 'clinic-reminder' },
-      { name: 'clinic-followup' }
-    ),
+              return {
+                redis: {
+                  host: cacheHost,
+                  port: cachePort,
+                  ...(cachePassword?.trim() && {
+                    password: cachePassword.trim(),
+                  }),
+                  db: parseInt(process.env['REDIS_DB'] || '0', 10),
+                },
+                defaultJobOptions: {
+                  removeOnComplete: 1000,
+                  removeOnFail: 500,
+                  attempts: 5,
+                  timeout: 60000,
+                },
+                settings: {
+                  stalledInterval: 30000,
+                  maxStalledCount: 1,
+                },
+              };
+            },
+            inject: [ConfigService],
+          }),
+          BullModule.registerQueue(
+            { name: 'clinic-appointment' },
+            { name: 'clinic-notification' },
+            { name: 'clinic-payment' },
+            { name: 'clinic-video-call' },
+            { name: 'clinic-analytics' },
+            { name: 'clinic-reminder' },
+            { name: 'clinic-followup' }
+          ),
+        ]
+      : []),
     EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
   controllers: [AppointmentsController, AppointmentPluginController],

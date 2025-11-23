@@ -23,11 +23,18 @@ export class DragonflyModule implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    // Only initialize DragonflyService if Dragonfly is the selected cache provider
-    // This prevents unnecessary connections when using Redis or other providers
-    const cacheProvider = process.env['CACHE_PROVIDER']?.toLowerCase() || 'dragonfly'; // Default to Dragonfly
+    // Import single source of truth for cache configuration
+    const { isCacheEnabled, getCacheProvider } = await import('@config');
 
-    if (cacheProvider === 'dragonfly') {
+    // Check if cache is enabled using single source of truth
+    if (!isCacheEnabled()) {
+      // Cache is disabled - skip initialization
+      return;
+    }
+
+    // Only initialize DragonflyService if Dragonfly is the selected cache provider
+    // Use single source of truth for provider
+    if (getCacheProvider() === 'dragonfly') {
       // Explicitly trigger DragonflyService.onModuleInit by calling it
       // This ensures the connection is established even if NestJS lifecycle hooks
       // don't fire in the expected order

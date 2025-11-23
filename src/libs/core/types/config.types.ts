@@ -91,6 +91,32 @@ export interface RedisConfig {
 }
 
 /**
+ * Cache configuration interface - Single Source of Truth
+ * @interface CacheConfig
+ * @description Centralized cache configuration
+ */
+export interface CacheConfig {
+  /** Whether cache is enabled (single source of truth) */
+  readonly enabled: boolean;
+  /** Cache provider type */
+  readonly provider: 'redis' | 'dragonfly' | 'memory';
+  /** Redis-specific configuration (only if cache is enabled) */
+  readonly redis?: {
+    readonly host: string;
+    readonly port: number;
+    readonly password?: string;
+    readonly enabled: boolean;
+  };
+  /** Dragonfly-specific configuration (only if cache is enabled) */
+  readonly dragonfly?: {
+    readonly host: string;
+    readonly port: number;
+    readonly password?: string;
+    readonly enabled: boolean;
+  };
+}
+
+/**
  * JWT configuration interface
  * @interface JwtConfig
  */

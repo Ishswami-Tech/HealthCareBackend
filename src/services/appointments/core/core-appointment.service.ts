@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
@@ -86,12 +86,15 @@ export class CoreAppointmentService {
     private readonly workflowEngine: AppointmentWorkflowEngine,
     @Inject(forwardRef(() => BusinessRulesEngine))
     private readonly businessRules: BusinessRulesEngine,
+    @Optional()
     @InjectQueue('clinic-appointment')
-    private readonly appointmentQueue: Queue,
+    private readonly appointmentQueue: Queue | null,
+    @Optional()
     @InjectQueue('clinic-notification')
-    private readonly notificationQueue: Queue,
+    private readonly notificationQueue: Queue | null,
+    @Optional()
     @InjectQueue('clinic-analytics')
-    private readonly analyticsQueue: Queue
+    private readonly analyticsQueue: Queue | null
   ) {}
 
   /**
@@ -773,49 +776,55 @@ export class CoreAppointmentService {
   ): Promise<void> {
     try {
       // Queue notification job
-      await this.notificationQueue.add(
-        'APPOINTMENT_NOTIFICATION',
-        {
-          appointmentId: appointment.id,
-          operation,
-          context: _context,
-        },
-        {
-          priority: 3,
-          delay: 0,
-          attempts: 3,
-        }
-      );
+      if (this.notificationQueue) {
+        await this.notificationQueue.add(
+          'APPOINTMENT_NOTIFICATION',
+          {
+            appointmentId: appointment.id,
+            operation,
+            context: _context,
+          },
+          {
+            priority: 3,
+            delay: 0,
+            attempts: 3,
+          }
+        );
+      }
 
       // Queue analytics job
-      await this.analyticsQueue.add(
-        'APPOINTMENT_ANALYTICS',
-        {
-          appointmentId: appointment.id,
-          operation,
-          context: _context,
-        },
-        {
-          priority: 5,
-          delay: 5000, // 5 second delay
-          attempts: 2,
-        }
-      );
+      if (this.analyticsQueue) {
+        await this.analyticsQueue.add(
+          'APPOINTMENT_ANALYTICS',
+          {
+            appointmentId: appointment.id,
+            operation,
+            context: _context,
+          },
+          {
+            priority: 5,
+            delay: 5000, // 5 second delay
+            attempts: 2,
+          }
+        );
+      }
 
       // Queue appointment processing job
-      await this.appointmentQueue.add(
-        'APPOINTMENT_PROCESSING',
-        {
-          appointmentId: appointment.id,
-          operation,
-          context: _context,
-        },
-        {
-          priority: 2,
-          delay: 0,
-          attempts: 3,
-        }
-      );
+      if (this.appointmentQueue) {
+        await this.appointmentQueue.add(
+          'APPOINTMENT_PROCESSING',
+          {
+            appointmentId: appointment.id,
+            operation,
+            context: _context,
+          },
+          {
+            priority: 2,
+            delay: 0,
+            attempts: 3,
+          }
+        );
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       void this.loggingService.log(

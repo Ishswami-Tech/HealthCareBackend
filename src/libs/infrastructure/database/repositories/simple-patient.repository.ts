@@ -1,6 +1,6 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
-import { ClinicIsolationService } from '@database/internal/clinic-isolation.service';
+import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
 import { RepositoryResult } from '@core/types/database.types';
 import type { PatientWithUser, PatientWithUserOrNull } from '@core/types/database.types';
 import { CacheService } from '@infrastructure/cache';

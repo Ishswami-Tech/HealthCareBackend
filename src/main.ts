@@ -16,7 +16,7 @@ import { LogType, LogLevel as AppLogLevel } from '@core/types';
 import { ValidationPipeConfig } from '@config/validation-pipe.config';
 import developmentConfig from './config/environment/development.config';
 import productionConfig from './config/environment/production.config';
-import { ConfigService } from '@config';
+import { ConfigService, isCacheEnabled } from '@config';
 import { LoggingInterceptor } from '@infrastructure/logging/logging.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import cluster from 'cluster';
@@ -79,6 +79,25 @@ async function setupWebSocketAdapter(
   loggingService: LoggingService | undefined
 ): Promise<IoAdapter | null> {
   try {
+    // Check if cache is enabled using single source of truth
+    if (!isCacheEnabled()) {
+      logger.log('[WebSocket] Cache is disabled - skipping WebSocket adapter setup');
+      if (loggingService) {
+        await loggingService
+          .log(
+            LogType.SYSTEM,
+            AppLogLevel.INFO,
+            'WebSocket adapter skipped - cache is disabled',
+            'WebSocketAdapter',
+            {}
+          )
+          .catch(() => {
+            // Ignore logging errors
+          });
+      }
+      return null;
+    }
+
     const { createAdapter } = await import('@socket.io/redis-adapter');
     const { createClient } = await import('redis');
 
@@ -95,7 +114,7 @@ async function setupWebSocketAdapter(
 
     // Use Dragonfly or Redis based on CACHE_PROVIDER
     // IMPORTANT: Use process.env directly, NOT configService, because:
-    // - configService.get('REDIS_HOST') returns 'localhost' from redis.config.ts default
+    // - configService.get('REDIS_HOST') returns 'localhost' from cache.config.ts default
     // - We need to check environment variables directly to get the actual values
     const dragonflyHost = process.env['DRAGONFLY_HOST'] || 'dragonfly';
     const redisHost = process.env['REDIS_HOST'] || '127.0.0.1';
@@ -215,11 +234,43 @@ async function setupWebSocketAdapter(
         ]);
       };
 
+      // Try to connect, but don't fail if cache is not available
+      // Since cache is disabled, WebSocket adapter is optional
       if (pubClient && subClient) {
-        await Promise.all([
-          connectWithTimeout(pubClient, 'Pub'),
-          connectWithTimeout(subClient, 'Sub'),
-        ]);
+        try {
+          await Promise.all([
+            connectWithTimeout(pubClient, 'Pub'),
+            connectWithTimeout(subClient, 'Sub'),
+          ]);
+        } catch (connectionError) {
+          // Cache is disabled - WebSocket adapter is optional
+          // Log warning but continue without Redis adapter
+          logger.warn(
+            `Failed to initialize ${useDragonfly ? 'Dragonfly' : 'Redis'} adapter: ${
+              connectionError instanceof Error ? connectionError.message : String(connectionError)
+            }`
+          );
+          if (loggingService) {
+            await loggingService
+              .log(
+                LogType.SYSTEM,
+                AppLogLevel.WARN,
+                `WebSocket adapter skipped - ${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed (cache disabled)`,
+                'WebSocketAdapter',
+                {
+                  error:
+                    connectionError instanceof Error
+                      ? connectionError.message
+                      : String(connectionError),
+                }
+              )
+              .catch(() => {
+                // Ignore logging errors
+              });
+          }
+          // Return null to indicate adapter setup failed - app will continue without it
+          return null;
+        }
       }
 
       class CustomIoAdapter extends IoAdapter {
@@ -549,16 +600,16 @@ async function bootstrap() {
     const serviceContainer = lifecycleManager.getServiceContainer();
 
     // Get services from DI container using ServiceContainer
-    const configService = serviceContainer.getService<ConfigService>(ConfigService);
-    const loggingServiceResult = serviceContainer.getService<LoggingService>(LoggingService);
+    // Use resolve() for scoped providers (like LoggingService) and get() for singletons
+    const configService = await serviceContainer.getService<ConfigService>(ConfigService);
+    const loggingServiceResult = await serviceContainer.getService<LoggingService>(LoggingService);
     loggingService = loggingServiceResult;
     const securityConfigService =
-      serviceContainer.getService<SecurityConfigService>(SecurityConfigService);
+      await serviceContainer.getService<SecurityConfigService>(SecurityConfigService);
     const gracefulShutdownService =
-      serviceContainer.getService<GracefulShutdownService>(GracefulShutdownService);
-    const processErrorHandlersService = serviceContainer.getService<ProcessErrorHandlersService>(
-      ProcessErrorHandlersService
-    );
+      await serviceContainer.getService<GracefulShutdownService>(GracefulShutdownService);
+    const processErrorHandlersService =
+      await serviceContainer.getService<ProcessErrorHandlersService>(ProcessErrorHandlersService);
 
     // Set framework adapter in security service
     securityConfigService.setFrameworkAdapter(frameworkAdapter);
@@ -592,14 +643,15 @@ async function bootstrap() {
     }
 
     // Configure Fastify session with cache-backed store (for all environments)
-    // Session store uses CacheService, which works with Dragonfly, Redis, or any configured cache provider
+    // Session store uses CacheService if available, otherwise uses in-memory store
+    // Cache is currently disabled - sessions will use in-memory store
     try {
       const { FastifySessionStoreAdapter } = await import(
-        '@core/session/fastify-session-store.adapter'
+        './libs/core/session/fastify-session-store.adapter'
       );
-      const sessionStore = app.get(FastifySessionStoreAdapter);
+      const sessionStore = await app.resolve(FastifySessionStoreAdapter);
       await securityConfigService.configureSession(app, sessionStore);
-      logger.log('Fastify session configured with CacheService-backed store');
+      logger.log('Fastify session configured (using in-memory store - cache disabled)');
     } catch (sessionError) {
       logger.warn(
         `Failed to configure Fastify session (non-critical): ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`
@@ -608,8 +660,10 @@ async function bootstrap() {
     }
 
     // Prepare middleware configuration
-    const apiPrefix =
-      configService?.get<string>('API_PREFIX') || process.env['API_PREFIX'] || 'api/v1';
+    const apiPrefixRaw =
+      configService?.get<string>('API_PREFIX') || process.env['API_PREFIX'] || '/api/v1';
+    // Ensure prefix has leading slash for NestJS
+    const apiPrefix = apiPrefixRaw.startsWith('/') ? apiPrefixRaw : `/${apiPrefixRaw}`;
 
     // Use ValidationPipeConfig to avoid duplication
     // ValidationPipeConfig.getOptions returns ValidationPipeOptions
@@ -658,7 +712,7 @@ async function bootstrap() {
       if (fastifyInstance?.get) {
         // Get AppController instance from NestJS container using the class token
         const { AppController } = await import('./app.controller');
-        const appController = app.get(AppController);
+        const appController = await app.resolve(AppController);
         if (
           appController &&
           typeof (appController as { getDashboard?: (reply: unknown) => Promise<unknown> })
@@ -676,7 +730,7 @@ async function bootstrap() {
         // CRITICAL: Manually register /health route for Fastify
         // Fastify doesn't always respect NestJS global prefix exclusions
         const { HealthController } = await import('./services/health/health.controller');
-        const healthController = app.get(HealthController);
+        const healthController = await app.resolve(HealthController);
         if (
           healthController &&
           typeof (healthController as { getHealth?: (reply: unknown) => Promise<unknown> })

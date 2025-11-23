@@ -23,11 +23,18 @@ export class RedisModule implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    // Only initialize RedisService if Redis is the selected cache provider
-    // This prevents unnecessary connections when using Dragonfly or other providers
-    const cacheProvider = process.env['CACHE_PROVIDER']?.toLowerCase() || 'dragonfly'; // Default to Dragonfly
+    // Import single source of truth for cache configuration
+    const { isCacheEnabled, getCacheProvider } = await import('@config');
 
-    if (cacheProvider === 'redis') {
+    // Check if cache is enabled using single source of truth
+    if (!isCacheEnabled()) {
+      // Cache is disabled - skip initialization completely
+      return;
+    }
+
+    // Only initialize RedisService if Redis is the selected cache provider
+    // Use single source of truth for provider
+    if (getCacheProvider() === 'redis') {
       // Explicitly trigger RedisService.onModuleInit by calling it
       // This ensures the connection is established even if NestJS lifecycle hooks
       // don't fire in the expected order
