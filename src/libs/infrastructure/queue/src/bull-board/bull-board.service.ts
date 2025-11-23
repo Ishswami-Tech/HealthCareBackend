@@ -57,15 +57,15 @@ export class BullBoardService {
    */
   constructor(
     private readonly loggingService: LoggingService,
-    @Optional() @InjectQueue(SERVICE_QUEUE) private serviceQueue: Queue,
-    @Optional() @InjectQueue(APPOINTMENT_QUEUE) private appointmentQueue: Queue,
-    @Optional() @InjectQueue(EMAIL_QUEUE) private emailQueue: Queue,
+    @Optional() @InjectQueue(SERVICE_QUEUE) private serviceQueue: Queue | null,
+    @Optional() @InjectQueue(APPOINTMENT_QUEUE) private appointmentQueue: Queue | null,
+    @Optional() @InjectQueue(EMAIL_QUEUE) private emailQueue: Queue | null,
     @Optional()
     @InjectQueue(NOTIFICATION_QUEUE)
-    private notificationQueue: Queue,
-    @Optional() @InjectQueue(VIDHAKARMA_QUEUE) private vidhakarmaQueue: Queue,
-    @Optional() @InjectQueue(PANCHAKARMA_QUEUE) private panchakarmaQueue: Queue,
-    @Optional() @InjectQueue(CHEQUP_QUEUE) private chequpQueue: Queue
+    private notificationQueue: Queue | null,
+    @Optional() @InjectQueue(VIDHAKARMA_QUEUE) private vidhakarmaQueue: Queue | null,
+    @Optional() @InjectQueue(PANCHAKARMA_QUEUE) private panchakarmaQueue: Queue | null,
+    @Optional() @InjectQueue(CHEQUP_QUEUE) private chequpQueue: Queue | null
   ) {}
 
   /**

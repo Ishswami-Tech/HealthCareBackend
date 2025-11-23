@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
 import { LoggingService } from '@infrastructure/logging';
@@ -49,8 +49,9 @@ export interface EmailQueueStats {
 @Injectable()
 export class EmailQueueService {
   constructor(
+    @Optional()
     @InjectQueue(EMAIL_QUEUE)
-    private readonly emailQueue: Queue<EmailQueueData>,
+    private readonly emailQueue: Queue<EmailQueueData> | null,
     private readonly queueService: QueueService,
     private readonly loggingService: LoggingService
   ) {}
@@ -194,6 +195,9 @@ export class EmailQueueService {
       removeOnFail?: number;
     }
   ): Promise<Job<EmailQueueData>> {
+    if (!this.emailQueue) {
+      throw new Error('Email queue is not available (cache is disabled)');
+    }
     try {
       // Use direct queue access for recurring jobs (cron) as QueueService doesn't support repeat option
       const job = await this.emailQueue.add('send-recurring-email', emailData, {
@@ -242,6 +246,9 @@ export class EmailQueueService {
   }
 
   async getJob(jobId: string | number): Promise<Job<EmailQueueData> | null> {
+    if (!this.emailQueue) {
+      return null;
+    }
     try {
       const jobIdString = String(jobId);
       const job = await this.emailQueue.getJob(jobIdString);
@@ -262,6 +269,9 @@ export class EmailQueueService {
   }
 
   async removeJob(jobId: string | number): Promise<boolean> {
+    if (!this.emailQueue) {
+      return false;
+    }
     try {
       const jobIdString = String(jobId);
       const job = await this.emailQueue.getJob(jobIdString);
@@ -293,6 +303,9 @@ export class EmailQueueService {
   }
 
   async retryFailedJob(jobId: string | number): Promise<boolean> {
+    if (!this.emailQueue) {
+      return false;
+    }
     try {
       const jobIdString = String(jobId);
       const job = await this.emailQueue.getJob(jobIdString);
@@ -463,6 +476,9 @@ export class EmailQueueService {
   }
 
   async pauseQueue(): Promise<void> {
+    if (!this.emailQueue) {
+      throw new Error('Email queue is not available (cache is disabled)');
+    }
     try {
       await this.emailQueue.pause();
       void this.loggingService.log(
@@ -486,6 +502,9 @@ export class EmailQueueService {
   }
 
   async resumeQueue(): Promise<void> {
+    if (!this.emailQueue) {
+      throw new Error('Email queue is not available (cache is disabled)');
+    }
     try {
       await this.emailQueue.resume();
       void this.loggingService.log(
@@ -509,6 +528,9 @@ export class EmailQueueService {
   }
 
   async drainQueue(): Promise<void> {
+    if (!this.emailQueue) {
+      throw new Error('Email queue is not available (cache is disabled)');
+    }
     try {
       // Remove all jobs from the queue using obliterate (BullMQ method)
       await this.emailQueue.obliterate({ force: true });

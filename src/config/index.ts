@@ -10,3 +10,4 @@
 export { ConfigModule } from './config.module';
 export { ConfigService } from './config.service';
 export * from './constants';
+export { isCacheEnabled, getCacheProvider, CacheConfigUtils } from './cache.config';

@@ -10,7 +10,7 @@ import { Reflector } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { ClinicIsolationService } from '@database/internal/clinic-isolation.service';
+import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
 import type { ClinicRequest, ClinicValidationResult } from '@core/types/guard.types';
 
 /**

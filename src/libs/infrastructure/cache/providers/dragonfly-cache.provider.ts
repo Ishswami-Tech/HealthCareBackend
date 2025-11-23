@@ -77,7 +77,8 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
 
   async exists(key: string): Promise<boolean> {
     try {
-      return await this.dragonflyService.exists(key);
+      const result = await this.dragonflyService.exists(key);
+      return result > 0;
     } catch {
       return false;
     }

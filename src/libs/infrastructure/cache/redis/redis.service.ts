@@ -1,3 +1,11 @@
+/**
+ * Redis Service
+ * @class RedisService
+ * @description Low-level Redis service for cache operations with advanced features
+ * Extends BaseCacheClientService for common functionality
+ * Includes advanced features: SWR caching, rate limiting, metrics, circuit breaker
+ */
+
 // External imports
 import {
   Injectable,
@@ -7,47 +15,36 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { ConfigService } from '@config';
-import Redis from 'ioredis';
+import { ConfigService, isCacheEnabled, getCacheProvider } from '@config';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { BaseCacheClientService } from '../base-cache-client.service';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 
 @Injectable()
-export class RedisService implements OnModuleInit, OnModuleDestroy {
-  private client!: Redis;
-  private readonly maxRetries = 5;
-  private readonly retryDelay = 5000; // 5 seconds
-  private readonly SECURITY_EVENT_RETENTION = 30 * 24 * 60 * 60; // 30 days
-  private readonly STATS_KEY = 'cache:stats';
-  private readonly isDevelopment!: boolean;
-  // Circuit breaker to prevent infinite retries when Redis is down
-  private circuitBreakerOpen = false;
-  private circuitBreakerFailures = 0;
-  private readonly circuitBreakerThreshold = 10; // Open circuit after 10 consecutive failures
-  private readonly circuitBreakerResetTimeout = 60000; // 1 minute before attempting to reset
-  private circuitBreakerLastFailureTime = 0;
-  // Reconnection lock to prevent multiple simultaneous reconnection attempts
-  private isReconnecting = false;
-  private lastReconnectionAttempt = 0;
-  private readonly RECONNECTION_COOLDOWN = 5000; // 5 seconds between reconnection attempts
-
-  // Production scaling configurations
-  private readonly PRODUCTION_CONFIG = {
+export class RedisService extends BaseCacheClientService implements OnModuleInit, OnModuleDestroy {
+  // Provider-specific configuration
+  protected readonly PRODUCTION_CONFIG = {
     maxMemoryPolicy: 'noeviction',
     maxConnections: parseInt(process.env['REDIS_MAX_CONNECTIONS'] || '100', 10),
-    connectionTimeout: 15000, // Increased to 15 seconds for better reliability in Docker
-    commandTimeout: 5000, // Increased to 5 seconds
+    connectionTimeout: 15000,
+    commandTimeout: 5000,
     retryOnFailover: true,
     enableAutoPipelining: true,
     maxRetriesPerRequest: 3,
     keyPrefix: process.env['REDIS_KEY_PREFIX'] || 'healthcare:',
   };
+
+  protected readonly PROVIDER_NAME = 'redis' as const;
+  protected readonly DEFAULT_HOST = 'redis';
+  protected readonly HOST_ENV_VAR = 'REDIS_HOST';
+  protected readonly PORT_ENV_VAR = 'REDIS_PORT';
+  protected readonly PASSWORD_ENV_VAR = 'REDIS_PASSWORD';
 
   // Cache strategies for different data types
   private readonly CACHE_STRATEGIES = {
@@ -105,17 +102,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     PHI_DATA: 'phi_data', // Protected Health Information
   };
 
-  private readonly verboseLoggingEnabled: boolean;
-
   constructor(
-    @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    @Inject(forwardRef(() => ConfigService)) configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService)) loggingService: LoggingService
   ) {
-    // Check multiple environment variables to determine development mode
-    this.isDevelopment = this.isDevEnvironment();
-    this.verboseLoggingEnabled =
-      process.env['ENABLE_CACHE_DEBUG'] === 'true' || process.env['CACHE_VERBOSE_LOGS'] === 'true';
+    super(configService, loggingService);
+
     if (this.verboseLoggingEnabled) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -125,25 +117,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         { environment: this.isDevelopment ? 'development' : 'production' }
       );
     }
+
     this.initializeClient();
 
     // CRITICAL: Connect immediately - don't wait for lifecycle hooks
-    // This ensures Redis connects as soon as the service is instantiated
-    // Use setImmediate to allow constructor to complete first
     setImmediate(() => {
-      // Check if Redis is the selected cache provider before attempting connection
-      const cacheProvider =
-        this.configService?.get<string>('CACHE_PROVIDER')?.toLowerCase() ||
-        process.env['CACHE_PROVIDER']?.toLowerCase() ||
-        'dragonfly'; // Default to Dragonfly
-
-      // Only attempt connection if Redis is the selected provider
-      if (cacheProvider !== 'redis') {
-        // Skip connection attempt - not using Redis
+      if (!isCacheEnabled() || getCacheProvider() !== 'redis') {
         return;
       }
 
-      // Always attempt connection - onModuleInit will handle if already connected
       if (this.verboseLoggingEnabled) {
         void this.loggingService
           .log(
@@ -154,7 +136,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
             {}
           )
           .catch(() => {
-            // Ignore logging errors - connection is more important
+            // Ignore logging errors
           });
       }
       void this.onModuleInit().catch(error => {
@@ -174,235 +156,72 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private isDevEnvironment(): boolean {
-    const nodeEnv =
-      this.configService?.get<string>('NODE_ENV')?.toLowerCase() ||
-      process.env['NODE_ENV']?.toLowerCase();
-    let appEnv: string | undefined;
-    try {
-      appEnv = this.configService?.get<string>('APP_ENV')?.toLowerCase();
-    } catch {
-      appEnv = process.env['APP_ENV']?.toLowerCase() || undefined;
-    }
-    const isDev = this.configService?.get<boolean | string>('IS_DEV') || process.env['IS_DEV'];
-    const devMode = process.env['DEV_MODE'] === 'true';
-    return (
-      devMode ||
-      nodeEnv !== 'production' ||
-      appEnv === 'development' ||
-      appEnv === 'dev' ||
-      isDev === 'true' ||
-      isDev === true
-    );
-  }
+  /**
+   * Override setupEventHandlers to add Redis-specific event handlers
+   */
+  protected setupEventHandlers(host: string, port: number): void {
+    super.setupEventHandlers(host, port);
 
-  private initializeClient(): void {
-    try {
-      // IMPORTANT: This service should only be used when CACHE_PROVIDER=redis
-      // If CACHE_PROVIDER=dragonfly, this service should not initialize
-      const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-      if (cacheProvider !== 'redis') {
-        // Skip initialization if not using Redis
-        return;
+    // Add Redis-specific error handling for read-only mode
+    this.client.on('error', err => {
+      if (err.message && err.message.includes('READONLY')) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Redis in read-only mode, attempting to fix',
+          'CacheService',
+          {}
+        );
+        this.resetReadOnlyMode().catch(resetError => {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'Failed to reset read-only mode',
+            'CacheService',
+            {
+              error: resetError instanceof Error ? resetError.message : String(resetError),
+              stack: resetError instanceof Error ? resetError.stack : undefined,
+            }
+          );
+        });
       }
+    });
 
-      // Determine default host based on environment
-      // In Docker, use 'redis' (service name), locally use 'localhost'
-      // Check multiple indicators that we're in Docker:
-      // 1. DOCKER_ENV environment variable
-      // 2. KUBERNETES_SERVICE_HOST (Kubernetes)
-      // 3. Containerized environment (/.dockerenv file exists - but we can't check files here)
-      // 4. REDIS_HOST is explicitly set (likely in Docker Compose)
-      const isDocker =
-        process.env['DOCKER_ENV'] === 'true' ||
-        process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
-        process.env['REDIS_HOST'] === 'redis' ||
-        process.env['REDIS_HOST'] !== undefined; // If REDIS_HOST is set, we're likely in Docker
-
-      const defaultHost = isDocker ? 'redis' : 'localhost';
-
-      // Use process.env directly to avoid configService defaults to localhost
-      const redisHost = process.env['REDIS_HOST'] || defaultHost;
-      const redisPort = parseInt(process.env['REDIS_PORT'] || '6379', 10);
-      let redisPassword: string | undefined;
-      try {
-        redisPassword =
-          this.configService?.get<string>('REDIS_PASSWORD') ||
-          this.configService?.get<string>('redis.password') ||
-          process.env['REDIS_PASSWORD'] ||
-          undefined;
-      } catch {
-        // Config key not found, use environment variable or undefined
-        redisPassword = process.env['REDIS_PASSWORD'] || undefined;
-      }
-      // Only include password if it's actually set and not empty (Redis might not require auth if protected mode is disabled)
-      const hasPassword = redisPassword && redisPassword.trim().length > 0;
-
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Initializing cache client',
-        'CacheService',
-        { host: redisHost, port: redisPort, hasPassword }
-      );
-
-      const redisOptions: {
-        host: string;
-        port: number;
-        password?: string;
-        keyPrefix: string;
-        retryStrategy: (times: number) => number | null;
-        maxRetriesPerRequest: number;
-        enableAutoPipelining: boolean;
-        connectTimeout: number;
-        commandTimeout: number;
-        enableReadyCheck: boolean;
-        autoResubscribe: boolean;
-        autoResendUnfulfilledCommands: boolean;
-        lazyConnect: boolean;
-        keepAlive: number;
-        family: number;
-        enableOfflineQueue?: boolean;
-      } = {
-        host: redisHost,
-        port: redisPort,
-        ...(hasPassword && redisPassword && { password: redisPassword }),
-        keyPrefix: this.PRODUCTION_CONFIG.keyPrefix,
-        retryStrategy: times => {
-          if (times > this.maxRetries) {
-            void this.loggingService.log(
-              LogType.ERROR,
-              LogLevel.ERROR,
-              'Max reconnection attempts reached',
-              'CacheService',
-              { maxRetries: this.maxRetries }
-            );
-            return null; // stop retrying
-          }
-          return Math.min(this.retryDelay * times, 30000); // Exponential backoff, max 30s
-        },
-        maxRetriesPerRequest: this.PRODUCTION_CONFIG.maxRetriesPerRequest,
-        enableAutoPipelining: this.PRODUCTION_CONFIG.enableAutoPipelining,
-        connectTimeout: this.PRODUCTION_CONFIG.connectionTimeout,
-        commandTimeout: this.PRODUCTION_CONFIG.commandTimeout,
-        enableReadyCheck: true,
-        autoResubscribe: true,
-        autoResendUnfulfilledCommands: true,
-        lazyConnect: true, // Don't connect immediately
-        // Production optimizations
-        keepAlive: 30000,
-        family: 4, // IPv4
-      };
-
-      // Connection pool settings for high concurrency
-      if (process.env['NODE_ENV'] === 'production') {
-        redisOptions.enableOfflineQueue = false; // Fail fast in production
-      }
-
-      this.client = new Redis(redisOptions);
-
-      this.client.on('error', err => {
+    this.client.on('connect', () => {
+      // Check read-only status on connect
+      this.checkAndResetReadOnlyMode().catch(err => {
         void this.loggingService.log(
           LogType.ERROR,
           LogLevel.ERROR,
-          'Redis Client Error',
+          'Failed to check read-only status on connect',
           'CacheService',
           {
             error: err instanceof Error ? err.message : String(err),
             stack: err instanceof Error ? err.stack : undefined,
           }
         );
-        // Check if it's a read-only error and attempt to fix it
-        if (err.message && err.message.includes('READONLY')) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'Redis in read-only mode, attempting to fix',
-            'CacheService',
-            {}
-          );
-          this.resetReadOnlyMode().catch(resetError => {
-            void this.loggingService.log(
-              LogType.ERROR,
-              LogLevel.ERROR,
-              'Failed to reset read-only mode',
-              'CacheService',
-              {
-                error: resetError instanceof Error ? resetError.message : String(resetError),
-                stack: resetError instanceof Error ? resetError.stack : undefined,
-              }
-            );
-          });
-        }
       });
+    });
 
-      this.client.on('connect', () => {
-        const currentHost = this.client.options.host || redisHost;
-        const currentPort = this.client.options.port || redisPort;
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          `Redis connected to ${currentHost}:${currentPort}`,
-          'CacheService',
-          { host: currentHost, port: currentPort }
-        );
-        // Check read-only status on connect
-        this.checkAndResetReadOnlyMode().catch(err => {
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'Failed to check read-only status on connect',
-            'CacheService',
-            {
-              error: err instanceof Error ? err.message : String(err),
-              stack: err instanceof Error ? err.stack : undefined,
-            }
-          );
-        });
-      });
-
-      this.client.on('ready', () => {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Cache client is ready',
-          'CacheService',
-          {}
-        );
-      });
-
-      this.client.on('reconnecting', () => {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'Reconnecting to Redis',
-          'CacheService',
-          {}
-        );
-      });
-
-      this.client.on('end', () => {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'Redis connection ended',
-          'CacheService',
-          {}
-        );
-      });
-    } catch (_error) {
+    this.client.on('reconnecting', () => {
       void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to initialize Redis client',
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Reconnecting to Redis',
         'CacheService',
-        {
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
+        {}
       );
-      throw _error;
-    }
+    });
+
+    this.client.on('end', () => {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Redis connection ended',
+        'CacheService',
+        {}
+      );
+    });
   }
 
   async onModuleInit() {
@@ -420,6 +239,22 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       });
 
     try {
+      // Check if cache is enabled using single source of truth
+      if (!isCacheEnabled()) {
+        await this.loggingService
+          .log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'RedisService skipped - cache is disabled',
+            'RedisService',
+            {}
+          )
+          .catch(() => {
+            // Ignore logging errors
+          });
+        return; // Don't connect if cache is disabled
+      }
+
       // Check if already connected to avoid duplicate connection attempts
       if (this.client && this.client.status === 'ready') {
         void this.loggingService
@@ -436,13 +271,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Check if Redis is the selected cache provider before attempting connection
-      const cacheProvider =
-        this.configService?.get<string>('CACHE_PROVIDER')?.toLowerCase() ||
-        process.env['CACHE_PROVIDER']?.toLowerCase() ||
-        'dragonfly'; // Default to Dragonfly
-
-      // Only connect if Redis is the selected provider
+      // Check if Redis is the selected cache provider using single source of truth
+      const cacheProvider = getCacheProvider();
       if (cacheProvider !== 'redis') {
         await this.loggingService.log(
           LogType.SYSTEM,
@@ -1186,12 +1016,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // ===== OVERRIDE BASIC OPERATIONS TO USE RETRY OPERATION =====
+  // These override base class methods to add retryOperation wrapper
+
   async set(key: string, value: string, ttl?: number): Promise<void>;
   async set<T>(key: string, value: T, ttl?: number): Promise<void>;
   async set<T>(key: string, value: T | string, ttl?: number): Promise<void> {
     try {
       const serializedValue = typeof value === 'string' ? value : JSON.stringify(value);
-
       await this.retryOperation(async () => {
         if (ttl) {
           await this.client.setex(key, ttl, serializedValue);
@@ -1200,10 +1032,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       });
     } catch (_error) {
-      // CRITICAL: Don't log errors here - let CacheService handle error logging
-      // This ensures errors are logged from CacheService, not RedisService
-      // Don't throw - allow graceful degradation (caller can handle null/undefined)
-      // This prevents Redis failures from breaking the application
+      // Fail silently - graceful degradation
     }
   }
 
@@ -1215,28 +1044,24 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       if (result === null) return null;
 
       try {
-        // Try to parse as JSON first
         return JSON.parse(result) as T;
       } catch {
-        // If parsing fails, return as string
         return result as T;
       }
     } catch (_error) {
-      // CRITICAL: Don't log errors here - let CacheService handle error logging
-      // This ensures errors are logged from CacheService, not RedisService
-      // Return null instead of throwing - allows graceful degradation
-      // Callers should handle null as cache miss
       return null;
     }
   }
 
-  async del(key: string): Promise<void>;
-  async del(...keys: string[]): Promise<void>;
-  async del(...keys: string[]): Promise<void> {
-    if (keys.length === 0) return;
-    await this.retryOperation(() => this.client.del(...keys));
+  // Override del to use retryOperation
+  async del(key: string): Promise<number>;
+  async del(...keys: string[]): Promise<number>;
+  async del(...keys: string[]): Promise<number> {
+    if (keys.length === 0) return 0;
+    return this.retryOperation(() => this.client.del(...keys));
   }
 
+  // Override exists to use retryOperation
   async exists(key: string): Promise<number> {
     return this.retryOperation(() => this.client.exists(key));
   }
@@ -1251,7 +1076,6 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   async ping(): Promise<string> {
     // Direct ping without retryOperation to avoid circular dependency
-    // This is used during connection verification
     if (!this.client) {
       throw new Error('Redis client not initialized');
     }
@@ -1317,7 +1141,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // Hash operations
+  // ===== OVERRIDE HASH OPERATIONS TO USE RETRY OPERATION =====
+
   async hSet(key: string, field: string, value: string): Promise<number> {
     return this.retryOperation(() => this.client.hset(key, field, value));
   }
@@ -1334,13 +1159,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(() => this.client.hdel(key, field));
   }
 
-  // List operations
+  // ===== OVERRIDE LIST OPERATIONS TO USE RETRY OPERATION =====
+
   async rPush(key: string, value: string): Promise<number> {
     return this.retryOperation(() => this.client.rpush(key, value));
   }
 
+  // Override lTrim to use retryOperation
   async lTrim(key: string, start: number, stop: number): Promise<string> {
-    return this.retryOperation(() => this.client.ltrim(key, start, stop));
+    await this.retryOperation(() => this.client.ltrim(key, start, stop));
+    return 'OK';
   }
 
   async lRange(key: string, start: number, stop: number): Promise<string[]> {
@@ -1351,7 +1179,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(() => this.client.llen(key));
   }
 
-  // Set operations
+  // ===== OVERRIDE SET OPERATIONS TO USE RETRY OPERATION =====
+
   async sAdd(key: string, ...members: string[]): Promise<number> {
     return this.retryOperation(() => this.client.sadd(key, ...members));
   }
@@ -1368,22 +1197,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(() => this.client.scard(key));
   }
 
-  // Pub/Sub operations
+  // ===== OVERRIDE PUB/SUB OPERATIONS =====
+
   async publish(channel: string, message: string): Promise<number> {
     return this.retryOperation(() => this.client.publish(channel, message));
   }
 
-  async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
-    const subscriber = this.client.duplicate();
-    await subscriber.subscribe(channel);
-    subscriber.on('message', (ch, message) => {
-      if (ch === channel) {
-        callback(message);
-      }
-    });
-  }
+  // ===== OVERRIDE EXPIRY OPERATIONS TO USE RETRY OPERATION =====
 
-  // Key expiry operations
   async expire(key: string, seconds: number): Promise<number> {
     return this.retryOperation(() => this.client.expire(key, seconds));
   }
@@ -1780,7 +1601,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.isDevelopment;
   }
 
-  // Sorted Set operations for rate limiting
+  // ===== OVERRIDE SORTED SET OPERATIONS TO USE RETRY OPERATION =====
+
   async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
     return this.retryOperation(() => this.client.zremrangebyscore(key, min, max));
   }
@@ -1807,8 +1629,6 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.retryOperation(async () => {
       const pipeline = this.client.pipeline();
       commands.forEach(cmd => {
-        // Type assertion needed for dynamic Redis command calls
-
         const pipelineAsAny = pipeline as unknown as Record<
           string,
           (...args: unknown[]) => unknown
@@ -1822,7 +1642,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // Hash operations for metrics
+  // ===== OVERRIDE UTILITY OPERATIONS TO USE RETRY OPERATION =====
+
   async hincrby(key: string, field: string, increment: number): Promise<number> {
     return this.retryOperation(() => this.client.hincrby(key, field, increment));
   }
@@ -1858,11 +1679,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Clears cache entries matching the given pattern.
-   * Returns the number of keys that were removed.
-   *
-   * @param pattern - Pattern to match keys (e.g. "user:*")
-   * @returns Number of keys cleared
+   * Override clearCache to add logging and batch processing
    */
   async clearCache(pattern?: string): Promise<number> {
     await this.loggingService.log(
@@ -1874,19 +1691,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     );
 
     try {
-      // If no pattern is provided, clear all non-system keys
       if (!pattern) {
         return await this.clearAllCache();
       }
 
-      // Get all keys matching the pattern
       const keys = await this.keys(pattern);
-
       if (keys.length === 0) {
         return 0;
       }
 
-      // Delete keys in batches to avoid blocking the Redis server
+      // Delete keys in batches
       const BATCH_SIZE = 1000;
       let deletedCount = 0;
 

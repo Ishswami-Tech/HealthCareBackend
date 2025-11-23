@@ -2,7 +2,7 @@ import { Module, Global } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import developmentConfig from './environment/development.config';
 import productionConfig from './environment/production.config';
-import redisConfig from './redis.config';
+import cacheConfig, { redisConfig } from './cache.config';
 import rateLimitConfig from './rate-limit.config';
 import { healthcareConfig } from '@infrastructure/database/config/healthcare.config';
 import { ConfigService } from './config.service';
@@ -24,6 +24,7 @@ import { ENV_VARS } from './constants';
     NestConfigModule.forRoot({
       load: [
         process.env[ENV_VARS.NODE_ENV] === 'production' ? productionConfig : developmentConfig,
+        cacheConfig, // Single source of truth for cache configuration
         redisConfig,
         rateLimitConfig,
         healthcareConfig,

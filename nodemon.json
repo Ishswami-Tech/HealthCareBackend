@@ -1,0 +1,22 @@
+{
+  "watch": [
+    "src"
+  ],
+  "ext": "ts,json,env",
+  "ignore": [
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "node_modules",
+    "dist",
+    ".git",
+    "*.log"
+  ],
+  "exec": "nest start",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "delay": 1000,
+  "verbose": true,
+  "legacyWatch": false
+}
+

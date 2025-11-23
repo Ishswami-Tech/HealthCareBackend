@@ -10,6 +10,8 @@
         "outDir": "dist/src"
       }
     ],
-    "watchAssets": true
+    "watchAssets": true,
+    "watchMode": true,
+    "tsConfigPath": "tsconfig.json"
   }
 }

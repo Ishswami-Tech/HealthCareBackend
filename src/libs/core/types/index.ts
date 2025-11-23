@@ -185,6 +185,7 @@ export type {
   DomainsConfig,
   DatabaseConfig,
   RedisConfig,
+  CacheConfig,
   JwtConfig,
   PrismaConfig,
   RateLimitConfig,

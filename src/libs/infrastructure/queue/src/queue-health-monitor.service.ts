@@ -35,6 +35,7 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
   private readonly HEALTH_CHECK_CIRCUIT_BREAKER_NAME = 'queue-health-check';
 
   constructor(
+    @Inject(forwardRef(() => CircuitBreakerService))
     private readonly circuitBreakerService: CircuitBreakerService,
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,

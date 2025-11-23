@@ -73,11 +73,12 @@ export class ServiceContainer {
    * const loggingService = container.getService<LoggingService>(LoggingService);
    * ```
    */
-  getService<T>(token: ServiceToken): T {
+  async getService<T>(token: ServiceToken): Promise<T> {
     try {
-      // NestJS app.get() returns 'any' in type definitions but is type-safe at runtime
-      // We use unknown as intermediate type and validate before returning
-      const serviceRaw: unknown = this.app.get(token);
+      // Use resolve() for all services as it works for both singleton and scoped providers
+      // get() throws an exception for scoped providers before we can catch it
+      const serviceRaw: unknown = await this.app.resolve(token);
+
       if (!serviceRaw) {
         const tokenName = this.getTokenName(token);
         const errorMessage = `${tokenName} not found in DI container`;
@@ -128,16 +129,17 @@ export class ServiceContainer {
    *
    * @example
    * ```typescript
-   * const [configService, loggingService] = container.getServices([
+   * const [configService, loggingService] = await container.getServices([
    *   ConfigService,
    *   LoggingService
    * ]);
    * ```
    */
-  getServices<T extends readonly ServiceToken[]>(
+  async getServices<T extends readonly ServiceToken[]>(
     tokens: T
-  ): { [K in keyof T]: T[K] extends ServiceToken ? unknown : never } {
-    return tokens.map(token => this.getService(token)) as {
+  ): Promise<{ [K in keyof T]: T[K] extends ServiceToken ? unknown : never }> {
+    const services = await Promise.all(tokens.map(token => this.getService(token)));
+    return services as {
       [K in keyof T]: T[K] extends ServiceToken ? unknown : never;
     };
   }

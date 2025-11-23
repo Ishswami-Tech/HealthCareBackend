@@ -14,6 +14,7 @@ import { FastifyAdapter } from '@bull-board/fastify';
 import { QueueStatusGateway } from './sockets/queue-status.gateway';
 import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
+import { ResilienceModule } from '@core/resilience';
 import { QueueHealthMonitorService } from './queue-health-monitor.service';
 import {
   APPOINTMENT_QUEUE,
@@ -43,6 +44,41 @@ import type { JobData } from '@core/types/queue.types';
 @Module({})
 export class QueueModule {
   static forRoot(): DynamicModule {
+    // Check if cache is enabled first - skip queue registration if cache is disabled
+    // BullMQ requires Redis/Dragonfly to function
+    const cacheEnabledEnv = process.env['CACHE_ENABLED'];
+    const isCacheEnabled = cacheEnabledEnv === 'true';
+
+    if (!isCacheEnabled) {
+      // Return a minimal module without BullMQ queues when cache is disabled
+      return {
+        module: QueueModule,
+        global: true,
+        imports: [
+          forwardRef(() => DatabaseModule),
+          ConfigModule,
+          LoggingModule,
+          forwardRef(() => ResilienceModule),
+          QueueMonitoringModule,
+        ],
+        providers: [
+          QueueService,
+          QueueProcessor,
+          SharedWorkerService,
+          QueueHealthMonitorService,
+          {
+            provide: 'BULLMQ_QUEUES',
+            useValue: [], // Empty array when cache is disabled
+          },
+          {
+            provide: 'BULLMQ_WORKERS',
+            useValue: [], // Empty array when cache is disabled
+          },
+        ],
+        exports: [QueueService, QueueProcessor, SharedWorkerService],
+      };
+    }
+
     // Filter queues based on service type to prevent conflicts
     const serviceName = process.env['SERVICE_NAME'] || 'clinic';
 
@@ -134,6 +170,7 @@ export class QueueModule {
         forwardRef(() => DatabaseModule),
         ConfigModule,
         LoggingModule, // Explicitly import LoggingModule to ensure LoggingService is available
+        forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         QueueMonitoringModule,
         BullModule.forRootAsync({
           imports: [ConfigModule],
@@ -359,6 +396,7 @@ export class QueueModule {
       module: QueueModule,
       imports: [
         forwardRef(() => DatabaseModule),
+        forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         BullModule.registerQueue({
           name: SERVICE_QUEUE,
         }),

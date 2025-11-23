@@ -114,27 +114,27 @@ export class BootstrapOrchestrator {
 
       // Stage 2: Get required services
       this.currentStage = BootstrapStage.SETTING_UP_SERVICES;
-      const configService = this.getService<ConfigService>(
+      const configService = await this.getService<ConfigService>(
         serviceContainer,
         ConfigService,
         options.configService
       );
-      const loggingService = this.getService<LoggingService>(
+      const loggingService = await this.getService<LoggingService>(
         serviceContainer,
         LoggingService as ServiceToken,
         options.loggingService
       );
-      const securityConfigService = this.getService<SecurityConfigService>(
+      const securityConfigService = await this.getService<SecurityConfigService>(
         serviceContainer,
         SecurityConfigService as ServiceToken,
         options.securityConfigService
       );
-      const gracefulShutdownService = this.getService<GracefulShutdownService>(
+      const gracefulShutdownService = await this.getService<GracefulShutdownService>(
         serviceContainer,
         GracefulShutdownService as ServiceToken,
         options.gracefulShutdownService
       );
-      const processErrorHandlersService = this.getService<ProcessErrorHandlersService>(
+      const processErrorHandlersService = await this.getService<ProcessErrorHandlersService>(
         serviceContainer,
         ProcessErrorHandlersService as ServiceToken,
         options.processErrorHandlersService
@@ -220,15 +220,15 @@ export class BootstrapOrchestrator {
    * @param providedService - Optional provided service (for dependency injection)
    * @returns Service instance
    */
-  private getService<T>(
+  private async getService<T>(
     serviceContainer: ServiceContainer,
     token: ServiceToken,
     providedService?: T
-  ): T {
+  ): Promise<T> {
     if (providedService) {
       return providedService;
     }
-    return serviceContainer.getService<T>(token);
+    return await serviceContainer.getService<T>(token);
   }
 
   /**

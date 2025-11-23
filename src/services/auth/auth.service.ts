@@ -331,6 +331,11 @@ export class AuthService {
         throw this.errors.invalidCredentials('AuthService.login');
       }
 
+      // Check if user has a password (required for password-based login)
+      if (!user.password) {
+        throw this.errors.invalidCredentials('AuthService.login');
+      }
+
       // Verify password
       const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
       if (!isPasswordValid) {
@@ -602,12 +607,14 @@ export class AuthService {
       }
 
       // Hash new password
-      const _hashedPassword = await bcrypt.hash(resetDto.newPassword, 12);
+      const hashedPassword = await bcrypt.hash(resetDto.newPassword, 12);
 
-      // Update password
+      // Update password - use type assertion to include password field
       await this.databaseService.updateUserSafe(user.id, {
-        // password: hashedPassword, // Password field not available in UserUpdateInput
-      });
+        password: hashedPassword,
+        passwordChangedAt: new Date(),
+        updatedAt: new Date(),
+      } as UserUpdateInput);
 
       // Invalidate all user sessions
       await this.sessionService.revokeAllUserSessions(user.id);
@@ -659,10 +666,61 @@ export class AuthService {
     changePasswordDto: ChangePasswordDto
   ): Promise<{ success: boolean; message: string }> {
     try {
-      const user = await this.databaseService.findUserByIdSafe(userId);
+      // Bypass cache for password operations - fetch directly from database
+      // to ensure password field is included
+      const userResult = await this.databaseService.executeHealthcareRead<
+        (UserWithRelations & { password?: string }) | null
+      >(async client => {
+        const tx = client as unknown as {
+          user: {
+            findUnique: (args: {
+              where: { id: string };
+              include: {
+                doctor: boolean;
+                patient: boolean;
+                receptionists: boolean;
+                clinicAdmins: boolean;
+                superAdmin: boolean;
+                pharmacist: boolean;
+                therapist: boolean;
+                labTechnician: boolean;
+                financeBilling: boolean;
+                supportStaff: boolean;
+                nurse: boolean;
+                counselor: boolean;
+              };
+            }) => Promise<UserWithRelations & { password?: string }>;
+          };
+        };
+        return await tx.user.findUnique({
+          where: { id: userId },
+          include: {
+            doctor: true,
+            patient: true,
+            receptionists: true,
+            clinicAdmins: true,
+            superAdmin: true,
+            pharmacist: true,
+            therapist: true,
+            labTechnician: true,
+            financeBilling: true,
+            supportStaff: true,
+            nurse: true,
+            counselor: true,
+          },
+        });
+      });
 
-      if (!user) {
+      if (!userResult) {
         throw this.errors.userNotFound(userId, 'AuthService.changePassword');
+      }
+
+      // Type assertion: UserWithRelations should have password for auth operations
+      const user = userResult as UserWithRelations & { password?: string };
+
+      // Check if user has a password
+      if (!user.password) {
+        throw this.errors.invalidCredentials('AuthService.changePassword');
       }
 
       // Verify current password
@@ -679,12 +737,14 @@ export class AuthService {
       }
 
       // Hash new password
-      const _hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 12);
+      const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 12);
 
-      // Update password
+      // Update password - use type assertion to include password field
       await this.databaseService.updateUserSafe(user.id, {
-        // password: hashedPassword, // Password field not available in UserUpdateInput
-      });
+        password: hashedPassword,
+        passwordChangedAt: new Date(),
+        updatedAt: new Date(),
+      } as UserUpdateInput);
 
       // Invalidate all user sessions except current
       await this.sessionService.revokeAllUserSessions(user.id);
@@ -797,18 +857,25 @@ export class AuthService {
       const user = await this.databaseService.findUserByEmailSafe(verifyDto.email);
 
       if (!user) {
+        // Return proper 400 error instead of 500
         throw this.errors.userNotFound(undefined, 'AuthService.verifyOtp');
       }
 
-      // Verify OTP
-      const storedOtp = await this.cacheService.get(`otp:${user.id}`);
+      // Verify OTP - check both email and user.id keys (OTP might be stored with either)
+      const storedOtpByEmail = await this.cacheService.get<string>(`otp:${verifyDto.email}`);
+      const storedOtpById = await this.cacheService.get<string>(`otp:${user.id}`);
+      const storedOtp = storedOtpByEmail || storedOtpById;
 
       if (!storedOtp || storedOtp !== verifyDto.otp) {
+        // Return proper 400 error instead of 500
         throw this.errors.otpInvalid('AuthService.verifyOtp');
       }
 
-      // Remove OTP
-      await this.cacheService.del(`otp:${user.id}`);
+      // Remove OTP - delete both possible keys
+      await Promise.all([
+        this.cacheService.del(`otp:${verifyDto.email}`).catch(() => {}),
+        this.cacheService.del(`otp:${user.id}`).catch(() => {}),
+      ]);
 
       // Create session first
       // Session is stored in Redis via SessionManagementService

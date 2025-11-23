@@ -91,9 +91,24 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private initializeWorkers() {
     try {
+      // Check if cache is enabled first - skip worker initialization if cache is disabled
+      // BullMQ workers require Redis/Dragonfly to function
+      const cacheEnabledEnv = process.env['CACHE_ENABLED'];
+      const isCacheEnabled = cacheEnabledEnv === 'true';
+
+      if (!isCacheEnabled) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Shared worker service skipped - cache is disabled (BullMQ requires Redis/Dragonfly)',
+          'SharedWorkerService'
+        );
+        return; // Skip worker initialization if cache is disabled
+      }
+
       // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
       // IMPORTANT: Use process.env directly, NOT configService, because:
-      // - configService.get('redis.host') returns 'localhost' from redis.config.ts default
+      // - configService.get('redis.host') returns 'localhost' from cache.config.ts default
       // - We need to check environment variables directly to get the actual values
       const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
       const useDragonfly = cacheProvider === 'dragonfly';

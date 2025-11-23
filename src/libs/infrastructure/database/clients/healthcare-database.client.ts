@@ -1,5 +1,5 @@
-import { Injectable, Inject, Optional } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
+import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 import type { PrismaClient } from '@infrastructure/database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -35,24 +35,9 @@ import type {
   PaymentWhereInput,
 } from '@core/types/input.types';
 import { ConnectionPoolManager } from '@infrastructure/database/connection-pool.manager';
-import { HealthcareQueryOptimizerService } from '@database/internal/query-optimizer.service';
-// Import services normally - forwardRef() in constructor will break circular dependency at runtime
-// The forwardRef() wrapper defers dependency resolution until after all providers are registered
-import { DatabaseMetricsService } from '@database/internal/database-metrics.service';
-import { ClinicIsolationService } from '@database/internal/clinic-isolation.service';
-import { ReadReplicaRouterService } from '@database/internal/read-replica-router.service';
-import { QueryCacheService } from '@database/internal/query-cache.service';
-import { DatabaseHealthMonitorService } from '@database/internal/database-health-monitor.service';
-import { RowLevelSecurityService } from '@database/internal/row-level-security.service';
-// ClinicRateLimiterService is provided by RateLimitModule - imported normally for runtime use with ModuleRef
-import { ClinicRateLimiterService } from '@database/internal/clinic-rate-limiter.service';
-import { DataMaskingService } from '@database/internal/data-masking.service';
-import { SQLInjectionPreventionService } from '@database/internal/sql-injection-prevention.service';
-import {
-  calculatePagination,
-  addDateRangeFilter,
-  buildOrderBy,
-} from '@infrastructure/database/query/query.utils';
+import { DatabaseMetricsService } from '@infrastructure/database/database-metrics.service';
+import { ClinicIsolationService } from '@infrastructure/database/clinic-isolation.service';
+import { HealthcareQueryOptimizerService } from '@infrastructure/database/query-optimizer.service';
 import { CacheService } from '@infrastructure/cache';
 import { RepositoryResult } from '@core/types/database.types';
 import { HealthcareError } from '@core/errors';
@@ -79,8 +64,6 @@ import type {
 } from '@core/types/database.types';
 import type { PermissionEntity } from '@core/types/rbac.types';
 import { CriticalPriority } from '@core/types/database.types';
-import { type IEventService, isEventService, EventCategory, EventPriority } from '@core/types';
-import type { EnterpriseEventPayload } from '@core/types/event.types';
 
 /**
  * Healthcare Database Client Implementation
@@ -118,72 +101,34 @@ import type { EnterpriseEventPayload } from '@core/types/event.types';
 @Injectable()
 export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   private auditLog: AuditInfo[] = [];
-  // Rate limiting for slow query warnings to prevent log spam
-  private lastSlowQueryWarning: number = 0;
-  private lastSlowWriteWarning: number = 0;
-  private lastHipaaLogWarning: number = 0;
-  private readonly SLOW_QUERY_WARNING_INTERVAL = 60000; // Only log slow query warnings once per minute
-  private readonly HIPAA_LOG_INTERVAL = 60000; // Only log HIPAA access once per minute
-  private slowQueryCount = 0; // Track number of slow queries since last warning
-  private slowWriteQueryCount = 0; // Track number of slow write queries since last warning
-  private hipaaLogCount = 0; // Track number of HIPAA logs since last warning
   private readonly maxAuditLogSize = 10000;
 
   // Error cache for deduplication and tracking
   private readonly errorCache = new Map<string, DatabaseErrorCacheEntry>();
   private readonly maxErrorCacheSize = 1000;
   private readonly errorCacheTTL = 5 * 60 * 1000; // 5 minutes
-  private typedEventService?: IEventService;
-  private clinicRateLimiterService?: ClinicRateLimiterService;
-  private moduleRef?: ModuleRef;
-
-  /**
-   * Get ClinicRateLimiterService lazily to break circular dependency
-   */
-  protected get clinicRateLimiter(): ClinicRateLimiterService {
-    if (!this.clinicRateLimiterService) {
-      if (this.moduleRef) {
-        this.clinicRateLimiterService = this.moduleRef.get(ClinicRateLimiterService, { strict: false });
-      } else {
-        throw new Error('ClinicRateLimiterService not available and ModuleRef not provided');
-      }
-    }
-    return this.clinicRateLimiterService;
-  }
 
   protected readonly config: HealthcareDatabaseConfig;
 
   constructor(
     protected readonly prismaService: PrismaService,
+    @Inject(forwardRef(() => ConnectionPoolManager))
+    protected readonly connectionPoolManager: ConnectionPoolManager,
+    @Inject(forwardRef(() => DatabaseMetricsService))
     protected readonly metricsService: DatabaseMetricsService,
+    @Inject(forwardRef(() => ClinicIsolationService))
     protected readonly clinicIsolationService: ClinicIsolationService,
     protected readonly queryOptimizer: HealthcareQueryOptimizerService,
-    protected readonly readReplicaRouter: ReadReplicaRouterService,
-    protected readonly queryCacheService: QueryCacheService,
-    protected readonly healthMonitor: DatabaseHealthMonitorService,
+    @Inject(forwardRef(() => LoggingService))
     protected readonly loggingService: LoggingService,
-    protected readonly eventService: unknown,
-    protected readonly connectionPoolManager: ConnectionPoolManager,
-    protected readonly rlsService: RowLevelSecurityService,
-    protected readonly dataMaskingService: DataMaskingService,
-    protected readonly sqlInjectionPrevention: SQLInjectionPreventionService,
+    protected readonly eventEmitter: EventEmitter2,
     @Optional()
+    @Inject(forwardRef(() => CacheService))
     protected readonly cacheService?: CacheService,
     @Optional()
     @Inject('HealthcareDatabaseConfig')
-    config?: HealthcareDatabaseConfig,
-    @Optional()
-    moduleRef?: ModuleRef
+    config?: HealthcareDatabaseConfig
   ) {
-    // Store ModuleRef for lazy injection of ClinicRateLimiterService
-    // ModuleRef is optional - will be lazily resolved if not provided
-    if (moduleRef) {
-      this.moduleRef = moduleRef;
-    }
-    // Type guard ensures type safety when using the service
-    if (isEventService(this.eventService)) {
-      this.typedEventService = this.eventService;
-    }
     // Support both DI (via @Inject) and manual instantiation
     if (config) {
       this.config = config;
@@ -197,7 +142,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         complianceLevel: 'HIPAA',
         connectionTimeout: 30000,
         queryTimeout: 15000,
-        maxConnections: 50, // Reduced to prevent connection pool exhaustion (matches connection_limit in DATABASE_URL)
+        maxConnections: 500, // Optimized for 10M+ users (increased from 50)
         healthCheckInterval: 30000,
       } as HealthcareDatabaseConfig;
     }
@@ -270,33 +215,24 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     }
 
     // Ensure cacheEntry is defined before using it
-    if (cacheEntry && this.typedEventService) {
-      // Emit error event via centralized EventService
-      void this.typedEventService.emitEnterprise('database.error', {
-        eventId: `db_error_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-        eventType: 'database.error',
-        category: EventCategory.DATABASE,
-        priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
-        source: 'HealthcareDatabaseClient',
-        version: '1.0.0',
-        payload: {
-          error: {
-            message: error.message,
-            stack: error.stack,
-            code: (error as { code?: string }).code,
-            name: error.name,
-          },
-          operation,
-          context: context || {},
-          cacheEntry: {
-            retryCount: cacheEntry.retryCount,
-            firstOccurrence: cacheEntry.timestamp,
-            lastRetry: cacheEntry.lastRetry,
-          },
-          timestamp: now,
+    if (cacheEntry) {
+      // Emit error event
+      this.eventEmitter.emit('database.error', {
+        error: {
+          message: error.message,
+          stack: error.stack,
+          code: (error as { code?: string }).code,
+          name: error.name,
         },
-      } as EnterpriseEventPayload);
+        operation,
+        context: context || {},
+        cacheEntry: {
+          retryCount: cacheEntry.retryCount,
+          firstOccurrence: cacheEntry.timestamp,
+          lastRetry: cacheEntry.lastRetry,
+        },
+        timestamp: now,
+      });
 
       // Log error using LoggingService
       void this.loggingService.log(
@@ -517,8 +453,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
    * Use this for models like therapyQueue, checkInLocation, etc. that are not typed delegates
    * NOTE: This should be used through executeHealthcareRead/Write for optimization layers
    */
-  getRawPrismaClient(): Promise<PrismaClient> {
-    return Promise.resolve(this.prismaService.getRawPrismaClient());
+  getRawPrismaClient(): PrismaClient {
+    const client = this.prismaService.getRawPrismaClient();
+    // Type assertion needed because generated PrismaClient has different generic parameters
+    return client as unknown as PrismaClient;
   }
 
   // Comprehensive type-safe database operations
@@ -555,198 +493,40 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     });
   }
 
-  /**
-   * Find user by email with optimized query for 10M+ user scale
-   * Uses selective includes based on user role to minimize data transfer
-   * @param email - User email (indexed field for fast lookup)
-   * @param includeRelations - Optional: specify which relations to include (default: minimal)
-   */
-  async findUserByEmailSafe(
-    email: string,
-    includeRelations?: {
-      doctor?: boolean;
-      patient?: boolean;
-      receptionists?: boolean;
-      clinicAdmins?: boolean;
-      superAdmin?: boolean;
-    }
-  ): Promise<UserWithRelations | null> {
-    const cacheKey = `user:findByEmail:${email}:${JSON.stringify(includeRelations || {})}`;
+  async findUserByEmailSafe(email: string): Promise<UserWithRelations | null> {
+    const cacheKey = `user:findByEmail:${email}`;
     return await this.executeCachedRead(
       cacheKey,
       async () => {
         return await this.executeHealthcareRead<UserWithRelations | null>(async client => {
           // Use the client directly instead of calling prismaService.findUserByEmailSafe again
           // This avoids recursive calls and connection pool exhaustion
-          // Access user delegate using dot notation - PrismaTransactionClient has user as a property
           const userDelegate = (
             client as unknown as {
-              user: {
-                findUnique: (args: {
-                  where: { email: string };
-                  include?: Record<string, unknown>;
-                }) => Promise<UserWithRelations | null>;
-              };
+              user: { findUnique: (args: unknown) => Promise<UserWithRelations | null> };
             }
-          ).user;
-
-          // For 10M users: Only load relations if explicitly requested
-          // Following .ai-rules: Use select to limit fields, use include with select for relations
-          const include: Record<string, unknown> = {};
-          if (includeRelations) {
-            // Use select within include to limit nested fields (per .ai-rules/database.md)
-            if (includeRelations.doctor) {
-              include['doctor'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  specialization: true,
-                  createdAt: true,
-                  // Include clinicId through DoctorClinic junction table
-                  clinics: {
-                    select: {
-                      clinicId: true,
-                    },
-                    take: 1, // Get first clinic (primary clinic)
-                  },
-                },
-              };
-            }
-            if (includeRelations.patient) {
-              include['patient'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  createdAt: true,
-                },
-              };
-            }
-            if (includeRelations.receptionists) {
-              include['receptionists'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  clinicId: true,
-                  createdAt: true,
-                },
-              };
-            }
-            if (includeRelations.clinicAdmins) {
-              include['clinicAdmins'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  clinicId: true,
-                  isOwner: true,
-                  createdAt: true,
-                },
-              };
-            }
-            if (includeRelations.superAdmin) {
-              include['superAdmin'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  createdAt: true,
-                },
-              };
-            }
-          } else {
-            // Default: minimal includes for backward compatibility
-            // Only load relations that are commonly needed, with select to limit fields
-            include['doctor'] = {
-              select: {
-                id: true,
-                userId: true,
-                specialization: true,
-                createdAt: true,
-                // Include clinicId through DoctorClinic junction table
-                clinics: {
-                  select: {
-                    clinicId: true,
-                  },
-                  take: 1, // Get first clinic (primary clinic)
-                },
-              },
-            };
-            include['patient'] = {
-              select: {
-                id: true,
-                userId: true,
-                createdAt: true,
-              },
-            };
-          }
-
+          )['user'];
           const result = await userDelegate.findUnique({
-            where: { email }, // Uses indexed email field for O(1) lookup
-            ...(Object.keys(include).length > 0 ? { include } : {}),
+            where: { email },
+            include: {
+              doctor: true,
+              patient: true,
+              receptionists: true,
+              clinicAdmins: true,
+              superAdmin: true,
+            },
           });
           return result;
         });
       },
       [`user:email:${email}`, 'users'],
-      3600 // 1 hour cache - email is unique so cache is safe
+      3600 // 1 hour
     );
   }
 
-  /**
-   * Find users with pagination and result limits for 10M+ user scale
-   * CRITICAL: Always use pagination to prevent loading millions of records
-   * Uses query utils for optimized pagination and filtering
-   * @param where - User where conditions
-   * @param options - Pagination and query options
-   */
-  async findUsersSafe(
-    where: UserWhereInput,
-    options?: {
-      page?: number; // Page number (1-based)
-      limit?: number; // Max records per page (default: 100, max: 1000)
-      take?: number; // Alternative to limit
-      skip?: number; // Offset for pagination
-      sortBy?: string; // Field to sort by (default: 'createdAt')
-      sortOrder?: 'asc' | 'desc'; // Sort order (default: 'desc')
-      dateFrom?: Date | string; // Filter by date range start
-      dateTo?: Date | string; // Filter by date range end
-      includeRelations?: {
-        doctor?: boolean;
-        patient?: boolean;
-        receptionists?: boolean;
-        clinicAdmins?: boolean;
-        superAdmin?: boolean;
-      };
-    }
-  ): Promise<UserWithRelations[]> {
-    // Use query utils for optimized pagination calculation
-    const pagination = calculatePagination({
-      ...(options?.page !== undefined && { page: options.page }),
-      ...(options?.limit !== undefined && { limit: options.limit }),
-      ...(options?.take !== undefined && { take: options.take }),
-      ...(options?.skip !== undefined && { skip: options.skip }),
-    });
-
-    // CRITICAL for 10M users: Enforce maximum limit of 1000 records per query
-    const take = Math.min(pagination.take, 1000);
-    const skip = pagination.skip;
-
-    // Add date range filtering using query utils
-    const optimizedWhere =
-      options?.dateFrom || options?.dateTo
-        ? (addDateRangeFilter(
-            where as UserWhereInput & { createdAt?: { gte?: Date; lte?: Date } },
-            options?.dateFrom,
-            options?.dateTo,
-            'createdAt'
-          ) as UserWhereInput)
-        : where;
-
-    // Build order by clause using query utils
-    const orderBy = buildOrderBy(options?.sortBy || 'createdAt', options?.sortOrder || 'desc');
-
-    // Create cache key from optimized query parameters
-    const whereHash = JSON.stringify({ where: optimizedWhere, take, skip, orderBy });
+  async findUsersSafe(where: UserWhereInput): Promise<UserWithRelations[]> {
+    const whereHash = JSON.stringify(where);
     const cacheKey = `user:findMany:${Buffer.from(whereHash).toString('base64').substring(0, 50)}`;
-
     return await this.executeCachedRead(
       cacheKey,
       async () => {
@@ -758,89 +538,16 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
               user: { findMany: (args: unknown) => Promise<UserWithRelations[]> };
             }
           )['user'];
-
-          // For 10M users: Only load relations if explicitly requested
-          // Following .ai-rules: Use select to limit fields, use include with select for relations
-          const include: Record<string, unknown> = {};
-          if (options?.includeRelations) {
-            // Use select within include to limit nested fields (per .ai-rules/database.md)
-            if (options.includeRelations.doctor) {
-              include['doctor'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  specialization: true,
-                  createdAt: true,
-                  // Include clinicId through DoctorClinic junction table
-                  clinics: {
-                    select: {
-                      clinicId: true,
-                    },
-                    take: 1, // Get first clinic (primary clinic)
-                  },
-                },
-              };
-            }
-            if (options.includeRelations.patient) {
-              include['patient'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  createdAt: true,
-                },
-              };
-            }
-            if (options.includeRelations.receptionists) {
-              include['receptionists'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  clinicId: true,
-                  createdAt: true,
-                },
-              };
-            }
-            if (options.includeRelations.clinicAdmins) {
-              include['clinicAdmins'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  clinicId: true,
-                  isOwner: true,
-                  createdAt: true,
-                },
-              };
-            }
-            if (options.includeRelations.superAdmin) {
-              include['superAdmin'] = {
-                select: {
-                  id: true,
-                  userId: true,
-                  createdAt: true,
-                },
-              };
-            }
-          }
-
-          // Build optimized query using query utils
-          // Following .ai-rules: Use select to limit fields for 10M user scale
-          const queryArgs = {
-            where: optimizedWhere,
-            take, // CRITICAL: Limit result size
-            skip, // CRITICAL: Support pagination
-            ...(Object.keys(include).length > 0 ? { include } : {}),
-            orderBy: orderBy || { createdAt: 'desc' }, // Use optimized order by
-          };
-
-          // Optimize query before execution
-          const queryString = JSON.stringify(queryArgs);
-          await this.queryOptimizer.optimizeQuery(queryString, {
-            queryType: 'HEALTHCARE_READ',
-            tableName: 'users',
-            executionTime: 0, // Will be measured during execution
+          const result = await userDelegate.findMany({
+            where,
+            include: {
+              doctor: true,
+              patient: true,
+              receptionists: true,
+              clinicAdmins: true,
+              superAdmin: true,
+            },
           });
-
-          const result = await userDelegate.findMany(queryArgs);
           return result;
         });
       },
@@ -850,10 +557,59 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {
-    // Use PrismaService directly outside transaction for now
-    // The transaction is handled at a higher level if needed
-    const prismaService = this.getInternalPrismaClient();
-    const result = await prismaService.createUserSafe(data);
+    const result = await this.executeHealthcareWrite<UserWithRelations>(
+      async client => {
+        // Use the transaction client directly to access user delegate
+        // The transaction client has the same structure as PrismaClient
+        const tx = client as unknown as {
+          user: {
+            create: (args: {
+              data: UserCreateInput;
+              include: {
+                doctor: boolean;
+                patient: boolean;
+                receptionists: boolean;
+                clinicAdmins: boolean;
+                superAdmin: boolean;
+                pharmacist: boolean;
+                therapist: boolean;
+                labTechnician: boolean;
+                financeBilling: boolean;
+                supportStaff: boolean;
+                nurse: boolean;
+                counselor: boolean;
+              };
+            }) => Promise<UserWithRelations>;
+          };
+        };
+        return await tx.user.create({
+          data,
+          include: {
+            doctor: true,
+            patient: true,
+            receptionists: true,
+            clinicAdmins: true,
+            superAdmin: true,
+            pharmacist: true,
+            therapist: true,
+            labTechnician: true,
+            financeBilling: true,
+            supportStaff: true,
+            nurse: true,
+            counselor: true,
+          },
+        });
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'CREATE_USER',
+        resourceType: 'USER',
+        resourceId: 'pending',
+        timestamp: new Date(),
+      }
+    );
 
     // Invalidate cache after creation
     if (result?.id) {
@@ -868,10 +624,60 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   }
 
   async updateUserSafe(id: string, data: UserUpdateInput): Promise<UserWithRelations> {
-    // Call prismaService.updateUserSafe directly (not wrapped in executeHealthcareWrite)
-    // to avoid transaction client issues similar to createUserSafe
-    const prismaService = this.getInternalPrismaClient();
-    const result = await prismaService.updateUserSafe(id, data);
+    const result = await this.executeHealthcareWrite<UserWithRelations>(
+      async client => {
+        // Use the transaction client directly to access user delegate
+        const tx = client as unknown as {
+          user: {
+            update: (args: {
+              where: { id: string };
+              data: UserUpdateInput;
+              include: {
+                doctor: boolean;
+                patient: boolean;
+                receptionists: boolean;
+                clinicAdmins: boolean;
+                superAdmin: boolean;
+                pharmacist: boolean;
+                therapist: boolean;
+                labTechnician: boolean;
+                financeBilling: boolean;
+                supportStaff: boolean;
+                nurse: boolean;
+                counselor: boolean;
+              };
+            }) => Promise<UserWithRelations>;
+          };
+        };
+        return await tx.user.update({
+          where: { id },
+          data,
+          include: {
+            doctor: true,
+            patient: true,
+            receptionists: true,
+            clinicAdmins: true,
+            superAdmin: true,
+            pharmacist: true,
+            therapist: true,
+            labTechnician: true,
+            financeBilling: true,
+            supportStaff: true,
+            nurse: true,
+            counselor: true,
+          },
+        });
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'UPDATE_USER',
+        resourceType: 'USER',
+        resourceId: id,
+        timestamp: new Date(),
+      }
+    );
 
     // Invalidate cache after update
     await this.invalidateCache([`user:${id}`, 'users']);
@@ -919,93 +725,15 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     );
   }
 
-  /**
-   * Find appointments with pagination and optimization for 10M+ user scale
-   * Uses query utils for optimized pagination and filtering
-   * @param where - Appointment where conditions
-   * @param options - Pagination and query options
-   */
-  async findAppointmentsSafe(
-    where: AppointmentWhereInput,
-    options?: {
-      page?: number; // Page number (1-based)
-      limit?: number; // Max records per page (default: 100, max: 1000)
-      take?: number; // Alternative to limit
-      skip?: number; // Offset for pagination
-      sortBy?: string; // Field to sort by (default: 'appointmentDateTime')
-      sortOrder?: 'asc' | 'desc'; // Sort order (default: 'desc')
-      dateFrom?: Date | string; // Filter by appointment date range start
-      dateTo?: Date | string; // Filter by appointment date range end
-    }
-  ): Promise<AppointmentWithRelations[]> {
-    // Use query utils for optimized pagination calculation
-    const pagination = calculatePagination({
-      ...(options?.page !== undefined && { page: options.page }),
-      ...(options?.limit !== undefined && { limit: options.limit }),
-      ...(options?.take !== undefined && { take: options.take }),
-      ...(options?.skip !== undefined && { skip: options.skip }),
-    });
-
-    // CRITICAL for 10M users: Enforce maximum limit of 1000 records per query
-    const take = Math.min(pagination.take, 1000);
-    const skip = pagination.skip;
-
-    // Add date range filtering using query utils (for appointmentDateTime)
-    // Manually add date range filter for appointmentDateTime field
-    const optimizedWhere: AppointmentWhereInput = {
-      ...where,
-      ...(options?.dateFrom || options?.dateTo
-        ? {
-            appointmentDateTime: {
-              ...(options?.dateFrom && {
-                gte:
-                  options.dateFrom instanceof Date ? options.dateFrom : new Date(options.dateFrom),
-              }),
-              ...(options?.dateTo && {
-                lte: options.dateTo instanceof Date ? options.dateTo : new Date(options.dateTo),
-              }),
-            },
-          }
-        : {}),
-    };
-
-    // Build order by clause using query utils
-    const orderBy = buildOrderBy(
-      options?.sortBy || 'appointmentDateTime',
-      options?.sortOrder || 'desc'
-    );
-
-    // Create cache key from optimized query parameters
-    const whereHash = JSON.stringify({ where: optimizedWhere, take, skip, orderBy });
+  async findAppointmentsSafe(where: AppointmentWhereInput): Promise<AppointmentWithRelations[]> {
+    const whereHash = JSON.stringify(where);
     const cacheKey = `appointment:findMany:${Buffer.from(whereHash).toString('base64').substring(0, 50)}`;
-
     return await this.executeCachedRead(
       cacheKey,
       async () => {
-        return await this.executeHealthcareRead<AppointmentWithRelations[]>(async client => {
-          const appointmentDelegate = (
-            client as unknown as {
-              appointment: { findMany: (args: unknown) => Promise<AppointmentWithRelations[]> };
-            }
-          )['appointment'];
-
-          // Build optimized query using query utils
-          const queryArgs = {
-            where: optimizedWhere,
-            take, // CRITICAL: Limit result size
-            skip, // CRITICAL: Support pagination
-            orderBy: orderBy || { appointmentDateTime: 'desc' }, // Use optimized order by
-          };
-
-          // Optimize query before execution
-          const queryString = JSON.stringify(queryArgs);
-          await this.queryOptimizer.optimizeQuery(queryString, {
-            queryType: 'HEALTHCARE_READ',
-            tableName: 'appointments',
-            executionTime: 0, // Will be measured during execution
-          });
-
-          const result = await appointmentDelegate.findMany(queryArgs);
+        return await this.executeHealthcareRead<AppointmentWithRelations[]>(async _client => {
+          const prismaService = this.getInternalPrismaClient();
+          const result = await prismaService.findAppointmentsSafe(where);
           return result;
         });
       },
@@ -1466,19 +1194,27 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   async findPermissionByResourceActionSafe(
     resource: string,
-    action: string
+    action: string,
+    domain?: string
   ): Promise<PermissionEntity | null> {
     return await this.executeHealthcareRead<PermissionEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findPermissionByResourceActionSafe(resource, action);
+      const result = await prismaService.findPermissionByResourceActionSafe(
+        resource,
+        action,
+        domain
+      );
       return result;
     });
   }
 
-  async findPermissionsByResourceSafe(resource: string): Promise<PermissionEntity[]> {
+  async findPermissionsByResourceSafe(
+    resource: string,
+    domain?: string
+  ): Promise<PermissionEntity[]> {
     return await this.executeHealthcareRead<PermissionEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findPermissionsByResourceSafe(resource);
+      const result = await prismaService.findPermissionsByResourceSafe(resource, domain);
       return result;
     });
   }
@@ -1532,10 +1268,14 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     });
   }
 
-  async findRoleByNameSafe(name: string, clinicId?: string): Promise<RbacRoleEntity | null> {
+  async findRoleByNameSafe(
+    name: string,
+    domain?: string,
+    clinicId?: string
+  ): Promise<RbacRoleEntity | null> {
     return await this.executeHealthcareRead<RbacRoleEntity | null>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findRoleByNameSafe(name, clinicId);
+      const result = await prismaService.findRoleByNameSafe(name, domain, clinicId);
       return result;
     });
   }
@@ -1544,6 +1284,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     name: string;
     displayName: string;
     description?: string | null;
+    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;
@@ -1566,10 +1307,10 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     );
   }
 
-  async findRolesByClinicSafe(clinicId?: string): Promise<RbacRoleEntity[]> {
+  async findRolesByDomainSafe(domain?: string, clinicId?: string): Promise<RbacRoleEntity[]> {
     return await this.executeHealthcareRead<RbacRoleEntity[]>(async _client => {
       const prismaService = this.getInternalPrismaClient();
-      const result = await prismaService.findRolesByClinicSafe(clinicId);
+      const result = await prismaService.findRolesByDomainSafe(domain, clinicId);
       return result;
     });
   }
@@ -1675,6 +1416,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     name: string;
     displayName: string;
     description?: string | null;
+    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;
@@ -1923,8 +1665,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Execute a raw query with metrics and error handling
-   * This is the unified entry point for all raw SQL queries
-   * All queries go through PrismaService directly (unified service pattern)
    */
   async executeRawQuery<T = Record<string, never>>(
     query: string,
@@ -1933,35 +1673,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      // Execute query directly using PrismaService (unified service)
-      // This ensures all queries go through the same optimization layers
-      const prismaClient = this.prismaService.getClient();
-      const typedParams: Array<string | number | boolean | null> = params.map(param => {
-        if (
-          typeof param === 'string' ||
-          typeof param === 'number' ||
-          typeof param === 'boolean' ||
-          param === null
-        ) {
-          return param;
-        }
-        // For objects, use JSON.stringify to avoid '[object Object]' stringification
-        if (typeof param === 'object' && param !== null) {
-          try {
-            return JSON.stringify(param);
-          } catch {
-            return '[object Object]';
-          }
-        }
-        // For other types, convert to string
-        return String(param);
+      const result: T = await this.connectionPoolManager.executeQuery<T>(query, params, {
+        ...(this.config.queryTimeout !== undefined && {
+          timeout: this.config.queryTimeout,
+        }),
       });
-
-      const result = await (
-        prismaClient as unknown as {
-          $queryRawUnsafe: <T>(query: string, ...params: unknown[]) => Promise<T>;
-        }
-      ).$queryRawUnsafe<T>(query, ...typedParams);
 
       const executionTime = Date.now() - startTime;
       this.metricsService.recordQueryExecution('RAW_QUERY', executionTime, true);
@@ -1990,12 +1706,11 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      // Use PrismaService's transaction method directly
-      const transactionMethod = this.prismaService.$transaction as unknown as <T>(
-        fn: (tx: PrismaTransactionClient) => Promise<T>,
-        options?: { maxWait?: number; timeout?: number }
-      ) => Promise<T>;
-      const result = await transactionMethod(
+      // Get the raw PrismaClient to access $transaction method
+      const rawClient = this.prismaService.getRawPrismaClient();
+      
+      // Use PrismaClient's $transaction method directly
+      const result = await rawClient.$transaction(
         async (tx: PrismaTransactionClient) => {
           return operation(tx);
         },
@@ -2030,16 +1745,33 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     operation: (client: PrismaTransactionClient) => Promise<T>
   ): Promise<T> {
     const startTime = Date.now();
-    const queryTimeout = this.config.queryTimeout || 30000; // Default 30 seconds if not configured
 
     try {
-      // Use ReadReplicaRouterService to get the appropriate client (replica for reads, primary for writes)
-      // This ensures optimal read performance by routing to read replicas when available
-      const readClient: PrismaTransactionClient | null =
-        this.readReplicaRouter.getReadClient() as PrismaTransactionClient | null;
+      // Execute the operation with the Prisma client through internal accessor
+      // Note: Read replica routing is handled at the Prisma client level if configured
+      // Get PrismaService which has all delegates initialized as readonly properties
+      const prismaService = this.getInternalPrismaClient();
 
-      // Ensure prismaClient is initialized
-      if (!readClient) {
+      // Ensure prismaClient is initialized (this also ensures delegates are initialized)
+      // PrismaService initializes delegates in constructor, but we need to ensure
+      // the underlying prismaClient exists and is properly initialized
+      let rawClient: PrismaClient;
+      try {
+        const client = prismaService.getRawPrismaClient();
+        // Type assertion needed because generated PrismaClient has different generic parameters
+        rawClient = client as unknown as PrismaClient;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          `PrismaClient initialization failed: ${errorMessage}. Please ensure "prisma generate" has been run and the database is accessible.`,
+          undefined,
+          { originalError: errorMessage },
+          'HealthcareDatabaseClient.executeHealthcareRead'
+        );
+      }
+
+      if (!rawClient) {
         throw new HealthcareError(
           ErrorCode.DATABASE_CONNECTION_FAILED,
           'PrismaClient is not initialized. Please ensure "prisma generate" has been run.',
@@ -2049,109 +1781,40 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         );
       }
 
-      // Add timeout wrapper to prevent queries from running indefinitely
-      // Promise.race will reject with timeout error if operation takes longer than queryTimeout
-      let timeoutId: NodeJS.Timeout | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            new HealthcareError(
-              ErrorCode.DATABASE_QUERY_TIMEOUT as ErrorCode,
-              `Query timeout after ${queryTimeout}ms - query exceeded maximum execution time`,
-              undefined,
-              { queryTimeout, executionTime: Date.now() - startTime },
-              'HealthcareDatabaseClient.executeHealthcareRead'
-            )
-          );
-        }, queryTimeout);
-      });
-
-      let data: T;
-      try {
-        data = await Promise.race([
-          operation(readClient as unknown as PrismaTransactionClient),
-          timeoutPromise,
-        ]);
-        // Clear timeout if operation completes before timeout
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      } catch (error) {
-        // Clear timeout on error
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        throw error;
-      }
+      // PrismaService has delegates (user, clinic, appointment, etc.) as readonly properties
+      // However, operations expect PrismaTransactionClient which has delegates directly on the client
+      // Use the raw PrismaClient which has all delegates accessible
+      // The rawClient has delegates like client.user, client.clinic, etc. directly accessible
+      const data = await operation(rawClient as unknown as PrismaTransactionClient);
 
       const executionTime = Date.now() - startTime;
 
       // Record metrics for performance monitoring
       this.metricsService.recordQueryExecution('HEALTHCARE_READ', executionTime, true);
 
-      // Record connection pool metrics (pass metrics to avoid circular dependency)
-      this.metricsService.recordConnectionPoolMetrics(this.connectionPoolManager.getMetrics());
-
       // Optimize query and get recommendations if query is slow
-      // CRITICAL for 10M users: Rate limit slow query warnings to prevent log spam
       if (executionTime > 1000) {
-        this.slowQueryCount++;
-        const now = Date.now();
-        // Initialize lastSlowQueryWarning if it's 0 (first time)
-        if (this.lastSlowQueryWarning === 0) {
-          this.lastSlowQueryWarning = now;
-        }
-        const timeSinceLastWarning = now - this.lastSlowQueryWarning;
-
-        // Only log slow query warning once per minute to prevent infinite logs
-        if (timeSinceLastWarning >= this.SLOW_QUERY_WARNING_INTERVAL) {
-          // Optimize query and get recommendations (silently, no logging)
-          void this.queryOptimizer
-            .optimizeQuery('read_operation', {
-              executionTime,
-              queryType: 'HEALTHCARE_READ',
-              slow: true,
-            })
-            .catch(() => {
-              // Query optimization failed - non-critical, don't log
-            });
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.WARN,
-            `Slow read query detected: ${executionTime}ms - consider optimization (${this.slowQueryCount} slow queries in last ${Math.round(timeSinceLastWarning / 1000)}s)`,
-            'HealthcareDatabaseClient',
-            { executionTime, slowQueryCount: this.slowQueryCount, timeSinceLastWarning }
-          );
-          this.lastSlowQueryWarning = now;
-          this.slowQueryCount = 0; // Reset counter after logging
-        }
+        void this.queryOptimizer
+          .optimizeQuery('read_operation', {
+            executionTime,
+            queryType: 'HEALTHCARE_READ',
+            slow: true,
+          })
+          .catch(() => {
+            // Query optimization logging failed - non-critical
+          });
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Slow read query detected: ${executionTime}ms - consider optimization`,
+          'HealthcareDatabaseClient',
+          { executionTime }
+        );
       }
 
       // Log for HIPAA compliance if PHI data is involved
-      // CRITICAL for 10M users: HIPAA logging is rate-limited to prevent log spam
-      // Only log HIPAA access for non-routine operations (slow queries, errors, etc.)
-      if (this.config.enablePHIProtection && executionTime > 1000) {
-        // Rate limit HIPAA logs to prevent infinite log spam
-        this.hipaaLogCount++;
-        const now = Date.now();
-        // Initialize lastHipaaLogWarning if it's 0 (first time)
-        if (this.lastHipaaLogWarning === 0) {
-          this.lastHipaaLogWarning = now;
-        }
-        const timeSinceLastHipaaLog = now - this.lastHipaaLogWarning;
-
-        // Only log HIPAA access once per minute to reduce log volume by 99%+
-        if (timeSinceLastHipaaLog >= this.HIPAA_LOG_INTERVAL) {
-          this.logDataAccess(
-            'READ',
-            'HEALTHCARE_DATA',
-            executionTime,
-            undefined,
-            this.hipaaLogCount
-          );
-          this.lastHipaaLogWarning = now;
-          this.hipaaLogCount = 0; // Reset counter after logging
-        }
+      if (this.config.enablePHIProtection) {
+        this.logDataAccess('READ', 'HEALTHCARE_DATA', executionTime);
       }
 
       return data;
@@ -2164,43 +1827,19 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       const errorStack = dbError.stack || 'No stack trace available';
 
       // Enhanced error logging with full details
-      // CRITICAL: Don't log timeout errors to database (they're too noisy and cause loops)
-      // Only log to console/Redis to avoid recursive database queries
-      const isTimeoutError =
-        dbError.name === 'HealthcareError' &&
-        (errorMessage.includes('timeout') ||
-          errorMessage.includes('TIMEOUT') ||
-          errorMessage.includes('Query timeout'));
-
-      if (!isTimeoutError) {
-        // Only log non-timeout errors to database to prevent loops
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.ERROR,
-          `Healthcare read operation failed: ${errorMessage}`,
-          'HealthcareDatabaseClient.executeHealthcareRead',
-          {
-            error: errorMessage,
-            errorStack,
-            errorName: dbError.name,
-            executionTime,
-            errorType: typeof error,
-          }
-        );
-      } else {
-        // For timeout errors, only log to console (no database logging to prevent loops)
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.WARN,
-          `Query timeout after ${executionTime}ms - skipping database audit log to prevent loops`,
-          'HealthcareDatabaseClient.executeHealthcareRead',
-          {
-            error: errorMessage,
-            executionTime,
-            skippedDatabaseLog: true,
-          }
-        );
-      }
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Healthcare read operation failed: ${errorMessage}`,
+        'HealthcareDatabaseClient.executeHealthcareRead',
+        {
+          error: errorMessage,
+          errorStack,
+          errorName: dbError.name,
+          executionTime,
+          errorType: typeof error,
+        }
+      );
 
       this.handleDatabaseError(dbError, 'executeHealthcareRead', {
         executionTime,
@@ -2219,8 +1858,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Execute healthcare-specific write operations with audit trails
-   * All writes go through primary database via PrismaService transaction
-   * PrismaService transaction automatically uses primary database connection
    */
   async executeHealthcareWrite<T>(
     operation: (client: PrismaTransactionClient) => Promise<T>,
@@ -2230,10 +1867,8 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
     try {
       // Execute within transaction for data consistency
-      // PrismaService.$transaction automatically uses primary database (writes always go to primary)
-      // The transaction client provided to the operation is the primary database client
+      // Note: Connection pooling is handled at the Prisma client level
       const data = await this.executeInTransaction(async client => {
-        // Execute the operation with the transaction client (always primary for writes)
         const operationResult = await operation(client);
 
         // Create audit trail entry
@@ -2253,43 +1888,25 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         auditInfo.userId
       );
 
-      // Record connection pool metrics (pass metrics to avoid circular dependency)
-      this.metricsService.recordConnectionPoolMetrics(this.connectionPoolManager.getMetrics());
-
       // Optimize query and get recommendations if query is slow
-      // CRITICAL for 10M users: Rate limit slow query warnings to prevent log spam
       if (executionTime > 1000) {
-        this.slowWriteQueryCount++;
-        const now = Date.now();
-        const timeSinceLastWarning = now - this.lastSlowWriteWarning;
-
-        // Only log slow write query warning once per minute to prevent infinite logs
-        if (timeSinceLastWarning >= this.SLOW_QUERY_WARNING_INTERVAL) {
-          const queryIdentifier = this.extractQueryIdentifier(operation);
-          void this.queryOptimizer
-            .optimizeQuery(queryIdentifier || 'write_operation', {
-              executionTime,
-              queryType: 'HEALTHCARE_WRITE',
-              slow: true,
-            })
-            .catch(() => {
-              // Query optimization logging failed - non-critical
-            });
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.WARN,
-            `Slow write query detected: ${executionTime}ms - consider optimization (${this.slowWriteQueryCount} slow queries in last ${Math.round(timeSinceLastWarning / 1000)}s)`,
-            'HealthcareDatabaseClient',
-            {
-              executionTime,
-              queryIdentifier,
-              slowQueryCount: this.slowWriteQueryCount,
-              timeSinceLastWarning,
-            }
-          );
-          this.lastSlowWriteWarning = now;
-          this.slowWriteQueryCount = 0; // Reset counter after logging
-        }
+        const queryIdentifier = this.extractQueryIdentifier(operation);
+        void this.queryOptimizer
+          .optimizeQuery(queryIdentifier || 'write_operation', {
+            executionTime,
+            queryType: 'HEALTHCARE_WRITE',
+            slow: true,
+          })
+          .catch(() => {
+            // Query optimization logging failed - non-critical
+          });
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Slow write query detected: ${executionTime}ms - consider optimization`,
+          'HealthcareDatabaseClient',
+          { executionTime, queryIdentifier }
+        );
       }
 
       // Log for HIPAA compliance
@@ -2454,13 +2071,23 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get connection health status
-   * Uses DatabaseHealthMonitorService for comprehensive health monitoring
+   * Optimized for fast health checks - bypasses HIPAA logging and slow query detection
    */
   async getHealthStatus(): Promise<DatabaseHealthStatus> {
     try {
-      // Use DatabaseHealthMonitorService for comprehensive health status
-      const healthStatus = await this.healthMonitor.getHealthStatus();
       const connectionMetrics = this.connectionPoolManager.getMetrics();
+      const start = Date.now();
+
+      // Use dedicated health check client to avoid interfering with regular operations
+      // This bypasses executeHealthcareRead to avoid HIPAA logging and slow query detection overhead
+      const healthCheckClient = PrismaService.getHealthCheckClient();
+      const typedClient = healthCheckClient as unknown as {
+        $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+      };
+
+      // Simple SELECT 1 query - fastest possible health check
+      await typedClient.$queryRaw`SELECT 1`;
+      const responseTime = Date.now() - start;
 
       // Trigger auto-scaling check as part of health check (non-blocking with timeout)
       // Use a very short timeout to prevent health checks from being delayed
@@ -2472,12 +2099,12 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
       });
 
       return {
-        isHealthy: healthStatus.healthy && connectionMetrics.isHealthy,
+        isHealthy: connectionMetrics.isHealthy && responseTime < 5000,
         connectionCount: connectionMetrics.totalConnections,
         activeQueries: connectionMetrics.activeConnections,
-        avgResponseTime: healthStatus.primary.latency || 0,
+        avgResponseTime: responseTime,
         lastHealthCheck: new Date(),
-        errors: healthStatus.issues,
+        errors: connectionMetrics.isHealthy ? [] : ['Connection pool unhealthy'],
       };
     } catch (error) {
       return {
@@ -2499,16 +2126,16 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const currentMetrics = this.metricsService.getCurrentMetrics();
 
     return Promise.resolve({
-      totalQueries: currentMetrics?.performance?.totalQueries || 0,
-      successfulQueries: currentMetrics?.performance?.successfulQueries || 0,
-      failedQueries: currentMetrics?.performance?.failedQueries || 0,
-      averageQueryTime: currentMetrics?.performance?.averageQueryTime || 0,
-      slowQueries: currentMetrics?.performance?.slowQueries || 0,
+      totalQueries: currentMetrics.performance.totalQueries,
+      successfulQueries: currentMetrics.performance.successfulQueries,
+      failedQueries: currentMetrics.performance.failedQueries,
+      averageQueryTime: currentMetrics.performance.averageQueryTime,
+      slowQueries: currentMetrics.performance.slowQueries,
       connectionPool: {
-        total: connectionMetrics?.totalConnections || 0,
-        active: connectionMetrics?.activeConnections || 0,
-        idle: connectionMetrics?.idleConnections || 0,
-        waiting: connectionMetrics?.waitingConnections || 0,
+        total: connectionMetrics.totalConnections,
+        active: connectionMetrics.activeConnections,
+        idle: connectionMetrics.idleConnections,
+        waiting: connectionMetrics.waitingConnections,
       },
     });
   }
@@ -3036,7 +2663,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Execute query with read replica routing for optimal read performance
-   * Routes read-only queries to read replicas when available using ReadReplicaRouterService
+   * Routes read-only queries to read replicas when available
    */
   async executeWithReadReplica<T>(
     operation: (client: PrismaTransactionClient) => Promise<T>,
@@ -3045,8 +2672,17 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     const startTime = Date.now();
 
     try {
-      // Use ReadReplicaRouterService to get read client (automatically routes to replica if available)
-      // executeHealthcareRead already uses ReadReplicaRouterService, so this is a convenience method
+      // Route to read replica through ConnectionPoolManager
+      await this.connectionPoolManager.executeQueryWithReadReplica<T>(
+        '', // Query executed through Prisma
+        [],
+        {
+          ...(clinicId && { clinicId }),
+          priority: 'normal',
+        }
+      );
+
+      // Execute the actual operation through healthcare read
       const data = await this.executeHealthcareRead(operation);
 
       const executionTime = Date.now() - startTime;
@@ -3092,8 +2728,7 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
         [],
         { priority: 'high' as const }
       );
-      // Execute the actual operation
-      return await operation(client);
+      return operation(client);
     });
   }
 
@@ -3126,7 +2761,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get connection pool metrics for monitoring
-   * Uses ConnectionPoolManager for metrics (consolidated from ConnectionPoolService)
    */
   getConnectionPoolMetrics() {
     return this.connectionPoolManager.getMetrics();
@@ -3134,16 +2768,13 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get detailed connection pool metrics with query performance
-   * Uses ConnectionPoolManager for comprehensive metrics (primary pool manager)
    */
   getDetailedConnectionMetrics() {
-    // Use ConnectionPoolManager for detailed metrics (primary pool manager with full feature set)
     return this.connectionPoolManager.getDetailedMetrics();
   }
 
   /**
    * Reset circuit breaker (useful for recovery after issues)
-   * Uses ConnectionPoolManager for circuit breaker management (consolidated from ConnectionPoolService)
    */
   resetCircuitBreaker(): void {
     this.connectionPoolManager.resetCircuitBreaker();
@@ -3157,7 +2788,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
 
   /**
    * Get current queue length (queries waiting for execution)
-   * Uses ConnectionPoolManager for queue metrics (consolidated from ConnectionPoolService)
    */
   getQueueLength(): number {
     return this.connectionPoolManager.getQueueLength();
@@ -3276,18 +2906,13 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
     operation: 'READ' | 'WRITE',
     resourceType: string,
     executionTime: number,
-    auditInfo?: AuditInfo,
-    accessCount?: number
+    auditInfo?: AuditInfo
   ): void {
     if (this.config.enablePHIProtection) {
-      const message =
-        accessCount && accessCount > 1
-          ? `HIPAA Data Access: ${operation} ${resourceType} (${accessCount} accesses in last minute)`
-          : `HIPAA Data Access: ${operation} ${resourceType}`;
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.INFO,
-        message,
+        `HIPAA Data Access: ${operation} ${resourceType}`,
         'HealthcareDatabaseClient',
         {
           operation,
@@ -3297,7 +2922,6 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
           userId: auditInfo?.userId,
           timestamp: new Date(),
           encrypted: true,
-          ...(accessCount && accessCount > 1 && { accessCount }),
         }
       );
     }
@@ -3341,20 +2965,37 @@ export class HealthcareDatabaseClient implements IHealthcareDatabaseClient {
   private async getStaffCount(clinicId: string): Promise<number> {
     try {
       const result = await this.executeWithClinicContext(clinicId, async client => {
-        const doctorClinicDelegate = client['doctorClinic'] as unknown as {
-          count: (args: { where: Record<string, unknown> }) => Promise<number>;
+        // Use proper Prisma delegate types with type assertions
+        type DoctorClinicDelegate = {
+          count: <T>(args: T) => Promise<number>;
         };
-        const receptionistsDelegate = client['receptionistsAtClinic'] as unknown as {
-          count: (args: { where: Record<string, unknown> }) => Promise<number>;
+        type ReceptionistsAtClinicDelegate = {
+          count: <T>(args: T) => Promise<number>;
         };
-        const clinicAdminDelegate = client['clinicAdmin'] as unknown as {
-          count: (args: { where: Record<string, unknown> }) => Promise<number>;
+        type ClinicAdminDelegate = {
+          count: <T>(args: T) => Promise<number>;
         };
 
+        const doctorClinicDelegate = (
+          client as unknown as {
+            doctorClinic: DoctorClinicDelegate;
+          }
+        ).doctorClinic;
+        const receptionistsDelegate = (
+          client as unknown as {
+            receptionistsAtClinic: ReceptionistsAtClinicDelegate;
+          }
+        ).receptionistsAtClinic;
+        const clinicAdminDelegate = (
+          client as unknown as {
+            clinicAdmin: ClinicAdminDelegate;
+          }
+        ).clinicAdmin;
+
         const results = await Promise.all([
-          doctorClinicDelegate.count({ where: { clinicId } }),
-          receptionistsDelegate.count({ where: { clinicId } }),
-          clinicAdminDelegate.count({ where: { clinicId } }),
+          doctorClinicDelegate.count({ where: { clinicId } } as Record<string, unknown>),
+          receptionistsDelegate.count({ where: { clinicId } } as Record<string, unknown>),
+          clinicAdminDelegate.count({ where: { clinicId } } as Record<string, unknown>),
         ]);
 
         const doctors = results[0];

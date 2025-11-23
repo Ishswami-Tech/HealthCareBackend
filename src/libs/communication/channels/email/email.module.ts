@@ -33,9 +33,14 @@ import { EMAIL_QUEUE } from '@infrastructure/queue';
     LoggingModule,
     DatabaseModule, // Optional: For email delivery logging/audit trails
     // QueueModule is already imported globally via AppModule.forRoot()
-    BullModule.registerQueue({
-      name: EMAIL_QUEUE,
-    }), // Register queue for @InjectQueue decorator
+    // Only register queue if cache is enabled (Bull requires Redis/Dragonfly)
+    ...(process.env['CACHE_ENABLED'] === 'true'
+      ? [
+          BullModule.registerQueue({
+            name: EMAIL_QUEUE,
+          }), // Register queue for @InjectQueue decorator
+        ]
+      : []),
   ],
   controllers: [EmailController],
   providers: [EmailService, EmailTemplatesService, EmailQueueService, SESEmailService],

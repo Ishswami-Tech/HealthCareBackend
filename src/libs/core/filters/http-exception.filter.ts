@@ -2,6 +2,7 @@ import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from
 import { FastifyReply } from 'fastify';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors';
 import type {
   RequestHeaders,
   ErrorLog,
@@ -104,13 +105,25 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const request = ctx.getRequest<CustomFastifyRequest>();
 
     // Get status code and message
-    const status =
-      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
-
-    const exceptionResponse =
-      exception instanceof HttpException
-        ? exception.getResponse()
-        : { message: 'Internal server error' };
+    // Check for HealthcareError first (it extends HttpException but has custom properties)
+    let status: number;
+    let exceptionResponse: unknown;
+    
+    if (exception instanceof HealthcareError) {
+      status = exception.getStatus();
+      exceptionResponse = {
+        code: exception.code,
+        message: exception.message,
+        timestamp: exception.timestamp,
+        ...(exception.metadata && { metadata: exception.metadata }),
+      };
+    } else if (exception instanceof HttpException) {
+      status = exception.getStatus();
+      exceptionResponse = exception.getResponse();
+    } else {
+      status = HttpStatus.INTERNAL_SERVER_ERROR;
+      exceptionResponse = { message: 'Internal server error' };
+    }
 
     // Extract error message safely
     const errorMessage =

@@ -1,4 +1,4 @@
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, HttpException } from '@nestjs/common';
 import { ErrorCode } from './error-codes.enum';
 import { ErrorMessages } from './error-messages.constant';
 import type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure.types';
@@ -7,11 +7,11 @@ import type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure
 export type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure.types';
 
 /**
- * Custom Healthcare Error class that extends the standard Error
+ * Custom Healthcare Error class that extends HttpException for proper NestJS error handling
  * Provides structured error handling with codes, messages, and metadata
  *
  * @class HealthcareError
- * @extends Error
+ * @extends HttpException
  * @description Comprehensive error class for healthcare applications
  * @example
  * ```typescript
@@ -24,13 +24,20 @@ export type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure
  * );
  * ```
  */
-export class HealthcareError extends Error {
+export class HealthcareError extends HttpException {
   public readonly code: ErrorCode;
-  public readonly statusCode: HttpStatus;
   public readonly timestamp: string;
   public readonly metadata?: ErrorMetadata;
   public readonly isOperational: boolean;
   public readonly context?: string;
+  
+  /**
+   * Get HTTP status code (for backward compatibility)
+   * Uses getStatus() from HttpException
+   */
+  get statusCode(): HttpStatus {
+    return this.getStatus();
+  }
 
   /**
    * Creates a new HealthcareError instance
@@ -49,11 +56,18 @@ export class HealthcareError extends Error {
     context?: string
   ) {
     const errorMessage = message || ErrorMessages[code];
-    super(errorMessage);
+    // Pass the error response object to HttpException
+    const response = {
+      code,
+      message: errorMessage,
+      timestamp: new Date().toISOString(),
+      ...(metadata && { metadata }),
+      ...(context && { context }),
+    };
+    super(response, statusCode);
 
     this.name = 'HealthcareError';
     this.code = code;
-    this.statusCode = statusCode;
     this.timestamp = new Date().toISOString();
     this.metadata = metadata || {};
     this.isOperational = true;

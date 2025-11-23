@@ -9,7 +9,7 @@
  * @description CacheService-based store adapter for @fastify/session
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache';
 
 /**
@@ -37,8 +37,11 @@ export interface SessionStore {
 @Injectable()
 export class FastifySessionStoreAdapter implements SessionStore {
   private readonly SESSION_PREFIX = 'fastify:session:';
+  private readonly useCache: boolean;
 
-  constructor(private readonly cacheService: CacheService) {}
+  constructor(@Optional() private readonly cacheService?: CacheService) {
+    this.useCache = cacheService !== undefined && cacheService !== null;
+  }
 
   /**
    * Get session data by session ID
@@ -48,6 +51,12 @@ export class FastifySessionStoreAdapter implements SessionStore {
    * @param callback - Callback function (err, result)
    */
   get(sid: string, callback: (err: unknown, result?: unknown) => void): void {
+    // If cache is disabled, return null (session not found)
+    if (!this.useCache || !this.cacheService) {
+      callback(null, null);
+      return;
+    }
+
     const key = this.getSessionKey(sid);
     this.cacheService
       .get<unknown>(key)
@@ -68,6 +77,12 @@ export class FastifySessionStoreAdapter implements SessionStore {
    * @param callback - Callback function (err)
    */
   set(sid: string, session: unknown, callback: (err?: unknown) => void): void {
+    // If cache is disabled, just call callback (sessions will use in-memory store)
+    if (!this.useCache || !this.cacheService) {
+      callback();
+      return;
+    }
+
     const key = this.getSessionKey(sid);
 
     // Extract TTL from session if it has expiresAt property
@@ -104,6 +119,12 @@ export class FastifySessionStoreAdapter implements SessionStore {
    * @param callback - Callback function (err)
    */
   destroy(sid: string, callback: (err?: unknown) => void): void {
+    // If cache is disabled, just call callback
+    if (!this.useCache || !this.cacheService) {
+      callback();
+      return;
+    }
+
     const key = this.getSessionKey(sid);
     this.cacheService
       .del(key)

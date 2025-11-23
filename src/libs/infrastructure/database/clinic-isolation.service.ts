@@ -1,21 +1,13 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService } from '../prisma/prisma.service';
+import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
+import type { PrismaService } from './prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import type { ClinicContext } from '@core/types/clinic.types';
 import type { ClinicIsolationResult } from '@core/types/database.types';
-
-/**
- * Helper function to safely access PrismaClient models
- * Uses bracket notation to satisfy TypeScript's strict index signature checks
- */
-function getPrismaModel<T>(prismaService: PrismaService, modelName: string): T {
-  const client = prismaService.getClient() as unknown as Record<string, T>;
-  return client[modelName] as T;
-}
 
 // Re-export for backward compatibility
 export type { ClinicContext } from '@core/types/clinic.types';
@@ -44,8 +36,8 @@ export class ClinicIsolationService implements OnModuleInit {
   private readonly MAX_CACHE_SIZE = 10000; // Maximum cache entries
 
   constructor(
-    @Inject(forwardRef(() => PrismaService))
-    private prismaService: PrismaService,
+    @Inject(forwardRef(() => HealthcareDatabaseClient))
+    private databaseService: HealthcareDatabaseClient,
     @Inject(forwardRef(() => ConfigService))
     private configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
@@ -81,13 +73,23 @@ export class ClinicIsolationService implements OnModuleInit {
       this.userClinicCache.clear();
       this.locationClinicCache.clear();
 
-      // Load all active clinics - ClinicIsolationService is an infrastructure component used BY HealthcareDatabaseClient
-      // It uses PrismaService directly to avoid circular dependency
-      const clinicModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(
-        this.prismaService,
-        'clinic'
-      );
-      const rawClinics = await clinicModel.findMany({
+      // Load all active clinics - use internal accessor
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+      ).getInternalPrismaClient();
+      type ClinicDelegate = {
+        findMany: <T>(args: T) => Promise<
+          Array<{
+            id: string;
+            name: string;
+            subdomain?: string | null;
+            locations?: Array<{ id: string }>;
+            _count?: { users?: number; appointments?: number };
+          }>
+        >;
+      };
+      const clinicDelegate = prismaClient.clinic as ClinicDelegate;
+      const rawClinics = await clinicDelegate.findMany({
         where: { isActive: true },
         include: {
           locations: {
@@ -191,12 +193,20 @@ export class ClinicIsolationService implements OnModuleInit {
 
       if (!clinicContext) {
         // If not in cache, try to load from database
-        // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const clinicModel = getPrismaModel<{ findFirst: <T>(args: T) => Promise<unknown> }>(
-          this.prismaService,
-          'clinic'
-        );
-        const rawClinic = await clinicModel.findFirst({
+        // Use internal accessor - ClinicIsolationService is infrastructure component
+        const prismaClient = (
+          this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+        ).getInternalPrismaClient();
+        type ClinicDelegate = {
+          findFirst: <T>(args: T) => Promise<{
+            id: string;
+            name: string;
+            subdomain?: string | null;
+            locations?: Array<{ id: string }>;
+          } | null>;
+        };
+        const clinicDelegate = prismaClient.clinic as ClinicDelegate;
+        const rawClinic = await clinicDelegate.findFirst({
           where: {
             id: clinicId,
             isActive: true,
@@ -309,12 +319,19 @@ export class ClinicIsolationService implements OnModuleInit {
       const userClinics = this.userClinicCache.get(userId);
       if (!userClinics || !userClinics.includes(clinicId)) {
         // Load from database if not in cache
-        // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const userModel = getPrismaModel<{ findFirst: <T>(args: T) => Promise<unknown> }>(
-          this.prismaService,
-          'user'
-        );
-        const rawUserClinicAccess = await userModel.findFirst({
+        // Use internal accessor - ClinicIsolationService is infrastructure component
+        const prismaClient = (
+          this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+        ).getInternalPrismaClient();
+        type UserDelegate = {
+          findFirst: <T>(args: T) => Promise<{
+            id: string;
+            primaryClinicId?: string | null;
+            clinics?: Array<{ id: string }>;
+          } | null>;
+        };
+        const userDelegate = prismaClient.user as UserDelegate;
+        const rawUserClinicAccess = await userDelegate.findFirst({
           where: {
             id: userId,
             OR: [
@@ -407,12 +424,19 @@ export class ClinicIsolationService implements OnModuleInit {
 
       if (!userClinics) {
         // Load from database
-        // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const userModel = getPrismaModel<{ findUnique: <T>(args: T) => Promise<unknown> }>(
-          this.prismaService,
-          'user'
-        );
-        const rawUser = await userModel.findUnique({
+        // Use internal accessor - ClinicIsolationService is infrastructure component
+        const prismaClient = (
+          this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+        ).getInternalPrismaClient();
+        type UserDelegate = {
+          findUnique: <T>(args: T) => Promise<{
+            id: string;
+            primaryClinicId?: string | null;
+            clinics?: Array<{ id: string }>;
+          } | null>;
+        };
+        const userDelegate = prismaClient.user as UserDelegate;
+        const rawUser = await userDelegate.findUnique({
           where: { id: userId },
           include: {
             primaryClinic: {
@@ -488,11 +512,23 @@ export class ClinicIsolationService implements OnModuleInit {
 
       if (!clinicId) {
         // Load from database
-        // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const clinicLocationModel = getPrismaModel<{
-          findUnique: <T>(args: T) => Promise<{ id: string; clinic: { id: string } | null } | null>;
-        }>(this.prismaService, 'clinicLocation');
-        const rawResult = await clinicLocationModel.findUnique({
+        // Use internal accessor - ClinicIsolationService is infrastructure component
+        const prismaClient = (
+          this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+        ).getInternalPrismaClient();
+        type ClinicLocationDelegate = {
+          findUnique: <T>(args: T) => Promise<{
+            id: string;
+            clinic: { id: string } | null;
+          } | null>;
+        };
+        type PrismaClientWithLocation = {
+          clinicLocation: ClinicLocationDelegate;
+        };
+        const clinicLocationDelegate = (prismaClient as unknown as PrismaClientWithLocation)[
+          'clinicLocation'
+        ];
+        const rawResult = await clinicLocationDelegate.findUnique({
           where: { id: locationId },
           include: {
             clinic: {
@@ -589,12 +625,21 @@ export class ClinicIsolationService implements OnModuleInit {
   }
 
   private async loadUserClinicMappings(): Promise<void> {
-    // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-    const userModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(
-      this.prismaService,
-      'user'
-    );
-    const rawUsers = await userModel.findMany({
+    // Use internal accessor - ClinicIsolationService is infrastructure component
+    const prismaClient = (
+      this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+    ).getInternalPrismaClient();
+    type UserDelegate = {
+      findMany: <T>(args: T) => Promise<
+        Array<{
+          id: string;
+          primaryClinicId?: string | null;
+          clinics?: Array<{ id: string }>;
+        }>
+      >;
+    };
+    const userDelegate = prismaClient.user as UserDelegate;
+    const rawUsers = await userDelegate.findMany({
       select: {
         id: true,
         primaryClinicId: true,
@@ -778,12 +823,15 @@ export class ClinicIsolationService implements OnModuleInit {
     // Fetch uncached users from database
     if (uncachedUserIds.length > 0) {
       try {
-        // ClinicIsolationService is an infrastructure component - uses PrismaService directly
-        const userModel = getPrismaModel<{ findMany: <T>(args: T) => Promise<Array<unknown>> }>(
-          this.prismaService,
-          'user'
-        );
-        const rawUsers = await userModel.findMany({
+        // Use internal accessor - ClinicIsolationService is infrastructure component
+        const prismaClient = (
+          this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+        ).getInternalPrismaClient();
+        type UserDelegate = {
+          findMany: <T>(args: T) => Promise<Array<{ id: string }>>;
+        };
+        const userDelegate = prismaClient.user as UserDelegate;
+        const rawUsers = await userDelegate.findMany({
           where: {
             id: { in: uncachedUserIds },
             clinicAdmins: {

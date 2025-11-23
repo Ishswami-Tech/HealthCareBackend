@@ -1,17 +1,17 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService } from '../prisma/prisma.service';
+import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
+import type { PrismaService } from './prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import type { ConnectionMetrics } from '@core/types/database.types';
-// Import services normally - dependencies will be set via factory provider
+import { ConnectionPoolManager } from './connection-pool.manager';
 import { HealthcareQueryOptimizerService } from './query-optimizer.service';
 import { ClinicIsolationService } from './clinic-isolation.service';
-import { DatabaseAlertService } from './database-alert.service';
 import type {
   DatabaseMetrics,
   ConnectionPoolMetricsInternal,
   ClinicMetrics,
+  Alert,
   MetricsSnapshot,
   HealthStatus,
   PerformanceTrends,
@@ -95,47 +95,16 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     health: 'healthy',
   };
 
-  private clinicIsolationService?: ClinicIsolationService;
-  private alertService?: DatabaseAlertService;
-  private queryOptimizer?: HealthcareQueryOptimizerService;
-
   constructor(
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
-    @Inject(forwardRef(() => PrismaService))
-    private readonly prismaService: PrismaService,
-    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
-  ) {
-    // No internal service dependencies in constructor
-    // Dependencies will be set via setDependencies() method called by factory provider
-  }
-
-  /**
-   * Set dependencies for DatabaseMetricsService
-   * Called by factory provider to wire dependencies explicitly
-   * This breaks circular dependency by deferring dependency resolution until after all providers are registered
-   * @internal
-   */
-  setDependencies(
-    clinicIsolation: ClinicIsolationService,
-    alertService: DatabaseAlertService,
-    queryOptimizer: HealthcareQueryOptimizerService
-  ): void {
-    // Validate dependencies (security check)
-    if (!clinicIsolation || !alertService || !queryOptimizer) {
-      throw new Error('All dependencies must be provided');
-    }
-    this.clinicIsolationService = clinicIsolation;
-    this.alertService = alertService;
-    this.queryOptimizer = queryOptimizer;
-
-    // Log dependency injection for audit trail
-    void this.loggingService.log(
-      LogType.DATABASE,
-      LogLevel.DEBUG,
-      'DatabaseMetricsService dependencies initialized',
-      this.serviceName
-    );
-  }
+    @Inject(forwardRef(() => HealthcareDatabaseClient))
+    private readonly databaseService: HealthcareDatabaseClient,
+    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => ConnectionPoolManager))
+    private readonly connectionPoolManager: ConnectionPoolManager,
+    private readonly queryOptimizer: HealthcareQueryOptimizerService,
+    private readonly clinicIsolationService: ClinicIsolationService
+  ) {}
 
   onModuleInit() {
     void this.loggingService.log(
@@ -455,7 +424,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
    * @internal
    */
   // Public for HealthcareDatabaseClient access, but marked as internal
-  recordConnectionPoolMetrics(poolMetrics: ConnectionMetrics): void {
+  recordConnectionPoolMetrics(): void {
+    const poolMetrics = this.connectionPoolManager.getMetrics();
     const metrics = this.currentMetrics.connectionPool;
 
     metrics.totalConnections = poolMetrics.totalConnections;
@@ -475,33 +445,28 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   // Public for HealthcareDatabaseClient access, but marked as internal
   async recordHealthcareMetrics(): Promise<void> {
     try {
-      // DatabaseMetricsService is an infrastructure component used BY HealthcareDatabaseClient
-      // It uses PrismaService directly to avoid circular dependency
-      const prismaClient = this.prismaService.getClient();
+      // Use internal accessor - DatabaseMetricsService is infrastructure component
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+      ).getInternalPrismaClient();
 
       // Type-safe Prisma delegates
       type PatientDelegate = { count: (args?: Record<string, never>) => Promise<number> };
       type AppointmentDelegate = { count: (args?: Record<string, never>) => Promise<number> };
       type ClinicDelegate = { count: (args?: Record<string, never>) => Promise<number> };
 
-      const patientDelegate = (prismaClient as unknown as Record<string, PatientDelegate>)[
-        'patient'
-      ];
-      const appointmentDelegate = (prismaClient as unknown as Record<string, AppointmentDelegate>)[
-        'appointment'
-      ];
-      const clinicDelegate = (prismaClient as unknown as Record<string, ClinicDelegate>)['clinic'];
+      const patientDelegate = prismaClient.patient as unknown as PatientDelegate;
+      const appointmentDelegate = prismaClient.appointment as unknown as AppointmentDelegate;
+      const clinicDelegate = prismaClient.clinic as unknown as ClinicDelegate;
 
-      if (!patientDelegate || !appointmentDelegate || !clinicDelegate) {
-        throw new Error('Prisma delegates not found');
-      }
+      // Get patient count
+      const patientCount = await patientDelegate.count({} as Record<string, never>);
 
-      // Get counts in parallel
-      const [patientCount, appointmentCount, clinicCount] = await Promise.all([
-        patientDelegate.count({} as Record<string, never>),
-        appointmentDelegate.count({} as Record<string, never>),
-        clinicDelegate.count({} as Record<string, never>),
-      ]);
+      // Get appointment count
+      const appointmentCount = await appointmentDelegate.count({} as Record<string, never>);
+
+      // Get clinic count
+      const clinicCount = await clinicDelegate.count({} as Record<string, never>);
 
       this.currentMetrics.healthcare.totalPatients = patientCount;
       this.currentMetrics.healthcare.totalAppointments = appointmentCount;
@@ -571,15 +536,15 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async collectMetrics(): Promise<void> {
-    // Note: Connection pool metrics are recorded by HealthcareDatabaseClient
-    // which has access to ConnectionPoolManager. This avoids circular dependency.
+    // Record connection pool metrics
+    this.recordConnectionPoolMetrics();
 
     // Record healthcare metrics
     await this.recordHealthcareMetrics();
 
     // Get query optimizer stats
-    const optimizerStats = this.queryOptimizer?.getOptimizerStats();
-    this.currentMetrics.performance.cacheHitRate = optimizerStats?.cacheHitRate || 0;
+    const optimizerStats = this.queryOptimizer.getOptimizerStats();
+    this.currentMetrics.performance.cacheHitRate = optimizerStats.cacheHitRate || 0;
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
     // Update timestamp
@@ -630,18 +595,18 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   private async updateClinicSpecificMetrics(): Promise<void> {
     try {
-      // Use HealthcareDatabaseClient for optimizations (caching, read replicas, etc.)
+      // Use internal accessor - DatabaseMetricsService is infrastructure component
+      const prismaClient = (
+        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
+      ).getInternalPrismaClient();
+
+      // Type-safe Prisma delegates
       type ClinicWithCount = {
         id: string;
         _count: {
           appointments: number;
         };
       };
-
-      // DatabaseMetricsService is an infrastructure component - uses PrismaService directly
-      const prismaClient = this.prismaService.getClient();
-
-      // Type-safe Prisma delegates
       type ClinicDelegate = {
         findMany: (args: Record<string, unknown>) => Promise<ClinicWithCount[]>;
       };
@@ -649,14 +614,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
         count: (args: Record<string, unknown>) => Promise<number>;
       };
 
-      const clinicDelegate = (prismaClient as unknown as Record<string, ClinicDelegate>)['clinic'];
-      const patientDelegate = (prismaClient as unknown as Record<string, PatientDelegate>)[
-        'patient'
-      ];
-
-      if (!clinicDelegate || !patientDelegate) {
-        throw new Error('Prisma delegates not found');
-      }
+      const clinicDelegate = prismaClient.clinic as unknown as ClinicDelegate;
+      const patientDelegate = prismaClient.patient as unknown as PatientDelegate;
 
       // Get clinic-specific data
       const clinics = await clinicDelegate.findMany({
@@ -725,10 +684,11 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   private checkAlerts(): void {
     const metrics = this.currentMetrics;
+    const alerts: Alert[] = [];
 
     // Performance alerts
     if (metrics.performance.averageQueryTime > this.slowQueryThreshold) {
-      this.alertService?.generateAlert({
+      alerts.push({
         type: 'PERFORMANCE',
         severity: 'warning',
         message: `Average query time (${metrics.performance.averageQueryTime}ms) exceeds threshold`,
@@ -740,7 +700,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (metrics.performance.criticalQueries > 0) {
-      this.alertService?.generateAlert({
+      alerts.push({
         type: 'PERFORMANCE',
         severity: 'critical',
         message: `${metrics.performance.criticalQueries} critical queries detected`,
@@ -753,7 +713,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Connection pool alerts
     if (metrics.connectionPool.connectionPoolUsage > this.maxConnectionPoolUsage) {
-      this.alertService?.generateAlert({
+      alerts.push({
         type: 'CONNECTION_POOL',
         severity: 'warning',
         message: `Connection pool usage (${(metrics.connectionPool.connectionPoolUsage * 100).toFixed(1)}%) is high`,
@@ -766,7 +726,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
     // Healthcare alerts
     if (metrics.healthcare.unauthorizedAccessAttempts > 0) {
-      this.alertService?.generateAlert({
+      alerts.push({
         type: 'SECURITY',
         severity: 'critical',
         message: `${metrics.healthcare.unauthorizedAccessAttempts} unauthorized access attempts detected`,
@@ -777,8 +737,20 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    // Update alerts from alert service
-    this.currentMetrics.alerts = this.alertService?.getRecentAlerts(100) || [];
+    // Update alerts
+    this.currentMetrics.alerts = alerts;
+
+    // Log critical alerts
+    const criticalAlerts = alerts.filter(alert => alert.severity === 'critical');
+    if (criticalAlerts.length > 0) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Critical database alerts: ${criticalAlerts.length} alerts`,
+        this.serviceName,
+        { alerts: criticalAlerts }
+      );
+    }
   }
 
   private calculateTrend(current: number, previous: number): 'improving' | 'stable' | 'degrading' {

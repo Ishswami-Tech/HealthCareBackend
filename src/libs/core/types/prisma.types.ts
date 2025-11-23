@@ -598,7 +598,7 @@ export type PrismaAdapter = {
 /**
  * Prisma Client constructor arguments
  * Strict type definition for PrismaClient constructor
- * Supports both Prisma 6 (datasources.url) and Prisma 7 (adapter) patterns
+ * Prisma 7 requires adapter pattern for library engine type
  */
 export interface PrismaClientConstructorArgs {
   log?: Array<{
@@ -606,14 +606,8 @@ export interface PrismaClientConstructorArgs {
     level: 'query' | 'info' | 'warn' | 'error';
   }>;
   errorFormat?: 'pretty' | 'colorless' | 'minimal';
-  // Prisma 7: adapter pattern
-  adapter?: PrismaAdapter;
-  // Prisma 6: datasources pattern (fallback)
-  datasources?: {
-    db?: {
-      url?: string;
-    };
-  };
+  // Prisma 7: adapter is required for library engine type
+  adapter?: unknown; // PrismaPg adapter type
 }
 
 /**
