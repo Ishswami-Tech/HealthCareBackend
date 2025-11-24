@@ -9,7 +9,7 @@
 
 import { Injectable } from '@nestjs/common';
 import type { QueryOptions } from '@core/types/database.types';
-import type { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * Query operation context

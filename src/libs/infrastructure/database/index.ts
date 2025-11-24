@@ -2,7 +2,6 @@
  * Database Infrastructure - Single Unified Service
  *
  * SINGLE ENTRY POINT: Only DatabaseService is the public interface.
- * HealthcareDatabaseClient is INTERNAL ONLY and NOT exported publicly.
  * All infrastructure components are internal and not exported.
  *
  * IMPORTANT: This is the ONLY module and client you should import and use.
@@ -39,19 +38,17 @@
  * });
  * ```
  *
- * NOTE: HealthcareDatabaseClient is INTERNAL and only used by database infrastructure components.
- * External services should NEVER import HealthcareDatabaseClient directly.
+ * NOTE: All database infrastructure components are INTERNAL.
+ * External services should ONLY use DatabaseService.
  */
 export * from './database.module';
 
 // SINGLE UNIFIED DATABASE SERVICE - This is the ONLY public interface
 // All database operations MUST go through this service with full optimization layers
 // DO NOT import or use any other database components directly
-// HealthcareDatabaseClient is NOT exported - it's internal infrastructure only
 
-// ONLY PUBLIC EXPORT: DatabaseService (alias for HealthcareDatabaseClient)
-// HealthcareDatabaseClient itself is NOT exported publicly - it's internal infrastructure only
-export { HealthcareDatabaseClient as DatabaseService } from './clients/healthcare-database.client';
+// ONLY PUBLIC EXPORT: DatabaseService
+export { DatabaseService } from './database.service';
 
 // Type exports for the unified service (re-export from @core/types)
 export type {

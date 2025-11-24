@@ -7,10 +7,8 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
 
-// Re-export for backward compatibility
+// Re-export types
 export { RepositoryResult };
-
-// Re-export types from centralized locations for backward compatibility
 export type { PaginatedResult, RepositoryContext, QueryOptions } from '@core/types/database.types';
 
 /**

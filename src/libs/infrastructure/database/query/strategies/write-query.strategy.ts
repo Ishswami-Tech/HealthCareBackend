@@ -7,9 +7,9 @@
  * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
 import { BaseQueryStrategy, type QueryOperationContext } from './base-query.strategy';
-import type { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 
@@ -21,7 +21,9 @@ export class WriteQueryStrategy extends BaseQueryStrategy {
   readonly name = 'WriteQueryStrategy';
 
   constructor(
+    @Inject(forwardRef(() => PrismaService))
     prismaService: PrismaService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     super(prismaService);
