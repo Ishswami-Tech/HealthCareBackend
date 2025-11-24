@@ -6,7 +6,6 @@ import { Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
-import { HealthcareDatabaseClient } from '../../clients/healthcare-database.client';
 
 // Re-export for backward compatibility
 export { RepositoryResult };
@@ -188,8 +187,7 @@ export abstract class BaseRepository<
     protected readonly entityName: string,
     protected readonly prismaDelegate: unknown,
     protected readonly loggingService: LoggingService,
-    protected readonly cacheService?: CacheService,
-    protected readonly databaseService?: HealthcareDatabaseClient
+    protected readonly cacheService?: CacheService
   ) {
     this.serviceName = `${entityName}Repository`;
     this.cacheEnabled = cacheService !== undefined;
@@ -238,33 +236,11 @@ export abstract class BaseRepository<
         { data }
       );
 
-      // Use HealthcareDatabaseClient for optimization layers if available
-      let entity: TEntity;
-      if (this.databaseService) {
-        entity = await this.databaseService.executeHealthcareWrite(
-          async _client => {
-            const delegate = this.prismaDelegate as PrismaDelegate;
-            return (await delegate.create({
-              data,
-            })) as TEntity;
-          },
-          {
-            userId: context?.userId || 'system',
-            userRole: (context?.metadata?.['userRole'] as string) || 'system',
-            clinicId: context?.clinicId ?? '',
-            operation: `CREATE_${this.entityName.toUpperCase()}`,
-            resourceType: this.entityName.toUpperCase(),
-            resourceId: 'pending',
-            timestamp: new Date(),
-          }
-        );
-      } else {
-        // Fallback to direct Prisma delegate if databaseService not available
-        const delegate = this.prismaDelegate as PrismaDelegate;
-        entity = (await delegate.create({
-          data,
-        })) as TEntity;
-      }
+      // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+      const delegate = this.prismaDelegate as PrismaDelegate;
+      const entity = (await delegate.create({
+        data,
+      })) as TEntity;
 
       const executionTime = Date.now() - startTime;
 
@@ -437,23 +413,12 @@ export abstract class BaseRepository<
           entity = await this.cacheService.cache<TEntity | null>(
             cacheKey,
             async () => {
-              // Use HealthcareDatabaseClient for optimization layers
-              if (this.databaseService) {
-                return await this.databaseService.executeHealthcareRead(async _client => {
-                  const delegate = this.prismaDelegate as PrismaDelegate;
-                  return (await delegate.findUnique({
-                    where: { id },
-                    ...(this.buildQueryOptions(options) || {}),
-                  })) as TEntity | null;
-                });
-              } else {
-                // Fallback to direct Prisma delegate
-                const delegate = this.prismaDelegate as PrismaDelegate;
-                return (await delegate.findUnique({
-                  where: { id },
-                  ...(this.buildQueryOptions(options) || {}),
-                })) as TEntity | null;
-              }
+              // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+              const delegate = this.prismaDelegate as PrismaDelegate;
+              return (await delegate.findUnique({
+                where: { id },
+                ...(this.buildQueryOptions(options) || {}),
+              })) as TEntity | null;
             },
             {
               ttl: this.defaultCacheTTL,
@@ -476,21 +441,11 @@ export abstract class BaseRepository<
 
       // If not from cache, query database
       if (!entity && !cacheHit) {
-        if (this.databaseService) {
-          entity = await this.databaseService.executeHealthcareRead(async _client => {
-            const delegate = this.prismaDelegate as PrismaDelegate;
-            return (await delegate.findUnique({
-              where: { id },
-              ...(this.buildQueryOptions(options) || {}),
-            })) as TEntity | null;
-          });
-        } else {
-          const delegate = this.prismaDelegate as PrismaDelegate;
-          entity = (await delegate.findUnique({
-            where: { id },
-            ...(this.buildQueryOptions(options) || {}),
-          })) as TEntity | null;
-        }
+        const delegate = this.prismaDelegate as PrismaDelegate;
+        entity = (await delegate.findUnique({
+          where: { id },
+          ...(this.buildQueryOptions(options) || {}),
+        })) as TEntity | null;
       }
 
       const executionTime = Date.now() - startTime;
@@ -681,20 +636,11 @@ export abstract class BaseRepository<
           entities = await this.cacheService.cache<TEntity[]>(
             cacheKey,
             async () => {
-              // Use HealthcareDatabaseClient for optimization layers
-              if (this.databaseService) {
-                return await this.databaseService.executeHealthcareRead(async _client => {
-                  const delegate = this.prismaDelegate as PrismaDelegate;
-                  return (await delegate.findMany(
-                    this.buildQueryOptions(options, context) as Record<string, unknown>
-                  )) as TEntity[];
-                });
-              } else {
-                const delegate = this.prismaDelegate as PrismaDelegate;
-                return (await delegate.findMany(
-                  this.buildQueryOptions(options, context) as Record<string, unknown>
-                )) as TEntity[];
-              }
+              // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+              const delegate = this.prismaDelegate as PrismaDelegate;
+              return (await delegate.findMany(
+                this.buildQueryOptions(options, context) as Record<string, unknown>
+              )) as TEntity[];
             },
             {
               ttl: this.defaultCacheTTL,
@@ -716,19 +662,10 @@ export abstract class BaseRepository<
 
       // If not from cache, query database
       if (!cacheHit) {
-        if (this.databaseService) {
-          entities = await this.databaseService.executeHealthcareRead(async _client => {
-            const delegate = this.prismaDelegate as PrismaDelegate;
-            return (await delegate.findMany(
-              this.buildQueryOptions(options, context) as Record<string, unknown>
-            )) as TEntity[];
-          });
-        } else {
-          const delegate = this.prismaDelegate as PrismaDelegate;
-          entities = (await delegate.findMany(
-            this.buildQueryOptions(options, context) as Record<string, unknown>
-          )) as TEntity[];
-        }
+        const delegate = this.prismaDelegate as PrismaDelegate;
+        entities = (await delegate.findMany(
+          this.buildQueryOptions(options, context) as Record<string, unknown>
+        )) as TEntity[];
       }
 
       const executionTime = Date.now() - startTime;
@@ -806,43 +743,21 @@ export abstract class BaseRepository<
             cacheKey,
             async () => {
               // Execute count and data queries in parallel for better performance
-              let entities: TEntity[];
-              let total: number;
 
-              if (this.databaseService) {
-                const [entitiesResult, totalResult] = await Promise.all([
-                  this.databaseService.executeHealthcareRead(async _client => {
-                    const delegate = this.prismaDelegate as PrismaDelegate;
-                    return (await delegate.findMany({
-                      ...(this.buildQueryOptions(options, context) || {}),
-                      skip,
-                      take: limit,
-                    } as Record<string, unknown>)) as unknown as TEntity[];
-                  }),
-                  this.databaseService.executeHealthcareRead(async _client => {
-                    const delegate = this.prismaDelegate as PrismaDelegate;
-                    return (await delegate.count({
-                      where: options?.where,
-                    } as Record<string, unknown>)) as unknown as number;
-                  }),
-                ]);
-                entities = entitiesResult;
-                total = totalResult;
-              } else {
-                const delegate = this.prismaDelegate as PrismaDelegate;
-                const [entitiesResult, totalResult] = await Promise.all([
-                  delegate.findMany({
-                    ...(this.buildQueryOptions(options, context) || {}),
-                    skip,
-                    take: limit,
-                  } as Record<string, unknown>),
-                  delegate.count({
-                    where: options?.where,
-                  } as Record<string, unknown>),
-                ]);
-                entities = entitiesResult as unknown as TEntity[];
-                total = totalResult as unknown as number;
-              }
+              // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+              const delegate = this.prismaDelegate as PrismaDelegate;
+              const [entitiesResult, totalResult] = await Promise.all([
+                delegate.findMany({
+                  ...(this.buildQueryOptions(options, context) || {}),
+                  skip,
+                  take: limit,
+                } as Record<string, unknown>),
+                delegate.count({
+                  where: options?.where,
+                } as Record<string, unknown>),
+              ]);
+              const entities = entitiesResult as unknown as TEntity[];
+              const total = totalResult as unknown as number;
 
               const totalPages = Math.ceil(total / limit);
 
@@ -886,43 +801,20 @@ export abstract class BaseRepository<
 
       // If not from cache, query database
       if (!result) {
-        let entities: TEntity[];
-        let total: number;
-
-        if (this.databaseService) {
-          const [entitiesResult, totalResult] = await Promise.all([
-            this.databaseService.executeHealthcareRead(async _client => {
-              const delegate = this.prismaDelegate as PrismaDelegate;
-              return (await delegate.findMany({
-                ...(this.buildQueryOptions(options, context) || {}),
-                skip,
-                take: limit,
-              } as Record<string, unknown>)) as unknown as TEntity[];
-            }),
-            this.databaseService.executeHealthcareRead(async _client => {
-              const delegate = this.prismaDelegate as PrismaDelegate;
-              return (await delegate.count({
-                where: options?.where,
-              } as Record<string, unknown>)) as unknown as number;
-            }),
-          ]);
-          entities = entitiesResult;
-          total = totalResult;
-        } else {
-          const delegate = this.prismaDelegate as PrismaDelegate;
-          const [entitiesResult, totalResult] = await Promise.all([
-            delegate.findMany({
-              ...(this.buildQueryOptions(options, context) || {}),
-              skip,
-              take: limit,
-            } as Record<string, unknown>),
-            delegate.count({
-              where: options?.where,
-            } as Record<string, unknown>),
-          ]);
-          entities = entitiesResult as unknown as TEntity[];
-          total = totalResult as unknown as number;
-        }
+        // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+        const delegate = this.prismaDelegate as PrismaDelegate;
+        const [entitiesResult, totalResult] = await Promise.all([
+          delegate.findMany({
+            ...(this.buildQueryOptions(options, context) || {}),
+            skip,
+            take: limit,
+          } as Record<string, unknown>),
+          delegate.count({
+            where: options?.where,
+          } as Record<string, unknown>),
+        ]);
+        const entities = entitiesResult as unknown as TEntity[];
+        const total = totalResult as unknown as number;
 
         const totalPages = Math.ceil(total / limit);
         const executionTime = Date.now() - startTime;
@@ -1017,20 +909,11 @@ export abstract class BaseRepository<
       );
 
       // Get existing entity for audit trail
-      let existingEntity: TEntity | null = null;
-      if (this.databaseService) {
-        existingEntity = await this.databaseService.executeHealthcareRead(async _client => {
-          const delegate = this.prismaDelegate as PrismaDelegate;
-          return (await delegate.findUnique({
-            where: { id },
-          } as Record<string, unknown>)) as TEntity | null;
-        });
-      } else {
-        const delegate = this.prismaDelegate as PrismaDelegate;
-        existingEntity = (await delegate.findUnique({
-          where: { id },
-        } as Record<string, unknown>)) as TEntity | null;
-      }
+      // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+      const delegate = this.prismaDelegate as PrismaDelegate;
+      const existingEntity = (await delegate.findUnique({
+        where: { id },
+      } as Record<string, unknown>)) as TEntity | null;
 
       if (!existingEntity) {
         return RepositoryResult.failure(
@@ -1045,35 +928,10 @@ export abstract class BaseRepository<
           context?.userId
         );
       }
-
-      // Use HealthcareDatabaseClient for optimization layers
-      let entity: TEntity;
-      if (this.databaseService) {
-        entity = await this.databaseService.executeHealthcareWrite(
-          async _client => {
-            const delegate = this.prismaDelegate as PrismaDelegate;
-            return (await delegate.update({
-              where: { id },
-              data,
-            } as Record<string, unknown>)) as TEntity;
-          },
-          {
-            userId: context?.userId || 'system',
-            userRole: (context?.metadata?.['userRole'] as string) || 'system',
-            clinicId: context?.clinicId ?? '',
-            operation: `UPDATE_${this.entityName.toUpperCase()}`,
-            resourceType: this.entityName.toUpperCase(),
-            resourceId: String(id),
-            timestamp: new Date(),
-          }
-        );
-      } else {
-        const delegate = this.prismaDelegate as PrismaDelegate;
-        entity = (await delegate.update({
-          where: { id },
-          data,
-        } as Record<string, unknown>)) as TEntity;
-      }
+      const entity = (await delegate.update({
+        where: { id },
+        data,
+      } as Record<string, unknown>)) as TEntity;
 
       const executionTime = Date.now() - startTime;
 
@@ -1169,34 +1027,12 @@ export abstract class BaseRepository<
         { where }
       );
 
-      // Use HealthcareDatabaseClient for optimization layers
-      let result: { count: number };
-      if (this.databaseService) {
-        result = await this.databaseService.executeHealthcareWrite(
-          async _client => {
-            const delegate = this.prismaDelegate as PrismaDelegate;
-            return (await delegate.updateMany({
-              where,
-              data,
-            } as Record<string, unknown>)) as { count: number };
-          },
-          {
-            userId: context?.userId || 'system',
-            userRole: (context?.metadata?.['userRole'] as string) || 'system',
-            clinicId: context?.clinicId ?? '',
-            operation: `UPDATE_MANY_${this.entityName.toUpperCase()}`,
-            resourceType: this.entityName.toUpperCase(),
-            resourceId: 'multiple',
-            timestamp: new Date(),
-          }
-        );
-      } else {
-        const delegate = this.prismaDelegate as PrismaDelegate;
-        result = (await delegate.updateMany({
-          where,
-          data,
-        } as Record<string, unknown>)) as { count: number };
-      }
+      // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+      const delegate = this.prismaDelegate as PrismaDelegate;
+      const result = (await delegate.updateMany({
+        where,
+        data,
+      } as Record<string, unknown>)) as { count: number };
 
       const executionTime = Date.now() - startTime;
 
@@ -1273,68 +1109,23 @@ export abstract class BaseRepository<
         this.serviceName
       );
 
-      // Use HealthcareDatabaseClient for optimization layers
+      // Use Prisma delegate directly - optimization layers will be handled by DatabaseService
+      const delegate = this.prismaDelegate as PrismaDelegate;
       let entity: TEntity;
-      if (this.databaseService) {
-        if (softDelete) {
-          // Soft delete - update isActive and deletedAt fields
-          entity = await this.databaseService.executeHealthcareWrite(
-            async _client => {
-              const delegate = this.prismaDelegate as PrismaDelegate;
-              return (await delegate.update({
-                where: { id },
-                data: {
-                  isActive: false,
-                  deletedAt: new Date(),
-                },
-              } as Record<string, unknown>)) as TEntity;
-            },
-            {
-              userId: context?.userId || 'system',
-              userRole: (context?.metadata?.['userRole'] as string) || 'system',
-              clinicId: context?.clinicId ?? '',
-              operation: `DELETE_${this.entityName.toUpperCase()}`,
-              resourceType: this.entityName.toUpperCase(),
-              resourceId: String(id),
-              timestamp: new Date(),
-            }
-          );
-        } else {
-          // Hard delete
-          entity = await this.databaseService.executeHealthcareWrite(
-            async _client => {
-              const delegate = this.prismaDelegate as PrismaDelegate;
-              return (await delegate.delete({
-                where: { id },
-              } as Record<string, unknown>)) as TEntity;
-            },
-            {
-              userId: context?.userId || 'system',
-              userRole: (context?.metadata?.['userRole'] as string) || 'system',
-              clinicId: context?.clinicId ?? '',
-              operation: `HARD_DELETE_${this.entityName.toUpperCase()}`,
-              resourceType: this.entityName.toUpperCase(),
-              resourceId: String(id),
-              timestamp: new Date(),
-            }
-          );
-        }
+      if (softDelete) {
+        // Soft delete - update isActive and deletedAt fields
+        entity = (await delegate.update({
+          where: { id },
+          data: {
+            isActive: false,
+            deletedAt: new Date(),
+          },
+        } as Record<string, unknown>)) as TEntity;
       } else {
-        // Fallback to direct Prisma delegate
-        const delegate = this.prismaDelegate as PrismaDelegate;
-        if (softDelete) {
-          entity = (await delegate.update({
-            where: { id },
-            data: {
-              isActive: false,
-              deletedAt: new Date(),
-            },
-          } as Record<string, unknown>)) as TEntity;
-        } else {
-          entity = (await delegate.delete({
-            where: { id },
-          } as Record<string, unknown>)) as TEntity;
-        }
+        // Hard delete
+        entity = (await delegate.delete({
+          where: { id },
+        } as Record<string, unknown>)) as TEntity;
       }
 
       const executionTime = Date.now() - startTime;

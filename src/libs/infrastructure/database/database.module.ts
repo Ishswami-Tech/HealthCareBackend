@@ -83,7 +83,7 @@ import { EventsModule } from '@infrastructure/events';
     ClinicRateLimiterService, // @internal - CacheService, ConfigService, LoggingService
     ClinicIsolationService, // @internal - PrismaService, ConfigService, LoggingService
     HealthcareQueryOptimizerService, // @internal - LoggingService only
-    ConnectionPoolManager, // @internal - must be before DatabaseMetricsService and HealthcareDatabaseClient
+    ConnectionPoolManager, // @internal - depends only on PrismaService, ConfigService, LoggingService
     DatabaseMetricsService, // @internal - depends on ConnectionPoolManager, PrismaService, ConfigService, LoggingService
     UserRepository, // @internal - infrastructure component, not exported
     SimplePatientRepository, // @internal - infrastructure component, not exported

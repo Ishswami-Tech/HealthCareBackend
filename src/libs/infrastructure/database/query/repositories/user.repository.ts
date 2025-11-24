@@ -1,6 +1,6 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseRepository, RepositoryResult, QueryOptions } from './base.repository';
-import { DatabaseService } from '@infrastructure/database';
+import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto, UpdateUserDto } from '@dtos/user.dto';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
@@ -78,22 +78,14 @@ function toUserBaseArray(result: unknown) {
 @Injectable()
 export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUserDto, string> {
   constructor(
-    @Inject(forwardRef(() => DatabaseService))
-    databaseService: DatabaseService,
+    @Inject(forwardRef(() => PrismaService))
+    private readonly prismaService: PrismaService,
     @Inject(forwardRef(() => LoggingService))
     loggingService: LoggingService,
     @Optional() @Inject(forwardRef(() => CacheService)) cacheService?: CacheService
   ) {
-    // Use internal accessor - repositories are infrastructure components
-    super(
-      'User',
-      (
-        databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient().user,
-      loggingService,
-      cacheService,
-      databaseService
-    );
+    // Use PrismaService directly - optimization layers will be handled by DatabaseService
+    super('User', prismaService.user, loggingService, cacheService);
   }
 
   /**
@@ -110,10 +102,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         `Finding user by email: ${email}`,
         'UserRepository'
       );
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.findUnique({
         where: { email },
@@ -147,10 +137,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         `Finding user by phone: ${phone}`,
         'UserRepository'
       );
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.findFirst({
         where: { phone },
@@ -226,10 +214,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         };
       }
 
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.findMany({
         where,
@@ -271,10 +257,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         `Finding users by role: ${role}`,
         'UserRepository'
       );
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.findMany({
         where: { role },
@@ -305,10 +289,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         'Finding active doctors',
         'UserRepository'
       );
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.findMany({
         where: {
@@ -356,10 +338,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
     }>
   > {
     try {
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const results = await Promise.all([
         userDelegate.count(),
@@ -436,10 +416,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         `Updating password for user: ${id}`,
         'UserRepository'
       );
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.update({
         where: { id },
@@ -468,10 +446,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
    */
   async updateLastLogin(id: string): Promise<RepositoryResult<UserBase>> {
     try {
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.update({
         where: { id },
@@ -502,10 +478,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
         `${isVerified ? 'Verifying' : 'Unverifying'} user: ${id}`,
         'UserRepository'
       );
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.update({
         where: { id },
@@ -538,10 +512,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
       const futureDate = new Date();
       futureDate.setDate(futureDate.getDate() + days);
 
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.findMany({
         where: {
@@ -593,10 +565,8 @@ export class UserRepository extends BaseRepository<User, CreateUserDto, UpdateUs
     updateData: Partial<UpdateUserDto>
   ): Promise<RepositoryResult<{ count: number }>> {
     try {
-      // Use internal accessor - repositories are infrastructure components
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => { user: unknown } }
-      ).getInternalPrismaClient();
+      // Use PrismaService directly
+      const prismaClient = this.prismaService;
       const userDelegate = getUserDelegate(prismaClient);
       const rawResult = await userDelegate.updateMany({
         where: {
