@@ -23,8 +23,26 @@ import { RowLevelSecurityService } from './internal/row-level-security.service';
 import { ReadReplicaRouterService } from './internal/read-replica-router.service';
 import { DatabaseHealthMonitorService } from './internal/database-health-monitor.service';
 import { ClinicRateLimiterService } from './internal/clinic-rate-limiter.service';
-import { HealthcareDatabaseClient } from './clients/healthcare-database.client';
+import { DatabaseService } from './database.service';
 import { EventsModule } from '@infrastructure/events';
+import { LoggingModule } from '@infrastructure/logging/logging.module';
+
+// Query patterns - strategies
+import { QueryStrategyManager } from './query/strategies/query-strategy.manager';
+import { ReadQueryStrategy } from './query/strategies/read-query.strategy';
+import { WriteQueryStrategy } from './query/strategies/write-query.strategy';
+import { TransactionQueryStrategy } from './query/strategies/transaction-query.strategy';
+
+// Query patterns - middleware
+import { QueryMiddlewareChain } from './query/middleware/query-middleware.chain';
+import { ValidationQueryMiddleware } from './query/middleware/validation-query.middleware';
+import { MetricsQueryMiddleware } from './query/middleware/metrics-query.middleware';
+import { SecurityQueryMiddleware } from './query/middleware/security-query.middleware';
+import { OptimizationQueryMiddleware } from './query/middleware/optimization-query.middleware';
+
+// Query patterns - builders and factories
+import { QueryOptionsBuilder } from './query/builders/query-options.builder';
+import { QueryKeyFactory } from './query/factories/query-key.factory';
 
 /**
  * Database Module - Single Unified Database Service
@@ -33,8 +51,7 @@ import { EventsModule } from '@infrastructure/events';
  * ONLY DatabaseService is exported publicly and should be used by external services.
  *
  * ARCHITECTURE:
- * - DatabaseService: ONLY public interface (alias for HealthcareDatabaseClient)
- *   └─ HealthcareDatabaseClient: Internal implementation (NOT exported publicly)
+ * - DatabaseService: ONLY public interface - single entry point for all database operations
  *   └─ All other components are INTERNAL and not exported:
  *   └─ ConnectionPoolManager: Internal infrastructure component (@internal)
  *   └─ DatabaseMetricsService: Internal infrastructure component (@internal)
@@ -44,7 +61,6 @@ import { EventsModule } from '@infrastructure/events';
  *
  * IMPORTANT:
  * - External services MUST use ONLY DatabaseService (import from @infrastructure/database)
- * - HealthcareDatabaseClient is INTERNAL ONLY (used by infrastructure components)
  * - Do NOT import or use any other database components directly
  *
  * All optimization layers are automatically applied through DatabaseService:
@@ -64,11 +80,14 @@ import { EventsModule } from '@infrastructure/events';
     // EventsModule for EventService
     forwardRef(() => EventsModule),
     // LoggingModule is @Global() and imported before DatabaseModule in AppModule
-    // Since it's @Global(), we don't need to import it explicitly - it's available everywhere
+    // We import it directly (not with forwardRef) since it's already initialized
+    // LoggingService uses DatabaseService, but since LoggingModule is initialized first,
+    // and we use forwardRef for DatabaseService injection in LoggingService, it works
+    forwardRef(() => LoggingModule),
     // CacheModule is @Global() - no need to import it explicitly
   ],
   providers: [
-    // ALL components are INTERNAL - only HealthcareDatabaseClient is exported
+    // ALL components are INTERNAL - only DatabaseService is exported
     // Order matters for circular dependencies: list services before services that depend on them
     // Layer 2: Internal Services (independent, no cross-deps)
     RetryService, // @internal - LoggingService only
@@ -87,6 +106,20 @@ import { EventsModule } from '@infrastructure/events';
     DatabaseMetricsService, // @internal - depends on ConnectionPoolManager, PrismaService, ConfigService, LoggingService
     UserRepository, // @internal - infrastructure component, not exported
     SimplePatientRepository, // @internal - infrastructure component, not exported
+    // Query patterns - strategies
+    ReadQueryStrategy, // @internal - PrismaService, LoggingService
+    WriteQueryStrategy, // @internal - PrismaService, LoggingService
+    TransactionQueryStrategy, // @internal - PrismaService, LoggingService
+    QueryStrategyManager, // @internal - depends on all strategies
+    // Query patterns - middleware
+    ValidationQueryMiddleware, // @internal - LoggingService
+    MetricsQueryMiddleware, // @internal - LoggingService, DatabaseMetricsService
+    SecurityQueryMiddleware, // @internal - LoggingService, SQLInjectionPreventionService, RowLevelSecurityService
+    OptimizationQueryMiddleware, // @internal - LoggingService, HealthcareQueryOptimizerService
+    QueryMiddlewareChain, // @internal - depends on all middleware
+    // Query patterns - builders and factories
+    QueryOptionsBuilder, // @internal - no dependencies
+    QueryKeyFactory, // @internal - no dependencies
     {
       provide: 'HealthcareDatabaseConfig',
       useValue: {
@@ -97,19 +130,18 @@ import { EventsModule } from '@infrastructure/events';
         complianceLevel: 'HIPAA',
         connectionTimeout: 30000,
         queryTimeout: 15000,
-        maxConnections: 500, // Optimized for 10M+ users (increased from 50)
         healthCheckInterval: 30000,
       },
     },
-    HealthcareDatabaseClient,
+    // DatabaseService - depends on everything above
+    DatabaseService,
   ],
   exports: [
     // SINGLE UNIFIED DATABASE SERVICE - This is the ONLY export
-    // All database operations MUST go through DatabaseService (exported in index.ts)
+    // All database operations MUST go through DatabaseService
     // It includes all optimization layers: connection pooling, caching, query optimization, metrics, HIPAA compliance
     // DO NOT export any other components - they are internal infrastructure
-    HealthcareDatabaseClient, // Internal class - exported as "DatabaseService" in index.ts (ONLY PUBLIC INTERFACE)
-    // Note: HealthcareDatabaseClient itself is NOT exported publicly - only DatabaseService alias is public
+    DatabaseService,
     ClinicIsolationService, // Export for GuardsModule to resolve circular dependency
   ],
 })

@@ -8,7 +8,7 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 import type { ClinicContext } from '@core/types/clinic.types';
 import type { ClinicIsolationResult } from '@core/types/database.types';
 
-// Re-export for backward compatibility
+// Re-export types
 export type { ClinicContext } from '@core/types/clinic.types';
 export type { ClinicIsolationResult } from '@core/types/database.types';
 
