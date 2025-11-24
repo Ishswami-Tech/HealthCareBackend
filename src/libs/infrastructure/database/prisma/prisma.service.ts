@@ -21,7 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 
-// Re-export PrismaClient for backward compatibility
+// Re-export PrismaClient type
 // Note: We use composition instead of inheritance to avoid 'any' types
 export type { PrismaClient } from '@prisma/client';
 
@@ -145,7 +145,7 @@ const appointmentTimeSlotSelectValidator = {
 
 // PrismaDelegateArgs is now imported from @core/types
 
-// Re-export types from centralized locations for backward compatibility
+// Re-export types from centralized locations
 export type {
   UserWithRelations,
   AppointmentWithRelations,
@@ -176,7 +176,7 @@ export type {
   PaymentWhereInput,
 } from '@core/types';
 
-// Type-safe operation results (backward compatibility)
+// Type-safe operation results
 // Note: These are type aliases for convenience, but methods should use explicit return types
 // to avoid 'any' in union types from Prisma-generated types
 export type UserFindUniqueResult = UserWithRelations | null;
@@ -1546,7 +1546,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     resource: string;
     action: string;
     description?: string | null;
-    domain?: string;
     isSystemPermission?: boolean;
     isActive?: boolean;
   }): Promise<PermissionEntity> {
@@ -1554,7 +1553,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       create: (args: PrismaDelegateArgs) => Promise<PermissionEntity>;
     };
     const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
-    return await delegate.create({ data } as PrismaDelegateArgs);
+    return await delegate.create({
+      data: {
+        ...data,
+        domain: 'healthcare',
+      },
+    } as PrismaDelegateArgs);
   }
 
   async findPermissionByIdSafe(id: string): Promise<PermissionEntity | null> {
@@ -1569,28 +1573,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   async findPermissionByResourceActionSafe(
     resource: string,
-    action: string,
-    domain?: string
+    action: string
   ): Promise<PermissionEntity | null> {
     type PermissionDelegate = {
       findFirst: (args: PrismaDelegateArgs) => Promise<PermissionEntity | null>;
     };
     const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
     return await delegate.findFirst({
-      where: { resource, action, domain },
+      where: { resource, action, domain: 'healthcare' },
     } as PrismaDelegateArgs);
   }
 
-  async findPermissionsByResourceSafe(
-    resource: string,
-    domain?: string
-  ): Promise<PermissionEntity[]> {
+  async findPermissionsByResourceSafe(resource: string): Promise<PermissionEntity[]> {
     type PermissionDelegate = {
       findMany: (args: PrismaDelegateArgs) => Promise<PermissionEntity[]>;
     };
     const delegate = (this as unknown as { permission: PermissionDelegate })['permission'];
     return await delegate.findMany({
-      where: { resource, domain, isActive: true },
+      where: { resource, domain: 'healthcare', isActive: true },
       orderBy: [{ resource: 'asc' }, { action: 'asc' }],
     } as PrismaDelegateArgs);
   }
@@ -1635,17 +1635,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   /**
    * Type-safe role operations
    */
-  async findRoleByNameSafe(
-    name: string,
-    domain?: string,
-    clinicId?: string
-  ): Promise<RbacRoleEntity | null> {
+  async findRoleByNameSafe(name: string, clinicId?: string): Promise<RbacRoleEntity | null> {
     type RbacRoleDelegate = {
       findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
     const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
     const result = await delegate.findFirst({
-      where: { name, domain, clinicId },
+      where: { name, domain: 'healthcare', clinicId },
     } as PrismaDelegateArgs);
     return result as RbacRoleEntity | null;
   }
@@ -1654,7 +1650,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     name: string;
     displayName: string;
     description?: string | null;
-    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;
@@ -1663,7 +1658,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       create: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
     const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
-    const result = await delegate.create({ data } as PrismaDelegateArgs);
+    const result = await delegate.create({
+      data: {
+        ...data,
+        domain: 'healthcare',
+      },
+    } as PrismaDelegateArgs);
     return result as RbacRoleEntity;
   }
 
@@ -1676,13 +1676,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return result as RbacRoleEntity | null;
   }
 
-  async findRolesByDomainSafe(domain?: string, clinicId?: string): Promise<RbacRoleEntity[]> {
+  async findRolesByClinicSafe(clinicId?: string): Promise<RbacRoleEntity[]> {
     type RbacRoleDelegate = {
       findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
     const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
     const result = await delegate.findMany({
-      where: { domain, clinicId, isActive: true },
+      where: { domain: 'healthcare', clinicId, isActive: true },
       orderBy: [{ name: 'asc' }],
     } as PrismaDelegateArgs);
     return result as RbacRoleEntity[];
@@ -1791,7 +1791,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     name: string;
     displayName: string;
     description?: string | null;
-    domain: string;
     clinicId?: string | null;
     isSystemRole?: boolean;
     isActive?: boolean;
@@ -1800,7 +1799,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       create: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
     const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
-    const result = await delegate.create({ data } as PrismaDelegateArgs);
+    const result = await delegate.create({
+      data: {
+        ...data,
+        domain: 'healthcare',
+        isSystemRole: true,
+      },
+    } as PrismaDelegateArgs);
     return result as RbacRoleEntity;
   }
 

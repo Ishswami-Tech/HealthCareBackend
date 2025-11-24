@@ -101,14 +101,12 @@ export class RoleService {
         name: string;
         displayName: string;
         description?: string | null;
-        domain: string;
         clinicId?: string | null;
         isSystemRole?: boolean;
         isActive?: boolean;
       } = {
         name: createRoleDto.name,
         displayName: createRoleDto.displayName,
-        domain: 'healthcare', // Default domain for healthcare roles
         isSystemRole: false,
         isActive: true,
       };
@@ -243,7 +241,7 @@ export class RoleService {
         }
       }
 
-      const rolesPrisma = await this.databaseService.findRolesByDomainSafe('healthcare', clinicId);
+      const rolesPrisma = await this.databaseService.findRolesByClinicSafe(clinicId);
 
       const mappedRoles: RoleRecord[] = rolesPrisma.map((rolePrisma: RbacRoleEntity) => {
         const role = this.toRoleEntity(rolePrisma);
@@ -536,7 +534,6 @@ export class RoleService {
         if (!existingRole) {
           await this.databaseService.createSystemRoleSafe({
             ...roleData,
-            domain: 'healthcare', // Default domain for healthcare roles
             isSystemRole: true,
             isActive: true,
           });

@@ -15,7 +15,7 @@ import type {
   CircuitBreakerState,
 } from '@core/types/database.types';
 
-// Re-export for backward compatibility
+// Re-export types
 export type {
   ConnectionMetrics,
   QueryOptions,
@@ -27,7 +27,7 @@ export type {
  * Supports high-volume operations (10 lakh+ users) with enterprise patterns
  *
  * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
- * All methods are private/protected. Use HealthcareDatabaseClient instead.
+ * All methods are private/protected. Use DatabaseService instead.
  * @internal
  */
 @Injectable()
@@ -141,10 +141,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Execute query with advanced features (circuit breaker, retry, priority queue)
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async executeQuery<T>(
     query: string,
     params: unknown[] = [],
@@ -624,30 +624,30 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get connection metrics
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getMetrics(): ConnectionMetrics {
     return { ...this.metrics };
   }
 
   /**
    * Get circuit breaker state
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getCircuitBreakerState(): CircuitBreakerState {
     return { ...this.circuitBreaker };
   }
 
   /**
    * Reset circuit breaker
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   resetCircuitBreaker(): void {
     this.initializeCircuitBreaker();
     void this.loggingService.log(
@@ -660,20 +660,20 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get queue length
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getQueueLength(): number {
     return this.queryQueue.length;
   }
 
   /**
    * Healthcare-specific query methods
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async executeHealthcareRead<T>(
     query: string,
     params: unknown[] = [],
@@ -688,10 +688,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async executeHealthcareWrite<T>(
     query: string,
     params: unknown[] = [],
@@ -706,10 +706,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async executeCriticalQuery<T>(
     query: string,
     params: unknown[] = [],
@@ -729,10 +729,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Execute batch operations with optimized concurrency for high scale
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async executeBatch<T, U>(
     items: T[],
     operation: (item: T, index: number) => Promise<U>,
@@ -806,10 +806,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Execute query with read replica routing for scale
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async executeQueryWithReadReplica<T = unknown>(
     query: string,
     params: unknown[] = [],
@@ -863,10 +863,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get comprehensive metrics for monitoring dashboards
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   getDetailedMetrics(): ConnectionMetrics & {
     queryMetrics: {
       queriesPerSecond: number;
@@ -898,10 +898,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Auto-scaling logic for connection pool based on load
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async autoScaleConnectionPool(): Promise<void> {
     type HealthcareConfigShape = {
       database?: {
@@ -963,10 +963,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Optimize queries for clinic-specific operations
-   * INTERNAL: Only accessible by HealthcareDatabaseClient
+   * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  // Public for HealthcareDatabaseClient access, but marked as internal
+  // Public for DatabaseService access, but marked as internal
   async executeClinicOptimizedQuery<T = unknown>(
     clinicId: string,
     query: string,

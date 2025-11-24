@@ -8,12 +8,11 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { type IQueryStrategy, type QueryOperationContext } from './base-query.strategy';
+import type { IQueryStrategy, QueryOperationContext } from './base-query.strategy';
 import { ReadQueryStrategy } from './read-query.strategy';
 import { WriteQueryStrategy } from './write-query.strategy';
 import { TransactionQueryStrategy } from './transaction-query.strategy';
-import type { PrismaService } from '../../prisma/prisma.service';
-import { LoggingService } from '@infrastructure/logging';
+import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * Query strategy manager - selects and executes appropriate strategy
@@ -23,15 +22,18 @@ export class QueryStrategyManager {
   private readonly strategies: IQueryStrategy[];
 
   constructor(
-    private readonly prismaService: PrismaService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    @Inject(forwardRef(() => TransactionQueryStrategy))
+    private readonly transactionStrategy: TransactionQueryStrategy,
+    @Inject(forwardRef(() => WriteQueryStrategy))
+    private readonly writeStrategy: WriteQueryStrategy,
+    @Inject(forwardRef(() => ReadQueryStrategy))
+    private readonly readStrategy: ReadQueryStrategy
   ) {
     // Initialize strategies in priority order
     this.strategies = [
-      new TransactionQueryStrategy(this.prismaService, this.loggingService),
-      new WriteQueryStrategy(this.prismaService, this.loggingService),
-      new ReadQueryStrategy(this.prismaService, this.loggingService), // Fallback
+      this.transactionStrategy,
+      this.writeStrategy,
+      this.readStrategy, // Fallback
     ];
   }
 
