@@ -1,49 +1,13 @@
-import {
-  Injectable,
-  OnModuleDestroy,
-  OnModuleInit,
-  Inject,
-  forwardRef,
-  Optional,
-} from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { HealthcareDatabaseClient } from '../../clients/healthcare-database.client';
-import type { PrismaService } from '../../prisma/prisma.service';
 import { PrismaService as PrismaServiceClass } from '../../prisma/prisma.service';
-import { HealthcareQueryOptimizerService } from '../../internal/query-optimizer.service';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 
 // Internal imports - Core types
-import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
-import type { EnterpriseEventPayload, EventResult } from '@core/types';
+import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
-
-// Internal imports - Events (using forwardRef to avoid circular dependency)
-// Define interface for EventService to avoid circular dependency type resolution issues
-interface IEventService {
-  emitEnterprise<T extends EnterpriseEventPayload>(
-    eventType: string,
-    payload: T,
-    options?: {
-      priority?: EventPriority;
-      retryPolicy?: { maxRetries: number; retryDelay: number };
-      async?: boolean;
-      timeout?: number;
-    }
-  ): Promise<EventResult>;
-}
-
-// Import EventService class for forwardRef injection (value import)
-// Note: Using forwardRef causes TypeScript to treat EventService as error type,
-// so we use IEventService interface for property types and type guards
-import { EventService } from '@infrastructure/events';
-
-// Helper function to get EventService token for forwardRef (avoids type resolution issues)
-function getEventServiceToken(): typeof EventService {
-  return EventService;
-}
 
 import type {
   ConnectionMetrics,
@@ -85,47 +49,12 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private circuitBreakerThreshold = 5;
   private circuitBreakerTimeout = 30000; // 30 seconds
 
-  private readonly eventService?: IEventService;
-  private readonly queryOptimizer?: HealthcareQueryOptimizerService;
-
-  /**
-   * Type guard to check if eventService is available and has emitEnterprise method
-   * Uses duck typing to avoid circular dependency type resolution issues
-   */
-  private isEventServiceAvailable(service: IEventService | undefined): service is IEventService {
-    if (!service || typeof service !== 'object') {
-      return false;
-    }
-    // Check for emitEnterprise method using duck typing
-    const hasMethod = 'emitEnterprise' in service;
-    const methodType = typeof (service as { emitEnterprise?: unknown }).emitEnterprise;
-    return hasMethod && methodType === 'function';
-  }
-
   constructor(
     @Inject(forwardRef(() => ConfigService)) private configService: ConfigService,
-    @Inject(forwardRef(() => HealthcareDatabaseClient))
-    private databaseService: HealthcareDatabaseClient,
-    @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService,
-    @Optional()
-    // Type assertion needed due to circular dependency - EventService type can't be resolved in forwardRef
-    // Using helper function to avoid TypeScript type resolution issues with forwardRef
-    // The type guard ensures type safety at runtime
-    @Inject(forwardRef(getEventServiceToken))
-    eventService?: unknown,
-    @Optional()
-    @Inject(forwardRef(() => HealthcareQueryOptimizerService))
-    queryOptimizer?: HealthcareQueryOptimizerService
+    @Inject(forwardRef(() => PrismaServiceClass))
+    private readonly prismaService: PrismaServiceClass,
+    @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService
   ) {
-    // Assign optional services (handle undefined explicitly for exactOptionalPropertyTypes)
-    // Type assertion needed due to forwardRef circular dependency type resolution
-    // The type guard will ensure type safety when using the service
-    if (eventService !== undefined && this.isEventServiceAvailable(eventService as IEventService)) {
-      this.eventService = eventService as IEventService;
-    }
-    if (queryOptimizer !== undefined) {
-      this.queryOptimizer = queryOptimizer;
-    }
     this.initializeMetrics();
     this.initializeCircuitBreaker();
   }
@@ -333,12 +262,8 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     try {
       this.metrics.activeConnections++;
 
-      // Execute query using Prisma's raw query through HealthcareDatabaseClient
-      // Use protected internal accessor for infrastructure components
-      // Accessing protected method - ConnectionPoolManager is infrastructure component
-      const prismaClient = (
-        this.databaseService as unknown as { getInternalPrismaClient: () => PrismaService }
-      ).getInternalPrismaClient();
+      // Execute query using PrismaService directly
+      const prismaClient = this.prismaService;
       // Convert params to the expected type for $queryRawUnsafe
       const typedParams: Array<string | number | boolean | null> = params.map(param => {
         if (
@@ -476,34 +401,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
               this.serviceName
             );
 
-            // Emit high utilization event using EventService
-            if (this.isEventServiceAvailable(this.eventService)) {
-              void this.eventService.emitEnterprise(
-                'database.connection-pool.high-utilization',
-                {
-                  eventId: `high-utilization-${Date.now()}`,
-                  eventType: 'database.connection-pool.high-utilization',
-                  category: EventCategory.DATABASE,
-                  priority: EventPriority.HIGH,
-                  timestamp: new Date().toISOString(),
-                  source: this.serviceName,
-                  version: '1.0.0',
-                  correlationId: `pool-util-${Date.now()}`,
-                  traceId: `trace-${Date.now()}`,
-                  payload: {
-                    utilizationRate,
-                    activeConnections: this.metrics.activeConnections,
-                    totalConnections: this.metrics.totalConnections,
-                    queueLength,
-                    timestamp: new Date().toISOString(),
-                  },
-                },
-                {
-                  priority: EventPriority.HIGH,
-                  async: true,
-                }
-              );
-            }
+            // Event emission will be handled by DatabaseService if needed
           }
 
           if (queueLength > 100) {
@@ -514,34 +412,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
               this.serviceName
             );
 
-            // Emit large queue event using EventService
-            if (this.isEventServiceAvailable(this.eventService)) {
-              void this.eventService.emitEnterprise(
-                'database.connection-pool.large-queue',
-                {
-                  eventId: `large-queue-${Date.now()}`,
-                  eventType: 'database.connection-pool.large-queue',
-                  category: EventCategory.DATABASE,
-                  priority: EventPriority.HIGH,
-                  timestamp: new Date().toISOString(),
-                  source: this.serviceName,
-                  version: '1.0.0',
-                  correlationId: `queue-${Date.now()}`,
-                  traceId: `trace-${Date.now()}`,
-                  payload: {
-                    queueLength,
-                    utilizationRate,
-                    activeConnections: this.metrics.activeConnections,
-                    totalConnections: this.metrics.totalConnections,
-                    timestamp: new Date().toISOString(),
-                  },
-                },
-                {
-                  priority: EventPriority.HIGH,
-                  async: true,
-                }
-              );
-            }
+            // Event emission will be handled by DatabaseService if needed
           }
 
           void this.loggingService.log(
@@ -631,17 +502,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         }
       );
 
-      // Trigger query optimization analysis
-      if (query && this.queryOptimizer) {
-        void this.queryOptimizer
-          .optimizeQuery(query, {
-            executionTime: queryTime,
-            slow: true,
-          })
-          .catch(() => {
-            // Optimization analysis failure is non-critical
-          });
-      }
+      // Query optimization will be handled by DatabaseService before passing to pool manager
     }
 
     // Critical query detection (> 5 seconds)
@@ -664,42 +525,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         }
       );
 
-      // Emit critical slow query event using EventService
-      if (this.isEventServiceAvailable(this.eventService)) {
-        void this.eventService.emitEnterprise(
-          'database.query.critical-slow',
-          {
-            eventId: `critical-slow-query-${Date.now()}`,
-            eventType: 'database.query.critical-slow',
-            category: EventCategory.DATABASE,
-            priority: EventPriority.CRITICAL,
-            timestamp: new Date().toISOString(),
-            source: this.serviceName,
-            version: '1.0.0',
-            correlationId: `slow-query-${Date.now()}`,
-            traceId: `trace-${Date.now()}`,
-            payload: {
-              queryTime,
-              query: query ? query.substring(0, 300) : 'N/A',
-              threshold: 5000,
-              actionRequired: [
-                'Review query execution plan immediately',
-                'Check for missing indexes',
-                'Consider query rewriting or splitting',
-                'Review database server performance',
-                'Check for table locks or blocking queries',
-              ],
-              poolUtilization: this.metrics.connectionUtilization,
-              activeConnections: this.metrics.activeConnections,
-              timestamp: new Date().toISOString(),
-            },
-          },
-          {
-            priority: EventPriority.CRITICAL,
-            async: true,
-          }
-        );
-      }
+      // Event emission will be handled by DatabaseService if needed
     }
   }
 
@@ -732,33 +558,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         }
       );
 
-      // Emit recovery event for monitoring systems using EventService
-      if (this.isEventServiceAvailable(this.eventService)) {
-        void this.eventService.emitEnterprise(
-          'database.circuit-breaker.closed',
-          {
-            eventId: `circuit-breaker-closed-${Date.now()}`,
-            eventType: 'database.circuit-breaker.closed',
-            category: EventCategory.DATABASE,
-            priority: EventPriority.HIGH,
-            timestamp: new Date().toISOString(),
-            source: this.serviceName,
-            version: '1.0.0',
-            correlationId: `cb-recovery-${Date.now()}`,
-            traceId: `trace-${Date.now()}`,
-            payload: {
-              timestamp: new Date().toISOString(),
-              service: this.serviceName,
-              recoveryAttempts: 3,
-              previousState: wasOpen ? 'OPEN' : 'CLOSED',
-            },
-          },
-          {
-            priority: EventPriority.HIGH,
-            async: true,
-          }
-        );
-      }
+      // Event emission will be handled by DatabaseService if needed
     }
   }
 
@@ -800,44 +600,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         }
       );
 
-      // Emit circuit breaker open event for monitoring systems using EventService
-      if (this.isEventServiceAvailable(this.eventService)) {
-        void this.eventService.emitEnterprise(
-          'database.circuit-breaker.opened',
-          {
-            eventId: `circuit-breaker-opened-${Date.now()}`,
-            eventType: 'database.circuit-breaker.opened',
-            category: EventCategory.DATABASE,
-            priority: EventPriority.CRITICAL,
-            timestamp: new Date().toISOString(),
-            source: this.serviceName,
-            version: '1.0.0',
-            correlationId: `cb-failure-${Date.now()}`,
-            traceId: `trace-${Date.now()}`,
-            payload: {
-              timestamp: new Date().toISOString(),
-              service: this.serviceName,
-              failureCount: this.circuitBreaker.failureCount,
-              threshold: this.circuitBreakerThreshold,
-              lastFailure: this.circuitBreaker.lastFailure
-                ? this.circuitBreaker.lastFailure.toISOString()
-                : undefined,
-              recoveryTime: this.circuitBreaker.halfOpenTime
-                ? this.circuitBreaker.halfOpenTime.toISOString()
-                : undefined,
-              poolMetrics: {
-                activeConnections: this.metrics.activeConnections,
-                totalConnections: this.metrics.totalConnections,
-                utilization: this.metrics.connectionUtilization,
-              },
-            },
-          },
-          {
-            priority: EventPriority.CRITICAL,
-            async: true,
-          }
-        );
-      }
+      // Event emission will be handled by DatabaseService if needed
     }
   }
 
@@ -1175,34 +938,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
       this.metrics.autoScalingEvents++;
 
-      // Emit auto-scaling event using EventService
-      if (this.isEventServiceAvailable(this.eventService)) {
-        void this.eventService.emitEnterprise(
-          'database.connection-pool.auto-scaling',
-          {
-            eventId: `auto-scale-up-${Date.now()}`,
-            eventType: 'database.connection-pool.auto-scaling',
-            category: EventCategory.DATABASE,
-            priority: EventPriority.HIGH,
-            timestamp: new Date().toISOString(),
-            source: this.serviceName,
-            version: '1.0.0',
-            correlationId: `auto-scale-${Date.now()}`,
-            traceId: `trace-${Date.now()}`,
-            payload: {
-              action: 'scale-up',
-              currentConnections,
-              utilization: currentUtilization,
-              targetConnections: Math.min(500, currentConnections + 50),
-              timestamp: new Date().toISOString(),
-            },
-          },
-          {
-            priority: EventPriority.HIGH,
-            async: true,
-          }
-        );
-      }
+      // Event emission will be handled by DatabaseService if needed
     }
 
     // Scale down if utilization is consistently low
@@ -1221,34 +957,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
 
       this.metrics.autoScalingEvents++;
 
-      // Emit auto-scaling event using EventService
-      if (this.isEventServiceAvailable(this.eventService)) {
-        void this.eventService.emitEnterprise(
-          'database.connection-pool.auto-scaling',
-          {
-            eventId: `auto-scale-down-${Date.now()}`,
-            eventType: 'database.connection-pool.auto-scaling',
-            category: EventCategory.DATABASE,
-            priority: EventPriority.NORMAL,
-            timestamp: new Date().toISOString(),
-            source: this.serviceName,
-            version: '1.0.0',
-            correlationId: `auto-scale-${Date.now()}`,
-            traceId: `trace-${Date.now()}`,
-            payload: {
-              action: 'scale-down',
-              currentConnections,
-              utilization: currentUtilization,
-              targetConnections: Math.max(50, currentConnections - 25),
-              timestamp: new Date().toISOString(),
-            },
-          },
-          {
-            priority: EventPriority.NORMAL,
-            async: true,
-          }
-        );
-      }
+      // Event emission will be handled by DatabaseService if needed
     }
   }
 
