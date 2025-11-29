@@ -342,7 +342,7 @@ export class LoggingService {
     try {
       // Development-only colored console output for debugging
       // In production, all logging goes through Redis/database only
-      if (process.env['NODE_ENV'] === 'development') {
+      if (process.env['NODE_ENV'] === 'development' && level !== LogLevel.DEBUG) {
         const levelColor = this.getLevelColor(level);
         const contextColor = '\x1b[36m'; // Cyan
         const resetColor = '\x1b[0m';

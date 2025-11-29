@@ -70,6 +70,23 @@ export default function createDevelopmentConfig(): Config {
       url:
         process.env[ENV_VARS.DATABASE_URL] ||
         'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+      sqlInjectionPrevention: {
+        enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], false),
+      },
+      rowLevelSecurity: {
+        enabled: parseBoolean(process.env['DB_ROW_LEVEL_SECURITY'], false),
+      },
+      dataMasking: {
+        enabled: parseBoolean(process.env['DB_DATA_MASKING'], false),
+      },
+      rateLimiting: {
+        enabled: parseBoolean(process.env['DB_RATE_LIMITING'], false),
+      },
+      readReplicas: {
+        enabled: parseBoolean(process.env['DB_READ_REPLICAS_ENABLED'], false),
+        strategy: 'random',
+        urls: [],
+      },
     },
     redis: {
       host: process.env[ENV_VARS.REDIS_HOST] || 'localhost',

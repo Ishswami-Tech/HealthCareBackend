@@ -59,7 +59,11 @@
       "Bash(echo \"Exit code: $?\")",
       "Bash(yarn --version)",
       "Bash(pnpm:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(test:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(tasklist:*)",
+      "Bash(powershell -Command \"Get-Process | Where-Object {$_ProcessName -like ''*node*''} | Select-Object -First 10 ProcessName,Id\")"
     ],
     "deny": [],
     "ask": []

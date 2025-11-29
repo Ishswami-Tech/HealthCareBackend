@@ -107,6 +107,23 @@ export default function createConfiguration(): Config {
       url:
         process.env[ENV_VARS.DATABASE_URL] ||
         'postgresql://postgres:postgres@localhost:5432/healthcare?schema=public',
+      sqlInjectionPrevention: {
+        enabled: parseBoolean(process.env['DATABASE_SQL_INJECTION_PREVENTION_ENABLED'], true),
+      },
+      rowLevelSecurity: {
+        enabled: parseBoolean(process.env['DATABASE_ROW_LEVEL_SECURITY_ENABLED'], true),
+      },
+      dataMasking: {
+        enabled: parseBoolean(process.env['DATABASE_DATA_MASKING_ENABLED'], true),
+      },
+      rateLimiting: {
+        enabled: parseBoolean(process.env['DATABASE_RATE_LIMITING_ENABLED'], true),
+      },
+      readReplicas: {
+        enabled: parseBoolean(process.env['DATABASE_READ_REPLICAS_ENABLED'], false),
+        strategy: (process.env['DATABASE_READ_REPLICAS_STRATEGY'] as 'round-robin' | 'random' | 'least-connections') || 'round-robin',
+        urls: process.env['DATABASE_READ_REPLICAS_URLS']?.split(',').filter(Boolean) || [],
+      },
     },
     redis: {
       host: process.env[ENV_VARS.REDIS_HOST] || 'localhost',

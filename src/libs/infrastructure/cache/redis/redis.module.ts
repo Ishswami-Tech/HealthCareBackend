@@ -4,6 +4,7 @@ import { Module, Global, OnModuleInit } from '@nestjs/common';
 // Internal imports - Infrastructure
 // ConfigModule is @Global() - no need to import it explicitly
 // LoggingModule is @Global() - no need to import it explicitly
+import { isCacheEnabled, getCacheProvider } from '@config';
 import { RedisService } from '@infrastructure/cache/redis/redis.service';
 
 @Global()
@@ -24,7 +25,7 @@ export class RedisModule implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     // Import single source of truth for cache configuration
-    const { isCacheEnabled, getCacheProvider } = await import('@config');
+    // Static import used above
 
     // Check if cache is enabled using single source of truth
     if (!isCacheEnabled()) {

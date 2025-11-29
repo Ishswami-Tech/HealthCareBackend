@@ -98,8 +98,6 @@ import type {
   CounselorDelegate,
   ClinicDelegate,
   AuditLogDelegate,
-  NotificationTemplateDelegate,
-  ReminderScheduleDelegate,
   TransactionDelegate,
 } from '@core/types';
 
@@ -188,8 +186,12 @@ export type AppointmentTimeSlotResult = AppointmentTimeSlot[];
 /**
  * Strict type-safe wrapper for PrismaClient
  * Uses composition instead of inheritance to avoid Prisma's 'any' types
+ *
+ * IMPORTANT: Using DEFAULT scope (singleton) instead of REQUEST scope
+ * because query strategies and other services need to inject this as a singleton.
+ * Multi-tenant isolation is handled at the query level, not at the service level.
  */
-@Injectable({ scope: Scope.REQUEST })
+@Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private prismaClient!: PrismaClient;
   private currentTenantId: string | null = null;
@@ -211,8 +213,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly clinic!: ClinicDelegate;
   readonly appointment!: AppointmentDelegate;
   readonly auditLog!: AuditLogDelegate;
-  readonly notificationTemplate!: NotificationTemplateDelegate;
-  readonly reminderSchedule!: ReminderScheduleDelegate;
   readonly permission!: PermissionDelegate;
   readonly rbacRole!: RbacRoleDelegate;
   readonly rolePermission!: RolePermissionDelegate;
@@ -547,7 +547,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       { emit: 'stdout' as const, level: 'error' as const },
       { emit: 'stdout' as const, level: 'warn' as const },
       { emit: 'stdout' as const, level: 'info' as const },
-      { emit: 'stdout' as const, level: 'query' as const },
     ];
     const logConfiguration: LogConfig[] = isProduction ? productionLogConfig : developmentLogConfig;
 
@@ -612,13 +611,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         PrismaService.createPrismaClientInstance(prismaConstructorArgs);
     }
 
-    // Use Object.defineProperty to avoid ESLint tracking the assignment
-    Object.defineProperty(this, 'prismaClient', {
-      value: PrismaService.sharedPrismaClient,
-      writable: true,
-      enumerable: false,
-      configurable: false,
-    });
+    // Direct assignment instead of Object.defineProperty to avoid access issues
+    this.prismaClient = PrismaService.sharedPrismaClient;
 
     // Apply production optimizations
     const productionExtendArgs: PrismaExtendArgs = {
@@ -699,20 +693,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       },
     };
 
-    // Replace prismaClient with extended version using module-level helper
-    // Use Object.defineProperty to avoid ESLint tracking the assignment
-    Object.defineProperty(this, 'prismaClient', {
-      value: PrismaService.extendPrismaClient(this.prismaClient, productionExtendArgs),
-      writable: true,
-      enumerable: false,
-      configurable: false,
-    });
+    // Replace prismaClient with extended version using direct assignment
+    this.prismaClient = PrismaService.extendPrismaClient(this.prismaClient, productionExtendArgs);
 
     // Initialize delegate properties using Object.defineProperty to break ESLint's type tracking
     // This approach sets properties directly without ESLint tracking through assignment
     const clientTyped = this.prismaClient as unknown as Record<string, unknown>;
 
-    // Helper to safely extract and assign delegate
     const assignDelegate = <TDelegate>(
       propertyName: string,
       targetProperty: keyof PrismaService
@@ -753,8 +740,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<ClinicDelegate>('clinic', 'clinic');
     assignDelegate<AppointmentDelegate>('appointment', 'appointment');
     assignDelegate<AuditLogDelegate>('auditLog', 'auditLog');
-    assignDelegate<NotificationTemplateDelegate>('notificationTemplate', 'notificationTemplate');
-    assignDelegate<ReminderScheduleDelegate>('reminderSchedule', 'reminderSchedule');
     assignDelegate<PermissionDelegate>('permission', 'permission');
     assignDelegate<RbacRoleDelegate>('rbacRole', 'rbacRole');
     assignDelegate<RolePermissionDelegate>('rolePermission', 'rolePermission');

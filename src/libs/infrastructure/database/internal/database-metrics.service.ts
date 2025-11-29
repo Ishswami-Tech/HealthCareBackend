@@ -43,7 +43,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   // Performance thresholds
   private readonly slowQueryThreshold = 1000; // 1 second
-  private readonly criticalQueryThreshold = 5000; // 5 seconds
+  private readonly criticalQueryThreshold = 10000; // 10 seconds
   private readonly maxConnectionPoolUsage = 0.8; // 80%
   private readonly maxErrorRate = 0.05; // 5%
   private readonly minCacheHitRate = 0.7; // 70% minimum cache hit rate
@@ -731,7 +731,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     if (criticalAlerts.length > 0) {
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.ERROR,
+        LogLevel.WARN,
         `Critical database alerts: ${criticalAlerts.length} alerts`,
         this.serviceName,
         { alerts: criticalAlerts }

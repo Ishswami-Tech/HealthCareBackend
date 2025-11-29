@@ -426,10 +426,24 @@ export class EmailService implements OnModuleInit {
       );
       return true;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // If unauthorized, disable the service to prevent further errors
+      if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Email service authentication failed (Unauthorized). Disabling email service. Error: ${errorMessage}`,
+          'EmailService'
+        );
+        this.isInitialized = false;
+        return false;
+      }
+
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to send API email: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to send API email: ${errorMessage}`,
         'EmailService',
         { stack: (error as Error)?.stack }
       );
