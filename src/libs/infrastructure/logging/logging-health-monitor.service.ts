@@ -326,7 +326,7 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
         process.env['PORT'] ||
         process.env['VIRTUAL_PORT'] ||
         8088;
-      const loggerUrl = `${loggerBaseUrl}/logger`;
+      const loggerUrl = `${loggerBaseUrl}/health`;
 
       // Use lightweight HTTP check - just verify endpoint responds (even 404 means service is responding)
       const httpCheckPromise = axios.get(loggerUrl, {
