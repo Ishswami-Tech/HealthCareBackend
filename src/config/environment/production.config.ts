@@ -83,6 +83,25 @@ export default function createProductionConfig(): ProductionConfig {
         process.env['DATABASE_URL_PROD'] ||
         process.env[ENV_VARS.DATABASE_URL] ||
         'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+      sqlInjectionPrevention: {
+        enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], true),
+      },
+      rowLevelSecurity: {
+        enabled: parseBoolean(process.env['DB_ROW_LEVEL_SECURITY'], true),
+      },
+      dataMasking: {
+        enabled: parseBoolean(process.env['DB_DATA_MASKING'], true),
+      },
+      rateLimiting: {
+        enabled: parseBoolean(process.env['DB_RATE_LIMITING'], true),
+      },
+      readReplicas: {
+        enabled: parseBoolean(process.env['DB_READ_REPLICAS_ENABLED'], false),
+        strategy: 'round-robin',
+        urls: process.env['DB_READ_REPLICAS_URLS']
+          ? process.env['DB_READ_REPLICAS_URLS'].split(',')
+          : [],
+      },
     },
     redis: {
       host: process.env[ENV_VARS.REDIS_HOST] || 'redis',

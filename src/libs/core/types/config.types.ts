@@ -69,6 +69,28 @@ export interface DomainsConfig {
 export interface DatabaseConfig {
   /** Database connection URL */
   readonly url: string;
+  /** SQL injection prevention configuration */
+  readonly sqlInjectionPrevention: {
+    readonly enabled: boolean;
+  };
+  /** Row level security configuration */
+  readonly rowLevelSecurity: {
+    readonly enabled: boolean;
+  };
+  /** Data masking configuration */
+  readonly dataMasking: {
+    readonly enabled: boolean;
+  };
+  /** Rate limiting configuration */
+  readonly rateLimiting: {
+    readonly enabled: boolean;
+  };
+  /** Read replicas configuration */
+  readonly readReplicas: {
+    readonly enabled: boolean;
+    readonly strategy: 'round-robin' | 'random' | 'least-connections';
+    readonly urls: readonly string[];
+  };
 }
 
 /**
