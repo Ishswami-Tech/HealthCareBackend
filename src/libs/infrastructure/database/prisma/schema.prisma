@@ -3,7 +3,6 @@ generator client {
   output          = "./generated/client"
   previewFeatures = []
   binaryTargets   = ["native", "linux-musl"]
-  engineType      = "library"
 }
 
 datasource db {

@@ -121,7 +121,11 @@ export default function createConfiguration(): Config {
       },
       readReplicas: {
         enabled: parseBoolean(process.env['DATABASE_READ_REPLICAS_ENABLED'], false),
-        strategy: (process.env['DATABASE_READ_REPLICAS_STRATEGY'] as 'round-robin' | 'random' | 'least-connections') || 'round-robin',
+        strategy:
+          (process.env['DATABASE_READ_REPLICAS_STRATEGY'] as
+            | 'round-robin'
+            | 'random'
+            | 'least-connections') || 'round-robin',
         urls: process.env['DATABASE_READ_REPLICAS_URLS']?.split(',').filter(Boolean) || [],
       },
     },
