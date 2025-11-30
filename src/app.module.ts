@@ -40,10 +40,8 @@ import { EventsModule } from '@infrastructure/events';
     }),
     ScheduleModule.forRoot(),
     QueueModule.forRoot(),
-    JwtModule.register({
-      secret: process.env['JWT_SECRET'] || 'your-secret-key',
-      signOptions: { expiresIn: '24h' },
-    }),
+    // JWT is configured in AuthModule - no need for global registration here
+    // This ensures all JWT operations use the same secret from ConfigService
     // Core modules must be loaded before communication modules to ensure LoggingService is available
     LoggingModule,
     // Central event system - must be loaded early for event-driven architecture

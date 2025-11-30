@@ -11,7 +11,6 @@ import { CacheModule } from '@infrastructure/cache';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { QueueModule } from '@infrastructure/queue';
 import { AuthModule } from '@services/auth/auth.module';
-import { JwtModule } from '@nestjs/jwt';
 import { GuardsModule } from '@core/guards/guards.module';
 // Core Services
 import { AppointmentsController } from './appointments.controller';
@@ -106,8 +105,7 @@ import { CommunicationModule } from '@communication/communication.module';
     CacheModule,
     RbacModule,
     QueueModule.forRoot(),
-    AuthModule,
-    JwtModule.register({}),
+    AuthModule, // AuthModule already provides JwtModule with proper configuration
     // RateLimitModule,
     GuardsModule,
     // Communication Modules - Unified module
