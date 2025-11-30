@@ -9,7 +9,7 @@
 
 import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService as PrismaServiceClass } from '../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 
@@ -39,10 +39,11 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
     errorRate: 0,
   };
   private readonly healthCheckTimeout = 5000; // 5 seconds
+  private lastSuccessLogTime = 0; // Track last success log time for periodic logging
 
   constructor(
-    @Inject(forwardRef(() => PrismaService))
-    private readonly prismaService: PrismaService,
+    @Inject(forwardRef(() => PrismaServiceClass))
+    private readonly prismaService: PrismaServiceClass,
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
@@ -73,19 +74,24 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
   }
 
   /**
-   * Perform health check
+   * Perform health check using dedicated health check client
+   * Uses the same dedicated connection pool as ConnectionPoolManager
+   * This ensures only ONE health check connection is used across the application
    */
   private async performHealthCheck(): Promise<void> {
     const startTime = Date.now();
 
     try {
-      // Simple health check query
-      type UserDelegate = {
-        count: () => Promise<number>;
+      // Use dedicated health check client (same as ConnectionPoolManager)
+      // This ensures only ONE health check connection pool is used
+      const prismaClient = PrismaServiceClass.getHealthCheckClient();
+      const typedClient = prismaClient as unknown as {
+        $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
       };
-      const userDelegate = this.prismaService.user as unknown as UserDelegate;
+
+      // Simple health check query using dedicated connection
       await Promise.race([
-        userDelegate.count(),
+        typedClient.$queryRaw`SELECT 1`,
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Health check timeout')), this.healthCheckTimeout)
         ),
@@ -98,9 +104,26 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
         status,
         latency,
         lastCheck: new Date(),
-        connectionCount: 0, // Would be populated from ConnectionPoolManager
-        errorRate: 0, // Would be populated from DatabaseMetricsService
+        connectionCount: 1, // Dedicated health check connection
+        errorRate: 0,
       };
+
+      // Log success periodically (every 5 minutes) to confirm database is connected
+      const now = Date.now();
+      if (!this.lastSuccessLogTime || now - this.lastSuccessLogTime > 300000) {
+        this.lastSuccessLogTime = now;
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.INFO,
+          `Database health check: Connected (latency: ${latency}ms)`,
+          this.serviceName,
+          {
+            status,
+            latency,
+            connectionType: 'dedicated-health-check-pool',
+          }
+        );
+      }
     } catch (error) {
       const latency = Date.now() - startTime;
 

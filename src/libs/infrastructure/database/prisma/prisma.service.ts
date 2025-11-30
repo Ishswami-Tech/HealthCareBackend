@@ -573,6 +573,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     // Create pg Pool with SSL configuration for Supabase
     // Handle self-signed certificates in development
+    // Get connection timeout from env or use defaults (longer for dev, shorter for prod)
+    const connectionTimeout = isProduction
+      ? parseInt(process.env['DB_CONNECTION_TIMEOUT'] || '10000', 10)
+      : parseInt(process.env['DB_CONNECTION_TIMEOUT'] || '30000', 10); // 30 seconds for dev
+
     const poolConfig: {
       connectionString: string;
       ssl?: boolean | { rejectUnauthorized: boolean };
@@ -581,7 +586,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     } = {
       connectionString,
       max: 10, // Limit connections per Pool instance
-      connectionTimeoutMillis: 10000, // 10 second connection timeout
+      connectionTimeoutMillis: connectionTimeout,
     };
 
     // For Supabase/cloud databases, always configure SSL

@@ -92,3 +92,31 @@ bin/
 .env.development
 .env.test.local
 .env.production
+
+# Test output and log files
+seed-output*.txt
+test-results.txt
+*.log
+build.log
+server.log
+tsc-run.log
+
+# Temporary documentation (consolidated)
+COMPLETE_FIXES_SUMMARY.md
+ENDPOINT_ANALYSIS_REPORT.md
+FINAL_STATUS.md
+FIXES_APPLIED.md
+SEED_FIXES_SUMMARY.md
+CLEANUP_PLAN.md
+CLEANUP_SUMMARY.md
+
+# Temporary test scripts (one-off helpers)
+analyze-endpoints.js
+test-all-fixes.js
+final-test.js
+simple-test.js
+setup-and-test.js
+check-db.js
+get-doctor-id.js
+force-seed.js
+run-seed.js

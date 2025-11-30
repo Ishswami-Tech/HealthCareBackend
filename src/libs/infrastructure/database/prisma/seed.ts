@@ -1,4 +1,4 @@
-// Import from generated client location (same as PrismaService)
+// Import PrismaClient - use adapter pattern like quick-seed.ts for Prisma 7
 import { PrismaClient } from './generated/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -38,22 +38,45 @@ const RoleValues = {
 
 const SEED_COUNT = 50;
 
-// Initialize Prisma client with PostgreSQL adapter for Supabase
-// Prisma 7 requires using the adapter pattern for custom connection handling
-const connectionString = process.env['DIRECT_URL'] || process.env['DATABASE_URL'];
+// Clinic ID counter for sequential generation (CL0001, CL0002, etc.)
+let clinicIdCounter = 1;
+
+// Generate sequential clinic ID (CL0001, CL0002, etc.)
+function generateClinicId(): string {
+  return `CL${String(clinicIdCounter++).padStart(4, '0')}`;
+}
+
+// Initialize Prisma client with adapter (required for Prisma 7 with engine type "client")
+const connectionString = process.env['DIRECT_URL'] || process.env['DATABASE_URL'] || '';
 if (!connectionString) {
   throw new Error('DATABASE_URL or DIRECT_URL environment variable is required');
 }
 
-const pool = new Pool({
+const poolConfig: {
+  connectionString: string;
+  ssl?: boolean | { rejectUnauthorized: boolean };
+  max?: number;
+  connectionTimeoutMillis?: number;
+} = {
   connectionString,
-  ssl: connectionString.includes('supabase.com')
-    ? { rejectUnauthorized: false }
-    : undefined,
-});
+  max: 10,
+  connectionTimeoutMillis: 10000,
+};
 
+const isProduction = process.env['NODE_ENV'] === 'production';
+if (connectionString.includes('supabase') || connectionString.includes('pooler.supabase.com')) {
+  poolConfig.ssl = isProduction ? { rejectUnauthorized: true } : { rejectUnauthorized: false };
+}
+
+console.log('Initializing PrismaClient with adapter...');
+const pool = new Pool(poolConfig);
 const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+const prisma = new PrismaClient({
+  log: process.env['NODE_ENV'] === 'development' ? ['error', 'warn'] : ['error'],
+  errorFormat: 'minimal' as const,
+  adapter,
+});
+console.log('PrismaClient initialized');
 
 let userIdCounter = 1;
 const generateUserId = () => `UID${String(userIdCounter++).padStart(6, '0')}`;
@@ -78,10 +101,189 @@ function exportTestIds(testIds: Record<string, unknown>) {
   }
 }
 
+/**
+ * Quick seed - creates only demo users if clinics exist
+ */
+async function quickSeed() {
+  const clinic = await prisma.clinic.findFirst({});
+  if (!clinic) {
+    throw new Error('Clinic not found');
+  }
+  console.log(`Using clinic: ${clinic.name} (Clinic ID: ${clinic.clinicId})`);
+
+  // Create demo patient if missing
+  let demoPatient = await prisma.user.findUnique({
+    where: { email: 'patient1@example.com' },
+  });
+
+  if (!demoPatient) {
+    console.log('Creating demo patient...');
+    const hashedPassword = await bcrypt.hash('test1234', 10);
+    demoPatient = await prisma.user.create({
+      data: {
+        email: 'patient1@example.com',
+        password: hashedPassword,
+        name: 'Demo Patient',
+        age: 30,
+        firstName: 'Demo',
+        lastName: 'Patient',
+        phone: '9000000003',
+        role: RoleValues.PATIENT,
+        gender: Gender.OTHER,
+        isVerified: true,
+        userid: generateUserId(),
+        clinics: { connect: { id: clinic.id } },
+        primaryClinicId: clinic.id,
+      },
+    });
+    await prisma.patient.create({
+      data: {
+        userId: demoPatient.id,
+        prakriti: Prakriti.VATA,
+        dosha: Dosha.PITTA,
+      },
+    });
+    console.log(`✓ Created demo patient: ${demoPatient.email}`);
+  } else {
+    console.log(`✓ Demo patient already exists: patient1@example.com`);
+  }
+
+  // Create demo doctor if missing
+  let demoDoctor = await prisma.user.findUnique({
+    where: { email: 'doctor1@example.com' },
+  });
+
+  if (!demoDoctor) {
+    console.log('Creating demo doctor...');
+    const hashedPassword = await bcrypt.hash('test1234', 10);
+    demoDoctor = await prisma.user.create({
+      data: {
+        email: 'doctor1@example.com',
+        password: hashedPassword,
+        name: 'Demo Doctor',
+        age: 45,
+        firstName: 'Demo',
+        lastName: 'Doctor',
+        phone: '9000000002',
+        role: RoleValues.DOCTOR,
+        gender: Gender.FEMALE,
+        isVerified: true,
+        userid: generateUserId(),
+        clinics: { connect: { id: clinic.id } },
+        primaryClinicId: clinic.id,
+      },
+    });
+    await prisma.doctor.create({
+      data: {
+        id: demoDoctor.id,
+        userId: demoDoctor.id,
+        specialization: 'General Medicine',
+        experience: 10,
+        qualification: 'MBBS',
+        rating: 4.5,
+        isAvailable: true,
+        consultationFee: 1000,
+      },
+    });
+    console.log(`✓ Created demo doctor: ${demoDoctor.email}`);
+  } else {
+    console.log(`✓ Demo doctor already exists: doctor1@example.com`);
+  }
+
+  console.log('\n✓ Quick seed completed!');
+  console.log('Test credentials:');
+  console.log('  Patient: patient1@example.com / test1234');
+  console.log('  Doctor:  doctor1@example.com / test1234');
+}
+
+/**
+ * Create initial clinic and super admin if they don't exist
+ */
+async function createClinicIfNeeded() {
+  // Create super admin first if needed
+  let superAdmin = await prisma.user.findFirst({
+    where: { role: RoleValues.SUPER_ADMIN },
+  });
+
+  if (!superAdmin) {
+    console.log('Creating super admin...');
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+    superAdmin = await prisma.user.create({
+      data: {
+        email: 'admin@example.com',
+        password: hashedPassword,
+        name: 'Admin User',
+        age: 30,
+        firstName: 'Admin',
+        lastName: 'User',
+        phone: '1234567890',
+        role: RoleValues.SUPER_ADMIN,
+        gender: Gender.MALE,
+        isVerified: true,
+        userid: generateUserId(),
+      },
+    });
+    await prisma.superAdmin.create({
+      data: { userId: superAdmin.id },
+    });
+    console.log('✓ Super admin created');
+  }
+
+  // Create clinic
+  console.log('Creating initial clinic...');
+  const clinic = await prisma.clinic.create({
+    data: {
+      name: 'Aadesh Ayurvedalay',
+      address: 'Pune, Maharashtra',
+      phone: '+91-9876543210',
+      email: 'contact@aadesh.com',
+      app_name: 'aadesh_ayurvedalay',
+      db_connection_string: process.env['DATABASE_URL'] || '',
+      databaseName: 'userdb',
+      createdByUser: {
+        connect: { id: superAdmin.id },
+      },
+      clinicId: 'CL0001',
+      subdomain: 'aadesh',
+      isActive: true,
+    },
+  });
+
+  console.log(`✓ Clinic created: ${clinic.name} (Clinic ID: ${clinic.clinicId})`);
+  return clinic;
+}
+
 async function main() {
   try {
     await waitForDatabase();
 
+    // Auto-detect scenario: check if clinics exist
+    const existingClinics = await prisma.clinic.findMany({ take: 1 });
+
+    if (existingClinics.length === 0) {
+      // No clinics exist - create initial clinic and super admin
+      console.log('No clinics found. Creating initial clinic and super admin...');
+      await createClinicIfNeeded();
+      console.log('\n✓ Initial setup complete. Run "pnpm seed:dev" again for full data seeding.');
+      return;
+    }
+
+    // Check if demo users already exist (quick seed scenario)
+    const existingDemoPatient = await prisma.user.findUnique({
+      where: { email: 'patient1@example.com' },
+    });
+    const existingDemoDoctor = await prisma.user.findUnique({
+      where: { email: 'doctor1@example.com' },
+    });
+
+    if (!existingDemoPatient || !existingDemoDoctor) {
+      // Clinics exist but demo users don't - quick seed
+      console.log('Clinics found but demo users missing. Creating demo users...');
+      await quickSeed();
+      return;
+    }
+
+    // Full seed scenario - clean and seed everything
     console.log('Cleaning database...');
     await cleanDatabase();
 
@@ -131,7 +333,7 @@ async function main() {
         createdByUser: {
           connect: { id: superAdminUser.id },
         },
-        clinicId: 'CL0001',
+        clinicId: generateClinicId(), // CL0001
         subdomain: 'aadesh',
         isActive: true,
       },
@@ -152,7 +354,7 @@ async function main() {
         createdByUser: {
           connect: { id: superAdminUser.id },
         },
-        clinicId: 'CL0002',
+        clinicId: generateClinicId(), // CL0002
         subdomain: 'vishwamurthi',
         isActive: true,
       },
@@ -499,10 +701,11 @@ async function main() {
         (await (prisma.doctorClinic.create({
           data,
         }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
-      } catch (_error) {
+      } catch (error) {
         // Skip if relationship already exists
-        if ((_error as { code?: string }).code !== 'P2002') {
-          throw _error;
+        const prismaError = error as { code?: string };
+        if (prismaError.code !== 'P2002') {
+          throw error;
         }
       }
     }
@@ -958,9 +1161,9 @@ async function main() {
     };
 
     exportTestIds(testIds);
-  } catch (_error) {
-    console.error('Error during seeding:', _error);
-    throw _error;
+  } catch (error) {
+    console.error('Error during seeding:', error);
+    throw error;
   } finally {
     await (prisma.$disconnect() as unknown as Promise<void>);
   }
@@ -974,8 +1177,11 @@ async function waitForDatabase() {
       await (prisma.$connect() as unknown as Promise<void>);
       console.log('Database connection established.');
       return;
-    } catch (_error) {
+    } catch (error) {
       console.log(`Database not ready yet, retrying... (${retries} attempts left)`);
+      if (error instanceof Error) {
+        console.log(`Error: ${error.message}`);
+      }
       retries -= 1;
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
@@ -1022,22 +1228,33 @@ async function cleanDatabase() {
           await delegate.deleteMany({});
           console.log(`Cleaned ${table} table`);
         }
-      } catch (_error) {
+      } catch (error) {
         // Skip if table doesn't exist
         console.log(`Skipping ${table} table (may not exist yet)`);
+        if (error instanceof Error) {
+          console.log(`Error: ${error.message}`);
+        }
       }
     }
-  } catch (_error) {
-    console.error('Error cleaning database:', _error);
-    throw _error;
+  } catch (error) {
+    console.error('Error cleaning database:', error);
+    throw error;
   }
 }
 
+console.log('Starting seed script main function...');
 main()
+  .then(() => {
+    console.log('Seed script completed successfully!');
+  })
   .catch(e => {
-    console.error(e);
+    console.error('Seed script failed:', e);
+    console.error('Error stack:', e instanceof Error ? e.stack : String(e));
     process.exit(1);
   })
-  .finally(() => {
-    void (prisma.$disconnect() as unknown as Promise<void>);
+  .finally(async () => {
+    console.log('Disconnecting from database...');
+    await prisma.$disconnect();
+    await pool.end();
+    console.log('Disconnected');
   });
