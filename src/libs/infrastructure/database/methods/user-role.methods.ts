@@ -170,4 +170,3 @@ export class UserRoleMethods extends DatabaseMethodsBase {
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 }
-

@@ -185,4 +185,3 @@ export class ClinicAdminMethods extends DatabaseMethodsBase {
     return result;
   }
 }
-

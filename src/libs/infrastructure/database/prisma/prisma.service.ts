@@ -2,7 +2,6 @@ import {
   Injectable,
   OnModuleInit,
   OnModuleDestroy,
-  Scope,
   Optional,
   Inject,
   forwardRef,

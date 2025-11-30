@@ -174,10 +174,10 @@ export class AppointmentMethods extends DatabaseMethodsBase {
     _clinicId: string,
     _date: Date
   ): Promise<AppointmentTimeSlot[]> {
-    return await this.executeRead<AppointmentTimeSlot[]>(async _prisma => {
+    return await this.executeRead<AppointmentTimeSlot[]>(_prisma => {
       // This is a placeholder - actual implementation would query available time slots
       // For now, return empty array
-      return [];
+      return Promise.resolve([]);
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 }

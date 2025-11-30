@@ -43,4 +43,3 @@ export class ClinicMethods extends DatabaseMethodsBase {
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }
 }
-

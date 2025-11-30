@@ -7,7 +7,7 @@
  * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
  */
 
-import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { BaseQueryStrategy, type QueryOperationContext } from './base-query.strategy';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';

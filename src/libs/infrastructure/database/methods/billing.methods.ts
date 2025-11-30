@@ -447,4 +447,3 @@ export class BillingMethods extends DatabaseMethodsBase {
     return result;
   }
 }
-
