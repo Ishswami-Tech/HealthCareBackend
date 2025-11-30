@@ -1,6 +1,11 @@
-import { PrismaClient } from '@prisma/client';
+// Import from generated client location (same as PrismaService)
+import { PrismaClient } from './generated/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 import { faker } from '@faker-js/faker';
 import * as bcrypt from 'bcrypt';
+import * as fs from 'fs';
+import * as path from 'path';
 // Import enums from centralized location
 import {
   PaymentStatus,
@@ -14,7 +19,6 @@ import {
 } from '@core/types/enums.types';
 import type { Role } from '@core/types/rbac.types';
 import { Gender } from '@dtos/user.dto';
-import type { PrismaClientWithDelegates, PrismaDelegateArgs } from '@core/types/prisma.types';
 
 // Role string literals (Role is a type, not an enum)
 const RoleValues = {
@@ -34,57 +38,45 @@ const RoleValues = {
 
 const SEED_COUNT = 50;
 
-// Initialize Prisma client with error handling
-// PrismaClient is available at runtime but TypeScript can't verify the type
-const PrismaClientConstructor = PrismaClient as unknown as new () => unknown;
-const prismaClientInstance = new PrismaClientConstructor();
-type ExtendedPrismaClient = PrismaClientWithDelegates & {
-  user: {
-    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; role?: string }>;
-    update: (args: {
-      where: PrismaDelegateArgs;
-      data: PrismaDelegateArgs;
-    }) => Promise<{ id: string }>;
-    findMany: (args?: {
-      where?: PrismaDelegateArgs;
-    }) => Promise<Array<{ id: string; role: string }>>;
-  };
-  superAdmin: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  clinic: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  clinicLocation: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  clinicAdmin: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  doctor: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  doctorClinic: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  receptionist: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  receptionistsAtClinic: {
-    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }>;
-  };
-  patient: {
-    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; userId: string }>;
-  };
-  medicine: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  therapy: { create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string }> };
-  appointment: {
-    create: (args: {
-      data: PrismaDelegateArgs;
-    }) => Promise<{ id: string; clinicId: string; userId: string }>;
-  };
-  payment: {
-    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; clinicId: string }>;
-  };
-  queue: {
-    create: (args: { data: PrismaDelegateArgs }) => Promise<{ id: string; clinicId: string }>;
-  };
-  $connect: () => Promise<void>;
-  $disconnect: () => Promise<void>;
-};
-const prisma = prismaClientInstance as ExtendedPrismaClient;
+// Initialize Prisma client with PostgreSQL adapter for Supabase
+// Prisma 7 requires using the adapter pattern for custom connection handling
+const connectionString = process.env['DIRECT_URL'] || process.env['DATABASE_URL'];
+if (!connectionString) {
+  throw new Error('DATABASE_URL or DIRECT_URL environment variable is required');
+}
+
+const pool = new Pool({
+  connectionString,
+  ssl: connectionString.includes('supabase.com')
+    ? { rejectUnauthorized: false }
+    : undefined,
+});
+
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 let userIdCounter = 1;
 const generateUserId = () => `UID${String(userIdCounter++).padStart(6, '0')}`;
 
 let locationIdCounter = 1;
 const generateLocationId = () => `LOC${String(locationIdCounter++).padStart(4, '0')}`;
+
+/**
+ * Export test IDs to a JSON file for use in testing scripts
+ */
+function exportTestIds(testIds: Record<string, unknown>) {
+  const testIdsPath = path.join(process.cwd(), 'test-ids.json');
+  try {
+    fs.writeFileSync(testIdsPath, JSON.stringify(testIds, null, 2), 'utf-8');
+    console.log(`\n✓ Test IDs exported to: ${testIdsPath}`);
+    console.log('You can now use these IDs in your test scripts:');
+    console.log('  - TEST_CLINIC_ID=' + String((testIds['clinics'] as string[])[0]));
+    console.log('  - TEST_DOCTOR_ID=' + String(testIds['demoDoctorId']));
+    console.log('  - TEST_PATIENT_ID=' + String(testIds['demoPatientId']));
+  } catch (error) {
+    console.error('Failed to export test IDs:', error);
+  }
+}
 
 async function main() {
   try {
@@ -770,17 +762,35 @@ async function main() {
 
       // Create sample appointments and related data
       console.log('Creating sample appointments and related data...');
+
+      // Helper function to generate realistic appointment times (business hours: 9 AM - 6 PM)
+      const generateAppointmentDateTime = (daysFromNow: number) => {
+        const date = new Date();
+        date.setDate(date.getDate() + daysFromNow);
+
+        // Random hour between 9 AM and 5 PM (to leave room for duration)
+        const hour = faker.number.int({ min: 9, max: 17 });
+        // Random minute: 0, 15, 30, or 45
+        const minute = faker.helpers.arrayElement([0, 15, 30, 45]);
+
+        date.setHours(hour, minute, 0, 0);
+        return date;
+      };
+
       const appointments = (await Promise.all(
-        Array.from({ length: 10 }).map(async (_unused, index) => {
-          const appointmentDate = faker.date.future();
-          const timeString = appointmentDate.toLocaleTimeString('en-US', {
+        Array.from({ length: 30 }).map(async (_unused, index) => {
+          // Create appointments spread over next 30 days
+          const daysFromNow = Math.floor(index / 2) + 1; // 2 appointments per day
+          const appointmentDateTime = generateAppointmentDateTime(daysFromNow);
+
+          const timeString = appointmentDateTime.toLocaleTimeString('en-US', {
             hour12: false,
             hour: '2-digit',
             minute: '2-digit',
           });
 
-          const doctor = doctors[Math.floor(Math.random() * doctors.length)];
-          const patient = patients[Math.floor(Math.random() * patients.length)];
+          const doctor = doctors[index % doctors.length];
+          const patient = patients[index % patients.length];
 
           if (!doctor || !patient) {
             throw new Error('Doctor or patient not found');
@@ -794,7 +804,22 @@ async function main() {
               ? (clinicLocations[Math.floor(Math.random() * clinicLocations.length)]?.id ??
                 clinicLocations[0]?.id ??
                 clinicId)
-              : clinicId; // Fallback to clinic ID if no locations
+              : clinicId;
+
+          // Vary appointment types and statuses for realistic data
+          const appointmentType = faker.helpers.arrayElement([
+            AppointmentType.IN_PERSON,
+            AppointmentType.VIDEO_CALL,
+            AppointmentType.IN_PERSON,
+          ]);
+
+          // Most appointments should be scheduled/confirmed, some pending, few completed
+          const status = faker.helpers.weightedArrayElement([
+            { weight: 5, value: AppointmentStatus.SCHEDULED },
+            { weight: 3, value: AppointmentStatus.CONFIRMED },
+            { weight: 1, value: AppointmentStatus.PENDING },
+            { weight: 1, value: AppointmentStatus.COMPLETED },
+          ]);
 
           return prisma.appointment.create({
             data: {
@@ -802,17 +827,68 @@ async function main() {
               patientId: patient.id,
               locationId: locationId,
               clinicId: clinicId,
-              date: appointmentDate,
+              date: appointmentDateTime,
               time: timeString,
-              duration: faker.number.int({ min: 15, max: 60 }),
-              type: AppointmentType.IN_PERSON,
-              status: AppointmentStatus.SCHEDULED,
+              duration: faker.helpers.arrayElement([15, 30, 45, 60]),
+              type: appointmentType,
+              status: status,
               notes: faker.lorem.sentence(),
               userId: patient.userId,
             },
           }) as unknown as Promise<{ id: string; clinicId: string; userId: string }>;
         })
       )) as unknown as Array<{ id: string; clinicId: string; userId: string }>;
+
+      // Create specific appointments for demo users for easy testing
+      console.log('Creating demo user appointments...');
+      const demoAppointments = (await Promise.all([
+        // Tomorrow at 10 AM
+        prisma.appointment.create({
+          data: {
+            doctorId: demoDoctor.id,
+            patientId: _demoPatientRecord.id,
+            locationId: clinic1Locations[0]?.id ?? clinic1.id,
+            clinicId: clinic1.id,
+            date: (() => {
+              const tomorrow = new Date();
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              tomorrow.setHours(10, 0, 0, 0);
+              return tomorrow;
+            })(),
+            time: '10:00',
+            duration: 30,
+            type: AppointmentType.IN_PERSON,
+            status: AppointmentStatus.SCHEDULED,
+            notes: 'Demo appointment for testing',
+            userId: demoPatient.id,
+          },
+        }) as unknown as Promise<{ id: string }>,
+        // Day after tomorrow at 2 PM
+        prisma.appointment.create({
+          data: {
+            doctorId: demoDoctor.id,
+            patientId: _demoPatientRecord.id,
+            locationId: clinic1Locations[0]?.id ?? clinic1.id,
+            clinicId: clinic1.id,
+            date: (() => {
+              const dayAfter = new Date();
+              dayAfter.setDate(dayAfter.getDate() + 2);
+              dayAfter.setHours(14, 0, 0, 0);
+              return dayAfter;
+            })(),
+            time: '14:00',
+            duration: 45,
+            type: AppointmentType.VIDEO_CALL,
+            status: AppointmentStatus.CONFIRMED,
+            notes: 'Video consultation appointment for testing',
+            userId: demoPatient.id,
+          },
+        }) as unknown as Promise<{ id: string }>,
+      ])) as unknown as Array<{ id: string }>;
+
+      console.log(
+        `Created ${appointments.length} sample appointments + ${demoAppointments.length} demo appointments`
+      );
 
       // Create sample payments, queues, prescriptions, etc.
       await Promise.all([
@@ -846,18 +922,42 @@ async function main() {
       ]);
     }
 
-    console.log('Seeding complete!');
-    console.log('Default credentials:');
-    console.log('SuperAdmin: admin@example.com / admin123');
-    console.log('Clinic Admin: clinicadmin@example.com / admin123');
-    console.log('Created clinics:');
-    console.log('1. Aadesh Ayurvedalay');
-    console.log('2. Shri Vishwamurthi Ayurvedalay');
-    console.log('Demo login credentials:');
-    console.log('Clinic Admin: clinicadmin1@example.com / test1234');
-    console.log('Doctor: doctor1@example.com / test1234');
-    console.log('Patient: patient1@example.com / test1234');
-    console.log('Receptionist: receptionist1@example.com / test1234');
+    console.log('\n========================================');
+    console.log('  Seeding Complete!');
+    console.log('========================================\n');
+
+    console.log('📋 Default Credentials:');
+    console.log('  SuperAdmin: admin@example.com / admin123');
+    console.log('  Clinic Admin: clinicadmin@example.com / admin123\n');
+
+    console.log('🏥 Created Clinics:');
+    console.log('  1. Aadesh Ayurvedalay (ID: ' + clinic1.id + ')');
+    console.log('  2. Shri Vishwamurthi Ayurvedalay (ID: ' + clinic2.id + ')\n');
+
+    console.log('👥 Demo Login Credentials:');
+    console.log('  Clinic Admin: clinicadmin1@example.com / test1234');
+    console.log('  Doctor:       doctor1@example.com / test1234 (ID: ' + demoDoctor.id + ')');
+    console.log('  Patient:      patient1@example.com / test1234 (ID: ' + demoPatient.id + ')');
+    console.log('  Receptionist: receptionist1@example.com / test1234\n');
+
+    // Export test IDs for automated testing
+    const testIds = {
+      clinics: [clinic1.id, clinic2.id],
+      clinicNames: ['Aadesh Ayurvedalay', 'Shri Vishwamurthi Ayurvedalay'],
+      demoDoctorId: demoDoctor.id,
+      demoPatientId: demoPatient.id,
+      demoReceptionistId: demoReceptionist.id,
+      demoClinicAdminId: demoClinicAdmin.id,
+      superAdminId: superAdminUser.id,
+      doctors: doctors.slice(0, 5).map(d => d.id),
+      patients: patients.slice(0, 5).map(p => p.id),
+      locations: {
+        clinic1: clinic1Locations.map(l => l.id),
+        clinic2: clinic2Locations.map(l => l.id),
+      },
+    };
+
+    exportTestIds(testIds);
   } catch (_error) {
     console.error('Error during seeding:', _error);
     throw _error;
