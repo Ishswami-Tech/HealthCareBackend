@@ -71,7 +71,14 @@ import { SignOptions } from 'jsonwebtoken';
     // Note: HealthcareCacheInterceptor is provided globally by CacheModule
     // No need to register it here to avoid duplicate instances
   ],
-  exports: [AuthService, JwtAuthService, OtpService, PasswordService, SocialAuthService],
+  exports: [
+    AuthService,
+    JwtAuthService,
+    OtpService,
+    PasswordService,
+    SocialAuthService,
+    JwtModule, // Export JwtModule so other modules can use the configured JWT service
+  ],
 })
 export class AuthModule implements OnModuleInit {
   constructor() {}

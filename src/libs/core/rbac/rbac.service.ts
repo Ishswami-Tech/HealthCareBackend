@@ -73,19 +73,36 @@ export class RbacService {
           permission === '*'
       );
 
-      // Check for role-based permissions
-      const hasRolePermission = userRoles.some(role =>
+      // Check for role-based permissions from RBAC roles
+      let hasRolePermission = userRoles.some(role =>
         this.checkRolePermission(role.roleName, context.resource, context.action)
       );
+
+      // Fallback: If no RBAC roles found, check user's role field from User table
+      let userRoleName: string | undefined;
+      if (!hasRolePermission && userRoles.length === 0) {
+        const user = await this.databaseService.findUserByIdSafe(context.userId);
+        if (user && user.role) {
+          userRoleName = user.role;
+          hasRolePermission = this.checkRolePermission(user.role, context.resource, context.action);
+        }
+      }
 
       // Check ownership-based access
       const hasOwnershipAccess = await this.checkOwnershipAccess(context);
 
       const hasPermission = hasDirectPermission || hasRolePermission || hasOwnershipAccess;
 
+      // Build roles array - include RBAC roles or fallback to user's role
+      const rolesArray = userRoles.length > 0 
+        ? userRoles.map(r => r.roleName)
+        : userRoleName 
+          ? [userRoleName]
+          : [];
+
       const result: PermissionCheck = {
         hasPermission,
-        roles: userRoles.map(r => r.roleName),
+        roles: rolesArray,
         permissions: userPermissions,
         reason: hasPermission ? 'Permission granted' : 'Insufficient permissions',
         metadata: {

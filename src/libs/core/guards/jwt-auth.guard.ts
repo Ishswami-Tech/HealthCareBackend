@@ -171,7 +171,13 @@ export class JwtAuthGuard implements CanActivate {
           throw new UnauthorizedException('No token provided');
         }
         const payload: JwtPayload = await this.verifyToken(token);
-        request.user = payload;
+        // Map JWT payload to request.user format expected by guards
+        // RbacGuard expects request.user.id, but JWT uses 'sub' for user ID
+        request.user = {
+          ...payload,
+          id: payload.sub || payload['id'], // Map 'sub' to 'id' for compatibility
+          clinicId: payload['clinicId'], // Ensure clinicId is available
+        } as JwtPayload;
         return true;
       }
 
@@ -233,7 +239,13 @@ export class JwtAuthGuard implements CanActivate {
 
       // Verify and decode JWT token
       const payload: JwtPayload = await this.verifyToken(token);
-      request.user = payload;
+      // Map JWT payload to request.user format expected by guards
+      // RbacGuard expects request.user.id, but JWT uses 'sub' for user ID
+      request.user = {
+        ...payload,
+        id: payload.sub || payload['id'], // Map 'sub' to 'id' for compatibility
+        clinicId: payload['clinicId'], // Ensure clinicId is available
+      } as JwtPayload;
 
       // Validate session
       const sessionData = await this.validateSession(payload.sub || 'anonymous', request);
@@ -252,14 +264,14 @@ export class JwtAuthGuard implements CanActivate {
       await this.resetFailedAttempts(clientIp);
 
       return true;
-    } catch (_error) {
-      // Skip _error handling in development mode
+    } catch (error) {
+      // Skip error handling in development mode
       const isDev = process.env['NODE_ENV'] === 'development' || process.env['DEV_MODE'] === 'true';
       if (isDev) {
-        throw _error;
+        throw error;
       }
-      await this.handleAuthenticationError(_error as Error, context);
-      throw _error;
+      await this.handleAuthenticationError(error as Error, context);
+      throw error;
     }
   }
 
@@ -521,13 +533,13 @@ export class JwtAuthGuard implements CanActivate {
         if (decoded && typeof decoded === 'object' && decoded !== null && 'sessionId' in decoded) {
           sessionId = (decoded as { sessionId: string }).sessionId;
         }
-      } catch (_error) {
+      } catch (error) {
         void logger.log(
           LogType.AUTH,
           LogLevel.ERROR,
           'Failed to decode token for sessionId',
           'JwtAuthGuard',
-          { _error }
+          { error: error instanceof Error ? error.message : String(error) }
         );
       }
     }
@@ -674,13 +686,13 @@ export class JwtAuthGuard implements CanActivate {
         JSON.stringify(updatedSession),
         3600 // Keep session alive for another hour
       );
-    } catch (_error) {
+    } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to update session data',
         'JwtAuthGuard',
-        { _error }
+        { error: error instanceof Error ? error.message : String(error) }
       );
     }
   }
@@ -720,13 +732,13 @@ export class JwtAuthGuard implements CanActivate {
         `security:events:${identifier}`,
         this.SECURITY_EVENT_RETENTION
       );
-    } catch (_error) {
+    } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to track security event',
         'JwtAuthGuard',
-        { _error }
+        { error: error instanceof Error ? error.message : String(error) }
       );
     }
   }

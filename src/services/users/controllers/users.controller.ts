@@ -78,17 +78,35 @@ export class UsersController {
   }
 
   @Get('profile')
+  @PatientCache({
+    keyTemplate: 'user:{userId}:profile',
+    ttl: 1800, // 30 minutes
+    tags: ['user_profiles', 'users'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true,
+  })
   @ApiOperation({
     summary: 'Get user profile',
-    description: 'Retrieve the profile of the currently authenticated user',
+    description: 'Retrieve the profile of the currently authenticated user. Cached for performance.',
+    operationId: 'getUserProfile',
   })
   @ApiResponse({
     status: 200,
     description: 'User profile retrieved successfully',
     type: UserResponseDto,
   })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - User ID not found in token',
+  })
   async getProfile(@Request() req: ClinicAuthenticatedRequest): Promise<UserResponseDto> {
-    const userId = req.user.sub || req.user.id;
+    const userId = req.user?.sub || req.user?.id;
     if (!userId) {
       throw new ForbiddenException('User ID not found in token');
     }

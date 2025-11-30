@@ -47,7 +47,11 @@ let testPassword = 'TestPassword123!';
 
 // Helper function to make HTTP requests
 async function makeRequest(method, endpoint, body = null, token = null) {
-  const url = `${BASE_URL}${endpoint}`;
+  // Handle endpoints that are not under /auth (like /user/profile)
+  const baseUrl = endpoint.startsWith('/user') || endpoint.startsWith('/appointments') 
+    ? 'http://localhost:8088/api/v1'
+    : BASE_URL;
+  const url = `${baseUrl}${endpoint}`;
   const headers = {
     'Content-Type': 'application/json',
     'X-API-Version': '1', // Required for API versioning
@@ -171,17 +175,19 @@ async function testLogin() {
 }
 
 async function testGetProfile() {
-  log('\n=== Test 4: GET /auth/profile ===', 'cyan');
+  log('\n=== Test 4: GET /user/profile ===', 'cyan');
   if (!accessToken) {
     logWarning('Skipping - No access token available');
     return false;
   }
 
-  const result = await makeRequest('GET', '/profile', null, accessToken);
+  // Use the unified profile endpoint
+  const result = await makeRequest('GET', '/user/profile', null, accessToken);
   
-  if (result.ok && result.data?.data) {
+  if (result.ok && (result.data?.data || result.data)) {
     logSuccess('Get Profile endpoint: OK');
-    console.log(JSON.stringify(result.data.data, null, 2));
+    const profile = result.data?.data || result.data;
+    console.log(JSON.stringify(profile, null, 2));
     return true;
   } else {
     logError(`Get Profile failed: ${result.status} - ${JSON.stringify(result.data)}`);

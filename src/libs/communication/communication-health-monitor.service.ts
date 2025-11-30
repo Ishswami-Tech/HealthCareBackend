@@ -58,6 +58,18 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
   }
 
   onModuleInit(): void {
+    // Skip health monitoring in development if disabled
+    const isDevelopment = process.env['NODE_ENV'] === 'development';
+    const healthCheckEnabled = process.env['COMMUNICATION_HEALTH_CHECK_ENABLED'] !== 'false';
+    if (isDevelopment && !healthCheckEnabled) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Communication health checks disabled in development',
+        this.serviceName
+      );
+      return;
+    }
     this.startHealthMonitoring();
   }
 
@@ -138,6 +150,7 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
    * Fast path: Only essential checks for frequent monitoring
    * Expensive checks run periodically (every 60 seconds)
    * Optimized for 10M+ users - minimal CPU load, non-blocking
+   * Only marks services as unhealthy if they're configured but failing
    */
   private async performHealthCheckInternal(): Promise<CommunicationHealthMonitorStatus> {
     const issues: string[] = [];
@@ -177,40 +190,134 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
     }
 
     try {
-      // Fast path: Essential Socket health check only (always runs)
-      // Uses lightweight service check - fastest possible socket check
-      const socketHealth = await this.checkSocketHealthWithTimeout();
-      status.socket = socketHealth;
-      if (!socketHealth.connected) {
-        issues.push('Socket service not connected');
-        status.healthy = false;
-        // Circuit breaker will track failures automatically
+      // Track which services are configured/enabled
+      const configuredServices: string[] = [];
+      const healthyServices: string[] = [];
+
+      // Fast path: Essential Socket health check
+      // Only mark as unhealthy if service exists AND is initialized but not connected
+      if (this.socketService) {
+        // Check if socket service is actually initialized
+        const isSocketInitialized = this.socketService.getInitializationState();
+
+        if (isSocketInitialized) {
+          configuredServices.push('socket');
+          const socketHealth = await this.checkSocketHealthWithTimeout();
+          status.socket = socketHealth;
+          if (socketHealth.connected) {
+            healthyServices.push('socket');
+          } else {
+            // Service is initialized but not connected - this is a real issue
+            issues.push('Socket service initialized but not connected');
+            status.healthy = false;
+          }
+        } else {
+          // Service exists but not initialized - not an issue (may be disabled)
+          status.socket = { connected: false };
+        }
+      } else {
+        // Service not configured - not an issue, just mark as not connected
+        status.socket = { connected: false };
       }
 
-      // Fast path: Essential Email health check only (always runs)
-      // Uses lightweight service check - fastest possible email check
-      const emailHealth = await this.checkEmailHealthWithTimeout();
-      status.email = emailHealth;
-      if (!emailHealth.connected) {
-        issues.push('Email service not connected');
-        status.healthy = false;
+      // Fast path: Essential Email health check
+      // Only mark as unhealthy if service exists AND is initialized but not healthy
+      if (this.emailService) {
+        // Check if email service is actually initialized/enabled
+        const isEmailEnabled =
+          process.env['EMAIL_ENABLED'] !== 'false' && process.env['EMAIL_PROVIDER'] !== undefined;
+
+        if (isEmailEnabled) {
+          configuredServices.push('email');
+          const emailHealth = await this.checkEmailHealthWithTimeout();
+          status.email = emailHealth;
+          if (emailHealth.connected) {
+            healthyServices.push('email');
+          } else {
+            // Service is enabled but not healthy - this is a real issue
+            issues.push('Email service enabled but not healthy');
+            status.healthy = false;
+          }
+        } else {
+          // Service exists but not enabled - not an issue
+          status.email = { connected: false };
+        }
+      } else {
+        // Service not configured - not an issue, just mark as not connected
+        status.email = { connected: false };
       }
 
-      // Fast path: Essential WhatsApp health check only (always runs)
-      const whatsappHealth = await this.checkWhatsAppHealthWithTimeout();
-      status.whatsapp = whatsappHealth;
-      if (!whatsappHealth.connected) {
-        issues.push('WhatsApp service not connected');
-        status.healthy = false;
+      // Fast path: Essential WhatsApp health check
+      // Only mark as unhealthy if service exists AND is enabled but not connected
+      if (this.whatsappService) {
+        // Check if WhatsApp service is actually enabled
+        const isWhatsAppEnabled =
+          process.env['WHATSAPP_ENABLED'] !== 'false' &&
+          process.env['WHATSAPP_API_KEY'] !== undefined;
+
+        if (isWhatsAppEnabled) {
+          configuredServices.push('whatsapp');
+          const whatsappHealth = await this.checkWhatsAppHealthWithTimeout();
+          status.whatsapp = whatsappHealth;
+          if (whatsappHealth.connected) {
+            healthyServices.push('whatsapp');
+          } else {
+            // Service is enabled but not connected - this is a real issue
+            issues.push('WhatsApp service enabled but not connected');
+            status.healthy = false;
+          }
+        } else {
+          // Service exists but not enabled - not an issue
+          status.whatsapp = { connected: false };
+        }
+      } else {
+        // Service not configured - not an issue, just mark as not connected
+        status.whatsapp = { connected: false };
       }
 
-      // Fast path: Essential Push health check only (always runs)
-      const pushHealth = await this.checkPushHealthWithTimeout();
-      status.push = pushHealth;
-      if (!pushHealth.connected) {
-        issues.push('Push service not connected');
+      // Fast path: Essential Push health check
+      // Only mark as unhealthy if service exists AND is enabled but not healthy
+      if (this.pushService) {
+        // Check if Push service is actually enabled
+        const isPushEnabled =
+          process.env['PUSH_ENABLED'] !== 'false' &&
+          (process.env['FCM_SERVER_KEY'] !== undefined ||
+            process.env['AWS_SNS_REGION'] !== undefined);
+
+        if (isPushEnabled) {
+          configuredServices.push('push');
+          const pushHealth = await this.checkPushHealthWithTimeout();
+          status.push = pushHealth;
+          if (pushHealth.connected) {
+            healthyServices.push('push');
+          } else {
+            // Service is enabled but not healthy - this is a real issue
+            issues.push('Push service enabled but not healthy');
+            status.healthy = false;
+          }
+        } else {
+          // Service exists but not enabled - not an issue
+          status.push = { connected: false };
+        }
+      } else {
+        // Service not configured - not an issue, just mark as not connected
+        status.push = { connected: false };
+      }
+
+      // Overall health: Only unhealthy if configured services are failing
+      // If no services are configured, consider it healthy (services are optional)
+      if (configuredServices.length === 0) {
+        // No services configured - this is acceptable, mark as healthy
+        status.healthy = true;
+        issues.push('No communication services configured (this is acceptable)');
+      } else if (healthyServices.length === configuredServices.length) {
+        // All configured services are healthy
+        status.healthy = true;
+      } else if (healthyServices.length > 0) {
+        // Some services are healthy, some are not - degraded but not completely unhealthy
         status.healthy = false;
       }
+      // If no services are healthy but some are configured, status.healthy is already false
 
       // Expensive checks only run periodically (every 60 seconds) to avoid performance impact
       // These are non-blocking and won't affect CPU load for frequent health checks
@@ -643,6 +750,7 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
    * Perform background health check (non-blocking)
    * Runs periodically to update cached status
    * Optimized for 10M+ users - uses lightweight checks, timeout protection, circuit breaker
+   * Uses dedicated health check pool for continuous monitoring
    */
   private performHealthCheck(): void {
     // Non-blocking: Don't await, just trigger update
@@ -650,18 +758,28 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
     // Circuit breaker prevents excessive checks when unhealthy (saves CPU)
     void this.getHealthStatus()
       .then(status => {
+        // Only log warnings if there are actual issues with configured services
+        // Don't log if services are simply not configured (this is acceptable)
+        const hasRealIssues = status.issues.some(
+          issue => !issue.includes('not configured') && !issue.includes('No communication services')
+        );
+
         if (
           !status.healthy &&
+          hasRealIssues &&
           this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
         ) {
-          // Only log if circuit breaker is not open (avoid log spam)
+          // Only log if circuit breaker is not open and there are real issues (avoid log spam)
           void this.loggingService?.log(
             LogType.SYSTEM,
             LogLevel.WARN,
-            'Communication health check failed',
+            'Communication health check: Some configured services are unhealthy',
             this.serviceName,
             {
-              issues: status.issues,
+              issues: status.issues.filter(
+                issue =>
+                  !issue.includes('not configured') && !issue.includes('No communication services')
+              ),
               socketConnected: status.socket.connected,
               emailConnected: status.email.connected,
               whatsappConnected: status.whatsapp.connected,
@@ -672,6 +790,23 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
               pushLatency: status.push.latency,
             }
           );
+        } else if (status.healthy) {
+          // Log success periodically (every 5 minutes) to confirm health checks are working
+          const now = Date.now();
+          if (!this.lastHealthCheckTime || now - this.lastHealthCheckTime > 300000) {
+            void this.loggingService?.log(
+              LogType.SYSTEM,
+              LogLevel.DEBUG,
+              'Communication health check: All configured services are healthy',
+              this.serviceName,
+              {
+                socketConnected: status.socket.connected,
+                emailConnected: status.email.connected,
+                whatsappConnected: status.whatsapp.connected,
+                pushConnected: status.push.connected,
+              }
+            );
+          }
         }
       })
       .catch(error => {

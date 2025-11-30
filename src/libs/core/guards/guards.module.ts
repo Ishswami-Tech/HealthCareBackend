@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@config';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
@@ -12,6 +13,7 @@ import { Reflector } from '@nestjs/core';
 import { LoggingModule, LoggingService } from '@infrastructure/logging';
 import { JwtAuthService } from '@services/auth/core/jwt.service';
 import { CacheModule } from '@infrastructure/cache/cache.module';
+import { SignOptions } from 'jsonwebtoken';
 
 /**
  * Guards Module for Healthcare Applications
@@ -36,7 +38,28 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
  */
 @Module({
   imports: [
-    JwtModule,
+    ConfigModule, // For ConfigService
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService): JwtModuleOptions => {
+        const expiresIn: string =
+          configService?.get<string>(
+            'JWT_ACCESS_EXPIRES_IN',
+            process.env['JWT_ACCESS_EXPIRES_IN'] || '24h'
+          ) || '24h';
+        return {
+          secret:
+            configService?.get<string>(
+              'JWT_SECRET',
+              process.env['JWT_SECRET'] || 'dev-jwt-secret-key'
+            ) || 'dev-jwt-secret-key',
+          signOptions: {
+            expiresIn: expiresIn as SignOptions['expiresIn'],
+          } as SignOptions,
+        };
+      },
+      inject: [ConfigService],
+    }),
     RedisModule,
     RateLimitModule,
     forwardRef(() => DatabaseModule),
@@ -58,7 +81,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     RolesGuard,
     ClinicGuard,
     LoggingService,
-    JwtModule,
+    JwtModule, // Export JwtModule so other modules can use the configured JWT service
     RateLimitModule,
     RateLimitService,
     JwtAuthService,

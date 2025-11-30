@@ -239,6 +239,7 @@ export class AuthService {
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
         role: user.role,
         ...(user.phone && { phone: user.phone }),
+        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
       const tokens = await this.generateTokens(userForTokens, session.sessionId);
 
@@ -361,6 +362,7 @@ export class AuthService {
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
         role: user.role,
         ...(user.phone && { phone: user.phone }),
+        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
       const tokens = await this.generateTokens(userForTokens, session.sessionId);
 
@@ -896,6 +898,7 @@ export class AuthService {
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
         role: user.role,
         ...(user.phone && { phone: user.phone }),
+        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
       const tokens = await this.generateTokens(userForTokens, session.sessionId);
 

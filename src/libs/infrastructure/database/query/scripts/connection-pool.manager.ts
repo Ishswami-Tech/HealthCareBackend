@@ -46,8 +46,11 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private isProcessingQueue = false;
   private healthCheckInterval!: NodeJS.Timeout;
   private slowQueryThreshold = 1000; // 1 second
-  private circuitBreakerThreshold = 5;
-  private circuitBreakerTimeout = 30000; // 30 seconds
+  // More tolerant circuit breaker in development
+  private readonly isProduction = process.env['NODE_ENV'] === 'production';
+  private circuitBreakerThreshold = this.isProduction ? 5 : 10; // More tolerant in dev
+  private circuitBreakerTimeout = this.isProduction ? 30000 : 60000; // Longer timeout in dev
+  private lastHealthCheckSuccessLog = 0; // Track last success log time for periodic logging
 
   constructor(
     @Inject(forwardRef(() => ConfigService)) private configService: ConfigService,
@@ -415,20 +418,25 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
             // Event emission will be handled by DatabaseService if needed
           }
 
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.DEBUG,
-            `Health check completed in ${duration}ms`,
-            this.serviceName,
-            {
-              total: this.metrics.totalConnections,
-              active: this.metrics.activeConnections,
-              idle: this.metrics.idleConnections,
-              waiting: this.metrics.waitingConnections,
-              utilization: `${(utilizationRate * 100).toFixed(1)}%`,
-              queueLength: queueLength,
-            }
-          );
+          // Log success periodically (every 5 minutes) to confirm database connection
+          const now = Date.now();
+          if (!this.lastHealthCheckSuccessLog || now - this.lastHealthCheckSuccessLog > 300000) {
+            this.lastHealthCheckSuccessLog = now;
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.INFO,
+              `Database health check: Connected (latency: ${duration}ms)`,
+              this.serviceName,
+              {
+                status: 'healthy',
+                latency: duration,
+                connectionType: 'dedicated-health-check-pool',
+                totalConnections: this.metrics.totalConnections,
+                activeConnections: this.metrics.activeConnections,
+                utilization: `${(utilizationRate * 100).toFixed(1)}%`,
+              }
+            );
+          }
         } catch (error) {
           this.metrics.isHealthy = false;
           this.handleCircuitBreakerFailure();

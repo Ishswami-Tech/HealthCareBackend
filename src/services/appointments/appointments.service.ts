@@ -943,39 +943,23 @@ export class AppointmentsService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        try {
-          // Hot path: Direct plugin injection for performance (very frequent operation)
-          const availabilityData = await this.clinicQueuePlugin.process({
-            operation: 'getDoctorAvailability',
-            doctorId,
-            date,
-          });
+        // Use core service directly for availability (not a queue operation)
+        // The ClinicQueuePlugin is for queue management operations only
+        const availabilityData = await this.coreAppointmentService.getDoctorAvailability(
+          doctorId,
+          date
+        );
 
-          const result = { success: true, data: availabilityData };
+        // Log the availability retrieval
+        await this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.INFO,
+          'Doctor availability retrieved successfully',
+          'AppointmentsService',
+          { doctorId, date, userId, clinicId }
+        );
 
-          if (result.success) {
-            // Log the availability retrieval
-            await this.loggingService.log(
-              LogType.BUSINESS,
-              LogLevel.INFO,
-              'Doctor availability retrieved successfully',
-              'AppointmentsService',
-              { doctorId, date, userId, clinicId }
-            );
-          }
-          return result;
-        } catch (_error) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.ERROR,
-            `Failed to get doctor availability through plugin: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
-            'AppointmentsService.getDoctorAvailability',
-            { error: _error instanceof Error ? _error.message : String(_error) }
-          );
-
-          // Fallback to core service if plugin fails
-          return this.coreAppointmentService.getDoctorAvailability(doctorId, date);
-        }
+        return { success: true, data: availabilityData };
       },
       {
         ttl: 180,

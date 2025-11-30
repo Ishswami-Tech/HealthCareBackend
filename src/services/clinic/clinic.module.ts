@@ -3,6 +3,7 @@ import { ClinicService } from './clinic.service';
 import { ClinicLocationService } from './services/clinic-location.service';
 import { ClinicUserService } from './services/clinic-user.service';
 import { ClinicController } from './clinic.controller';
+import { ClinicLocationController } from './cliniclocation/clinic-location.controller';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
 import { GuardsModule } from '@core/guards';
@@ -10,7 +11,7 @@ import { GuardsModule } from '@core/guards';
 @Module({
   imports: [DatabaseModule, LoggingModule, GuardsModule],
   providers: [ClinicService, ClinicLocationService, ClinicUserService],
-  controllers: [ClinicController],
+  controllers: [ClinicController, ClinicLocationController],
   exports: [ClinicService, ClinicLocationService, ClinicUserService],
 })
 export class ClinicModule {}

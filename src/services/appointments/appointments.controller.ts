@@ -553,15 +553,27 @@ export class AppointmentsController {
     description: 'Doctor not found',
   })
   async getDoctorAvailability(
-    @Param('doctorId', ParseUUIDPipe) doctorId: string,
+    @Param('doctorId') doctorIdParam: string,
     @Query('date') date: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<DoctorAvailabilityResponseDto> {
     try {
-      const clinicId = req.user?.clinicId || (req.headers?.['clinic-id'] as string | undefined);
+      // Validate doctorId before ParseUUIDPipe
+      if (!doctorIdParam || doctorIdParam === 'null' || doctorIdParam === 'undefined') {
+        throw new BadRequestException('Doctor ID is required and must be a valid UUID');
+      }
+
+      // Validate UUID format
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(doctorIdParam)) {
+        throw new BadRequestException('Doctor ID must be a valid UUID format');
+      }
+
+      const doctorId = doctorIdParam;
+      const clinicId = req.clinicContext?.clinicId;
 
       if (!clinicId) {
-        throw new BadRequestException('Clinic ID is required');
+        throw new BadRequestException('Clinic context is required');
       }
 
       if (!date) {
@@ -608,15 +620,14 @@ export class AppointmentsController {
       );
       return result;
     } catch (_error) {
-      const errorClinicId =
-        req.user?.clinicId || (req.headers?.['clinic-id'] as string | undefined) || '';
+      const errorClinicId = req.clinicContext?.clinicId || '';
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get doctor availability: ${_error instanceof Error ? _error.message : String(_error)}`,
         'AppointmentsController',
         {
-          doctorId,
+          doctorId: doctorIdParam, // Use param instead of scoped variable
           clinicId: errorClinicId,
           error: _error instanceof Error ? _error.stack : undefined,
         }
@@ -672,10 +683,10 @@ export class AppointmentsController {
   ): Promise<AppointmentResponseDto[]> {
     try {
       const currentUserId = req.user?.sub;
-      const clinicId = req.user?.clinicId || (req.headers?.['clinic-id'] as string | undefined);
+      const clinicId = req.clinicContext?.clinicId;
 
       if (!clinicId) {
-        throw new BadRequestException('Clinic ID is required');
+        throw new BadRequestException('Clinic context is required');
       }
 
       // Patients can only access their own upcoming appointments
@@ -707,8 +718,7 @@ export class AppointmentsController {
       return result;
     } catch (_error) {
       const errorUserId = userId || '';
-      const errorClinicId =
-        req.user?.clinicId || (req.headers?.['clinic-id'] as string | undefined) || '';
+      const errorClinicId = req.clinicContext?.clinicId || '';
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
